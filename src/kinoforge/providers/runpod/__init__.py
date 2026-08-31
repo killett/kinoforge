@@ -55,6 +55,8 @@ from kinoforge.core.interfaces import (
     Instance,
     InstanceSpec,
     Offer,
+    combine_steps,
+    render_launch,
 )
 from kinoforge.core.offers import filter_offers
 from kinoforge.core.runtime_probe import RuntimeProbe
@@ -455,12 +457,17 @@ class RunPodProvider(ComputeProvider):
             "env": c,  # "env"
             "tags": c,  # pod-vs-serverless routing, then Instance.tags
             "run_id": c,  # "name"
-            "provision_script": c,  # gzip+b64 into KINOFORGE_PROVISION_SCRIPT
-            "run_cmd": u,  # the provision script's trailing exec carries it
+            # S3: superseded by setup_steps + launch, which every shipped
+            # engine now emits and which _create_pod reads FIRST. What remains
+            # is a fallback for unmigrated callers, so no shipped config's
+            # value reaches the wire through it — declaring it CONSUMED would
+            # be the flattery this table exists to catch. Dies in Task 7.
+            "provision_script": u,
+            "run_cmd": u,  # superseded by launch.argv
             "image_build_script": u,  # Modal-only split
             "runtime_provision_script": u,  # Modal-only split
-            "setup_steps": u,  # S3 Task 4 turns this CONSUMED
-            "launch": u,  # S3 Task 4 turns this CONSUMED
+            "setup_steps": c,  # combined, then gzip+b64 into the script env var
+            "launch": c,  # rendered and appended — RunPod's PID-1 convention
             "lifecycle": c,  # rendered into KINOFORGE_SELFTERM_SCRIPT
             "offer": c,  # "gpuTypeId"
             "backend_options": c,  # "cloudType" / "restartPolicy"
@@ -920,7 +927,20 @@ class RunPodProvider(ComputeProvider):
             Instance with ``status="starting"``.
         """
         env = self._assemble_create_env(spec)
-        docker_args = self._encode_provision_script(env, spec.provision_script)
+        # compute-seam S3: the engine emits steps + a launch; the trailing
+        # `exec` is RunPod's OWN PID-1 convention, composed here rather than
+        # baked into the engine's script. `render_launch` raises when a spec
+        # declares steps but no launch — a pod that provisions and then exits,
+        # billing with nothing listening, is worse than a loud failure.
+        # The `else` fallback covers specs built before Task 7 deletes
+        # `provision_script`, and dies with it.
+        if spec.setup_steps:
+            script: str | None = (
+                combine_steps(spec.setup_steps) + "\n" + render_launch(spec.launch)
+            )
+        else:
+            script = spec.provision_script
+        docker_args = self._encode_provision_script(env, script)
 
         gpu_type_id = spec.offer.gpu_type if spec.offer else ""
         # Under ephemeral mode, suppress the alias-laden run_id from the

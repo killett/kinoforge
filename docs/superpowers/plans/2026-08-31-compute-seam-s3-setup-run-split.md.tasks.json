@@ -37,7 +37,7 @@
     {
       "id": 4,
       "subject": "Task 4: RunPod composes its own launch line",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Make the provider that owns the PID-1 convention be the one that writes it, with the wire bytes unmoved.\n\n**Files:**\n- Modify: `src/kinoforge/providers/runpod/__init__.py:907-1010`\n- Test: `tests/providers/test_runpod_setup_steps.py`\n\n**Acceptance Criteria:**\n- [ ] `_build_create_pod_body` builds `dockerArgs` from the combined steps plus the rendered launch when `setup_steps` is non-empty, falling back to `spec.provision_script` otherwise, with a comment saying the fallback dies in Task 7.\n- [ ] All 20 RunPod goldens byte-identical, proven by decoding `KINOFORGE_PROVISION_SCRIPT` (gzip+base64) and comparing the decoded script, not the envelope.\n- [ ] `setup_steps` and `launch` are CONSUMED on runpod, each with a `_WIRE_PROOFS` entry that mutates the spec and observes the decoded script follow.\n- [ ] A spec with `setup_steps` and `launch=None` raises rather than shipping a server-less container.\n\n**Verify:** `pixi run python -m pytest tests/providers -q` -> all pass, 31 goldens unmoved\n\nFull steps + code: plan Task 4.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/runpod/__init__.py\", \"tests/providers/test_runpod_setup_steps.py\", \"tests/providers/test_field_consumption_parity.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/providers -q\", \"modelTier\": \"frontier\", \"acceptanceCriteria\": [\"dockerArgs composed from steps + rendered launch with a documented legacy fallback\", \"All 20 RunPod goldens byte-identical, proven by decoding the gzip+base64 blob\", \"setup_steps and launch CONSUMED on runpod with wire proofs\", \"steps without a launch raises rather than booting a server-less container\"]}\n```",
       "blockedBy": [
         3
@@ -89,5 +89,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-08-31T01:36:43.716872"
+  "lastUpdated": "2026-08-31T07:24:29.277512"
 }
