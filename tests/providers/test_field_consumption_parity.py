@@ -938,39 +938,30 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             probe={"run_id": "kf-probe-run"},
             expected="kf-probe-run",
         ),
-        # Modal boots from runtime_provision_script when the engine split one
-        # out, so proving the fallback means clearing it first.
-        "provision_script": _tracks(
-            lambda ln: (
-                "kf-probe-provision-marker"
-                in (_modal_request(ln)["provision_script"] or "")
-            ),
-            probe={
-                "runtime_provision_script": None,
-                "provision_script": _PROBE_SCRIPT,
-            },
-            expected=True,
-        ),
-        "runtime_provision_script": _tracks(
+        # S3: Modal partitions the steps on their own flags. Two proofs,
+        # because the partition has two sides and a provider that dropped
+        # either one would still satisfy the other.
+        "setup_steps": _tracks(
             lambda ln: (
                 "kf-probe-runtime-marker"
-                in (_modal_request(ln)["provision_script"] or "")
-            ),
-            probe={"runtime_provision_script": _PROBE_RUNTIME_SCRIPT},
-            expected=True,
-        ),
-        "image_build_script": _tracks(
-            lambda ln: (
+                in (_modal_request(ln)["provision_script"] or ""),
                 "kf-probe-build-marker"
-                in (_modal_request(ln)["image_build_script"] or "")
+                in (_modal_request(ln)["image_build_script"] or ""),
             ),
-            probe={"image_build_script": _PROBE_BUILD_SCRIPT},
-            expected=True,
+            probe={
+                "setup_steps": (
+                    SpecSetupStep("echo kf-probe-runtime-marker"),
+                    SpecSetupStep(
+                        "echo kf-probe-build-marker", bakeable=True, runtime=False
+                    ),
+                )
+            },
+            expected=(True, True),
         ),
-        "run_cmd": _tracks(
-            lambda ln: _modal_request(ln)["run_cmd"],
-            probe={"run_cmd": ["kf-probe-cmd", "--flag"]},
-            expected=["kf-probe-cmd", "--flag"],
+        "launch": _tracks(
+            lambda ln: _modal_request(ln)["launch_line"],
+            probe={"launch": SpecLaunch(("kf-probe-cmd", "--flag"))},
+            expected="kf-probe-cmd --flag",
         ),
         "volume_mount": _tracks(
             lambda ln: _modal_request(ln)["volume_mount"],

@@ -55,7 +55,7 @@
     {
       "id": 6,
       "subject": "Task 6: Modal partitions on `bakeable`",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Replace the `image_build_script` / `runtime_provision_script` pair with the flag that means the same thing, and stop the provider appending a second launch.\n\n**Files:**\n- Modify: `src/kinoforge/providers/modal/__init__.py:214-262`, `src/kinoforge/providers/modal/_app.py:55-56`\n- Test: `tests/providers/modal/test_setup_steps.py`\n\n**Acceptance Criteria:**\n- [ ] Modal's build script is the combined bakeable steps and its boot script the combined non-bakeable steps, matching today's `build_script` / `runtime_script` exactly for every Modal config.\n- [ ] `_app.py` no longer appends `\"exec \" + shlex.join(run_cmd)`; the launch line comes from `render_launch` via the request. The commit notes the old appended `exec` was unreachable dead code for diffusers.\n- [ ] All 6 Modal goldens byte-identical, or -- if the dead `exec` was inside a golden -- the ONLY delta is its removal, decoded and shown.\n- [ ] `setup_steps` and `launch` CONSUMED on modal with wire proofs; `image_build_script` and `runtime_provision_script` rows gone from every provider's `consumes()`.\n\n**Verify:** `pixi run python -m pytest tests/providers -q`\n\nFull steps + code: plan Task 6.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/__init__.py\", \"src/kinoforge/providers/modal/_app.py\", \"tests/providers/modal/test_setup_steps.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/providers -q\", \"modelTier\": \"frontier\", \"acceptanceCriteria\": [\"build script = bakeable steps, boot script = non-bakeable steps, matching today's values\", \"_app.py stops appending a second exec; launch_line rides the request\", \"6 Modal goldens byte-identical or only the dead exec line removed, shown decoded\", \"setup_steps and launch CONSUMED on modal with wire proofs; the two old rows deleted\"]}\n```",
       "blockedBy": [
         5
@@ -89,5 +89,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-08-31T07:39:38.272818"
+  "lastUpdated": "2026-08-31T07:47:01.494697"
 }

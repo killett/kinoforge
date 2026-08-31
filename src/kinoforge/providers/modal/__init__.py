@@ -26,6 +26,8 @@ from kinoforge.core.interfaces import (
     Instance,
     InstanceSpec,
     Offer,
+    combine_steps,
+    render_launch,
 )
 from kinoforge.core.runtime_probe import RuntimeProbe
 from kinoforge.providers.modal._app import (
@@ -150,12 +152,15 @@ class ModalProvider(ComputeProvider):
             "env": c,  # ModalAppRequest.env
             "tags": c,  # Instance.tags
             "run_id": c,  # ModalAppRequest.run_id, and the app name
-            "provision_script": c,  # required, and the boot-script fallback
-            "run_cmd": c,  # ModalAppRequest.run_cmd
-            "image_build_script": c,  # baked into the image at build time
-            "runtime_provision_script": c,  # preferred as the boot script
-            "setup_steps": u,  # S3 Task 6 turns this CONSUMED
-            "launch": u,  # S3 Task 6 turns this CONSUMED
+            # S3: superseded by setup_steps + launch, all three read FIRST.
+            # What remains is a fallback for unmigrated callers, so no shipped
+            # config's value reaches the wire through them. Die in Task 7.
+            "provision_script": u,
+            "run_cmd": u,  # superseded by launch.argv
+            "image_build_script": u,  # superseded by the bakeable partition
+            "runtime_provision_script": u,  # superseded by the runtime partition
+            "setup_steps": c,  # partitioned into the image bake + boot script
+            "launch": c,  # ModalAppRequest.launch_line
             "lifecycle": c,  # scaledown_window_s + startup_timeout_s
             "offer": c,  # ModalAppRequest.gpu
             "backend_options": u,  # Options is empty: no knob to consume
@@ -213,7 +218,17 @@ class ModalProvider(ComputeProvider):
         Raises:
             ValueError: If ``run_cmd``/``provision_script`` or ``offer`` is missing.
         """
-        if not spec.run_cmd or not spec.provision_script:
+        # A Modal container is a server or it is nothing: the app's web
+        # endpoint IS the instance, so a spec with no launch would deploy an
+        # app that answers nothing. S3 asks that of the new fields, falling
+        # back to the legacy pair for unmigrated callers (dies in Task 7).
+        if spec.setup_steps:
+            if spec.launch is None:
+                raise ValueError(
+                    "ModalProvider requires spec.launch (the server boot "
+                    "command); got setup_steps with no launch"
+                )
+        elif not spec.run_cmd or not spec.provision_script:
             raise ValueError(
                 "ModalProvider requires spec.run_cmd and spec.provision_script "
                 f"(the server boot command); got run_cmd={spec.run_cmd!r}"
@@ -241,24 +256,43 @@ class ModalProvider(ComputeProvider):
         # server's own os.environ.setdefault("HF_HOME", ...) respects this.
         env.setdefault("HF_HOME", volume_mount)
 
-        # Modal fast-boot: the container boots with the RUNTIME script only —
-        # the build script is baked into the image below, so re-running it at
-        # container start would re-download everything and re-open the
-        # preemption window (2026-07-09 FlashVSR failure). Non-splitting engines
-        # leave runtime_provision_script None and fall back to the combined one.
-        boot_script = spec.runtime_provision_script or spec.provision_script
+        # Modal fast-boot: the container boots with the RUNTIME steps only —
+        # the bakeable ones are baked into the image below, so re-running them
+        # at container start would re-download everything and re-open the
+        # preemption window (2026-07-09 FlashVSR failure).
+        #
+        # compute-seam S3: the partition is on the STEP's own flags, not on two
+        # pre-split strings named after this pipeline. The two are independent
+        # because a step can be both — the diffusers module embed has to exist
+        # in the image for the build-phase weights fetch AND at container start
+        # for the server. The build phase runs in isolation, so it carries its
+        # own fail-fast line; the combined script's lives in the runtime
+        # preamble, which a baked image never executes. The `else` is the
+        # legacy path and dies with the old fields in Task 7.
+        if spec.setup_steps:
+            boot_script: str = combine_steps(
+                tuple(s for s in spec.setup_steps if s.runtime)
+            )
+            bakeable = combine_steps(tuple(s for s in spec.setup_steps if s.bakeable))
+            build_script = "set -euo pipefail\n" + bakeable if bakeable else None
+            launch_line = render_launch(spec.launch)
+        else:
+            boot_script = spec.runtime_provision_script or spec.provision_script or ""
+            build_script = spec.image_build_script
+            launch_line = ""
 
         req = ModalAppRequest(
             run_id=app_run_id,
             image=spec.image,
             gpu=spec.offer.gpu_type,
             provision_script=boot_script,
-            run_cmd=list(spec.run_cmd),
+            run_cmd=list(spec.run_cmd or []),
+            launch_line=launch_line,
             env=env,
             volume_mount=volume_mount,
             scaledown_window_s=int(spec.lifecycle.idle_timeout_s),
             startup_timeout_s=int(spec.lifecycle.boot_timeout_s) or 1800,
-            image_build_script=spec.image_build_script,
+            image_build_script=build_script,
         )
         app, server_fn = self._app_factory(req, self._modal_mod())
         url = self._deployer(app, server_fn)
