@@ -42,7 +42,10 @@ def build_instance_spec(
         lifecycle: Effective lifecycle guardrails.
         env: Credential-resolved environment for the instance.
         run_id: Run identifier.
-        tags: Caller tags, merged last so they win over the defaults.
+        tags: Caller tags, merged over ``cfg.compute.tags`` so a
+            per-invocation label (CLI flag, grid cell) wins over the config's
+            static one. Neither can overwrite ``kinoforge_engine`` /
+            ``kinoforge_key``.
         diagnostic_env: Diagnostic overlay; only used when
             ``cfg.diagnostic_mode`` is set. Merged into ``env`` via
             ``setdefault`` so an operator-supplied value always wins.
@@ -54,12 +57,27 @@ def build_instance_spec(
     if cfg.diagnostic_mode and diagnostic_env:
         for key, value in diagnostic_env.items():
             merged_env.setdefault(key, value)
+    # Precedence reads top-to-bottom: kinoforge's own keys, then the cfg's
+    # static labels, then the caller's per-invocation ones.
     merged_tags: dict[str, str] = {
         "kinoforge_engine": engine_name,
         "kinoforge_key": key_hash,
     }
+    if cfg.compute is not None and cfg.compute.tags:
+        merged_tags.update(cfg.compute.tags)
     if tags:
         merged_tags.update(tags)
+    # kinoforge-owned keys are re-asserted last: a cfg or caller that sets
+    # kinoforge_key would break warm-reuse matching, which keys off it.
+    merged_tags["kinoforge_engine"] = engine_name
+    merged_tags["kinoforge_key"] = key_hash
+    # RunPod branches on this tag (providers/runpod/__init__.py, create_instance).
+    # Before S2 nothing wrote it, so `compute.mode: serverless` silently took
+    # the pod branch — the S1 whole-branch review proved the payload was
+    # identical either way. setdefault, not assignment: RunPod's own internal
+    # re-create call passes an explicit mode tag and must keep winning.
+    if cfg.compute is not None:
+        merged_tags.setdefault("mode", cfg.compute.mode)
     backend_options: dict[str, dict[str, Any]] = {
         name: dict(opts)
         for name, opts in (

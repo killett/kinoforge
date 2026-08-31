@@ -43,6 +43,7 @@ def _raw(
     placement: dict[str, Any] | None = None,
     lifecycle: dict[str, Any] | None = None,
     backend_options: dict[str, dict[str, Any]] | None = None,
+    compute_level: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return the raw cfg mapping for ``provider``.
 
@@ -53,6 +54,9 @@ def _raw(
         lifecycle: Optional ``compute.lifecycle`` block; defaults to the
             minimum Pydantic accepts (``budget`` has no default).
         backend_options: Optional ``compute.backend_options`` mapping.
+        compute_level: Optional keys written directly under ``compute``
+            (``mode``, ``tags``, ``heartbeat_mode``, ...), merged last so a
+            test can override the defaults this helper writes.
 
     Returns:
         A mapping ready for ``yaml.safe_dump``.
@@ -67,6 +71,8 @@ def _raw(
         compute["placement"] = placement
     if backend_options is not None:
         compute["backend_options"] = backend_options
+    if compute_level is not None:
+        compute.update(compute_level)
     return {
         "engine": {"kind": "fake", "precision": "fp16"},
         "models": [
@@ -396,14 +402,23 @@ def test_modal_spot_warns_under_the_same_timeout_bound_as_its_rate_cap() -> None
     assert "discount" in result.message
 
 
-def test_accelerator_count_is_the_only_error_row_a_cfg_can_reach() -> None:
-    """Pins the invariant the severity table now claims.
+def test_only_substitute_free_rows_are_errors() -> None:
+    """Pins the exact set of rows that refuse a load.
 
     Every UNSUPPORTED row on a registered provider must carry a substitute
-    except ``accelerator_count``, whose 1-accelerator pin nothing else can
-    cover. A new row added without a substitute — or an existing substitute
-    deleted — silently reintroduces a refusal path this ruling forbids, and
-    would show up here as a second field name.
+    except two, and both are deliberate:
+
+    * ``accelerator_count`` — every provider pins one accelerator and no
+      other field can deliver a second.
+    * ``region`` (added in S2) — RunPod sends no ``dataCenterId`` and Modal
+      is passed no ``region=``, so the pin reaches nothing, and no timeout or
+      rate cap substitutes for landing in the wrong jurisdiction.
+
+    A THIRD name appearing here means a row was shipped without a substitute
+    and now refuses loads; a name disappearing means a substitute was added
+    (or a declaration flipped to CONSUMED) without anyone saying so. Both are
+    decisions, not accidents, which is why this asserts the set rather than a
+    count.
     """
     from kinoforge.core.capabilities import consumes_for
     from kinoforge.core.interfaces import FieldSupport
@@ -424,16 +439,125 @@ def test_accelerator_count_is_the_only_error_row_a_cfg_can_reach() -> None:
             "min_vram_gb": 79,
             "min_cuda": "12.9",
             "disk_gb": 321,
+            "region": "kf-probe-region",
             "spot": True,
             "max_usd_per_hr": 9.75,
         }
-        cfg = _cfg(provider, placement={k: probe[k] for k in unsupported})
+        # Every UNSUPPORTED row must have a probe value, or the strongest-probe
+        # claim above quietly stops being true for the row nobody added.
+        assert unsupported <= set(probe), sorted(unsupported - set(probe))
+        # The compute-level rows get the same treatment: every one of them
+        # set to a non-default at once, so a substitute missing from any is
+        # visible here rather than to the operator it refuses.
+        compute_probe = {
+            "mode": "serverless",
+            "tags": {"probe": "value"},
+            "heartbeat_mode": "graphql-tag",
+            "warm_reuse_auto_attach": False,
+        }
+        compute_unsupported = {
+            name: value
+            for name, value in compute_probe.items()
+            if declared.get(name) is FieldSupport.UNSUPPORTED
+        }
+        cfg = _cfg(
+            provider,
+            placement={k: probe[k] for k in unsupported},
+            compute_level=compute_unsupported,
+        )
         errored |= {
             gap.field
             for gap in evaluate_field_gaps(cfg)
             if gap.severity is Severity.ERROR
         }
-    assert errored == {"compute.placement.accelerator_count"}
+    assert errored == {
+        "compute.placement.accelerator_count",
+        "compute.placement.region",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Compute-level rows (S2) — the block outside `placement`
+# ---------------------------------------------------------------------------
+
+
+def test_unsupported_compute_level_field_reports_its_real_path() -> None:
+    """A compute-level finding names ``compute.mode``, not a placement path.
+
+    Bug caught: the module hardcoded the ``compute.placement`` prefix, so the
+    first compute-level row would have sent the operator to
+    ``compute.placement.mode`` — a key that not only does not exist but is
+    actively refused by ``PlacementConfig(extra="forbid")``, making the
+    suggested fix impossible to apply.
+    """
+    result = UnsupportedFieldCheck().run(
+        _cfg("skypilot", compute_level={"mode": "serverless"})
+    )
+    assert result.passed is False
+    assert "compute.mode" in result.message
+    assert "compute.placement.mode" not in result.message
+
+
+def test_a_compute_level_field_left_at_its_default_is_not_a_finding() -> None:
+    """The default comparison applies to the compute block too.
+
+    Bug caught: reporting every UNSUPPORTED compute-level key regardless of
+    value would fire on all 45 `mode: pod` configs and on every config that
+    writes `warm_reuse_auto_attach: true` — findings for values the operator
+    never chose, which is what the default comparison exists to prevent.
+    """
+    gaps = evaluate_field_gaps(
+        _cfg("skypilot", compute_level={"mode": "pod", "warm_reuse_auto_attach": True})
+    )
+    assert [g.field for g in gaps if g.field.startswith("compute.")] == []
+
+
+def test_warm_reuse_auto_attach_warns_naming_the_orchestrator() -> None:
+    """No provider reads the flag, and the CLI honouring it is real coverage.
+
+    Bug caught: declaring the flag UNSUPPORTED without a substitute would
+    make an ERROR out of a key that works perfectly — it is simply honoured
+    before any provider is called.
+    """
+    result = UnsupportedFieldCheck().run(
+        _cfg("runpod", compute_level={"warm_reuse_auto_attach": False})
+    )
+    assert result.severity is Severity.WARN
+    assert "compute.warm_reuse_auto_attach" in result.message
+    assert "pre-launch warm scan" in result.message
+
+
+def test_heartbeat_mode_is_consumed_on_runpod_and_warned_elsewhere() -> None:
+    """Mirrors ``_adapters.build_heartbeat_endpoint_for``'s real dispatch.
+
+    Bug caught: declaring the substrate CONSUMED everywhere would tell a
+    skypilot operator their instance-side heartbeat is live when the dispatch
+    raises for that provider — the difference between "the cluster is alive"
+    and "the controller is alive".
+    """
+    runpod = evaluate_field_gaps(
+        _cfg("runpod", compute_level={"heartbeat_mode": "graphql-tag"})
+    )
+    assert [g.field for g in runpod if g.field == "compute.heartbeat_mode"] == []
+
+    result = UnsupportedFieldCheck().run(
+        _cfg("skypilot", compute_level={"heartbeat_mode": "graphql-tag"})
+    )
+    assert result.severity is Severity.WARN
+    assert "compute.heartbeat_mode" in result.message
+    assert "orchestrator-clock heartbeat" in result.message
+
+
+def test_local_is_told_its_image_goes_nowhere() -> None:
+    """``image`` is UNSUPPORTED on local and every cfg writes one.
+
+    Bug caught: treating a field with no default as "unwritten" would make
+    the one provider that genuinely ignores the image say nothing about it.
+    """
+    result = UnsupportedFieldCheck().run(_cfg("local"))
+    assert result.passed is False
+    assert result.severity is Severity.WARN
+    assert "compute.image" in result.message
 
 
 @pytest.mark.parametrize("field", ["disk_gb", "accelerator_count"])

@@ -398,6 +398,28 @@ class RunPodProvider(ComputeProvider):
         with no spot equivalent. Setting any of the three today changes
         nothing an operator can observe short of the invoice.
 
+        ``heartbeat_mode`` is CONSUMED and RunPod is the only provider where
+        that is true: ``_adapters.build_heartbeat_endpoint_for`` maps
+        ``'graphql-tag'`` onto :class:`RunPodGraphQLHeartbeatEndpoint`, which
+        reads the pod's own tags off the GraphQL API. Every other value, and
+        every other provider, raises or returns None there.
+
+        ``warm_reuse_auto_attach`` is UNSUPPORTED on every provider including
+        this one, and that is not a gap: the pre-launch warm scan lives in
+        the CLI (``cli/_commands.py``), which decides whether to call
+        ``create_instance`` at all. A provider never sees the flag.
+
+        ``mode`` is the one compute-level field this provider reads:
+        :meth:`create_instance` branches on ``spec.tags["mode"]`` to pick
+        between the pod mutation and the serverless endpoint. Nothing wrote
+        that tag before compute-seam S2, so ``compute.mode: serverless``
+        silently took the pod branch.
+
+        ``region`` joins them: RunPod's create mutation accepts a
+        data-centre id (``dataCenterId``) and kinoforge sends none, so a
+        pinned region reaches nothing. Wiring it is deliberately out of S2 —
+        it is new wire surface needing its own live proof.
+
         The four selection fields are CONSUMED through ``find_offers`` ->
         :func:`kinoforge.core.offers.filter_offers`, not through the launch
         payload: what reaches the wire is the chosen ``Offer``.
@@ -418,8 +440,13 @@ class RunPodProvider(ComputeProvider):
             "min_vram_gb": c,  # filter_offers excludes below the floor
             "min_cuda": c,  # filter_offers excludes below the floor
             "disk_gb": u,  # "containerDiskInGb": 250, hardcoded
+            "region": u,  # dataCenterId is never sent; RunPod picks the DC
             "spot": u,  # on-demand mutation only
             "max_usd_per_hr": c,  # filter_offers excludes pod offers above it
+            # -- compute ---------------------------------------------------
+            "mode": c,  # spec.tags["mode"] selects pod vs serverless
+            "heartbeat_mode": c,  # 'graphql-tag' -> RunPodGraphQLHeartbeatEndpoint
+            "warm_reuse_auto_attach": u,  # orchestrator-side scan, not provider
             # -- spec ------------------------------------------------------
             "image": c,  # "imageName"
             "ports": c,  # "ports", with the /http suffix defaulted in

@@ -67,12 +67,20 @@ def test_empty_rendered_image_falls_back():
     assert _build(rendered=_rendered(image="")).image == "fallback:img"
 
 
-def test_engine_and_key_tags_are_always_present_and_caller_tags_win():
-    # Bug caught: caller tags clobbered by the defaults, or vice versa, which
-    # breaks warm-reuse matching (kinoforge_key) and the ephemeral index.
+def test_caller_tags_merge_but_cannot_hijack_the_kinoforge_keys():
+    # Bug caught (both directions): caller tags dropped by the defaults, so a
+    # per-invocation label never reaches the ledger; or a caller overwriting
+    # kinoforge_key, which warm-reuse matching and the ephemeral index key
+    # off — an override there makes a pod match a capability key it was not
+    # built for.
+    #
+    # Behaviour change, compute-seam S2: before S2 the caller won outright,
+    # including on kinoforge_key. No production caller ever passed one (the
+    # orchestrator threads `tags` straight from the CLI, which sets neither),
+    # so the reversal is a hole closed rather than a feature removed.
     spec = _build(tags={"kinoforge_key": "override", "extra": "x"})
     assert spec.tags["kinoforge_engine"] == "diffusers"
-    assert spec.tags["kinoforge_key"] == "override"
+    assert spec.tags["kinoforge_key"] == "abc123"
     assert spec.tags["extra"] == "x"
 
 

@@ -792,6 +792,11 @@ class PlacementConfig(BaseModel):
         min_vram_gb: Minimum GPU VRAM in GB.
         min_cuda: Minimum CUDA version string an offer must report.
         disk_gb: Minimum disk in GB.
+        region: Cloud region to pin (e.g. ``us-west-2`` on AWS). ``None``
+            leaves the choice to the provider's optimizer. The string is a
+            CLOUD's vocabulary, so pin it alongside
+            ``compute.backend_options.skypilot.clouds`` — a region name from
+            the wrong cloud is refused or silently relocated.
         spot: Request a spot/preemptible instance when True.
         max_usd_per_hr: Ceiling on cost rate.
     """
@@ -803,6 +808,7 @@ class PlacementConfig(BaseModel):
     min_vram_gb: int = 48
     min_cuda: str = "12.8"
     disk_gb: int = 100
+    region: str | None = None
     spot: bool = False
     max_usd_per_hr: float = 2.20
 
@@ -879,6 +885,12 @@ class ComputeConfig(BaseModel):
         provider: Compute provider name (e.g. "runpod").
         image: Container image reference.
         mode: Instance mode; "pod" or "serverless".
+        tags: Operator labels merged onto every instance this cfg launches,
+            below the caller's per-invocation tags (the CLI's and the grid
+            executor's ``build_instance_spec(tags=...)``) and never over the
+            two kinoforge-owned keys ``kinoforge_engine`` / ``kinoforge_key``,
+            which warm-reuse matching keys off. Written by four shipped
+            configs and silently dropped until compute-seam S2.
         placement: Portable resource block — what to get (accelerators,
             VRAM, disk, spot, price ceiling). Replaced the pre-S1
             ``requirements`` catalog-filter block.
@@ -906,9 +918,19 @@ class ComputeConfig(BaseModel):
             ``backend_options.runpod.*``.
     """
 
+    #: ``extra="forbid"`` (compute-seam S2), matching ``PlacementConfig``.
+    #: Deferred until S2 because the default ``extra="ignore"`` was hiding two
+    #: keys operators legitimately write — ``tags`` and, before it was read,
+    #: ``mode`` — and refusing them would have been worse than dropping them.
+    #: Now that both are fields, an unknown key here is a typo, and a typo'd
+    #: ``placemnt:`` block silently applies every placement default instead of
+    #: the values it contains.
+    model_config = ConfigDict(extra="forbid")
+
     provider: str
     image: str
     mode: str = "pod"
+    tags: dict[str, str] = {}
     placement: PlacementConfig = PlacementConfig()
     lifecycle: LifecycleConfig | None = None
     heartbeat_mode: str = "none"
@@ -1594,6 +1616,7 @@ class Config(BaseModel):
             min_vram_gb=p.min_vram_gb,
             min_cuda=p.min_cuda,
             disk_gb=p.disk_gb,
+            region=p.region,
             spot=p.spot,
             max_usd_per_hr=p.max_usd_per_hr,
         )

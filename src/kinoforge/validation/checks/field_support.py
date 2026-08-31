@@ -9,10 +9,15 @@ Severity is by RISK COVERAGE, mirroring
 :mod:`kinoforge.validation.checks.capabilities`:
 
 * **ERROR** when nothing else in the cfg bounds the same risk.
-  ``accelerator_count`` is the archetype, and after the 2026-08-27 review the
-  ONLY row a cfg can reach — every provider pins one accelerator and no other
-  field can deliver a second.
-  ``test_accelerator_count_is_the_only_error_row_a_cfg_can_reach`` pins that,
+  ``accelerator_count`` is the archetype — every provider pins one accelerator
+  and no other field can deliver a second. S2 added the second such row,
+  ``region``: RunPod's create mutation never sends a ``dataCenterId`` and
+  Modal's ``@app.function(region=)`` is never passed, so a pinned region
+  reaches nothing and NOTHING else in the cfg constrains where the run lands
+  — data residency is not something a timeout or a rate cap can substitute
+  for. No shipped config sets ``region`` on either provider, so this refuses
+  nobody today; it refuses the operator who assumes a pin they wrote is being
+  honoured. ``test_only_substitute_free_rows_are_errors`` pins the exact set,
   so a new row shipped without a substitute is caught rather than discovered
   by the operator it refuses.
 * **WARN naming the substitute and the bound it actually enforces**
@@ -26,11 +31,23 @@ is UNSUPPORTED on all four providers and skypilot's ``max_usd_per_hr`` is F4
 itself — and 15 shipped configs set one of them. Refusing them would punish
 the operator for a gap in the providers.
 
-Scope is ``compute.placement``, the portable resource block. The provider-side
-fields of ``InstanceSpec`` (``image``, ``ports``, ``volume_gb``, ``env``) also
-appear in ``consumes()``, but several are UNSUPPORTED on ``local`` by design
-and are not what this ruling was written about; extending the sweep to them is
-a deliberate follow-up, not a silent widening.
+Scope is ``compute.placement`` plus the launch-describing keys of the
+``compute`` block itself — ``image``, ``mode``, ``tags``, ``heartbeat_mode``,
+``warm_reuse_auto_attach`` (compute-seam S2). That widening is the deliberate
+follow-up this module's earlier note promised, and it is what makes
+``compute.mode`` reportable at all: before S2 the check stopped at
+``compute.placement.*``, so 46 configs could write a key nothing read without
+a single finding.
+
+Each finding names its OWN dotted path (:data:`_COMPUTE_PATHS`) rather than a
+hardcoded prefix. ``compute.placement.mode`` would send an operator to a key
+that not only does not exist but is actively refused by
+``PlacementConfig(extra="forbid")``.
+
+The remaining ``InstanceSpec`` rows (``ports``, ``volume_gb``, ``env``, the
+provision scripts) are still out of scope: they are not written under
+``compute`` at all, so there is no operator-facing cfg path to report them
+against.
 """
 
 from __future__ import annotations
@@ -40,7 +57,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from kinoforge.core.capabilities import consumes_for, provider_registered
-from kinoforge.core.config import Config, PlacementConfig
+from kinoforge.core.config import ComputeConfig, Config, PlacementConfig
 from kinoforge.core.interfaces import FieldSupport
 from kinoforge.validation.protocol import CheckCategory, CheckResult, Severity
 from kinoforge.validation.registry import register
@@ -53,8 +70,30 @@ __all__ = [
     "foreign_namespaces",
 ]
 
-#: The dotted prefix every field this check reports lives under.
-_PREFIX = "compute.placement"
+#: Compute-level fields that live directly under ``compute`` rather than under
+#: ``compute.placement``. A finding that names the wrong path sends the
+#: operator to a key that does not exist — and ``compute.placement.mode``
+#: would be doubly misleading, because writing it there is itself refused.
+_COMPUTE_PATHS: dict[str, str] = {
+    "image": "compute.image",
+    "mode": "compute.mode",
+    "tags": "compute.tags",
+    "heartbeat_mode": "compute.heartbeat_mode",
+    "warm_reuse_auto_attach": "compute.warm_reuse_auto_attach",
+}
+
+
+def _dotted_path(field: str) -> str:
+    """Return the cfg path an operator would have written for *field*.
+
+    Args:
+        field: A declared field name.
+
+    Returns:
+        The dotted path, defaulting to the placement block.
+    """
+    return _COMPUTE_PATHS.get(field, f"compute.placement.{field}")
+
 
 #: Values a placement field carries when the operator wrote nothing.
 #:
@@ -67,6 +106,17 @@ _PREFIX = "compute.placement"
 #: ``test_placement_yaml_defaults_match_the_portable_dataclass`` pins them
 #: equal so the choice cannot drift into meaning something.
 _DEFAULTS = PlacementConfig()
+
+#: Defaults for the compute-level rows, taken from ``ComputeConfig``'s field
+#: declarations rather than an instance: ``provider`` and ``image`` are
+#: required, so ``ComputeConfig()`` cannot be constructed the way
+#: ``PlacementConfig()`` can. ``image`` is absent here on purpose — it has no
+#: default, and :func:`_written_fields` treats it as always-written.
+_COMPUTE_DEFAULTS: dict[str, Any] = {
+    name: field.get_default()
+    for name, field in ComputeConfig.model_fields.items()
+    if name in {"mode", "tags", "heartbeat_mode", "warm_reuse_auto_attach"}
+}
 
 #: RunPod's create-pod mutation pins this literal (``providers/runpod``,
 #: ``_create_pod``), with a TODO admitting ``placement.disk_gb`` should be
@@ -90,8 +140,14 @@ _RISK: dict[str, str] = {
     "min_vram_gb": "the run lands on an accelerator with too little VRAM",
     "min_cuda": "the run lands on a host whose CUDA is below the floor",
     "disk_gb": "the run runs out of disk mid-download",
+    "region": "the run lands in a region you did not choose",
     "spot": "the run pays the on-demand rate",
     "max_usd_per_hr": "the run books an instance above the rate ceiling",
+    "image": "the run starts a container you did not choose, or none at all",
+    "mode": "the run takes the pod branch when you asked for serverless",
+    "tags": "the label never reaches the ledger, so runs cannot be told apart",
+    "heartbeat_mode": "liveness is inferred from the controller, not the instance",
+    "warm_reuse_auto_attach": "the warm-reuse scan does not do what the key says",
 }
 
 
@@ -376,6 +432,71 @@ def _local_inert(cfg: Config) -> str:
     )
 
 
+def _orchestrator_owns_warm_reuse(cfg: Config) -> str:
+    """Name the code that really honours ``warm_reuse_auto_attach``.
+
+    No provider reads the flag and none should: the pre-launch warm scan runs
+    in the CLI and decides whether ``create_instance`` is called at all. So
+    the risk "the key does nothing" is fully covered — by the orchestrator,
+    not by the provider — and the row is a WARN rather than a refusal.
+
+    Args:
+        cfg: The loaded Config.
+
+    Returns:
+        A phrase naming the orchestrator-side owner and its real effect.
+    """
+    flag = cfg.compute.warm_reuse_auto_attach if cfg.compute is not None else True
+    return (
+        f"the CLI's pre-launch warm scan (cli/_commands.py), which honours "
+        f"warm_reuse_auto_attach={flag} BEFORE any provider call — the flag "
+        f"decides whether create_instance runs at all, so no provider ever "
+        f"needs to read it"
+    )
+
+
+def _controller_clock_heartbeat(cfg: Config) -> str:
+    """Name what stands in for a wire-level heartbeat on this provider.
+
+    Args:
+        cfg: The loaded Config.
+
+    Returns:
+        A phrase naming the orchestrator-clock fallback and the lifecycle
+        bound that actually kills a run when liveness cannot be observed.
+    """
+    assert cfg.compute is not None  # noqa: S101 — guarded by applies_to
+    lifecycle = cfg.compute.lifecycle
+    bound = (
+        f"max_lifetime={lifecycle.max_lifetime}s"
+        if lifecycle is not None
+        else "no lifecycle block, so no stated bound"
+    )
+    return (
+        f"the orchestrator-clock heartbeat the reaper falls back to, which "
+        f"proves the CONTROLLER is alive rather than the instance — the "
+        f"instance itself is bounded only by {bound}"
+    )
+
+
+def _mode_is_the_only_shape(cfg: Config) -> str:
+    """Name the single instance shape a provider with no second arm offers.
+
+    Args:
+        cfg: The loaded Config (unused; the shape is a provider property).
+
+    Returns:
+        A phrase saying which shape the run gets regardless of the key.
+    """
+    assert cfg.compute is not None  # noqa: S101 — guarded by applies_to
+    provider = cfg.compute.provider
+    shape = "serverless" if provider == "modal" else "a booked instance"
+    return (
+        f"{provider} offering exactly one instance shape ({shape}); the run "
+        f"is not silently placed on the OTHER branch, because there is none"
+    )
+
+
 #: (provider, portable field) -> phrase naming the substitute AND its bound.
 #:
 #: A row absent here is an ERROR by construction: "nothing bounds this risk"
@@ -395,6 +516,16 @@ _SUBSTITUTE: dict[tuple[str, str], Callable[[Config], str]] = {
     ("modal", "disk_gb"): _modal_disk,
     ("modal", "spot"): _modal_spot,
     ("modal", "max_usd_per_hr"): _modal_rate_cap,
+    # compute-level rows (S2). `warm_reuse_auto_attach` is UNSUPPORTED on all
+    # four providers by design, so every one of them needs the orchestrator
+    # substitute or a flag that works would start refusing loads.
+    ("runpod", "warm_reuse_auto_attach"): _orchestrator_owns_warm_reuse,
+    ("skypilot", "warm_reuse_auto_attach"): _orchestrator_owns_warm_reuse,
+    ("modal", "warm_reuse_auto_attach"): _orchestrator_owns_warm_reuse,
+    ("skypilot", "heartbeat_mode"): _controller_clock_heartbeat,
+    ("modal", "heartbeat_mode"): _controller_clock_heartbeat,
+    ("skypilot", "mode"): _mode_is_the_only_shape,
+    ("modal", "mode"): _mode_is_the_only_shape,
 }
 
 #: provider -> substitute applied to EVERY unsupported field of that provider.
@@ -406,20 +537,30 @@ _PROVIDER_FALLBACK: dict[str, Callable[[Config], str]] = {"local": _local_inert}
 
 
 def _written_fields(cfg: Config) -> list[tuple[str, Any]]:
-    """Return the placement fields whose value differs from the default.
+    """Return the fields whose value differs from the default.
+
+    Covers the placement block and the launch-describing compute-level keys
+    (:data:`_COMPUTE_PATHS`). ``image`` has no default — every config states
+    it — so it counts as written whenever the provider does not consume it,
+    which is exactly the ``local`` case worth reporting.
 
     Args:
         cfg: A Config whose ``compute`` block is set.
 
     Returns:
-        ``(field name, value)`` pairs in ``PlacementConfig`` declaration
-        order, so the rendered message is deterministic.
+        ``(field name, value)`` pairs in declaration order — placement first,
+        then compute-level — so the rendered message is deterministic.
     """
+    assert cfg.compute is not None  # noqa: S101 — guarded by applies_to
     placement = _placement(cfg)
     written: list[tuple[str, Any]] = []
     for name in PlacementConfig.model_fields:
         value = getattr(placement, name)
         if value != getattr(_DEFAULTS, name):
+            written.append((name, value))
+    for name in _COMPUTE_PATHS:
+        value = getattr(cfg.compute, name)
+        if name == "image" or value != _COMPUTE_DEFAULTS.get(name):
             written.append((name, value))
     return written
 
@@ -472,7 +613,7 @@ def evaluate_field_gaps(cfg: Config) -> list[Gap]:
         substitute = phrase(cfg) if phrase is not None else None
         gaps.append(
             Gap(
-                field=f"{_PREFIX}.{name}",
+                field=_dotted_path(name),
                 value=value,
                 risk=_RISK.get(name, "the value is silently discarded"),
                 substitute=substitute,

@@ -575,10 +575,17 @@ compute:                     # OMIT entirely for a hosted engine (requires_compu
     min_cuda: "12.8"             # default "12.8"
     max_usd_per_hr: 2.20   # default 2.20; pod-mode only (ignored for serverless — use `lifecycle.budget` instead)
     disk_gb: 100
+    region: us-west-2      # S2: portable but CLOUD-SCOPED — pin it next to backend_options.<provider>.clouds,
+                           # since the string is one cloud's vocabulary. None (default) = let the optimizer pick.
+                           # SkyPilot consumes it; runpod/modal declare it UNSUPPORTED and doctor ERRORs on it.
   backend_options:               # per-provider namespace for anything that does NOT generalize
     runpod: { cloud_type: secure }         # validated by the owning provider's options model;
                                            # an unknown key or provider name is a load-time ConfigError
-  mode: pod                  # RunPod-specific: "pod" or "serverless". Not all providers have modes (e.g. SkyPilot has none).
+  mode: pod                  # RunPod-specific: "pod" or "serverless" — S2 delivers it as spec.tags["mode"], so
+                             # the RunPod branch finally sees it. Other providers have one shape and declare it UNSUPPORTED.
+  tags: { smoke_tier: tier-3 }   # S2: operator labels merged onto Instance.tags (ledger / `kinoforge list` / reaper).
+                                 # Caller tags beat these; neither overwrites kinoforge_engine / kinoforge_key.
+  # ComputeConfig forbids unknown keys: a misspelled `placemnt:` is a load-time error, not a silent default.
   lifecycle:                 # cost-safety guardrails (see Cost-safety section). NOTE: the INVARIANT is universal, but how each guardrail is honored is provider-specific — a direct provider (RunPod) enforces these via the in-pod mechanism; SkyPilot maps idle_timeout onto its autostop and may not honor the others identically (document the mapping in the adapter).
     idle_timeout: 2h         # reap after this long with no jobs (warm-reuse window)
     job_timeout: 30m         # per-CLIP budget; a job's effective deadline ≈ segments × job_timeout (+ time_buffer), so native-extension streams aren't aborted for being legitimately long; overrun -> abort + teardown (enforced in-pod)

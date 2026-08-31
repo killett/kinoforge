@@ -641,10 +641,25 @@ class SkyPilotProvider(ComputeProvider):
         read — ``min_vram_gb == 0`` short-circuits to the synthetic CPU
         offer, which is what makes the task request ``cpus``/``memory``.
 
+        ``heartbeat_mode`` is UNSUPPORTED: sky exposes no per-cluster tag
+        store to read a heartbeat out of, and
+        ``_adapters.build_heartbeat_endpoint_for`` raises for any non-``none``
+        value on this provider. ``warm_reuse_auto_attach`` is UNSUPPORTED
+        everywhere — the warm scan is a CLI decision taken before
+        ``create_instance`` is called at all.
+
+        ``mode`` is UNSUPPORTED: sky books an instance and kinoforge runs a
+        server on it. There is no serverless arm to route to, so
+        ``mode: serverless`` on a skypilot cfg describes nothing this
+        provider can do.
+
         ``backend_options`` is consumed by the SkyPilot namespace's owner,
         :func:`kinoforge._adapters.build_provider_for`, which turns
         ``clouds`` / ``retry_until_up`` into constructor arguments; this
         provider reads them off ``self`` rather than off ``spec``.
+        ``region`` arrives by that same route — ``build_provider_for`` reads
+        ``cfg.placement().region`` onto ``self._region``, which
+        :meth:`create_instance` pins onto ``resources["region"]``.
 
         Returns:
             The declared field-support mapping.
@@ -657,8 +672,13 @@ class SkyPilotProvider(ComputeProvider):
             "min_vram_gb": c,  # filter_offers floor + the CPU short-circuit
             "min_cuda": c,  # filter_offers excludes below the floor
             "disk_gb": u,  # disk_size is 60/30 by fiat
+            "region": c,  # resources["region"], via the _adapters wiring
             "spot": c,  # resources["use_spot"]
             "max_usd_per_hr": u,  # F4: the optimizer never sees the cap
+            # -- compute ---------------------------------------------------
+            "mode": u,  # sky books an instance; there is no serverless arm
+            "heartbeat_mode": u,  # no substrate; the dispatch raises for skypilot
+            "warm_reuse_auto_attach": u,  # orchestrator-side scan, not provider
             # -- spec ------------------------------------------------------
             "image": c,  # resources["image_id"], docker:-normalised
             "ports": u,  # the tunnel is ssh-side, never declared to sky

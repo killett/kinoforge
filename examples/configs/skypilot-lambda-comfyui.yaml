@@ -33,6 +33,9 @@ models:
     target: checkpoints
 
 compute:
+  # Deliberately NO `placement.region`: Lambda names its regions in its own
+  # vocabulary (us-west-1, us-east-3, …), not AWS's, and its capacity moves
+  # hour to hour — pinning one is the fastest way to a no-capacity launch.
   provider: skypilot
   # Public CUDA-base image. The `skypilot/skypilot-gpu:latest` placeholder
   # the Stage-C template shipped with does NOT exist on Docker Hub —

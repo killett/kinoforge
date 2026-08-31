@@ -16,10 +16,15 @@ first unchecked task without redoing committed work.
   **S1 (portable core + `backend_options`) SHIPPED 2026-08-27** — plan
   `docs/superpowers/plans/2026-08-24-compute-seam-s1-portable-core.md`, all 9 tasks done, live
   smoke PROVEN, merged to `main` at `40f0596c`. See the RESUME SNAPSHOT above for the full ship
-  summary. **S2 (region + the compute-block surface) PLANNED, NOT STARTED** — plan
+  summary. **S2 (region + the compute-block surface) SHIPPED 2026-08-30** — plan
   `docs/superpowers/plans/2026-08-29-compute-seam-s2-region-and-compute-surface.md`
-  (`.tasks.json` co-located, 9 tasks, committed `193b4235`). Execute it next; the RESUME SNAPSHOT
-  carries the two decisions already made and the load-bearing task ordering.
+  (`.tasks.json` co-located, 9 tasks, all committed), branch
+  `feat/compute-seam-s2-region-and-compute-surface`, live smoke PROVEN in `us-west-2a` for
+  $0.0425. `placement.region` is reachable from YAML, `compute.tags` and `compute.mode` are real,
+  the parity guard covers the whole `compute` block, and unknown compute keys are refused. See the
+  RESUME SNAPSHOT for the one intended behaviour change (`mode: serverless` now routes) and which
+  two goldens moved. **S3 (setup/run split, `_strip_trailing_exec` deleted) is NEXT — not yet
+  planned.**
 - **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
 - **Modal plan (spec 1, done):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; `.tasks.json` co-located)
@@ -393,7 +398,103 @@ first unchecked task without redoing committed work.
   longer route anyone into it. GCP's `roles.txt` is still entirely unmeasured — honest and labelled
   as such, rather than green from a caller-evaluated `testIamPermissions`.
 
-## RESUME SNAPSHOT (updated 2026-08-27 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-08-30 — read this, then STOP; below is history)
+
+**Compute-seam S2 (region as a first-class field + closing the ComputeConfig surface) — SHIPPED
+2026-08-30.** Plan `docs/superpowers/plans/2026-08-29-compute-seam-s2-region-and-compute-surface.md`
+(`.tasks.json` co-located), all 9 tasks committed on branch
+`feat/compute-seam-s2-region-and-compute-surface`, commit range `6aec4eef`..HEAD. Live smoke
+**PROVEN**. What the config surface gained:
+
+- **`compute.placement.region`** — portable, `None` by default (= let the provider decide, which
+  is exactly what every config that omits it keeps doing). skypilot CONSUMED; runpod, modal and
+  local UNSUPPORTED-and-declared. Wired through `_adapters.build_provider_for`, closing the half
+  of F6 that said the constructor knob was unreachable from any YAML.
+- **`compute.tags`** — a real field instead of a key four shipped configs wrote and pydantic
+  dropped. Reaches `Instance.tags`, which is what the ledger / `kinoforge list` / the reaper read.
+- **`compute.mode`** — now written to `spec.tags["mode"]`, so RunPod's pod-vs-serverless branch
+  finally sees the operator's value.
+- **`extra="forbid"` on `ComputeConfig`** — a misspelled `placemnt:` is a load-time error rather
+  than a silent application of every placement default.
+
+**THE ONE INTENDED BEHAVIOUR CHANGE: `compute.mode: serverless` now routes to
+`_create_serverless`.** 46 configs wrote `mode`; nothing read it; `mode: serverless` silently
+created a *pod* and produced a byte-identical payload. A RunPod config that says `serverless` and
+has been getting a pod will now get a serverless endpoint — a different resource with different
+billing. Every shipped config is `mode: pod`, which was already the branch taken, so nothing in
+this repo changes behaviour. Documented in `docs/breaking-changes.md`.
+
+**A second, smaller behaviour change worth knowing:** a caller can no longer override
+`kinoforge_key` via `build_instance_spec(tags=...)`.
+`test_engine_and_key_tags_are_always_present_and_caller_tags_win` pinned the opposite and is
+rewritten. Warm-reuse matching and the ephemeral index key off that tag; no production caller ever
+passed one, so this closes a hole rather than removing a feature.
+
+**Goldens: TWO moved, both reviewed, both for stated reasons.**
+1. `skypilot-cpu.json` (Task 2, the plan's one sanctioned change) — added exactly
+   `resources.cloud='aws'` and `resources.region='us-west-2'`. The decoded provision script is
+   byte-identical: `setup` sha256 `467e4c2128e1af62a1bd278eebbb1a25e022e6c5737c886d574458cdc2f75cc3`
+   before and after, as are `run` and `envs`.
+2. `local-fake.json` (Task 4, NOT anticipated by the plan) — added `instance.tags.mode='pod'`,
+   because LocalProvider echoes `spec.tags` onto the Instance it fabricates. It is not a wire
+   change: the 30 goldens that are real wire bytes (every runpod / skypilot / modal payload) are
+   byte-identical, which is the claim that mattered — all 45 `mode: pod` configs launch exactly
+   what they launched before.
+
+**No golden moved for `compute.tags`, and the plan's stated reason was wrong.** All four tagged
+configs DO have goldens; they did not move because RunPod's create mutation carries no `tags` key
+at all, so the tag is off-wire by construction. A test now pins both halves (the tag arrives on
+`Instance.tags`; `payload["input"]` has no `tags`) so the absence stays explained.
+
+**Live smoke — `tests/live/test_compute_seam_s2_region_smoke.py`, PROVEN.** Cluster
+`kinoforge-s2-smoke-16bcb2d1`, `c6i.large` in `us-west-2a`, preflight rc=0, $0.0425 / 1802 s.
+Three claims, none able to substitute for another: **cfg-region** (`build_provider_for` alone put
+`us-west-2` / `['aws']` on the provider, with the smoke passing neither), **yaml-pinned** (the real
+`sky.Task.from_yaml_config` payload carried `resources.region`/`cloud`), **realized-az** (EC2 said
+`us-west-2a` for `i-0ad7f73cda9f7af70`). Teardown convergent and verified after exit on every
+attempt. Three attempts, all committed rather than summarised into the one that worked: attempt 1
+($0.0472) proved the first two claims live and lost the AZ to a harness ordering bug (it read the
+AZ, then read the instance TYPE, then asserted — the type query hit the 120 s aws-CLI ceiling and
+discarded a result already in hand); attempt 2 ($0.0102) never provisioned because the EC2
+endpoint dropped the connection, which sky reports as "no capacity in any zone". Cumulative
+**$0.0999**. Both harness bugs are fixed in the committed test.
+
+**Two things about this container's network, learned the expensive way:** the aws CLI here can
+exceed 120 s under any concurrency — do NOT run your own `aws` commands while a live smoke is in
+flight, which is what pushed attempt 1's query over its ceiling — and outbound TLS to both
+`ec2.us-west-2.amazonaws.com` and RunPod's API intermittently drops (a transient SSL handshake
+timeout also made one `pixi run preflight` exit 1; the re-run was clean). Retry before concluding
+anything about capacity or credentials.
+
+**S1 line items CLOSED by S2:** `compute.mode` (decided and wired, not deleted); `compute.tags`
+(made real, which unblocked `extra="forbid"`); the guard's blind spot (the parity guard now derives
+its required set from `ComputeConfig.model_fields` minus a commented structural exclusion set, and
+`UnsupportedFieldCheck` reports each field at its own dotted path instead of a hardcoded
+`compute.placement` prefix).
+
+**S1 line items still OPEN, unchanged by S2:**
+- `region` is wired on skypilot only. RunPod (`dataCenterId`) and Modal (`region=`) stay
+  UNSUPPORTED-and-declared — both are new wire surface wanting their own live proof. Note that
+  setting `region` on either is now a hard doctor **ERROR**: it is the second substitute-free row
+  after `accelerator_count`, because nothing else in a cfg bounds where a run lands. No shipped
+  config does this, so it refuses nobody today.
+- The 11 ungated `tests/live` modules. One of them,
+  `tests/live/test_runpod_ephemeral_sweeper_smoke.py`, hits real RunPod GraphQL and failed inside a
+  full-suite run while passing standalone — it touches no compute-seam surface.
+- The unreadable provision blob (`wan_t2v_server.py`'s stale `requirements.disk_gb` comment) —
+  still deliberately deferred to S3, which regenerates goldens as part of the setup/run split.
+- `disk_gb` and skypilot/modal `max_usd_per_hr` remain declared-and-warned, wired to nothing.
+- The golden ratchet's non-recursive glob still misses 7 configs under `grids/` and `extras/`.
+
+**SINGLE NEXT ACTION: write the S3 plan** — the setup/run split, with `_strip_trailing_exec`
+deleted. Design doc §11. S3 legitimately regenerates goldens as part of its work, so it is also
+where the stale `requirements.disk_gb` comment inside the gzip-embedded provision script gets
+fixed. The S2 branch is `feat/compute-seam-s2-region-and-compute-surface`; merge it to `main`
+before starting, mirroring how S1 landed at `40f0596c`.
+
+---
+
+### Previous snapshot (2026-08-27)
 
 **Compute-seam S1 (portable core) — SHIPPED 2026-08-27.** Design doc
 `docs/superpowers/specs/2026-08-24-compute-seam-portable-core-design.md` + plan

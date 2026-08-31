@@ -84,16 +84,45 @@ _REPRESENTATIVE_CONFIG: dict[str, Path] = {
 }
 
 
+#: ``ComputeConfig`` fields that are STRUCTURE rather than a launch decision,
+#: and so need no per-provider declaration:
+#:
+#: * ``provider`` selects which declaration table applies at all.
+#: * ``placement`` is declared through its own sub-fields (``accelerators``,
+#:   ``region``, ...), not as one opaque blob.
+#: * ``lifecycle`` is covered by the ``lifecycle`` row already required of
+#:   every provider via ``_SPEC_PORTABLE``.
+#: * ``backend_options`` is likewise already a required row, and is by
+#:   definition provider-specific.
+#:
+#: Everything else in the block describes WHAT TO LAUNCH and must be declared.
+#: ``test_the_structural_exclusion_set_is_not_stale`` pins this against
+#: ``ComputeConfig.model_fields`` in both directions, so a renamed field
+#: cannot leave a ghost here that quietly stops requiring its replacement.
+_COMPUTE_STRUCTURAL = {"provider", "placement", "lifecycle", "backend_options"}
+
+
+def _compute_portable() -> set[str]:
+    """Return the compute-level fields every provider must declare.
+
+    Returns:
+        ``ComputeConfig``'s fields minus :data:`_COMPUTE_STRUCTURAL`.
+    """
+    from kinoforge.core.config import ComputeConfig  # noqa: PLC0415
+
+    return set(ComputeConfig.model_fields) - _COMPUTE_STRUCTURAL
+
+
 def _expected_fields() -> set[str]:
     """Return the portable field set every provider must declare.
 
     Returns:
-        The union of ``Placement``'s fields and the portable subset of
-        ``InstanceSpec``'s.
+        The union of ``Placement``'s fields, the portable subset of
+        ``InstanceSpec``'s, and the compute-level fields.
     """
     placement = {f.name for f in dataclasses.fields(Placement)}
     spec = {f.name for f in dataclasses.fields(InstanceSpec)} & _SPEC_PORTABLE
-    return placement | spec
+    return placement | spec | _compute_portable()
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +183,39 @@ def test_declaration_covers_exactly_the_portable_field_set(provider_name: str) -
     )
     assert not stale, f"{provider_name} declares removed fields {sorted(stale)}"
     assert all(isinstance(v, FieldSupport) for v in declared.values())
+
+
+def test_compute_level_fields_are_declared_by_every_provider() -> None:
+    """Every launch-describing key of the compute block has a declaration.
+
+    Bug caught: ``consumes()`` covered ``Placement`` and part of
+    ``InstanceSpec``, so ``compute.mode`` rotted for months — written by 46
+    configs, read by nobody, and invisible to this guard because the guard
+    never looked at the compute block at all.
+    """
+    expected = _compute_portable()
+    assert expected, (
+        "ComputeConfig lost every declarable field — check the exclusion set"
+    )
+    for name in sorted(_EXPECTED_PROVIDERS):
+        cls = registry.provider_class(name)
+        assert cls is not None
+        missing = expected - set(cls.consumes())
+        assert not missing, f"{name} does not declare {sorted(missing)}"
+
+
+def test_the_structural_exclusion_set_is_not_stale() -> None:
+    """``_COMPUTE_STRUCTURAL`` names only fields that still exist.
+
+    Bug caught: a field is renamed, the exclusion set keeps the old name, and
+    the subtraction in :func:`_compute_portable` silently stops requiring the
+    new one — the same class of rot the guard exists to prevent, one level up.
+    """
+    from kinoforge.core.config import ComputeConfig  # noqa: PLC0415
+
+    fields = set(ComputeConfig.model_fields)
+    stale = _COMPUTE_STRUCTURAL - fields
+    assert not stale, f"_COMPUTE_STRUCTURAL names removed fields {sorted(stale)}"
 
 
 def test_spec_portable_set_is_not_stale() -> None:
@@ -261,6 +323,33 @@ def _with_backend_options(
     return mutate
 
 
+def _with_placement(overrides: Mapping[str, Any]) -> Callable[[Any], Any]:
+    """Return a config mutator applying ``overrides`` to ``compute.placement``.
+
+    ``region`` is the second portable field (after ``backend_options``) whose
+    consumer is the composition root rather than the provider object: the
+    registry factory takes no arguments, so
+    :func:`kinoforge._adapters.build_provider_for` pins it onto the provider
+    after construction. A spec-level probe could never observe that, so the
+    probe is at config level — the route an operator actually uses.
+
+    Args:
+        overrides: Placement field name to replacement value.
+
+    Returns:
+        A callable suitable for ``capture_launch(mutate_cfg=...)``.
+    """
+
+    def mutate(cfg: Any) -> Any:  # noqa: ANN401 — Config, imported lazily by the tool
+        clone = cfg.model_copy(deep=True)
+        assert clone.compute is not None  # noqa: S101 — every representative config has one
+        for key, value in overrides.items():
+            setattr(clone.compute.placement, key, value)
+        return clone
+
+    return mutate
+
+
 @functools.cache
 def _baseline(provider_name: str) -> Launch:
     """Return the unmutated launch for ``provider_name``'s representative config."""
@@ -333,6 +422,134 @@ def _tracks_cfg(
             return (
                 f"backend_options probe {dict(backend_options)!r} left the "
                 f"payload at {after!r} (wanted {expected!r})"
+            )
+        return ""
+
+    return proof
+
+
+def _runpod_mode_selects_its_mutation() -> _Proof:
+    """Proof: ``spec.tags["mode"]`` decides which RunPod mutation is sent.
+
+    ``compute.mode`` cannot be proven through
+    :func:`~tools.snapshot_launch_payloads.capture_launch` the way the other
+    fields are: that capturer hardcodes the pod mutation's response shape, so
+    a serverless capture would be observing the harness rather than the
+    provider. This drives the real provider twice over one transport instead
+    and compares the two queries — the exact thing that did NOT differ before
+    S2, when 46 configs wrote ``mode`` and nothing read it.
+
+    Returns:
+        A proof that fails when both modes put the same mutation on the wire.
+    """
+
+    def proof(provider_name: str) -> str:
+        spec = _baseline(provider_name).spec
+
+        def sent_query(mode: str) -> str:
+            sent: list[dict[str, Any]] = []
+
+            def post(_url: str, body: dict[str, Any]) -> dict[str, Any]:
+                sent.append(body)
+                return {
+                    "data": {
+                        "podFindAndDeployOnDemand": {"id": "pod-probe"},
+                        "saveTemplate": {"id": "sl-probe"},
+                    }
+                }
+
+            provider = RunPodProvider(
+                _StubCreds(), http_post=post, http_get=lambda _url: {}
+            )
+            provider.create_instance(
+                dataclasses.replace(spec, tags={**spec.tags, "mode": mode})
+            )
+            return str(sent[0]["query"])
+
+        pod, serverless = sent_query("pod"), sent_query("serverless")
+        if pod == serverless:
+            return (
+                "mode=pod and mode=serverless put the SAME mutation on the "
+                "wire; the branch is not reading the tag"
+            )
+        if "podFindAndDeployOnDemand" not in pod:
+            return f"mode=pod did not send the pod mutation; sent {pod[:60]!r}"
+        if "saveTemplate" not in serverless:
+            return (
+                "mode=serverless did not send the endpoint mutation; sent "
+                f"{serverless[:60]!r}"
+            )
+        return ""
+
+    return proof
+
+
+def _runpod_heartbeat_mode_selects_its_substrate() -> _Proof:
+    """Proof: ``compute.heartbeat_mode`` decides which substrate is built.
+
+    Like ``backend_options``, this field's consumer is the composition root
+    rather than the provider object — ``build_heartbeat_endpoint_for`` maps
+    the value onto a concrete :class:`HeartbeatEndpoint`. So the proof
+    observes what that returns for each value, which is where the operator's
+    setting either takes effect or does not.
+
+    Returns:
+        A proof that fails when both values build the same thing.
+    """
+
+    def proof(provider_name: str) -> str:
+        from kinoforge._adapters import build_heartbeat_endpoint_for  # noqa: PLC0415
+        from kinoforge.providers.runpod.heartbeat import (  # noqa: PLC0415
+            RunPodGraphQLHeartbeatEndpoint,
+        )
+
+        class _KeyedCreds(CredentialProvider):
+            """Answers the one key the graphql-tag branch demands."""
+
+            def get(self, key: str) -> str | None:
+                """Return a synthetic RunPod key, nothing else."""
+                return "kinoforge-prod-deadbeef" if key == "RUNPOD_API_KEY" else None
+
+        from kinoforge.core.config import load_config  # noqa: PLC0415
+
+        def built(mode: str) -> Any:  # noqa: ANN401 — HeartbeatEndpoint | None
+            cfg = load_config(str(_REPRESENTATIVE_CONFIG[provider_name]))
+            assert cfg.compute is not None  # noqa: S101 — representative configs have one
+            cfg.compute.heartbeat_mode = mode
+            return build_heartbeat_endpoint_for(cfg, _KeyedCreds())
+
+        if built("none") is not None:
+            return "heartbeat_mode='none' still built a substrate"
+        if not isinstance(built("graphql-tag"), RunPodGraphQLHeartbeatEndpoint):
+            return (
+                "heartbeat_mode='graphql-tag' did not build the GraphQL "
+                "substrate; the value is not being read"
+            )
+        return ""
+
+    return proof
+
+
+def _tracks_cfg_placement(
+    observe: _Observe,
+    *,
+    placement: Mapping[str, Any],
+    expected: Any,  # noqa: ANN401
+) -> _Proof:
+    """Proof: the observed launch value follows ``compute.placement``."""
+
+    def proof(provider_name: str) -> str:
+        before = observe(_baseline(provider_name))
+        if before == expected:
+            return (
+                f"the unmutated payload already observes {expected!r}; this "
+                "probe cannot tell a read from a constant"
+            )
+        after = observe(_probed(provider_name, cfg=_with_placement(placement)))
+        if after != expected:
+            return (
+                f"placement probe {dict(placement)!r} left the payload at "
+                f"{after!r} (wanted {expected!r})"
             )
         return ""
 
@@ -611,6 +828,8 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             backend_options={"runpod": {"cloud_type": "community"}},
             expected="COMMUNITY",
         ),
+        "mode": _runpod_mode_selects_its_mutation(),
+        "heartbeat_mode": _runpod_heartbeat_mode_selects_its_substrate(),
         "accelerators": _orders_by_preference(),
         "min_vram_gb": _filters(_above_every_vram, axis="min_vram_gb"),
         "min_cuda": _filters(_above_every_cuda, axis="min_cuda"),
@@ -664,6 +883,13 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             lambda ln: _sky_resources(ln).get("cloud"),
             backend_options={"skypilot": {"clouds": ["kfprobe"]}},
             expected="kfprobe",
+        ),
+        # Like backend_options, region is pinned by the composition root
+        # after construction, so the probe has to go through the config.
+        "region": _tracks_cfg_placement(
+            lambda ln: _sky_resources(ln).get("region"),
+            placement={"region": "kf-probe-region"},
+            expected="kf-probe-region",
         ),
         "spot": _tracks(
             lambda ln: _sky_resources(ln).get("use_spot"),
@@ -819,6 +1045,7 @@ def test_wire_proof_holds(provider_name: str, field: str) -> None:
 _INERT_PLACEMENT_PROBES: list[tuple[str, Any]] = [
     ("accelerator_count", 4),
     ("disk_gb", 777),
+    ("region", "kf-probe-region"),
     ("spot", True),
 ]
 

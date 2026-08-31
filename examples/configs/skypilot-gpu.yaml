@@ -32,10 +32,11 @@ compute:
   # SkyPilot picks the concrete SKU from accelerator + memory
   # requirements at launch time. min_vram_gb=8 forces a GPU with ≥ 8 GB
   # VRAM (T4 has 16 GB and clears the bar; weaker accelerators are
-  # excluded). The smoke test pins region us-central1 explicitly; this
-  # YAML does not — `placement.region` lands in S2
-  # (docs/superpowers/specs/2026-08-24-compute-seam-portable-core-design.md §8), so today
-  # region is only settable at the call site that builds the InstanceSpec, not from this file.
+  # excluded). Deliberately NO `placement.region`: this cfg pins no cloud,
+  # and a region name is one cloud's vocabulary — pinning us-west-2 here
+  # would refuse or silently relocate the launch on every non-AWS cloud sky
+  # might pick. Pin a cloud in backend_options.skypilot.clouds first, then a
+  # region (see skypilot-cpu.yaml).
   provider: skypilot
   # Public CUDA-base image. The original `skypilot/skypilot-gpu:latest`
   # placeholder the Layer W+β template shipped with does NOT exist on

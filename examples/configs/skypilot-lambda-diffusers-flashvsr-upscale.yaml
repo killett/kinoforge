@@ -50,6 +50,9 @@ engine:
 models: []
 
 compute:
+  # Deliberately NO `placement.region`: Lambda names its regions in its own
+  # vocabulary (us-west-1, us-east-3, …), not AWS's, and its capacity moves
+  # hour to hour — pinning one is the fastest way to a no-capacity launch.
   provider: skypilot
   backend_options:
     skypilot:

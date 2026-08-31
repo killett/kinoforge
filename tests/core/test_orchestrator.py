@@ -2104,7 +2104,15 @@ def test_deploy_session_tags_empty_dict_is_noop(tmp_path: Path) -> None:
 
     assert len(spy.create_calls) == 1
     created_spec = spy.create_calls[0]
-    assert set(created_spec.tags.keys()) == {"kinoforge_engine", "kinoforge_key"}
+    # "mode" joined the built-ins in compute-seam S2: build_instance_spec now
+    # writes cfg.compute.mode so RunPod's pod-vs-serverless branch sees the
+    # operator's value instead of its own "pod" fallback.
+    assert set(created_spec.tags.keys()) == {
+        "kinoforge_engine",
+        "kinoforge_key",
+        "mode",
+    }
+    assert created_spec.tags["mode"] == "pod"
 
 
 class _LaunchLedgerSpyProvider(LocalProvider):
