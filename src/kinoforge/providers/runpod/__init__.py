@@ -459,6 +459,8 @@ class RunPodProvider(ComputeProvider):
             "run_cmd": u,  # the provision script's trailing exec carries it
             "image_build_script": u,  # Modal-only split
             "runtime_provision_script": u,  # Modal-only split
+            "setup_steps": u,  # S3 Task 4 turns this CONSUMED
+            "launch": u,  # S3 Task 4 turns this CONSUMED
             "lifecycle": c,  # rendered into KINOFORGE_SELFTERM_SCRIPT
             "offer": c,  # "gpuTypeId"
             "backend_options": c,  # "cloudType" / "restartPolicy"

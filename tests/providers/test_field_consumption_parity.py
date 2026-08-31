@@ -61,6 +61,8 @@ _SPEC_PORTABLE = {
     "run_cmd",
     "image_build_script",
     "runtime_provision_script",
+    "setup_steps",
+    "launch",
     "lifecycle",
     "offer",
     "backend_options",

@@ -92,3 +92,73 @@ def test_render_launch_refuses_none() -> None:
     ship a script that starts no server."""
     with pytest.raises(ValueError, match="no launch"):
         render_launch(None)
+
+
+def test_spec_builder_threads_the_new_pair_and_keeps_the_old_fields() -> None:
+    """Additive migration: both representations coexist until Task 7.
+
+    Bug caught: switching the spec over in one commit would strand every one of
+    the ~54 test modules that construct an InstanceSpec with provision_script.
+    A builder that accepts the new fields but drops them on the floor is caught
+    too — the provider would then see ``()`` and fall back forever.
+    """
+    from kinoforge.core.config import Config
+    from kinoforge.core.interfaces import (
+        Lifecycle,
+        Offer,
+        RenderedProvision,
+    )
+    from kinoforge.core.spec_builder import build_instance_spec
+
+    cfg = Config.model_validate(
+        {
+            "engine": {"kind": "diffusers", "precision": "bf16"},
+            "spec": {"model": "m", "precision": "bf16"},
+            "models": [{"kind": "base", "ref": "hf:org/repo", "target": "checkpoints"}],
+            "compute": {"provider": "runpod", "image": "i"},
+        }
+    )
+    rendered = RenderedProvision(
+        script="install\nrun-server",
+        run_cmd=["run-server"],
+        image="img:tag",
+        ports=["8000"],
+        env_required=[],
+        setup_steps=(SetupStep("install", bakeable=True),),
+        launch=Launch(("run-server",)),
+    )
+    spec = build_instance_spec(
+        cfg=cfg,
+        rendered=rendered,
+        offer=Offer(
+            id="g", gpu_type="g", vram_gb=80, cuda="12.4", cost_rate_usd_per_hr=1.0
+        ),
+        engine_name="diffusers",
+        key_hash="abc",
+        image="fallback:img",
+        lifecycle=Lifecycle(),
+        env={},
+        run_id="run-1",
+    )
+    assert spec.setup_steps == (SetupStep("install", bakeable=True),)
+    assert spec.launch == Launch(("run-server",))
+    # The old representation is untouched — that is what keeps the tree green.
+    assert spec.provision_script == "install\nrun-server"
+    assert spec.run_cmd == ["run-server"]
+
+
+def test_an_engine_that_emits_no_steps_gets_no_synthesised_launch() -> None:
+    """Bug caught: defaulting ``launch`` to ``Launch(tuple(run_cmd))`` would put
+    a plausible-looking launch on every legacy spec and hide, rather than
+    surface, the engines that have not been migrated yet."""
+    from kinoforge.core.interfaces import RenderedProvision
+
+    rendered = RenderedProvision(
+        script="echo hi",
+        run_cmd=["sleep", "infinity"],
+        image="i",
+        ports=[],
+        env_required=[],
+    )
+    assert rendered.setup_steps == ()
+    assert rendered.launch is None

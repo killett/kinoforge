@@ -154,6 +154,8 @@ class ModalProvider(ComputeProvider):
             "run_cmd": c,  # ModalAppRequest.run_cmd
             "image_build_script": c,  # baked into the image at build time
             "runtime_provision_script": c,  # preferred as the boot script
+            "setup_steps": u,  # S3 Task 6 turns this CONSUMED
+            "launch": u,  # S3 Task 6 turns this CONSUMED
             "lifecycle": c,  # scaledown_window_s + startup_timeout_s
             "offer": c,  # ModalAppRequest.gpu
             "backend_options": u,  # Options is empty: no knob to consume

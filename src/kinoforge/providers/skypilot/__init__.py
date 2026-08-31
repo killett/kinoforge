@@ -691,6 +691,8 @@ class SkyPilotProvider(ComputeProvider):
             "run_cmd": c,  # Task.run, shell-quoted
             "image_build_script": u,  # Modal-only split
             "runtime_provision_script": u,  # Modal-only split
+            "setup_steps": u,  # S3 Task 5 turns this CONSUMED
+            "launch": u,  # S3 Task 5 turns this CONSUMED
             "lifecycle": c,  # idle_minutes_to_autostop + the watchdog deadline
             "offer": c,  # resources["accelerators"] / cpus+memory
             "backend_options": c,  # cloud pin + retry_until_up, via _adapters

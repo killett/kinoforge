@@ -125,6 +125,12 @@ def build_instance_spec(
         image_build_script=(rendered.build_script or None),
         runtime_provision_script=(rendered.runtime_script or None),
         run_cmd=rendered.run_cmd,
+        # compute-seam S3: the setup/run pair rides through untouched. No
+        # coercion and no synthesis — an engine that emits neither gets `()`
+        # and `None`, which is how a provider tells "not migrated yet" from
+        # "migrated, and this workload really starts nothing".
+        setup_steps=tuple(rendered.setup_steps),
+        launch=rendered.launch,
         # compute-seam S1: the portable resource block travels on the spec so
         # a provider reads what to get from one place (SkyPilot's use_spot,
         # S4's declarative selection) instead of re-deriving it from cfg.
