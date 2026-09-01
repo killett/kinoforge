@@ -92,6 +92,12 @@ def test_orchestrator_passes_boot_timeout_from_yaml_through_to_engine_provision(
     engine = _SpyEngine()
     provider = MagicMock()
     provider.name = "runpod"
+    # compute-seam S4: the orchestrator verifies the realized rate between
+    # create_instance and provision, so a mock provider has to answer with a
+    # number under the cfg cap. A bare MagicMock returns a MagicMock and the
+    # comparison TypeErrors -- which is the check doing its job.
+    provider.realized_rate.return_value = 1.0
+    provider.capabilities.return_value = frozenset()
     provider.find_offers.return_value = [
         Offer(
             id="X",

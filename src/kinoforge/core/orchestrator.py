@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from kinoforge.core import registry
 from kinoforge.core.cancel import CancelToken
-from kinoforge.core.capabilities import WorkloadShape
+from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.config import Config
 from kinoforge.core.credentials import EnvCredentialProvider
@@ -42,6 +42,7 @@ from kinoforge.core.errors import (
     ProfileNotCached,
     ProvisionFailed,
     ProvisionTimeout,
+    RateCapExceeded,
     TeardownError,
     ValidationError,
 )
@@ -555,6 +556,91 @@ def _create_with_offer_retry(
     ) from last_capacity_exc
 
 
+def _placement_summary(instance: Instance) -> str:
+    """Return a one-line identity of what was actually booked.
+
+    Kept to what an :class:`Instance` really holds — provider plus whatever
+    selection tags the provider chose to record. An operator reading a cap
+    violation needs to tell "my cap is too low" from "this went somewhere I
+    did not intend", and only the identity distinguishes them.
+
+    Args:
+        instance: The launched instance.
+
+    Returns:
+        e.g. ``"sku=A100:1, cloud=lambda, provider=skypilot"``.
+    """
+    parts = [
+        f"{key}={instance.tags[key]}"
+        for key in ("sku", "cloud", "region", "accelerators")
+        if instance.tags.get(key)
+    ]
+    parts.append(f"provider={instance.provider}")
+    return ", ".join(parts)
+
+
+def _enforce_rate_cap(
+    *,
+    provider: ComputeProvider,
+    instance: Instance,
+    cap: float,
+    logger: logging.Logger = _log,
+) -> float | None:
+    """Destroy *instance* and raise when it bills above *cap*.
+
+    Args:
+        provider: The provider that launched it.
+        instance: The freshly created instance.
+        cap: ``placement.max_usd_per_hr``.
+        logger: Injected for testability.
+
+    Returns:
+        The realized rate, or None when it could not be read on a provider
+        whose catalog price already bounded the booking.
+
+    Raises:
+        RateCapExceeded: The realized rate exceeds *cap*, or could not be read
+            on a provider that chooses its own SKU. The instance is destroyed
+            first; a teardown failure is folded into the same error rather
+            than replacing it.
+    """
+    declared = provider.capabilities()
+    realized = provider.realized_rate(instance)
+    if realized is not None and realized <= cap:
+        return realized
+    if realized is None and Capability.RATE_READBACK not in declared:
+        # The catalog already bounded this before booking; an unreadable
+        # readback is a missing nicety, not a money risk.
+        logger.warning(
+            "[rate-cap] %s: realized rate unreadable; the catalog price "
+            "bounded this launch before it was booked",
+            instance.id,
+        )
+        return None
+
+    summary = _placement_summary(instance)
+    teardown_error: str | None = None
+    try:
+        provider.destroy_instance(instance.id)
+    except Exception as exc:  # noqa: BLE001 — folded into the raised error
+        teardown_error = repr(exc)
+        logger.error(
+            "[rate-cap] %s: teardown FAILED after a cap violation; the "
+            "instance is still billing and its ledger row is the only "
+            "handle on it",
+            instance.id,
+        )
+    err = RateCapExceeded(
+        realized=realized,
+        cap=cap,
+        instance_id=instance.id,
+        placement_summary=summary,
+    )
+    if teardown_error is not None:
+        err.args = (f"{err.args[0]}\n  TEARDOWN ALSO FAILED: {teardown_error}",)
+    raise err
+
+
 _CAPACITY_RETRY_INTERVAL_S: float = 25.0
 
 
@@ -964,6 +1050,20 @@ def _provision_instance_and_build_backend(
     # holder's __exit__ in deploy_session.
     if on_instance_created is not None:
         on_instance_created(instance)
+    # compute-seam S4: the cap is verified against what was LAUNCHED, not
+    # filtered against a catalog the chooser may never have consulted. Runs
+    # after on_instance_created (so a failed teardown still leaves a ledger row
+    # pointing at the live instance) and before _wait_for_provider_ready and
+    # engine.provision, so a violation is torn down before the expensive part
+    # of a boot — on RunPod and Modal. On SkyPilot `sky.launch` already ran
+    # Task.setup by the time it returned, so there the teardown discards work
+    # that has been done; that is the accepted trade (design §14) and a
+    # pre-launch estimate is an S5 follow-up.
+    _enforce_rate_cap(
+        provider=resolved_provider,
+        instance=instance,
+        cap=cfg.placement().max_usd_per_hr,
+    )
     # Status-only polling: preserve endpoints + tags from create_instance.
     # provider.get_instance(id) re-queries the API but the GraphQL `pod` query
     # only returns id/desiredStatus/imageName — endpoints + ports tag are

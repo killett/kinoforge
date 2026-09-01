@@ -79,7 +79,7 @@
       "id": "4",
       "planTask": 3,
       "subject": "Task 3: Enforce the cap between launch and provision",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": ["3"],
       "metadata": {
         "files": [

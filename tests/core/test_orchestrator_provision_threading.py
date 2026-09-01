@@ -19,6 +19,7 @@ from kinoforge.core.interfaces import (
     Launch,
     Lifecycle,
     Offer,
+    Placement,
     RenderedProvision,
     SetupStep,
     combine_steps,
@@ -29,6 +30,12 @@ from kinoforge.core.orchestrator import _provision_instance_and_build_backend
 def _fake_provider() -> MagicMock:
     provider = MagicMock()
     provider.name = "fakeprovider"
+    # compute-seam S4: the orchestrator verifies the realized rate between
+    # create_instance and provision, so a mock provider has to answer with a
+    # number under the cfg cap. A bare MagicMock returns a MagicMock and the
+    # comparison TypeErrors -- which is the check doing its job.
+    provider.realized_rate.return_value = 1.0
+    provider.capabilities.return_value = frozenset()
     provider.find_offers.return_value = [
         Offer(id="X1", gpu_type="X1", vram_gb=80, cuda="12.4", cost_rate_usd_per_hr=1.0)
     ]
@@ -54,6 +61,7 @@ def _fake_engine(rendered: RenderedProvision) -> MagicMock:
 def _make_cfg() -> MagicMock:
     cfg = MagicMock()
     cfg.lifecycle.return_value = Lifecycle(boot_timeout_s=900.0)
+    cfg.placement.return_value = Placement(max_usd_per_hr=2.20)
     cfg.hardware_requirements.return_value = MagicMock()
     cfg.compute = MagicMock(image="should-be-overridden")
     cfg.model_dump.return_value = {"engine": {}, "models": []}
