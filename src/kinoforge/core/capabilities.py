@@ -26,6 +26,7 @@ __all__ = [
     "capabilities_for",
     "consumes_for",
     "provider_billed",
+    "provider_class_for",
     "provider_registered",
 ]
 
@@ -112,6 +113,23 @@ def _provider_class(provider_kind: str) -> type[ComputeProvider] | None:
         _ensure_adapters_imported()
         cls = registry.provider_class(provider_kind)
     return cls
+
+
+def provider_class_for(provider_kind: str) -> type[ComputeProvider] | None:
+    """Return the registered provider CLASS for ``provider_kind``, or None.
+
+    The public face of the same lazy lookup :func:`capabilities_for` uses, for
+    the validation checks that inspect a provider class directly rather than
+    only its declared set (see
+    :func:`kinoforge.validation.checks.capabilities.rate_source_declared`).
+
+    Args:
+        provider_kind: Registry key, e.g. ``"skypilot"``.
+
+    Returns:
+        The provider class, or None for an unknown provider.
+    """
+    return _provider_class(provider_kind)
 
 
 def capabilities_for(

@@ -403,7 +403,11 @@ def test_every_gap_line_carries_its_own_severity(
     assert {g.severity for g in gaps} == {Severity.ERROR, Severity.WARN}
 
     message = ProviderCapabilityCheck().run(cfg).message
-    lines = [ln for ln in message.splitlines() if "compute.lifecycle." in ln]
+    # "compute." not "compute.lifecycle.": stripping every capability also
+    # strips both rate sources, so S4's compute.placement.max_usd_per_hr gap
+    # is one of the rendered lines and a lifecycle-only filter would silently
+    # compare 4 lines against 5 gaps.
+    lines = [ln for ln in message.splitlines() if "compute." in ln]
     assert len(lines) == len(gaps)
     for gap, line in zip(gaps, lines, strict=True):
         assert line.strip().startswith(f"[{gap.severity.name}]")
@@ -484,3 +488,51 @@ def test_always_evaluated_spend_rows_never_error_on_any_registered_provider(
                 (g.field, g.severity) for g in gaps if g.severity is Severity.ERROR
             ]
             assert errors == [], f"{provider}/{shape.value} produced {errors}"
+
+
+def test_a_provider_with_no_rate_source_refuses_the_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The S4 rate-source gap has to travel all the way into the CheckResult.
+
+    Bug caught: a check function nobody calls refuses nothing. rate_source_declared
+    is only load-bearing if evaluate_capability_gaps calls it and the aggregated
+    result comes back ERROR — which is what `kinoforge doctor` and every cfg load
+    actually run.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    cfg = load_config(_write_cfg(tmp_path, provider="skypilot"))
+    monkeypatch.setattr(
+        SkyPilotProvider,
+        "capabilities",
+        classmethod(
+            lambda cls, shape=WorkloadShape.SERVER: frozenset(
+                {
+                    Capability.ON_INSTANCE_DEADLINE,
+                    Capability.IDLE_AUTOSTOP,
+                    Capability.JOB_TIMEOUT,
+                    Capability.HEARTBEAT_READ,
+                }
+            )
+        ),
+    )
+    gaps = evaluate_capability_gaps(cfg, WorkloadShape.SERVER)
+    rate = [g for g in gaps if g.field == "compute.placement.max_usd_per_hr"]
+    assert len(rate) == 1
+    assert rate[0].severity is Severity.ERROR
+
+    result = ProviderCapabilityCheck().run(cfg)
+    assert result.passed is False
+    assert result.severity is Severity.ERROR
+    assert "RATE_READBACK" in result.message
+    assert "RATE_DETERMINISTIC" in result.message
+
+
+def test_the_rate_source_check_refuses_nobody_shipped(tmp_path: Path) -> None:
+    """Bug caught: a check that fires on a real shipped config turns doctor
+    into noise operators learn to skip. All four providers must pass it."""
+    for provider in ("skypilot", "runpod", "modal", "local"):
+        cfg = load_config(_write_cfg(tmp_path, provider=provider))
+        gaps = evaluate_capability_gaps(cfg, WorkloadShape.SERVER)
+        assert [g for g in gaps if g.field == "compute.placement.max_usd_per_hr"] == []

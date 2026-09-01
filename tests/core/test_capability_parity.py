@@ -343,3 +343,38 @@ def test_predicate_answers_are_unchanged_from_the_string_tables() -> None:
         "runpod",
     }
     assert {n for n in REGISTERED if provider_balance_supported(n)} == {"runpod"}
+
+
+def test_a_provider_with_no_rate_source_is_a_load_error() -> None:
+    """Bug caught: without this, a fifth provider that never implements
+    realized_rate() reaches the enforcement point returning None, and the only
+    honest response there is to destroy every instance it ever launches. The
+    refusal belongs at load, where it costs nothing."""
+    from kinoforge.validation.checks.capabilities import rate_source_declared
+    from kinoforge.validation.protocol import Severity
+
+    class _Priceless:
+        name = "priceless"
+
+        @classmethod
+        def capabilities(cls, shape: object = None) -> frozenset[Capability]:
+            return frozenset({Capability.HEARTBEAT_READ})
+
+    gaps = rate_source_declared(_Priceless)
+    assert [g.severity for g in gaps] == [Severity.ERROR]
+    assert "RATE_READBACK" in gaps[0].detail
+    assert "RATE_DETERMINISTIC" in gaps[0].detail
+    assert "priceless" in gaps[0].detail
+
+
+@pytest.mark.parametrize("provider_name", ["skypilot", "runpod", "modal", "local"])
+def test_every_shipped_provider_declares_a_rate_source(provider_name: str) -> None:
+    """The check refuses nobody today. Bug caught: shipping a check that fires
+    on a real config turns doctor into noise operators learn to skip."""
+    import kinoforge._adapters  # noqa: F401
+    from kinoforge.core import registry
+    from kinoforge.validation.checks.capabilities import rate_source_declared
+
+    cls = registry.provider_class(provider_name)
+    assert cls is not None
+    assert rate_source_declared(cls) == []

@@ -60,7 +60,7 @@
       "id": "3",
       "planTask": 2,
       "subject": "Task 2: Refuse a config whose provider cannot price itself",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": ["2"],
       "metadata": {
         "files": [

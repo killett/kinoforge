@@ -23,6 +23,7 @@ from kinoforge.core.capabilities import (
     WorkloadShape,
     capabilities_for,
     provider_billed,
+    provider_class_for,
     provider_registered,
 )
 from kinoforge.core.config import Config
@@ -34,6 +35,7 @@ __all__ = [
     "ProviderCapabilityCheck",
     "evaluate_capability_gaps",
     "infer_shape",
+    "rate_source_declared",
 ]
 
 
@@ -402,6 +404,47 @@ def _deadline_mismatch_gap(
     )
 
 
+def rate_source_declared(provider_cls: type) -> list[Gap]:
+    """Return an ERROR gap when *provider_cls* declares no rate source.
+
+    A provider that declares neither ``RATE_READBACK`` nor
+    ``RATE_DETERMINISTIC`` cannot answer what a launched instance bills, so
+    ``max_usd_per_hr`` cannot be enforced against it — and the only honest
+    thing the enforcement point could do with that silence is destroy every
+    instance the provider ever launches. The refusal belongs here, at load,
+    where it costs nothing.
+
+    Args:
+        provider_cls: The provider class to inspect.
+
+    Returns:
+        One ERROR gap, or an empty list when a rate source is declared.
+    """
+    declare = getattr(provider_cls, "capabilities", None)
+    declared: frozenset[Capability] = declare() if declare is not None else frozenset()
+    if declared & {Capability.RATE_READBACK, Capability.RATE_DETERMINISTIC}:
+        return []
+    name = getattr(provider_cls, "name", provider_cls.__name__)
+    return [
+        Gap(
+            field="compute.placement.max_usd_per_hr",
+            risk="the run books an instance above the rate ceiling",
+            missing=Capability.RATE_READBACK,
+            substitute=None,
+            severity=Severity.ERROR,
+            headline=(f"{name} declares neither RATE_READBACK nor RATE_DETERMINISTIC"),
+            detail=(
+                f"{name} declares neither RATE_READBACK nor RATE_DETERMINISTIC, "
+                f"so kinoforge cannot know what a launched instance bills and "
+                f"max_usd_per_hr cannot be enforced. A provider that chooses "
+                f"its own SKU declares RATE_READBACK and implements "
+                f"realized_rate(); one that books the SKU it is handed "
+                f"declares RATE_DETERMINISTIC."
+            ),
+        )
+    ]
+
+
 def evaluate_capability_gaps(cfg: Config, shape: WorkloadShape) -> list[Gap]:
     """Return every guardrail ``cfg`` asserts that its provider cannot enforce.
 
@@ -462,6 +505,12 @@ def evaluate_capability_gaps(cfg: Config, shape: WorkloadShape) -> list[Gap]:
                 ),
             )
         )
+    # compute-seam S4: a provider that cannot price a launched instance cannot
+    # have max_usd_per_hr enforced against it at all. Billed-gated like every
+    # other spend row — an unbilled provider has no rate to verify.
+    provider_cls = provider_class_for(provider)
+    if billed and provider_cls is not None:
+        gaps.extend(rate_source_declared(provider_cls))
     return gaps
 
 
