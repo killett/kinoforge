@@ -885,6 +885,7 @@ def _provision_instance_and_build_backend(
     for_discovery: bool,
     tags: dict[str, str] | None = None,
     on_instance_created: Callable[[Instance], None] | None = None,
+    on_rate_verified: Callable[[Instance], None] | None = None,
     cancel_token: CancelToken | None = None,
     start_heartbeat: Callable[[Instance], HeartbeatLoopProtocol] | None = None,
     capacity_wait_s: float | None = None,
@@ -913,6 +914,13 @@ def _provision_instance_and_build_backend(
             immediately after ``create_instance`` returns, with the
             freshly-created ``Instance``. B7 uses this seam to enter
             ``hold_until_first_tick`` before ``engine.provision`` runs.
+        on_rate_verified: compute-seam S4 — optional callback fired at most
+            once, with the instance carrying the REALIZED hourly rate, after
+            the cap check passes. Not fired when the rate was unreadable (the
+            recorded catalog number is then the best available and must
+            survive). The row was already written by ``on_instance_created``,
+            so this corrects it in place rather than recording a second one:
+            ``Ledger.record`` appends.
         cancel_token: C29 cooperative cancellation. Forwarded into
             ``_provision_compute_once`` so a boot-phase reap raises
             ``Cancelled`` from inside ``engine.wait_for_ready``. Task 5 adds
@@ -1059,11 +1067,20 @@ def _provision_instance_and_build_backend(
     # Task.setup by the time it returned, so there the teardown discards work
     # that has been done; that is the accepted trade (design §14) and a
     # pre-launch estimate is an S5 follow-up.
-    _enforce_rate_cap(
+    realized_rate = _enforce_rate_cap(
         provider=resolved_provider,
         instance=instance,
         cap=cfg.placement().max_usd_per_hr,
     )
+    if realized_rate is not None:
+        # S4 closes F4 here: every downstream surface — the ledger row,
+        # est_spend, `kinoforge list`, every lifecycle.budget computation —
+        # reads cost_rate_usd_per_hr, and until now that was the number
+        # kinoforge ASKED for. An unreadable rate leaves the recorded catalog
+        # number alone rather than zeroing a pod that is very much billing.
+        instance = dataclasses.replace(instance, cost_rate_usd_per_hr=realized_rate)
+        if on_rate_verified is not None:
+            on_rate_verified(instance)
     # Status-only polling: preserve endpoints + tags from create_instance.
     # provider.get_instance(id) re-queries the API but the GraphQL `pod` query
     # only returns id/desiredStatus/imageName — endpoints + ports tag are
@@ -1404,6 +1421,23 @@ def deploy_session(
             )
         claim_holder.install(inst)
 
+    def _correct_recorded_rate(inst: Instance) -> None:
+        """Rewrite the ledger row's rate with the one read off the instance.
+
+        compute-seam S4. Deliberately NOT a second ``_record_then_install``:
+        ``Ledger.record`` appends, so re-firing it would leave two rows for one
+        instance and re-enter the claim. This corrects the one row in place.
+        """
+        try:
+            _ledger_for_claim.set_cost_rate(inst.id, inst.cost_rate_usd_per_hr)
+        except Exception as rate_exc:  # noqa: BLE001
+            _log.warning(
+                "S4: ledger.set_cost_rate failed for %s: %s "
+                "(the row keeps the pre-launch rate)",
+                inst.id,
+                rate_exc,
+            )
+
     # ------------------------------------------------------------------
     # C29 — build the start_heartbeat closure ONCE per deploy_session.
     #
@@ -1526,6 +1560,7 @@ def deploy_session(
                             for_discovery=True,
                             tags=tags,
                             on_instance_created=_record_then_install,
+                            on_rate_verified=_correct_recorded_rate,
                             cancel_token=cancel_token,
                             start_heartbeat=_start_heartbeat,
                             capacity_wait_s=capacity_wait_s,
@@ -1570,6 +1605,7 @@ def deploy_session(
                             for_discovery=False,
                             tags=tags,
                             on_instance_created=_record_then_install,
+                            on_rate_verified=_correct_recorded_rate,
                             cancel_token=cancel_token,
                             start_heartbeat=_start_heartbeat,
                             capacity_wait_s=capacity_wait_s,

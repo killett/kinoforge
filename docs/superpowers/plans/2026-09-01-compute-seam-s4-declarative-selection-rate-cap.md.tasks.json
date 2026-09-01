@@ -103,7 +103,7 @@
       "id": "5",
       "planTask": 4,
       "subject": "Task 4: cost_rate_usd_per_hr sources from the realized read",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": ["4"],
       "metadata": {
         "files": [

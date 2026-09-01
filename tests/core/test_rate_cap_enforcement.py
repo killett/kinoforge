@@ -102,6 +102,7 @@ class _Harness:
     cap: float
     run: Callable[[], None]
     recorded: list[str] = field(default_factory=list)
+    rate_corrections: list[tuple[str, float]] = field(default_factory=list)
     provisioned_instances: list[Instance] = field(default_factory=list)
 
     @property
@@ -200,6 +201,9 @@ def rate_harness(
                 state_dir=tmp_path,
                 for_discovery=False,
                 on_instance_created=lambda inst: harness.recorded.append(inst.id),
+                on_rate_verified=lambda inst: harness.rate_corrections.append(
+                    (inst.id, inst.cost_rate_usd_per_hr)
+                ),
             )
 
         harness.run = _run
@@ -316,3 +320,102 @@ def test_the_ledger_row_is_written_before_the_check(
     with pytest.raises(RateCapExceeded):
         h.run()
     assert h.recorded == [h.instance_id]
+
+
+def test_the_instance_carries_the_realized_rate_after_the_check(
+    rate_harness: Callable[..., _Harness],
+) -> None:
+    """Bug caught, and it is F4 itself: reporting the asked-for rate makes the
+    ledger, est_spend, kinoforge list and every budget computation agree with
+    each other and disagree with the invoice."""
+    h = rate_harness(
+        realized=0.85, cap=1.09, caps={Capability.RATE_READBACK}, catalog_rate=0.40
+    )
+    h.run()
+    assert h.final_instance.cost_rate_usd_per_hr == pytest.approx(0.85)
+
+
+def test_an_unreadable_deterministic_rate_keeps_the_catalog_number(
+    rate_harness: Callable[..., _Harness],
+) -> None:
+    """Bug caught: overwriting with None zeroes RunPod's cost tracking, so
+    budget guardrails silently stop firing — a worse failure than the one this
+    task fixes, because it is invisible."""
+    h = rate_harness(
+        realized=None,
+        cap=1.09,
+        caps={Capability.RATE_DETERMINISTIC},
+        catalog_rate=0.40,
+    )
+    h.run()
+    assert h.final_instance.cost_rate_usd_per_hr == pytest.approx(0.40)
+
+
+def test_the_recorded_rate_is_corrected_exactly_once(
+    rate_harness: Callable[..., _Harness],
+) -> None:
+    """Bug caught: re-firing on_instance_created to carry the new number would
+    APPEND a second ledger row (Ledger.record appends), leaving two rows for
+    one instance and `kinoforge list` double-counting the spend."""
+    h = rate_harness(
+        realized=0.85, cap=1.09, caps={Capability.RATE_READBACK}, catalog_rate=0.40
+    )
+    h.run()
+    assert h.recorded == [h.instance_id]
+    assert len(h.rate_corrections) == 1
+    corrected_id, corrected_rate = h.rate_corrections[0]
+    assert corrected_id == h.instance_id
+    assert corrected_rate == pytest.approx(0.85)
+
+
+def test_no_rate_correction_fires_when_the_rate_was_unreadable(
+    rate_harness: Callable[..., _Harness],
+) -> None:
+    """Bug caught: correcting the row with None (or with 0.0 coerced from it)
+    zeroes the cost of a pod that is very much billing."""
+    h = rate_harness(
+        realized=None,
+        cap=1.09,
+        caps={Capability.RATE_DETERMINISTIC},
+        catalog_rate=0.40,
+    )
+    h.run()
+    assert h.rate_corrections == []
+
+
+def test_ledger_set_cost_rate_rewrites_the_row_in_place(tmp_path: Path) -> None:
+    """The mechanism behind the correction, tested against a real ledger.
+
+    Bug caught: an implementation that appends (which is what Ledger.record
+    does) leaves two rows for one instance, and every reader picks whichever
+    it finds first.
+    """
+    from kinoforge.core.lifecycle import Ledger
+    from kinoforge.stores.local import LocalArtifactStore
+
+    store = LocalArtifactStore(root=tmp_path)
+    ledger = Ledger(store=store, run_id="test")
+    inst = Instance(
+        id="inst-9",
+        provider="skypilot",
+        status="ready",
+        created_at=0.0,
+        cost_rate_usd_per_hr=0.40,
+    )
+    ledger.record(inst)
+    ledger.set_cost_rate("inst-9", 1.99)
+
+    rows = [e for e in ledger.entries() if e["id"] == "inst-9"]
+    assert len(rows) == 1
+    assert rows[0]["cost_rate_usd_per_hr"] == pytest.approx(1.99)
+
+
+def test_ledger_set_cost_rate_on_a_missing_row_is_a_no_op(tmp_path: Path) -> None:
+    """Boundary. Bug caught: inventing a row for an id the ledger never had
+    would resurrect an instance the reaper had already forgotten."""
+    from kinoforge.core.lifecycle import Ledger
+    from kinoforge.stores.local import LocalArtifactStore
+
+    ledger = Ledger(store=LocalArtifactStore(root=tmp_path), run_id="test")
+    ledger.set_cost_rate("never-existed", 1.99)
+    assert ledger.entries() == []

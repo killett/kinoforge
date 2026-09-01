@@ -1109,9 +1109,13 @@ class SkyPilotProvider(ComputeProvider):
             created_at=time.time(),
             endpoints=endpoints,
             tags=dict(spec.tags),
-            cost_rate_usd_per_hr=(
-                spec.offer.cost_rate_usd_per_hr if spec.offer else 0.0
-            ),
+            # compute-seam S4: 0.0, not spec.offer's price. That assignment
+            # WAS finding F4 — it reported the rate kinoforge asked for while
+            # the optimizer booked whatever it liked (a $1.99 Lambda A100 under
+            # a $1.09 ceiling). A provider that cannot know the rate at create
+            # time must not guess one; the orchestrator fills this in from
+            # realized_rate() immediately after the cap check.
+            cost_rate_usd_per_hr=0.0,
         )
 
     def get_instance(self, instance_id: str) -> Instance:

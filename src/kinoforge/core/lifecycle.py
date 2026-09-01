@@ -592,6 +592,35 @@ class Ledger:
             entries.append(entry)
             self._write_entries(entries)
 
+    def set_cost_rate(self, instance_id: str, cost_rate_usd_per_hr: float) -> None:
+        """Rewrite ``instance_id``'s recorded hourly rate in place.
+
+        compute-seam S4: the row is written by ``record`` BEFORE the realized
+        rate is read (so a teardown that fails still leaves the reaper a
+        handle), and corrected here once the read succeeds. Rewriting rather
+        than re-recording matters because :meth:`record` APPENDS — a second
+        call would leave two rows for one instance and every reader would pick
+        whichever it found first.
+
+        Args:
+            instance_id: The instance whose row to correct.
+            cost_rate_usd_per_hr: The realized rate to store.
+        """
+        with self._store.acquire_lock(
+            f"ledger/{self._run_id}", ttl_s=self._mutate_ttl_s
+        ):
+            entries = self._read_entries()
+            changed = False
+            for entry in entries:
+                if entry.get("id") == instance_id:
+                    entry["cost_rate_usd_per_hr"] = cost_rate_usd_per_hr
+                    changed = True
+            # No row for this id is not an error: the instance may already have
+            # been forgotten by a concurrent reap, and inventing a row here
+            # would resurrect it.
+            if changed:
+                self._write_entries(entries)
+
     def entries(self) -> list[dict]:  # type: ignore[type-arg]
         """Return all recorded entries.
 
