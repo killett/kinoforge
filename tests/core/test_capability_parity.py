@@ -83,6 +83,8 @@ def test_declared_matrix_matches_the_design_doc() -> None:
             Capability.HEARTBEAT_READ,
             Capability.UTIL_SNAPSHOT,
             Capability.PAUSE_BILLING,
+            Capability.RATE_DETERMINISTIC,
+            Capability.CATALOG_ENUMERATION,
         }
     )
     assert RunPodProvider.capabilities() == frozenset(
@@ -94,6 +96,8 @@ def test_declared_matrix_matches_the_design_doc() -> None:
             Capability.JOB_TIMEOUT,
             Capability.PAUSE_BILLING,
             Capability.BALANCE_QUERY,
+            Capability.RATE_DETERMINISTIC,
+            Capability.CATALOG_ENUMERATION,
         }
     )
     assert ModalProvider.capabilities() == frozenset(
@@ -102,10 +106,12 @@ def test_declared_matrix_matches_the_design_doc() -> None:
             Capability.UTIL_SNAPSHOT,
             Capability.IDLE_AUTOSTOP,
             Capability.ON_INSTANCE_DEADLINE,
+            Capability.RATE_DETERMINISTIC,
+            Capability.CATALOG_ENUMERATION,
         }
     )
     assert SkyPilotProvider.capabilities() == frozenset(
-        {Capability.ON_INSTANCE_DEADLINE}
+        {Capability.ON_INSTANCE_DEADLINE, Capability.RATE_READBACK}
     )
 
 

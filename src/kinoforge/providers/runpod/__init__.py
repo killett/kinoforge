@@ -641,6 +641,44 @@ class RunPodProvider(ComputeProvider):
         pods: list[dict[str, Any]] = (data.get("myself") or {}).get("pods") or []
         return [_pod_to_instance(p) for p in pods]
 
+    def realized_rate(self, instance: Instance) -> float | None:
+        """Return the pod's own ``costPerHr``, or None when it is unreadable.
+
+        RunPod declares ``RATE_DETERMINISTIC`` because the pod is booked on the
+        ``gpuTypeId`` kinoforge selected from RunPod's catalog, so the filtered
+        catalog price already bounded the price before booking. The pod is
+        nonetheless the authority: a spot / community repricing moves
+        ``costPerHr`` away from the catalog snapshot.
+
+        Deliberately NOT via :func:`_pod_to_instance`, whose 0.0 fallback for a
+        missing ``costPerHr`` is right for the status surface and wrong here —
+        it would report an early-boot pod as free, and free passes every cap.
+
+        Args:
+            instance: The pod to price.
+
+        Returns:
+            USD per hour, or None when the pod is gone, the field is absent, or
+            the transport fails. Never raises.
+        """
+        try:
+            resp = self._http_post(self._base_url, {"query": _LIST_PODS_QUERY})
+            data = _unwrap_graphql_response(resp, context="list pods")
+        except Exception:  # noqa: BLE001 — an unreadable rate is not a crash
+            return None
+        pods: list[dict[str, Any]] = (data.get("myself") or {}).get("pods") or []
+        for pod in pods:
+            if str(pod.get("id", "")) != instance.id:
+                continue
+            raw = pod.get("costPerHr")
+            if raw is None:
+                return None
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                return None
+        return None
+
     def find_instance_by_tag(self, key: str, value: str) -> Instance | None:
         """Return the first 'ready' instance whose tags[key] == value, else None.
 

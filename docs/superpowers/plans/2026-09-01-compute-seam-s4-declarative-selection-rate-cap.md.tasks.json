@@ -8,7 +8,7 @@
       "id": "1",
       "planTask": 0,
       "subject": "Task 0: The capability split and RateCapExceeded",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "metadata": {
         "files": [
@@ -34,7 +34,7 @@
       "id": "2",
       "planTask": 1,
       "subject": "Task 1: realized_rate() on the ABC and on every provider",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": ["1"],
       "metadata": {
         "files": [

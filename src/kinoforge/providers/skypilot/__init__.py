@@ -1133,6 +1133,49 @@ class SkyPilotProvider(ComputeProvider):
                 return _cluster_record_to_instance(cluster)
         raise KeyError(f"no SkyPilot cluster found: {instance_id!r}")
 
+    def realized_rate(self, instance: Instance) -> float | None:
+        """Return the rate the optimizer's chosen resources will bill at.
+
+        The launch payload is discarded by :meth:`create_instance` (the cluster
+        name is the canonical id), so the handle is re-read from ``status()``.
+        That also makes this correct on a warm attach, where no launch payload
+        exists at all.
+
+        This is the whole point of SkyPilot declaring ``RATE_READBACK``: the
+        launch pins an accelerator NAME and the optimizer picks cloud, region
+        and SKU itself, so the asked-for catalog price is not the billed price
+        (verification finding F4 — a $1.99 Lambda A100 under a $1.09 ceiling).
+
+        Args:
+            instance: The cluster to price.
+
+        Returns:
+            USD per hour, or None when the cluster, its handle or its price is
+            unreadable. Never raises — the caller tears the instance down on
+            None rather than crashing mid-launch.
+        """
+        sky = self._sky()
+        try:
+            clusters = _resolve(sky, sky.status())
+        except Exception:  # noqa: BLE001 — an unreadable rate is not a crash
+            return None
+        for cluster in clusters or []:
+            if _record_field(cluster, "name") != instance.id:
+                continue
+            handle = (
+                cluster.get("handle")
+                if isinstance(cluster, dict)
+                else getattr(cluster, "handle", None)
+            )
+            launched = getattr(handle, "launched_resources", None)
+            if launched is None:
+                return None
+            try:
+                return float(launched.get_cost(3600))
+            except Exception:  # noqa: BLE001 — same reason
+                return None
+        return None
+
     def list_instances(self) -> list[Instance]:
         """Return all active SkyPilot clusters.
 

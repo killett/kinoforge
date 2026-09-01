@@ -256,6 +256,21 @@ class LocalProvider(ComputeProvider):
         """
         return self._instances[instance_id]
 
+    def realized_rate(self, instance: Instance) -> float | None:
+        """Return ``0.0`` — the literal price of an in-process instance.
+
+        Not None: None means "unreadable", and nothing about a local instance
+        is unreadable. Its catalog price IS zero, which is what
+        ``RATE_DETERMINISTIC`` claims.
+
+        Args:
+            instance: The in-process instance to price.
+
+        Returns:
+            ``0.0``, always.
+        """
+        return 0.0
+
     def list_instances(self) -> list[Instance]:
         """Return all live (non-destroyed) instances.
 

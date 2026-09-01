@@ -504,6 +504,28 @@ class ComputeProvider(ABC):
         """
         return None
 
+    def realized_rate(self, instance: Instance) -> float | None:
+        """Return the hourly rate *instance* will actually bill at.
+
+        Read AFTER launch, from whatever source this provider's rate
+        capability names: the launched handle where the provider chooses the
+        SKU (``RATE_READBACK``), the catalog price where the requested SKU is
+        the billed one (``RATE_DETERMINISTIC``).
+
+        The default is ``None``, not ``0.0``: a provider that never implements
+        this must fail the ``rate_source_declared`` validation rather than
+        report every instance as free, since free passes every cap.
+
+        Args:
+            instance: The instance to price, already created.
+
+        Returns:
+            The rate in USD per hour, or None when it cannot be read. Never
+            raises: an unreadable rate is a decision for the caller (which
+            tears the instance down), not a crash mid-launch.
+        """
+        return None
+
     def set_heartbeat_endpoint(
         self,
         endpoint: object | None,

@@ -37,7 +37,7 @@ from kinoforge.providers.modal._app import (
     default_list,
     default_stop,
 )
-from kinoforge.providers.modal._catalog import modal_offers
+from kinoforge.providers.modal._catalog import MODAL_GPU_CATALOG, modal_offers
 
 _DESTROY_POLL_MAX_ITERS: int = 40  # 40 × 3s ≈ 120s upper bound (mirror SkyPilot)
 
@@ -284,6 +284,11 @@ class ModalProvider(ComputeProvider):
             "app": app,
             "url": url,
             "name": f"kinoforge-{app_run_id}",
+            # compute-seam S4: the booked GPU class is what realized_rate()
+            # prices against. The Instance carries no accelerator field, so
+            # without this the rate would have to be inferred from a number
+            # that is itself the thing being verified.
+            "gpu": req.gpu,
         }
         return Instance(
             id=app_run_id,
@@ -294,6 +299,32 @@ class ModalProvider(ComputeProvider):
             tags=dict(spec.tags),
             cost_rate_usd_per_hr=spec.offer.cost_rate_usd_per_hr,
         )
+
+    def realized_rate(self, instance: Instance) -> float | None:
+        """Return the catalog price of the GPU class this app booked.
+
+        Modal declares ``RATE_DETERMINISTIC``: the function runs on the GPU
+        class the request named, so ``MODAL_GPU_CATALOG``'s price for that
+        class IS the rate — no read off a live host happens or could. That
+        makes this the ONLY thing able to enforce a cap on Modal, because
+        every catalog entry is ``mode="serverless"`` and
+        :func:`~kinoforge.core.offers.filter_offers` applies its price ceiling
+        to ``mode == "pod"`` offers only.
+
+        Args:
+            instance: The deployed app to price.
+
+        Returns:
+            USD per hour from the catalog; the instance's own recorded rate
+            when this process never deployed it (a warm attach); None when
+            neither is known. Never raises.
+        """
+        gpu = str(self._deployments.get(instance.id, {}).get("gpu", ""))
+        if gpu:
+            for offer in MODAL_GPU_CATALOG:
+                if offer.gpu_type == gpu:
+                    return offer.cost_rate_usd_per_hr
+        return instance.cost_rate_usd_per_hr or None
 
     def _modal_mod(self) -> Any:  # noqa: ANN401
         """Return the injected/real ``modal`` module (``None`` if unavailable).
