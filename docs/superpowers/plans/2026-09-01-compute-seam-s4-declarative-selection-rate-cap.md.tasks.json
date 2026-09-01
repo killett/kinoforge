@@ -126,7 +126,7 @@
       "id": "6",
       "planTask": 5,
       "subject": "Task 5: Live smoke — a violated cap tears the instance down (USER GATE)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": ["5"],
       "metadata": {
         "userGate": true,
