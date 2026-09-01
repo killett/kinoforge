@@ -30,7 +30,11 @@ first unchecked task without redoing committed work.
   `image_build_script`, `runtime_provision_script` and `run_cmd` are deleted. Fixed two live
   SkyPilot bugs — the diffusers double-launch and comfyui's lost `cd` — and corrected design doc §7
   in two places. See the RESUME SNAPSHOT for which 21 goldens moved and why.
-  **S4 (realized-rate check + the `find_offers` inversion) is NEXT — not yet planned.**
+  **S4 (realized-rate check + the `find_offers` inversion) is PLANNED, not started** — plan
+  `docs/superpowers/plans/2026-09-01-compute-seam-s4-declarative-selection-rate-cap.md`, 13 tasks
+  in two independently-shippable halves (Part A = the verified rate cap, Tasks 0–5, closes F4;
+  Part B = declarative selection, Tasks 6–12). **No `.tasks.json` was written** — bootstrap the
+  task list from the plan document's `## Task N:` headers (executing-plans Step 1b does this).
 - **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
 - **Modal plan (spec 1, done):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; `.tasks.json` co-located)
