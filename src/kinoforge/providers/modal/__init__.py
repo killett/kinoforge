@@ -78,9 +78,15 @@ class ModalProvider(ComputeProvider):
         ON_INSTANCE_DEADLINE is the ``@app.function(timeout=...)`` cap. Modal
         does NOT honour cfg's ``lifecycle.job_timeout``, so JOB_TIMEOUT is
         absent, and there is no wire-level heartbeat read.
+
+        RATE_DETERMINISTIC: the function runs on the GPU class kinoforge asked
+        for, so ``MODAL_GPU_CATALOG``'s price for that class is the rate.
+        CATALOG_ENUMERATION: that catalog is a real, listable table.
         """
         return frozenset(
             {
+                Capability.RATE_DETERMINISTIC,
+                Capability.CATALOG_ENUMERATION,
                 Capability.RUNTIME_PROBE,
                 Capability.UTIL_SNAPSHOT,
                 Capability.IDLE_AUTOSTOP,

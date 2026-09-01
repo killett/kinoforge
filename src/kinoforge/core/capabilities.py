@@ -43,6 +43,19 @@ class Capability(StrEnum):
     JOB_TIMEOUT          — the provider enforces cfg's per-job timeout.
     PAUSE_BILLING        — ``stop_instance()`` pauses billing without destroying.
     BALANCE_QUERY        — live account balance readable from the provider.
+    RATE_READBACK        — the provider CHOOSES the SKU, so the rate is only
+                           knowable by reading it back off the launched
+                           instance. skypilot.
+    RATE_DETERMINISTIC   — the requested SKU is the billed SKU, so the catalog
+                           price is the rate. runpod, modal, local.
+    CATALOG_ENUMERATION  — the provider can list what is bookable. Gates
+                           ``kinoforge offers``. runpod, modal, local; NOT
+                           skypilot, whose optimizer takes constraints rather
+                           than publishing a catalog.
+
+    The two rate members are mutually exclusive: they are opposite claims
+    about who chooses the SKU, and a provider declaring both would leave the
+    enforcement point free to pick whichever branch it tested first.
     """
 
     HEARTBEAT_READ = "HEARTBEAT_READ"
@@ -53,6 +66,9 @@ class Capability(StrEnum):
     JOB_TIMEOUT = "JOB_TIMEOUT"
     PAUSE_BILLING = "PAUSE_BILLING"
     BALANCE_QUERY = "BALANCE_QUERY"
+    RATE_READBACK = "RATE_READBACK"
+    RATE_DETERMINISTIC = "RATE_DETERMINISTIC"
+    CATALOG_ENUMERATION = "CATALOG_ENUMERATION"
 
 
 class WorkloadShape(StrEnum):

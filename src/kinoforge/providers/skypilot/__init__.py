@@ -579,8 +579,15 @@ class SkyPilotProvider(ComputeProvider):
         a server spec's launch becomes a never-terminating ``Task.run``,
         so ``job_lib.is_cluster_idle()`` is permanently False (verification
         doc F1) and the 60 s AutostopEvent tick resets the timer forever.
+
+        RATE_READBACK, not RATE_DETERMINISTIC: the launch pins an accelerator
+        NAME and sky's optimizer then picks cloud, region and SKU on its own,
+        so the only honest price is one read back off the launched cluster
+        (:meth:`realized_rate`). CATALOG_ENUMERATION is absent for the same
+        reason — there is no catalog here to list, only an optimizer that
+        takes constraints.
         """
-        caps = {Capability.ON_INSTANCE_DEADLINE}
+        caps = {Capability.ON_INSTANCE_DEADLINE, Capability.RATE_READBACK}
         if shape is WorkloadShape.BATCH:
             caps.add(Capability.IDLE_AUTOSTOP)
         return frozenset(caps)

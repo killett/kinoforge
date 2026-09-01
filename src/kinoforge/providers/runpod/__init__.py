@@ -372,9 +372,16 @@ class RunPodProvider(ComputeProvider):
         ``selfterm.py`` is a boot-relative money cap (audit B4, 67627cd0), not
         idle detection — RunPod idle reaping is controller-side only, which the
         design doc rules out as risk coverage.
+
+        RATE_DETERMINISTIC: the pod is booked on the ``gpuTypeId`` kinoforge
+        selected from RunPod's own catalog, so the price that survived the
+        pre-book filter is the price billed. CATALOG_ENUMERATION: that catalog
+        is real and listable, which is what ``kinoforge offers`` prints.
         """
         return frozenset(
             {
+                Capability.RATE_DETERMINISTIC,
+                Capability.CATALOG_ENUMERATION,
                 Capability.HEARTBEAT_READ,
                 Capability.RUNTIME_PROBE,
                 Capability.UTIL_SNAPSHOT,

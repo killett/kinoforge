@@ -107,9 +107,18 @@ class LocalProvider(ComputeProvider):
         seam, not a measurement. It stays declared because the endpoint does
         return snapshots and LocalProvider is unbilled, so no money decision
         rides on it.
+
+        RATE_DETERMINISTIC is declared even though nothing is billed: the
+        synthetic catalog's price is the literal ``0.0``, and it is the rate,
+        which is exactly what the capability claims. Declaring neither would
+        make an otherwise valid local config a validation ERROR.
+        CATALOG_ENUMERATION covers the synthetic catalog ``find_offers``
+        returns.
         """
         return frozenset(
             {
+                Capability.RATE_DETERMINISTIC,
+                Capability.CATALOG_ENUMERATION,
                 Capability.HEARTBEAT_READ,
                 Capability.UTIL_SNAPSHOT,
                 Capability.PAUSE_BILLING,
