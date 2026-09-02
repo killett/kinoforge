@@ -1,0 +1,78 @@
+"""Behavior: status reads; it does not build.
+
+The rule this pins: no observational command may create a resource. A
+tunnel-ensuring ``kinoforge status`` would spawn one ssh subprocess per
+invocation and fail offline — see the S5 plan, "four things the design gets
+wrong", item 1.
+"""
+
+from __future__ import annotations
+
+from kinoforge.core.interfaces import Instance
+
+
+class _SpyProvider:
+    """Records which endpoint door was used."""
+
+    name = "skypilot"
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def endpoints(self, instance: Instance) -> dict[str, str]:
+        self.calls.append("endpoints")
+        return {}
+
+    def ensure_endpoints(self, instance: Instance) -> dict[str, str]:
+        self.calls.append("ensure_endpoints")
+        return {"8000": "http://127.0.0.1:50001"}
+
+
+def test_status_uses_the_pure_read_and_names_the_cluster() -> None:
+    """Status never repairs, and says what it can identify.
+
+    Bug caught: printing ``{}`` for a live cluster tells the operator nothing,
+    and printing ``ssh://<name>`` tells them something an HTTP client cannot
+    use (finding F11).
+    """
+    from kinoforge.cli._commands import _render_endpoints_for_status
+
+    provider = _SpyProvider()
+    inst = Instance(
+        id="kf-cluster-7",
+        provider="skypilot",
+        status="ready",
+        created_at=0.0,
+        endpoints={},
+        tags={},
+        cost_rate_usd_per_hr=0.0,
+    )
+    rendered = _render_endpoints_for_status(provider, inst)
+    assert provider.calls == ["endpoints"]
+    assert "kf-cluster-7" in rendered
+
+
+def test_status_renders_a_real_endpoint_map_when_there_is_one() -> None:
+    """A provider with endpoints still gets its JSON map.
+
+    Bug caught: the skypilot special case swallowing RunPod's proxy URLs.
+    """
+    from kinoforge.cli._commands import _render_endpoints_for_status
+
+    class _RunPodish(_SpyProvider):
+        name = "runpod"
+
+        def endpoints(self, instance: Instance) -> dict[str, str]:
+            self.calls.append("endpoints")
+            return {"8000": "https://abc-8000.proxy.runpod.net"}
+
+    inst = Instance(
+        id="abc",
+        provider="runpod",
+        status="ready",
+        created_at=0.0,
+        endpoints={},
+        tags={},
+        cost_rate_usd_per_hr=0.0,
+    )
+    assert "proxy.runpod.net" in _render_endpoints_for_status(_RunPodish(), inst)

@@ -1774,7 +1774,11 @@ def _resolve_attach_pod(
         merged_tags.update(live.tags or {})  # live values still win on collision
         live.tags = merged_tags
     try:
-        live.endpoints = provider.endpoints(live)
+        # compute-seam S5: this instance is about to be handed to an engine
+        # that will make HTTP requests against it, so use the door that
+        # repairs a dead tunnel (ensure_endpoints) rather than the pure
+        # read (endpoints) that status uses.
+        live.endpoints = provider.ensure_endpoints(live)
     except Exception as exc:  # noqa: BLE001
         print(
             f"pod {pod_id} endpoints query failed: {type(exc).__name__}: {exc}.",
@@ -2074,6 +2078,30 @@ def _refuse_reason_for_verdict(
     return verdict
 
 
+def _render_endpoints_for_status(provider: object, instance: Instance) -> str:
+    """Render the status line's endpoint field without creating anything.
+
+    compute-seam S5: ``endpoints`` is the pure read. A provider holding no
+    live endpoint in THIS process (skypilot after a warm attach, always)
+    yields the instance identity instead of an empty map — enough for the
+    operator to run ``sky status`` or ``kinoforge destroy --id``.
+
+    Args:
+        provider: The resolved compute provider.
+        instance: The instance being reported.
+
+    Returns:
+        A JSON endpoint map, ``cluster=<id>``, or ``unknown (<ExcName>)``.
+    """
+    try:
+        mapping = provider.endpoints(instance)  # type: ignore[attr-defined]
+    except Exception as exc:  # noqa: BLE001
+        return f"unknown ({exc.__class__.__name__})"
+    if mapping:
+        return json.dumps(mapping)
+    return f"cluster={instance.id}"
+
+
 def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``status`` subcommand: read ledger, dispatch to recorded provider.
 
@@ -2176,14 +2204,15 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
             ledger_block = _build_ledger_block(entry, cfg=cfg, now=now)
 
     provider_block = {"provider_status": instance.status}
-    try:
-        # ComputeProvider.endpoints takes the Instance, not the id: every
-        # implementation dereferences instance.tags / instance.endpoints
-        # (audit B7 — passing args.id AttributeError'd into the except
-        # below, so every healthy pod rendered endpoints=unknown).
-        provider_block["endpoints"] = json.dumps(provider.endpoints(instance))
-    except Exception as exc:  # noqa: BLE001
-        provider_block["endpoints"] = f"unknown ({exc.__class__.__name__})"
+    # ComputeProvider.endpoints takes the Instance, not the id: every
+    # implementation dereferences instance.tags / instance.endpoints
+    # (audit B7 — passing args.id AttributeError'd into the except
+    # below, so every healthy pod rendered endpoints=unknown).
+    #
+    # compute-seam S5: status is an observational read, so it calls the
+    # pure ``endpoints()`` door — never ``ensure_endpoints()``, which would
+    # spawn an ssh tunnel per invocation on skypilot.
+    provider_block["endpoints"] = _render_endpoints_for_status(provider, instance)
 
     # Layer V — verdict line, same source of truth as `kinoforge reap`.
     # When list_instances raises, we cannot trust pod presence to
@@ -2329,7 +2358,9 @@ def _cmd_pod_lora_ls(args: argparse.Namespace, ctx: SessionContext) -> int:
         return 2
 
     try:
-        endpoints_map = provider.endpoints(instance)
+        # compute-seam S5: this endpoint is used to make an HTTP request
+        # immediately below, so use the repairing door.
+        endpoints_map = provider.ensure_endpoints(instance)
     except Exception as exc:  # noqa: BLE001
         print(
             f"pod lora ls: endpoint resolution failed "

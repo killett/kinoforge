@@ -1819,7 +1819,10 @@ def deploy(
             boot_timeout_s=lifecycle.boot_timeout_s,
         )
 
-        endpoints = resolved_provider.endpoints(instance)
+        # compute-seam S5: deploy_session hands the instance to a caller
+        # that will immediately make HTTP requests against it, so use the
+        # door that repairs a dead tunnel rather than the pure read.
+        endpoints = resolved_provider.ensure_endpoints(instance)
         _log.info(
             "deployed instance %r via %r (status=%s)",
             instance.id,

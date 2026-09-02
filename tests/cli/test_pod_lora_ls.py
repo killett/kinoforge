@@ -23,6 +23,9 @@ class _FakeProvider:
     def endpoints(self, instance: Any) -> dict[str, str]:
         return self._endpoints
 
+    def ensure_endpoints(self, instance: Any) -> dict[str, str]:
+        return self._endpoints
+
     def get_instance(self, pod_id: str) -> _FakeInstance:
         if pod_id != self._instance.id:
             raise KeyError(pod_id)
