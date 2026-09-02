@@ -1,0 +1,10 @@
+{
+  "smoke": "compute-seam S5 — an over-cap plan is refused before launch",
+  "task": "task-9 committed this placeholder RED, before any spend",
+  "outcome": "NOT-RUN",
+  "note": "Placeholder. tests/live/test_compute_seam_s5_smoke.py overwrites this file with the catalog estimate, the refusal's str/repr, the independent 'nothing was booked' oracles, and the in-cap arm when it runs under `pixi run -e live-skypilot` with KINOFORGE_LIVE_TESTS=1. Committed ahead of the run so a mid-spend crash cannot lose the scaffold.",
+  "estimate": {"status": "not-run"},
+  "refusal": {"status": "not-run"},
+  "nothing_booked": {"status": "not-run"},
+  "in_cap_arm": {"status": "not-run"}
+}

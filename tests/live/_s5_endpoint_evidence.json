@@ -1,0 +1,8 @@
+{
+  "smoke": "compute-seam S5 — endpoint shape and ledger shape",
+  "task": "task-9 committed this placeholder RED, before any spend",
+  "outcome": "NOT-RUN",
+  "note": "Placeholder. tests/live/test_compute_seam_s5_smoke.py overwrites this file with claim 1 (offline ensure_endpoints) and claim 3 (live tunnel repair) when it runs under `pixi run -e live-skypilot` with KINOFORGE_LIVE_TESTS=1. Committed ahead of the run so a mid-spend crash cannot lose the scaffold.",
+  "claim_1_offline": {"status": "not-run"},
+  "claim_3_live": {"status": "not-run"}
+}

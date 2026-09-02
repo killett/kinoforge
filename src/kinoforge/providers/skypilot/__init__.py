@@ -98,8 +98,10 @@ logger = logging.getLogger(__name__)
 
 #: Deadline for the pre-launch catalog price read
 #: (:meth:`SkyPilotProvider._estimate_hourly_rate`). It runs before anything is
-#: booked and before the instance-side watchdog is armed, so a wedged API
-#: server must cost seconds, not a hung launch. Expiry reads as "unreadable".
+#: booked and before the instance-side watchdog is armed. The read is LOCAL
+#: (``sky.list_accelerators`` is ``sky.catalog.list_accelerators``), but sky's
+#: catalog lazily downloads its pricing CSVs over HTTP, so a slow or wedged
+#: fetch must cost seconds, not a hung launch. Expiry reads as "unreadable".
 _ESTIMATE_TIMEOUT_S = 20.0
 
 # Bridge sky's vast adapter to vastai-sdk >= 0.2 as soon as the provider is
@@ -1419,10 +1421,12 @@ class SkyPilotProvider(ComputeProvider):
         price can ever be read back. Verified at the installed pin.
 
         What this returns instead is the cheapest price sky's own catalog
-        (``sky.list_accelerators``, whose ``/list_accelerators`` route does
-        NOT ignore its return value — ``sky/server/server.py:1333``) reports
-        for a single-accelerator instance of the pinned accelerator, narrowed
-        to the same clouds the launch is pinned to. That is a LOWER BOUND on
+        reports for a single-accelerator instance of the pinned accelerator,
+        narrowed to the same clouds the launch is pinned to. The catalog read
+        is LOCAL, unlike ``sky.optimize``: ``sky.list_accelerators`` resolves
+        to ``sky.catalog.list_accelerators`` (``sky/catalog/config.py`` at the
+        installed pin), so no request is scheduled on the API server and there
+        is no return value for the server to discard. That is a LOWER BOUND on
         what the launch can cost, not a quote: sky's optimizer still picks the
         cloud, region and SKU for itself, and a booking can land above this
         number. S4's post-launch :meth:`realized_rate` readback remains the
@@ -1433,12 +1437,15 @@ class SkyPilotProvider(ComputeProvider):
         booked cluster. Only the second can make a cap true, and collapsing
         them would let a cheap catalog number vouch for an expensive booking.
 
-        Bounded by an explicit deadline: ``list_accelerators`` is a call to
-        sky's API server, which can be slow or wedged, and this runs before
-        anything is booked AND before the instance-side watchdog is armed —
-        so a hang here would stall a launch with no guardrail running at all.
-        Expiry counts as unreadable; the worker is a daemon thread and is
-        abandoned rather than joined.
+        Bounded by an explicit deadline, and NOT because it crosses the API
+        server — it does not (see above). ``sky.catalog.list_accelerators``
+        runs in this process, but sky's catalog is lazily materialised: a cold
+        cache fetches the per-cloud pricing CSVs over HTTP on first read, so
+        the call can still block on the network for as long as that fetch
+        takes. This runs before anything is booked AND before the
+        instance-side watchdog is armed, so a hang here would stall a launch
+        with no guardrail running at all. Expiry counts as unreadable; the
+        worker is a daemon thread and is abandoned rather than joined.
 
         Best-effort by contract: any failure — the catalog read raising, the
         deadline expiring, no priced record for the accelerator, a shape this

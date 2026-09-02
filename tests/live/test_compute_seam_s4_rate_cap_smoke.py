@@ -26,10 +26,16 @@ Three claims, in cost order:
 This smoke covers the POST-LAUNCH arm on purpose. compute-seam S5 Task 8 added
 a PRE-launch refusal to ``SkyPilotProvider.create_instance``: it bounds the
 launch from sky's accelerator catalog and raises ``PreLaunchRateCapExceeded``
-before ``sky.launch`` when that bound already exceeds the cap. A $0.01 cap
-trips it, so the test forces the estimate unreadable
-(``_estimate_hourly_rate -> None``, the documented WARN-and-proceed path) to
-keep reaching the readback. The pre-launch arm has its own live smoke; between
+before ``sky.launch`` when that bound already exceeds the cap. On THIS config
+that arm cannot fire at any cap, $0.01 included: ``skypilot-cpu.yaml`` is
+CPU-only, and ``_estimate_hourly_rate`` returns ``None`` for a CPU placement BY
+DESIGN — sky's accelerator catalog has nothing to say about CPU SKUs — which is
+the documented WARN-and-proceed path. The test forces the estimate unreadable
+anyway: the monkeypatch decouples this smoke from that fact about the config,
+so it keeps reaching the readback on the day the config grows an accelerator or
+the estimator learns to price CPU SKUs. The pre-launch arm has its own live
+smoke (``test_compute_seam_s5_smoke.py``, which prices a NAMED accelerator so
+the estimate is a real number); between
 them both arms are covered, and neither test is weakened to accommodate the
 other. Nothing about the readback, the enforcement or the teardown is stubbed
 here.
@@ -272,12 +278,16 @@ def test_s4_a_violated_rate_cap_destroys_the_instance(
 
     # compute-seam S5 Task 8 added a PRE-launch refusal: create_instance now
     # bounds the launch from sky's catalog and raises before sky.launch when
-    # the bound already exceeds the cap. A $0.01 cap trips it, which would end
-    # this smoke at create_instance and leave the POST-launch readback — the
-    # only thing this test exists to prove — unexercised. Forcing the estimate
-    # unreadable takes the documented WARN-and-proceed path, which is exactly
-    # the pre-Task-8 behaviour this smoke was written against. Nothing about
-    # the readback, the enforcement or the teardown is stubbed.
+    # the bound already exceeds the cap. On this CPU-only config the bound is
+    # unreadable regardless of the cap (_estimate_hourly_rate returns None for
+    # a CPU placement by design), so the $0.01 cap here cannot trip it today.
+    # Forcing it explicitly makes that independent of the config: if this cfg
+    # ever grows an accelerator, the refusal would otherwise end the smoke at
+    # create_instance and leave the POST-launch readback — the only thing this
+    # test exists to prove — unexercised. The forced value takes the documented
+    # WARN-and-proceed path, which is exactly the pre-Task-8 behaviour this
+    # smoke was written against. Nothing about the readback, the enforcement or
+    # the teardown is stubbed.
     monkeypatch.setattr(
         SkyPilotProvider,
         "_estimate_hourly_rate",
