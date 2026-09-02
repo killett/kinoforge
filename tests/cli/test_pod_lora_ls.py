@@ -16,14 +16,27 @@ class _FakeInstance:
 
 
 class _FakeProvider:
+    """Records which endpoint door ``pod lora ls`` used.
+
+    ``endpoints`` (the pure read) and ``ensure_endpoints`` (the repairing
+    door) deliberately return different values — ``endpoints`` returns an
+    empty map, matching a provider with no live endpoint in this process —
+    so a regression that swaps the call site back to ``endpoints`` is
+    caught by the happy-path test failing (no endpoint URL) rather than by
+    an assertion on ``calls`` alone.
+    """
+
     def __init__(self, endpoints_map: dict[str, str], instance: _FakeInstance) -> None:
         self._endpoints = endpoints_map
         self._instance = instance
+        self.calls: list[str] = []
 
     def endpoints(self, instance: Any) -> dict[str, str]:
-        return self._endpoints
+        self.calls.append("endpoints")
+        return {}
 
     def ensure_endpoints(self, instance: Any) -> dict[str, str]:
+        self.calls.append("ensure_endpoints")
         return self._endpoints
 
     def get_instance(self, pod_id: str) -> _FakeInstance:
@@ -134,6 +147,10 @@ def test_pod_lora_ls_happy_renders_inventory(
     assert captured_url["url"].endswith("/lora/inventory")
     assert "lora_0" in out
     assert "loras (1 resident" in out
+    # compute-seam S5: `pod lora ls` is about to make an HTTP request
+    # against the resolved endpoint, so it must use the repairing door
+    # (ensure_endpoints), never the pure read (endpoints).
+    assert provider.calls == ["ensure_endpoints"]
 
 
 def test_pod_lora_ls_pod_unreachable_returns_2(

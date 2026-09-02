@@ -76,3 +76,38 @@ def test_status_renders_a_real_endpoint_map_when_there_is_one() -> None:
         cost_rate_usd_per_hr=0.0,
     )
     assert "proxy.runpod.net" in _render_endpoints_for_status(_RunPodish(), inst)
+
+
+def test_status_never_names_a_runpod_pod_as_a_cluster() -> None:
+    """A non-skypilot provider with no live endpoint says "unknown", not "cluster=".
+
+    Bug caught: ``_cmd_status`` builds its ``Instance`` from a bare
+    ``provider.get_instance()``, which drops RunPod's ``ports`` tag, so
+    ``RunPodProvider.endpoints`` genuinely returns ``{}`` on the status path
+    — not a hypothetical. Painting that empty map as ``cluster=<pod-id>``
+    would borrow skypilot's semantics (the id IS the cluster name, and
+    ``sky status``/``kinoforge destroy --id`` are the honest follow-ups) for
+    a provider where that isn't true, hiding a real "something is wrong"
+    signal behind a benign-looking cluster label.
+    """
+    from kinoforge.cli._commands import _render_endpoints_for_status
+
+    class _RunPodEmpty(_SpyProvider):
+        name = "runpod"
+
+        def endpoints(self, instance: Instance) -> dict[str, str]:
+            self.calls.append("endpoints")
+            return {}
+
+    inst = Instance(
+        id="abc",
+        provider="runpod",
+        status="ready",
+        created_at=0.0,
+        endpoints={},
+        tags={},
+        cost_rate_usd_per_hr=0.0,
+    )
+    rendered = _render_endpoints_for_status(_RunPodEmpty(), inst)
+    assert rendered == "unknown (no live endpoint)"
+    assert "cluster=" not in rendered

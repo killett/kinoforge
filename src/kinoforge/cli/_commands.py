@@ -2081,17 +2081,30 @@ def _refuse_reason_for_verdict(
 def _render_endpoints_for_status(provider: object, instance: Instance) -> str:
     """Render the status line's endpoint field without creating anything.
 
-    compute-seam S5: ``endpoints`` is the pure read. A provider holding no
-    live endpoint in THIS process (skypilot after a warm attach, always)
-    yields the instance identity instead of an empty map — enough for the
-    operator to run ``sky status`` or ``kinoforge destroy --id``.
+    compute-seam S5: ``endpoints`` is the pure read. An empty map means
+    different things on different providers, so the fallback is scoped to
+    skypilot only:
+
+    - **skypilot**: the instance id IS the cluster name, and the natural
+      follow-up when this process holds no live tunnel is ``sky status`` or
+      ``kinoforge destroy --id`` — both keyed on that same id. So an empty
+      map renders as ``cluster=<id>``, which is honest and actionable.
+    - **every other provider** (RunPod, Modal, Local): an empty map means
+      something is wrong — e.g. ``RunPodProvider.endpoints`` reads the
+      ``ports`` tag off the instance, which ``_cmd_status``'s bare
+      ``provider.get_instance()`` call does not populate — and must keep
+      looking wrong rather than being repainted as a skypilot-shaped
+      cluster identity. Rehydrating those tags from the ledger so RunPod's
+      status line can render real endpoints is a separate, deferred piece
+      of work — out of scope here.
 
     Args:
         provider: The resolved compute provider.
         instance: The instance being reported.
 
     Returns:
-        A JSON endpoint map, ``cluster=<id>``, or ``unknown (<ExcName>)``.
+        A JSON endpoint map, ``cluster=<id>`` (skypilot only), or
+        ``unknown (<reason>)``.
     """
     try:
         mapping = provider.endpoints(instance)  # type: ignore[attr-defined]
@@ -2099,7 +2112,9 @@ def _render_endpoints_for_status(provider: object, instance: Instance) -> str:
         return f"unknown ({exc.__class__.__name__})"
     if mapping:
         return json.dumps(mapping)
-    return f"cluster={instance.id}"
+    if getattr(provider, "name", "") == "skypilot":
+        return f"cluster={instance.id}"
+    return "unknown (no live endpoint)"
 
 
 def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
