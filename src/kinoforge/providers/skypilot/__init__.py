@@ -60,6 +60,7 @@ Self-registers under ``"skypilot"`` when this module is imported.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import socket
 import subprocess
@@ -325,16 +326,25 @@ def _collapse_status(raw: str) -> str:
 # Provider-internal SSH tunnel (HTTP-over-sky seam)
 # ---------------------------------------------------------------------------
 
-#: Port the diffusers/comfyui video server listens on inside the cluster
-#: (matches the RunPod path's 8000). The provider forwards a local port to this.
-_VIDEO_SERVER_PORT: int = 8000
-
 #: Max status polls in destroy_instance before returning even if the cluster is
 #: still listed. Bounds teardown so a cloud that is slow to deprovision (or a
 #: stale status listing) can never hang --no-reuse forever (observed as a ~7-min
 #: Lambda hang 2026-07-08). destroy_confirmed re-verifies via list_instances and
 #: retries, so returning unconfirmed here is safe, not a leak.
 _DESTROY_POLL_MAX_ITERS: int = 40  # 40 × 3s ≈ 120s upper bound
+
+
+@dataclasses.dataclass
+class _Tunnel:
+    """One live ssh port-forward.
+
+    Attributes:
+        proc: The ``ssh -N -T -L`` subprocess.
+        local_port: The localhost port the forward is bound to.
+    """
+
+    proc: Any
+    local_port: int
 
 
 def _alloc_free_port() -> int:
@@ -740,8 +750,8 @@ class SkyPilotProvider(ComputeProvider):
         self._alloc_port: Callable[[], int] = (
             port_allocator if port_allocator is not None else _alloc_free_port
         )
-        #: cluster_name -> live tunnel subprocess handle (killed on destroy).
-        self._tunnels: dict[str, Any] = {}
+        #: cluster_name -> remote_port -> live tunnel (killed on destroy).
+        self._tunnels: dict[str, dict[str, _Tunnel]] = {}
         #: Optional ledger for the pre-launch provisional row (F12). ``None``
         #: until :meth:`set_launch_ledger` is called; every existing
         #: construction of this provider leaves it unset, so behaviour is
@@ -1076,16 +1086,22 @@ class SkyPilotProvider(ComputeProvider):
         # modern API.
         _resolve(sky, raw)
         endpoints: dict[str, str] = {}
-        # Only a server spec (one that declares a long-running launch) needs an
-        # HTTP tunnel; a server-less deploy (CPU smoke) gets no tunnel and empty
-        # endpoints. S3 moved the condition off ``run_cmd`` onto ``launch``:
-        # every engine sets the two together or neither, so this is the same
-        # question asked of the field that now answers it.
+        # Only a server spec (one that declares a long-running launch) needs
+        # HTTP tunnels; a server-less deploy (CPU smoke) gets none. S5: one
+        # tunnel per DECLARED port, because an engine declaring ["8000",
+        # "8001"] means both are load-bearing — 8001 is the /tmp file server
+        # the project's own live-smoke rule fetches bootstrap.log from.
         if spec.launch is not None:
-            local_port = self._alloc_port()
+            opened: dict[str, _Tunnel] = {}
+            port = ""
             try:
-                tunnel = self._ssh_spawn(cluster_name, local_port, _VIDEO_SERVER_PORT)
+                for port in spec.ports:
+                    local_port = self._alloc_port()
+                    proc = self._ssh_spawn(cluster_name, local_port, int(port))
+                    opened[port] = _Tunnel(proc=proc, local_port=local_port)
             except Exception as exc:  # noqa: BLE001 — any spawn fault → clean fail
+                for tunnel in opened.values():
+                    self._kill_tunnel(tunnel.proc)
                 # Best-effort teardown so a live-but-unreachable cluster is not
                 # left billing while we raise.
                 try:
@@ -1093,10 +1109,14 @@ class SkyPilotProvider(ComputeProvider):
                 except Exception:  # noqa: BLE001, S110
                     pass
                 raise ProvisionFailed(
-                    f"failed to open ssh tunnel to {cluster_name!r}: {exc}"
+                    f"failed to open ssh tunnel to {cluster_name!r} for port "
+                    f"{port}: {exc}"
                 ) from exc
-            self._tunnels[cluster_name] = tunnel
-            endpoints = {"8000": f"http://127.0.0.1:{local_port}"}
+            self._tunnels[cluster_name] = opened
+            endpoints = {
+                port: f"http://127.0.0.1:{tunnel.local_port}"
+                for port, tunnel in opened.items()
+            }
         # Success: hand the record over to the orchestrator's post-create
         # write. Deliberately NOT in a finally — the tunnel-failure path
         # must keep its row, because a failed best-effort ``sky.down``
@@ -1127,7 +1147,12 @@ class SkyPilotProvider(ComputeProvider):
             status="starting",
             created_at=time.time(),
             endpoints=endpoints,
-            tags=dict(spec.tags),
+            tags={
+                **dict(spec.tags),
+                # S5 — same key RunPod uses (_pod_to_instance / endpoints), so
+                # ensure_endpoints and warm-attach have one reader for both.
+                "ports": ",".join(spec.ports),
+            },
             # compute-seam S4: 0.0, not spec.offer's price. That assignment
             # WAS finding F4 — it reported the rate kinoforge asked for while
             # the optimizer booked whatever it liked (a $1.99 Lambda A100 under
@@ -1250,9 +1275,10 @@ class SkyPilotProvider(ComputeProvider):
             instance_id: The SkyPilot cluster name to destroy.
         """
         sky = self._sky()
-        # Pop the tunnel up front and kill it in a finally, so a failing
-        # sky.down (or status-poll) never leaks the ssh port-forward.
-        tunnel = self._tunnels.pop(instance_id, None)
+        # Pop the whole tunnel map up front and kill every one of them in a
+        # finally, so a failing sky.down (or status-poll) never leaks any of
+        # the ssh port-forwards — S5: there can be more than one per cluster.
+        tunnels = self._tunnels.pop(instance_id, None) or {}
         try:
             # Resolve the down RequestId so the call blocks until SkyPilot has
             # accepted (and committed to) the teardown — otherwise the provider
@@ -1270,8 +1296,8 @@ class SkyPilotProvider(ComputeProvider):
                     return  # confirmed gone
                 self._sleep(3.0)
         finally:
-            if tunnel is not None:
-                self._kill_tunnel(tunnel)
+            for tunnel in tunnels.values():
+                self._kill_tunnel(tunnel.proc)
 
     def heartbeat(self, instance_id: str) -> None:
         """No-op by design; ``HEARTBEAT_READ`` is not declared.

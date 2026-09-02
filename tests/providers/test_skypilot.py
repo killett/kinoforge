@@ -1465,7 +1465,11 @@ def test_tunnel_failure_keeps_the_provisional_row() -> None:
         provider.create_instance(
             # A launch is what makes this a SERVER spec, which is what makes
             # create_instance attempt the tunnel this test forces to fail.
-            _watchdog_spec(run_id="kf-orphan", launch=Launch(("sleep", "1")))
+            # S5: a tunnel is only opened per DECLARED port, so this spec must
+            # declare one for ``_boom`` to ever be reached.
+            _watchdog_spec(
+                run_id="kf-orphan", ports=("8000",), launch=Launch(("sleep", "1"))
+            )
         )
 
     assert ledger.forgotten == [], ledger.forgotten
