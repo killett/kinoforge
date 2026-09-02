@@ -167,6 +167,59 @@ def test_second_spawn_failure_kills_the_first_tunnel_and_the_cluster() -> None:
     assert made and all(p.terminated for p in made)
 
 
+def test_second_create_under_the_same_run_id_spares_the_first_calls_tunnel() -> None:
+    """A second launch's spawn failure never tears down a sibling call's tunnel.
+
+    Bug caught: ``cluster_name`` is stable across calls (derived from
+    ``spec.run_id``), so popping the *whole* per-cluster tunnel dict on a
+    create failure — Task 0's shape, before this fix — kills tunnels a
+    prior, already-succeeded ``create_instance`` call left live for the same
+    cluster, and the failure path's best-effort ``sky.down`` then tears down
+    the compute backing them too. Only tunnels opened by *this* call may be
+    killed; the cluster may only be downed when no tunnel this process holds
+    for it survives the failure.
+    """
+    sky = _FakeSky()
+    made: dict[int, _FakeProc] = {}
+
+    def _spawn(cluster: str, local_port: int, remote_port: int) -> _FakeProc:
+        if remote_port == 8002:
+            raise OSError("ssh: connect failed")
+        proc = _FakeProc()
+        made[remote_port] = proc
+        return proc
+
+    ports = iter([50001, 50002, 50003])
+    provider = SkyPilotProvider(
+        sky,
+        ssh_spawn=_spawn,
+        port_allocator=lambda: next(ports),
+        sleep=lambda _s: None,
+    )
+
+    first = provider.create_instance(
+        _spec(ports=("8000",), launch=Launch(("python", "-m", "srv")))
+    )
+    assert first.endpoints == {"8000": "http://127.0.0.1:50001"}
+
+    from kinoforge.core.errors import ProvisionFailed
+
+    with pytest.raises(ProvisionFailed, match="8002"):
+        provider.create_instance(
+            _spec(ports=("8001", "8002"), launch=Launch(("python", "-m", "srv")))
+        )
+
+    # The first call's tunnel is untouched: still tracked, still alive.
+    assert provider._tunnels[first.id]["8000"].proc is made[8000]  # noqa: SLF001
+    assert made[8000].terminated is False
+    # The second call's own new tunnel (8001) is killed on the 8002 failure,
+    # same as the existing single-call partial-failure contract.
+    assert made[8001].terminated is True
+    # The cluster is still live — sky.down must NOT be called, because a
+    # tunnel from the first call still depends on it.
+    assert sky.downed == []
+
+
 def test_destroy_kills_every_tunnel_even_when_down_raises() -> None:
     """Teardown never leaks a port-forward.
 
@@ -295,3 +348,32 @@ def test_ensure_endpoints_without_a_port_list_returns_empty(
     with caplog.at_level("WARNING"):
         assert provider.ensure_endpoints(bare) == {}
     assert "kf-bare" in caplog.text
+
+
+def test_ensure_endpoints_falls_back_to_endpoint_keys_when_the_ports_tag_is_empty() -> (
+    None
+):
+    """An unconditionally-written empty ``tags["ports"]`` is treated as absent.
+
+    Bug caught: Task 0 writes the ``"ports"`` tag on every created Instance,
+    even a spec with no declared ports — so ``tags["ports"] == ""`` is the
+    COMMON shape for that case, not an edge case. A ``_ports_for`` that
+    treated ``""`` as "one port named the empty string" (rather than falling
+    through to the numeric-endpoint-key fallback) would silently try to open
+    a tunnel to remote port ``""``.
+    """
+    spawns: list[tuple[str, int, int]] = []
+    provider = _provider(_FakeSky(), spawns)
+    recorded = Instance(
+        id="kf-empty-tag",
+        provider="skypilot",
+        status="ready",
+        created_at=0.0,
+        endpoints={"8000": "http://127.0.0.1:1"},  # a dead port from last run
+        tags={"ports": ""},
+        cost_rate_usd_per_hr=0.0,
+    )
+    assert provider.ensure_endpoints(recorded) == {
+        "8000": "http://127.0.0.1:50001",
+    }
+    assert [(c, r) for c, _l, r in spawns] == [("kf-empty-tag", 8000)]

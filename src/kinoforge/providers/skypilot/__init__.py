@@ -1093,19 +1093,41 @@ class SkyPilotProvider(ComputeProvider):
         # the project's own live-smoke rule fetches bootstrap.log from.
         if spec.launch is not None:
             port = ""
+            # Ports THIS call actually opened (reused-or-fresh, tracked as
+            # each iteration of the loop below completes without raising).
+            # cluster_name is stable across calls (derived from spec.run_id),
+            # so a second create_instance reusing the same run_id must only
+            # ever tear down tunnels *this* call opened on failure — never a
+            # prior, already-succeeded call's live tunnels for the same
+            # cluster (finding: task-1 review, 2026-09-01).
+            opened_ports: list[str] = []
             try:
                 for port in spec.ports:
                     self._ensure_tunnel(cluster_name, port)
+                    opened_ports.append(port)
             except Exception as exc:  # noqa: BLE001 — any spawn fault → clean fail
-                opened = self._tunnels.pop(cluster_name, {})
-                for tunnel in opened.values():
-                    self._kill_tunnel(tunnel.proc)
-                # Best-effort teardown so a live-but-unreachable cluster is not
-                # left billing while we raise.
-                try:
-                    _resolve(sky, sky.down(cluster_name))
-                except Exception:  # noqa: BLE001, S110
-                    pass
+                held = self._tunnels.get(cluster_name)
+                cluster_now_empty = True
+                if held is not None:
+                    for opened_port in opened_ports:
+                        tunnel = held.pop(opened_port, None)
+                        if tunnel is not None:
+                            self._kill_tunnel(tunnel.proc)
+                    cluster_now_empty = not held
+                    if cluster_now_empty:
+                        self._tunnels.pop(cluster_name, None)
+                if cluster_now_empty:
+                    # Best-effort teardown so a live-but-unreachable cluster
+                    # is not left billing while we raise — but ONLY when no
+                    # tunnel this process still holds for the cluster
+                    # survives the failure. A live sibling tunnel from a
+                    # prior successful create_instance call means the
+                    # underlying compute is still in active use and must not
+                    # be torn down out from under it.
+                    try:
+                        _resolve(sky, sky.down(cluster_name))
+                    except Exception:  # noqa: BLE001, S110
+                        pass
                 raise ProvisionFailed(
                     f"failed to open ssh tunnel to {cluster_name!r} for port "
                     f"{port}: {exc}"
