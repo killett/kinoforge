@@ -104,7 +104,6 @@ def test_c26_phase_a_stall_detection_live() -> None:
 
     spec = InstanceSpec(
         image="mirror.gcr.io/library/alpine:latest",
-        offer=cheapest,
         env={},
     )
     instance = provider.create_instance(spec)

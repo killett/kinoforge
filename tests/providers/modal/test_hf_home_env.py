@@ -7,7 +7,7 @@ preempted/cold container. These tests pin that ``create_instance`` seeds
 clobbering an operator-supplied value.
 """
 
-from kinoforge.core.interfaces import InstanceSpec, Launch, Lifecycle, Offer, SetupStep
+from kinoforge.core.interfaces import InstanceSpec, Launch, Lifecycle, SetupStep
 from kinoforge.providers.modal import ModalProvider
 from kinoforge.providers.modal._app import ModalAppRequest
 
@@ -16,14 +16,6 @@ def _spec(env: dict[str, str], volume_mount: str = "") -> InstanceSpec:
     """Build a minimal valid Modal InstanceSpec for an A100-80GB run."""
     return InstanceSpec(
         image="python:3.13-slim",
-        offer=Offer(
-            id="A100-80GB",
-            gpu_type="A100-80GB",
-            vram_gb=80,
-            cuda="12.4",
-            cost_rate_usd_per_hr=2.10,
-            mode="serverless",
-        ),
         run_id="run-hf",
         setup_steps=(SetupStep("echo provisioning"),),
         launch=Launch(("python", "-m", "server")),

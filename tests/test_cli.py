@@ -105,7 +105,7 @@ def test_dry_run_prints_plan(
     # plan content
     assert "fake" in out
     assert "local" in out
-    assert "offer" in out.lower()
+    assert "placement" in out.lower()
     # zero real create_instance calls
     assert len(create_calls) == 0
 

@@ -116,7 +116,6 @@ def test_c27_phase_a2_alpine_restart_loop_live() -> None:
     # to terminate; RunPod's restart policy spins it back up immediately → loop.
     spec = InstanceSpec(
         image="mirror.gcr.io/library/alpine:latest",
-        offer=cheapest,
         env={},
         setup_steps=(SetupStep("sleep 5; exit 1"),),
     )

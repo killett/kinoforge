@@ -31,7 +31,6 @@ from kinoforge.core.interfaces import (
     InstanceSpec,
     Launch,
     Lifecycle,
-    Offer,
     SetupStep,
 )
 from kinoforge.core.util_endpoints import provider_util_supported
@@ -42,6 +41,37 @@ from kinoforge.providers.skypilot import SkyPilotProvider
 
 PROVIDERS = [LocalProvider, ModalProvider, RunPodProvider, SkyPilotProvider]
 REGISTERED = ["local", "runpod", "skypilot", "modal"]
+
+
+#: compute-seam S4: providers select their own SKU inside create_instance, so a
+#: transport a create test drives must answer the catalog query first.
+_S4_GPU_TYPES: dict[str, object] = {
+    "data": {
+        "gpuTypes": [
+            {
+                "id": name,
+                "displayName": name,
+                "memoryInGb": vram,
+                "secureCloud": True,
+                "lowestPrice": {
+                    "minimumBidPrice": price,
+                    "uninterruptablePrice": price,
+                },
+            }
+            for name, vram, price in (
+                ("NVIDIA RTX A4000", 16, 0.32),
+                ("NVIDIA RTX A5000", 24, 0.44),
+                ("NVIDIA GeForce RTX 4090", 24, 0.69),
+                ("NVIDIA A100 80GB PCIe", 80, 1.64),
+            )
+        ]
+    }
+}
+
+_S4_ACCELERATORS: list[dict[str, object]] = [
+    {"accelerator_name": "T4", "vram_gb": 16, "cuda": "12.8", "price": 0.35},
+    {"accelerator_name": "A100", "vram_gb": 80, "cuda": "12.8", "price": 2.10},
+]
 
 
 def _overrides(cls: type, method: str) -> bool:
@@ -138,6 +168,9 @@ def test_runpod_job_timeout_declaration_matches_the_create_payload() -> None:
     captured: list[dict[str, Any]] = []
 
     def _post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+
+        if "gpuTypes" in str(body.get("query", "")):
+            return _S4_GPU_TYPES
         del url
         captured.append(body)
         return {"data": {"saveTemplate": {"id": "ep-1"}}}
@@ -146,14 +179,6 @@ def test_runpod_job_timeout_declaration_matches_the_create_payload() -> None:
     provider.create_instance(
         InstanceSpec(
             image="runpod/pytorch:latest",
-            offer=Offer(
-                id="NVIDIA A100 80GB PCIe",
-                gpu_type="NVIDIA A100 80GB PCIe",
-                vram_gb=80,
-                cuda="12.4",
-                cost_rate_usd_per_hr=1.64,
-                mode="serverless",
-            ),
             lifecycle=Lifecycle(job_timeout_s=1234.0),
             tags={"mode": "serverless"},
         )
@@ -194,7 +219,6 @@ def test_modal_idle_autostop_declaration_matches_the_built_app_request() -> None
     provider.create_instance(
         InstanceSpec(
             image="img:latest",
-            offer=Offer("A10", "A10", 24, "12.4", 1.10, mode="serverless"),
             run_id="r1",
             setup_steps=(SetupStep("echo hi"),),
             launch=Launch(("python", "-m", "server")),
@@ -234,6 +258,11 @@ def test_skypilot_on_instance_deadline_declaration_matches_the_rendered_setup() 
         def __init__(self) -> None:
             self.launches: list[dict[str, Any]] = []
             self.Task = _FakeTaskNamespace()  # noqa: N815 — mirrors sky.Task
+
+        def list_accelerators(self, **_kw: object) -> object:
+            """Answer S4\'s in-provider catalog read with a frozen list."""
+
+            return list(_S4_ACCELERATORS)
 
         def launch(self, task: Any, **kwargs: Any) -> tuple[None, None]:
             del kwargs

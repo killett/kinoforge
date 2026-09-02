@@ -123,7 +123,6 @@ def test_c29_phase_b_boot_restart_loop_reap_fires_during_provision() -> None:
     # well below the 90 s threshold tick over tick.
     spec = InstanceSpec(
         image="mirror.gcr.io/library/alpine:latest",
-        offer=cheapest,
         env={},
         setup_steps=(SetupStep("sleep 5; exit 1"),),
     )

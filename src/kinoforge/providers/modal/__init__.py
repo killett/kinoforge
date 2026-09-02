@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from kinoforge.core import registry
 from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.ephemeral import EphemeralSession
+from kinoforge.core.errors import CapacityError
 from kinoforge.core.interfaces import (
     ComputeProvider,
     FieldSupport,
@@ -161,7 +162,6 @@ class ModalProvider(ComputeProvider):
             "setup_steps": c,  # partitioned into the image bake + boot script
             "launch": c,  # ModalAppRequest.launch_line
             "lifecycle": c,  # scaledown_window_s + startup_timeout_s
-            "offer": c,  # ModalAppRequest.gpu
             "backend_options": u,  # Options is empty: no knob to consume
         }
 
@@ -226,8 +226,18 @@ class ModalProvider(ComputeProvider):
                 f"server boot command); got setup_steps={len(spec.setup_steps)} "
                 f"launch={spec.launch!r}"
             )
-        if spec.offer is None:
-            raise ValueError("ModalProvider requires spec.offer (GPU selection)")
+        # compute-seam S4: Modal picks its own GPU class from the portable
+        # placement block. It schedules rather than books a host, so a caller
+        # pre-deciding a SKU never had anything to pin here beyond the class
+        # name this lookup produces.
+        candidates = modal_offers(spec.placement)
+        if not candidates:
+            raise CapacityError(
+                f"no Modal GPU class satisfies the placement "
+                f"(min_vram_gb={spec.placement.min_vram_gb}, "
+                f"accelerators={spec.placement.accelerators or '(any)'})"
+            )
+        chosen = candidates[0]
 
         # Ephemeral runs must not leak the subcommand/timestamp-bearing
         # run_id into the app name: `modal app stop` only STOPS an app, and
@@ -269,7 +279,7 @@ class ModalProvider(ComputeProvider):
         req = ModalAppRequest(
             run_id=app_run_id,
             image=spec.image,
-            gpu=spec.offer.gpu_type,
+            gpu=chosen.gpu_type,
             provision_script=boot_script,
             launch_line=launch_line,
             env=env,
@@ -297,7 +307,7 @@ class ModalProvider(ComputeProvider):
             created_at=self._clock(),
             endpoints={"8000": url},
             tags=dict(spec.tags),
-            cost_rate_usd_per_hr=spec.offer.cost_rate_usd_per_hr,
+            cost_rate_usd_per_hr=chosen.cost_rate_usd_per_hr,
         )
 
     def realized_rate(self, instance: Instance) -> float | None:

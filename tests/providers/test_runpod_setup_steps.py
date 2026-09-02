@@ -19,8 +19,48 @@ from typing import Any
 
 import pytest
 
-from kinoforge.core.interfaces import InstanceSpec, Launch, Offer, SetupStep
+from kinoforge.core.interfaces import InstanceSpec, Launch, SetupStep
 from kinoforge.providers.runpod import RunPodProvider
+
+#: compute-seam S4: RunPod selects its own SKU inside create_instance, so every
+#: transport a create test drives must answer the catalog query first.
+_S4_GPU_TYPES: dict[str, object] = {
+    "data": {
+        "gpuTypes": [
+            {
+                "id": name,
+                "displayName": name,
+                "memoryInGb": vram,
+                "secureCloud": True,
+                "lowestPrice": {
+                    "minimumBidPrice": price,
+                    "uninterruptablePrice": price,
+                },
+            }
+            # Wide enough that both shapes of shipped config find something: a
+            # DEFAULT Placement (48 GB floor, $2.20 cap) and the cheap
+            # interpolate configs (16 GB floor, $1.00 cap, named 24 GB SKUs).
+            for name, vram, price in (
+                ("NVIDIA RTX A4000", 16, 0.32),
+                ("NVIDIA RTX A5000", 24, 0.44),
+                ("NVIDIA GeForce RTX 4090", 24, 0.69),
+                ("NVIDIA A100 80GB PCIe", 80, 1.64),
+            )
+        ]
+    }
+}
+
+
+def _create_body(captured: list[Any]) -> dict[str, Any]:
+    """Return the create-mutation body, skipping S4's catalog read."""
+    for item in captured:
+        body = item[1] if isinstance(item, tuple) else item
+        if "gpuTypes" not in str(body.get("query", "")):
+            return dict(body)
+    raise AssertionError("no create mutation was sent")
+
+
+_create_body_entry = _create_body
 
 
 def _capture_post() -> tuple[
@@ -31,7 +71,14 @@ def _capture_post() -> tuple[
     captured: list[dict[str, Any]] = []
 
     def _http_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        if "gpuTypes" in str(body.get("query", "")):
+            return _S4_GPU_TYPES
+
+        if "gpuTypes" in str(body.get("query", "")):
+            return _S4_GPU_TYPES
         captured.append(body)
+        if "gpuTypes" in str(body.get("query", "")):
+            return _S4_GPU_TYPES
         return {"data": {"podFindAndDeployOnDemand": {"id": "pod-xyz"}}}
 
     return captured, _http_post
@@ -48,13 +95,6 @@ def _spec(**kwargs: Any) -> InstanceSpec:
     """Return a minimal creatable spec, overridden by *kwargs*."""
     return InstanceSpec(
         image="runpod/pytorch:latest",
-        offer=Offer(
-            id="NVIDIA A100 80GB PCIe",
-            gpu_type="NVIDIA A100 80GB PCIe",
-            vram_gb=80,
-            cuda="12.4",
-            cost_rate_usd_per_hr=1.64,
-        ),
         **kwargs,
     )
 
@@ -85,7 +125,7 @@ def test_runpod_appends_the_rendered_launch_to_the_steps() -> None:
         )
     )
     assert (
-        _decoded_script(captured[0])
+        _decoded_script(_create_body_entry(captured))
         == "step-one\nstep-two\ncd /srv && exec serve --port 8000"
     )
 
@@ -108,6 +148,9 @@ def test_runpod_sends_no_script_at_all_for_a_spec_with_no_steps() -> None:
     """
     captured, post = _capture_post()
     _provider(post).create_instance(_spec())
-    env = {e["key"]: e["value"] for e in captured[0]["variables"]["input"]["env"]}
+    env = {
+        e["key"]: e["value"]
+        for e in _create_body_entry(captured)["variables"]["input"]["env"]
+    }
     assert "KINOFORGE_PROVISION_SCRIPT" not in env
-    assert captured[0]["variables"]["input"]["dockerArgs"] == ""
+    assert _create_body_entry(captured)["variables"]["input"]["dockerArgs"] == ""

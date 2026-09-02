@@ -113,7 +113,6 @@ def _spec(offer: Offer | None) -> InstanceSpec:
     """Return a pod spec carrying *offer* and a three-accelerator placement."""
     return InstanceSpec(
         image="runpod/pytorch:latest",
-        offer=offer,
         placement=Placement(
             accelerators=("GPU_0", "GPU_1", "GPU_2"), min_vram_gb=80, max_usd_per_hr=2.0
         ),
@@ -172,18 +171,18 @@ def test_runpod_does_not_retry_a_non_capacity_error() -> None:
     assert len(transport.created_gpu_ids) == 1
 
 
-def test_a_successful_first_create_never_enumerates_the_catalog() -> None:
-    """The happy path costs exactly one API call, as it does today.
+def test_the_catalog_is_read_once_per_create_not_once_per_attempt() -> None:
+    """One enumeration, however many offers it takes.
 
-    Bug caught: enumerating eagerly to build the retry list turns every launch
-    into two round trips, and — because the caller's pre-selected offer would
-    then be re-derived — changes which SKU is booked on the path that works.
+    Bug caught: re-reading the catalog inside the retry loop turns a capacity
+    drought into N round trips against an API that is already rate-limiting,
+    and can change the candidate list mid-walk so an offer is tried twice.
     """
-    transport = _ScriptedTransport(["ok"])
-    _provider(transport).create_instance(_spec(_offer(0)))
+    transport = _ScriptedTransport(["capacity", "capacity", "ok"])
+    _provider(transport).create_instance(_spec(None))
 
-    assert transport.created_gpu_ids == ["GPU_0"]
-    assert transport.gpu_type_queries == 0
+    assert transport.created_gpu_ids == ["GPU_0", "GPU_1", "GPU_2"]
+    assert transport.gpu_type_queries == 1
 
 
 def test_runpod_selects_for_itself_when_the_caller_passes_no_offer() -> None:

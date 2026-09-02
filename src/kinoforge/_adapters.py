@@ -147,7 +147,7 @@ def build_provider_for(cfg: "Config") -> "ComputeProvider | None":
 def build_capacity_wait_for(cfg: "Config") -> float:
     """Return the create-retry window, in seconds, for the configured provider.
 
-    Capacity-miss retry is a RunPod behaviour: its ``find_offers`` lists an
+    Capacity-miss retry is a RunPod behaviour: its catalog lists an
     offer that can vanish before create. SkyPilot's equivalent is
     ``retry_until_up``, which its own optimizer honours, and Modal handles
     scheduling itself. A provider that declares no ``capacity_wait_s`` gets
@@ -157,7 +157,7 @@ def build_capacity_wait_for(cfg: "Config") -> float:
         cfg: The loaded kinoforge config.
 
     Returns:
-        Seconds to keep retrying ``find_offers`` + ``create_instance`` on a
+        Seconds to keep retrying ``create_instance`` on a
         :class:`~kinoforge.core.errors.CapacityError`; ``0.0`` disables retry.
     """
     if cfg.compute is None or cfg.compute.provider != "runpod":

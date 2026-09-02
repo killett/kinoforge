@@ -150,7 +150,6 @@ def test_runpod_util_disk_field_probe() -> None:
 
     spec = InstanceSpec(
         image="mirror.gcr.io/library/alpine:latest",
-        offer=cheapest,
         env={},
     )
     instance = provider.create_instance(spec)

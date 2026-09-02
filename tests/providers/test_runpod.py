@@ -66,8 +66,41 @@ def _make_creds() -> FakeCreds:
 # ---------------------------------------------------------------------------
 
 
+#: compute-seam S4: RunPod selects its own SKU inside create_instance, so every
+#: transport a create test drives has to answer the catalog query too. One
+#: entry, priced under the default cap and above the default VRAM floor, so it
+#: survives filter_offers on a default Placement.
+_GPU_TYPES_RESPONSE: dict[str, Any] = {
+    "data": {
+        "gpuTypes": [
+            {
+                "id": "NVIDIA A100 80GB PCIe",
+                "displayName": "A100 80GB",
+                "memoryInGb": 80,
+                "secureCloud": True,
+                "lowestPrice": {
+                    "minimumBidPrice": 1.64,
+                    "uninterruptablePrice": 1.64,
+                },
+            }
+        ]
+    }
+}
+
+
+def _is_catalog_query(body: dict[str, Any]) -> bool:
+    """True when *body* is the gpuTypes enumeration, not a create mutation."""
+    return "gpuTypes" in str(body.get("query", ""))
+
+
 class HttpPostSpy:
-    """Records every (url, body) call; returns the configured response."""
+    """Records every (url, body) call; returns the configured response.
+
+    The catalog query is answered separately from the scripted response: since
+    S4 the provider enumerates before it creates, and a spy that replied with a
+    create-shaped body to the catalog query would make every create test fail
+    as "no capacity".
+    """
 
     def __init__(self, response: dict[str, Any] | None = None) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -75,7 +108,49 @@ class HttpPostSpy:
 
     def __call__(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((url, body))
+        if _is_catalog_query(body) and not (
+            "gpuTypes" in str(self._response) or "errors" in self._response
+        ):
+            # Stand in for the catalog read a create now performs first. A test
+            # that scripted its OWN catalog, or an errors shape it wants that
+            # read to hit, keeps its response.
+            return _GPU_TYPES_RESPONSE
         return self._response
+
+
+class CatalogThenErrorSpy(HttpPostSpy):
+    """Answers the catalog query, then returns *error_response* to the create.
+
+    Needed since S4: create_instance enumerates first, so a spy that returned
+    the same error to every call would fail at the catalog read and never reach
+    the create the test is about.
+    """
+
+    def __init__(self, error_response: dict[str, Any]) -> None:
+        super().__init__(response=error_response)
+
+    def __call__(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append((url, body))
+        if _is_catalog_query(body):
+            return _GPU_TYPES_RESPONSE
+        return self._response
+
+
+#: The gpu_type the canned catalog offers — what a create attempt actually
+#: books now that the provider selects for itself.
+_CATALOG_GPU = "NVIDIA A100 80GB PCIe"
+
+
+def _create_calls(
+    spy: HttpPostSpy | MultiResponseHttpPostSpy,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Return only the create-mutation POSTs, dropping the catalog query.
+
+    compute-seam S4: create_instance enumerates before it creates, so the
+    create body is no longer ``calls[0]``. Filtering by shape rather than by
+    index keeps these assertions about the PAYLOAD, which is what they are for.
+    """
+    return [(u, b) for u, b in spy.calls if not _is_catalog_query(b)]
 
 
 class MultiResponseHttpPostSpy:
@@ -162,7 +237,6 @@ def pod_spec() -> InstanceSpec:
     """
     return InstanceSpec(
         image="runpod/pytorch:2.1",
-        offer=_CAPACITY_OFFER,
         lifecycle=Lifecycle(
             idle_timeout_s=1800,
             job_timeout_s=900,
@@ -178,7 +252,6 @@ def serverless_spec() -> InstanceSpec:
     """InstanceSpec for serverless mode, carrying an offer like a real caller."""
     return InstanceSpec(
         image="runpod/pytorch:2.1",
-        offer=_CAPACITY_OFFER,
         lifecycle=Lifecycle(
             job_timeout_s=600,
             max_workers=3,
@@ -201,7 +274,7 @@ def test_find_offers_fetches_gpu_list_and_filters() -> None:
     reqs = Placement(min_vram_gb=48, max_usd_per_hr=2.20)
     offers = provider.find_offers(reqs)
 
-    assert len(http_post.calls) == 1, "expected exactly one POST call"
+    assert len(http_post.calls) == 1, "expected exactly one create POST"
     # Real fixture: 46 GPU types, 7 have vram>=48 GB and uninterruptablePrice<=2.20
     assert len(offers) == 7
     # A100 80GB PCIe is the first non-null-priced 80GB entry in the fixture
@@ -344,7 +417,7 @@ def test_create_pod_calls_http_post(pod_spec: InstanceSpec) -> None:
 
     provider.create_instance(pod_spec)
 
-    assert len(http_post.calls) == 1
+    assert len(_create_calls(http_post)) == 1
 
 
 def test_create_pod_body_contains_image(pod_spec: InstanceSpec) -> None:
@@ -354,7 +427,7 @@ def test_create_pod_body_contains_image(pod_spec: InstanceSpec) -> None:
 
     provider.create_instance(pod_spec)
 
-    _url, body = http_post.calls[0]
+    _url, body = _create_calls(http_post)[0]
     # Walk the body to find image somewhere in the nested query / variables
     body_str = str(body)
     assert "runpod/pytorch:2.1" in body_str
@@ -367,7 +440,7 @@ def test_create_pod_injects_terminate_key(pod_spec: InstanceSpec) -> None:
 
     provider.create_instance(pod_spec)
 
-    _url, body = http_post.calls[0]
+    _url, body = _create_calls(http_post)[0]
     env = _extract_env(body)
     assert "RUNPOD_TERMINATE_KEY" in env
     assert env["RUNPOD_TERMINATE_KEY"] == "t-secret"
@@ -380,7 +453,7 @@ def test_create_pod_does_not_inject_main_api_key(pod_spec: InstanceSpec) -> None
 
     provider.create_instance(pod_spec)
 
-    _url, body = http_post.calls[0]
+    _url, body = _create_calls(http_post)[0]
     env = _extract_env(body)
     assert "RUNPOD_API_KEY" not in env
 
@@ -392,7 +465,7 @@ def test_create_pod_embeds_selfterm_script(pod_spec: InstanceSpec) -> None:
 
     provider.create_instance(pod_spec)
 
-    _url, body = http_post.calls[0]
+    _url, body = _create_calls(http_post)[0]
     env = _extract_env(body)
     assert "KINOFORGE_SELFTERM_SCRIPT" in env
     script = env["KINOFORGE_SELFTERM_SCRIPT"]
@@ -431,7 +504,6 @@ def test_create_pod_appends_http_protocol_suffix_to_bare_ports() -> None:
     """
     layer_q_spec = InstanceSpec(
         image="runpod/pytorch:2.1",
-        offer=_CAPACITY_OFFER,
         ports=("8188",),  # bare port — caller doesn't know about protocol
         lifecycle=Lifecycle(
             idle_timeout_s=1800,
@@ -447,8 +519,8 @@ def test_create_pod_appends_http_protocol_suffix_to_bare_ports() -> None:
     provider.create_instance(layer_q_spec)
 
     # Exactly one create-pod POST call.
-    assert len(http_post.calls) == 1
-    body = http_post.calls[0][1]
+    assert len(_create_calls(http_post)) == 1
+    body = _create_calls(http_post)[0][1]
     sent_ports = body["variables"]["input"]["ports"]
     assert sent_ports == "8188/http", (
         f"expected RunPod-proxy-compatible 'PORT/http' format, got {sent_ports!r}"
@@ -462,7 +534,6 @@ def test_create_pod_preserves_explicit_protocol_suffix_on_ports() -> None:
     """
     spec_with_explicit = InstanceSpec(
         image="runpod/pytorch:2.1",
-        offer=_CAPACITY_OFFER,
         ports=("22/tcp", "8188/http"),  # mix of explicit protocols
         lifecycle=Lifecycle(
             idle_timeout_s=1800,
@@ -477,7 +548,7 @@ def test_create_pod_preserves_explicit_protocol_suffix_on_ports() -> None:
 
     provider.create_instance(spec_with_explicit)
 
-    sent_ports = http_post.calls[0][1]["variables"]["input"]["ports"]
+    sent_ports = _create_calls(http_post)[0][1]["variables"]["input"]["ports"]
     assert sent_ports == "22/tcp,8188/http"
 
 
@@ -499,7 +570,6 @@ def test_create_pod_populates_endpoints_eagerly_from_spec_ports() -> None:
     """
     layer_q_spec = InstanceSpec(
         image="runpod/pytorch:2.1",
-        offer=_CAPACITY_OFFER,
         ports=("8188",),  # Layer Q path: render_provision.ports → spec.ports
         lifecycle=Lifecycle(
             idle_timeout_s=1800,
@@ -572,7 +642,7 @@ def test_create_instance_raises_capacity_error_on_no_resources(
     failure shape returns.
     """
     err_msg = "This machine does not have the resources to deploy your pod"
-    http_post = HttpPostSpy(response={"errors": [{"message": err_msg}]})
+    http_post = CatalogThenErrorSpy({"errors": [{"message": err_msg}]})
     provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
     spec = _spec_with_offer(pod_spec)
 
@@ -580,7 +650,7 @@ def test_create_instance_raises_capacity_error_on_no_resources(
         provider.create_instance(spec)
 
     # AC5: message names the offer's gpu_type so operators can debug
-    assert _CAPACITY_OFFER.gpu_type in str(exc_info.value)
+    assert _CATALOG_GPU in str(exc_info.value)
 
 
 def test_create_instance_capacity_error_case_insensitive(
@@ -593,7 +663,7 @@ def test_create_instance_capacity_error_case_insensitive(
     re-introducing PROGRESS:182.
     """
     err_msg = "MACHINE DOES NOT HAVE THE RESOURCES TO DEPLOY YOUR POD"
-    http_post = HttpPostSpy(response={"errors": [{"message": err_msg}]})
+    http_post = CatalogThenErrorSpy({"errors": [{"message": err_msg}]})
     provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
     spec = _spec_with_offer(pod_spec)
 
@@ -611,16 +681,23 @@ def test_create_instance_capacity_error_chains_underlying_value_error(
     operators to the actual capacity reason.
     """
     raw_msg = "This machine does not have the resources to deploy your pod"
-    http_post = HttpPostSpy(response={"errors": [{"message": raw_msg}]})
+    http_post = CatalogThenErrorSpy({"errors": [{"message": raw_msg}]})
     provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
     spec = _spec_with_offer(pod_spec)
 
     with pytest.raises(CapacityError) as exc_info:
         provider.create_instance(spec)
 
-    cause = exc_info.value.__cause__
-    assert isinstance(cause, ValueError)
-    assert raw_msg in str(cause)
+    # S4: the retry loop wraps the per-offer CapacityError, so the raw RunPod
+    # ValueError is one link deeper. What must survive is the MESSAGE and the
+    # ValueError itself — an operator reading the chain has to reach it.
+    chain: list[BaseException] = []
+    exc: BaseException | None = exc_info.value
+    while exc is not None:
+        chain.append(exc)
+        exc = exc.__cause__
+    assert any(isinstance(link, ValueError) for link in chain), chain
+    assert any(raw_msg in str(link) for link in chain), chain
 
 
 def test_create_instance_non_capacity_error_still_raises_value_error(
@@ -634,7 +711,7 @@ def test_create_instance_non_capacity_error_still_raises_value_error(
     causing the orchestrator to retry across every offer for a problem
     that fails identically on each.
     """
-    http_post = HttpPostSpy(response={"errors": [{"message": "template not found"}]})
+    http_post = CatalogThenErrorSpy({"errors": [{"message": "template not found"}]})
     provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
     spec = _spec_with_offer(pod_spec)
 
@@ -669,7 +746,7 @@ def test_create_serverless_no_selfterm_script(serverless_spec: InstanceSpec) -> 
 
     provider.create_instance(serverless_spec)
 
-    _url, body = http_post.calls[0]
+    _url, body = _create_calls(http_post)[0]
     body_str = str(body)
     assert "KINOFORGE_SELFTERM_SCRIPT" not in body_str
 
@@ -681,7 +758,7 @@ def test_create_serverless_uses_lifecycle_caps(serverless_spec: InstanceSpec) ->
 
     provider.create_instance(serverless_spec)
 
-    _url, body = http_post.calls[0]
+    _url, body = _create_calls(http_post)[0]
     body_str = str(body)
     # The values 3 (max_workers) and 5 (max_in_flight) must appear somewhere
     assert "3" in body_str
@@ -891,7 +968,7 @@ def test_destroy_instance_raises_on_terminate_graphql_errors() -> None:
     # we must surface the GraphQL failure, not mask it as a poll timeout.
     assert "terminate" in str(excinfo.value).lower()
     # Only one POST should have happened — no polling on a failed terminate.
-    assert len(http_post.calls) == 1, (
+    assert len(_create_calls(http_post)) == 1, (
         f"expected 1 POST (terminate only), got {len(http_post.calls)} "
         f"(polls fired after failed terminate)"
     )
@@ -1048,8 +1125,8 @@ def test_get_instance_query_selects_cost_per_hr_field() -> None:
 
     provider.get_instance("pod-q")
 
-    assert len(http_post.calls) == 1
-    query = http_post.calls[0][1]["query"]
+    assert len(_create_calls(http_post)) == 1
+    query = _create_calls(http_post)[0][1]["query"]
     assert "costPerHr" in query, (
         f"GraphQL pod() query missing costPerHr field; got: {query!r}"
     )
@@ -1067,8 +1144,8 @@ def test_list_instances_query_selects_cost_per_hr_field() -> None:
 
     provider.list_instances()
 
-    assert len(http_post.calls) == 1
-    query = http_post.calls[0][1]["query"]
+    assert len(_create_calls(http_post)) == 1
+    query = _create_calls(http_post)[0][1]["query"]
     assert "costPerHr" in query, (
         f"GraphQL myself.pods query missing costPerHr field; got: {query!r}"
     )
@@ -1377,7 +1454,6 @@ def test_create_pod_transforms_env_dict_to_key_value_array() -> None:
 
     spec = InstanceSpec(
         image="runpod/pytorch:2.1",
-        offer=_CAPACITY_OFFER,
         lifecycle=Lifecycle(
             idle_timeout_s=1800,
             job_timeout_s=900,
@@ -1388,7 +1464,7 @@ def test_create_pod_transforms_env_dict_to_key_value_array() -> None:
     )
     provider.create_instance(spec)
 
-    _url, body = http_post.calls[0]
+    _url, body = _create_calls(http_post)[0]
     env_field = body["variables"]["input"]["env"]
     assert isinstance(env_field, list), (
         f"env must be a list of {{key, value}} pairs, got: {type(env_field).__name__}"
@@ -1407,8 +1483,8 @@ def test_create_pod_raises_on_graphql_errors_block() -> None:
     failed, leaving the orchestrator with no way to track a possibly-real
     pod and risking cost leak.
     """
-    http_post = HttpPostSpy(
-        response={
+    http_post = CatalogThenErrorSpy(
+        {
             "errors": [
                 {"message": "Field key required"},
                 {"message": "Field value required"},
@@ -1420,7 +1496,6 @@ def test_create_pod_raises_on_graphql_errors_block() -> None:
 
     spec = InstanceSpec(
         image="x",
-        offer=_CAPACITY_OFFER,
         lifecycle=Lifecycle(),
         tags={"mode": "pod"},
     )
@@ -1440,7 +1515,6 @@ def test_create_pod_raises_on_empty_pod_id() -> None:
 
     spec = InstanceSpec(
         image="x",
-        offer=_CAPACITY_OFFER,
         lifecycle=Lifecycle(),
         tags={"mode": "pod"},
     )
@@ -1642,7 +1716,9 @@ def test_find_instance_by_tag_recovers_just_created_pod(
     )
     list_pods_response = _load_fixture("list_pods.json")
     http_post = MultiResponseHttpPostSpy(
-        responses=[_POD_CREATE_RESPONSE, list_pods_response]
+        # S4: create_instance reads the catalog before it creates, so the
+        # scripted sequence starts with that read.
+        responses=[_GPU_TYPES_RESPONSE, _POD_CREATE_RESPONSE, list_pods_response]
     )
     provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
 

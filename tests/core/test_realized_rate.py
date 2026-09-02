@@ -42,7 +42,7 @@ def _modal_provider_with_deployment(gpu: str) -> tuple[ModalProvider, Instance]:
         InstanceSpec,
         Launch,
         Lifecycle,
-        Offer,
+        Placement,
         SetupStep,
     )
     from kinoforge.providers.modal import ModalProvider  # noqa: PLC0415
@@ -53,8 +53,10 @@ def _modal_provider_with_deployment(gpu: str) -> tuple[ModalProvider, Instance]:
     )
     spec = InstanceSpec(
         image="runpod/pytorch:2.4.0-cuda12.4",
-        offer=Offer(gpu, gpu, 24, "12.8", 0.0, mode="serverless"),
         run_id="run1",
+        # S4: Modal selects its GPU class from placement, so this is how a
+        # caller asks for A10 now.
+        placement=Placement(accelerators=(gpu,), min_vram_gb=24),
         setup_steps=(SetupStep("echo hi"),),
         launch=Launch(("python", "-m", "server")),
         lifecycle=Lifecycle(idle_timeout_s=300),

@@ -64,7 +64,6 @@ _SPEC_PORTABLE = {
     "setup_steps",
     "launch",
     "lifecycle",
-    "offer",
     "backend_options",
 }
 
@@ -453,6 +452,9 @@ def _runpod_mode_selects_its_mutation() -> _Proof:
 
             def post(_url: str, body: dict[str, Any]) -> dict[str, Any]:
                 sent.append(body)
+                if "gpuTypes" in str(body.get("query", "")):
+                    # S4: create_instance reads the catalog before it creates.
+                    return _RUNPOD_GPU_TYPES
                 return {
                     "data": {
                         "podFindAndDeployOnDemand": {"id": "pod-probe"},
@@ -466,7 +468,13 @@ def _runpod_mode_selects_its_mutation() -> _Proof:
             provider.create_instance(
                 dataclasses.replace(spec, tags={**spec.tags, "mode": mode})
             )
-            return str(sent[0]["query"])
+            return str(
+                next(
+                    b["query"]
+                    for b in sent
+                    if "gpuTypes" not in str(b.get("query", ""))
+                )
+            )
 
         pod, serverless = sent_query("pod"), sent_query("serverless")
         if pod == serverless:
@@ -619,8 +627,14 @@ def _runpod_offers(reqs: Placement) -> list[Offer]:
 
 
 def _skypilot_offers(reqs: Placement) -> list[Offer]:
-    """Return SkyPilot's own ``find_offers`` output over the fake catalog."""
-    return SkyPilotProvider(_FakeSkyCatalog()).find_offers(reqs)
+    """Return the accelerators SkyPilot would consider, filtered and ranked.
+
+    compute-seam S4 made SkyPilot's selection private (it has no bookable
+    catalog to publish). The probe goes through ``_candidate_accelerators``,
+    which is the filtering-and-ranking half of that selection — the half these
+    placement proofs are about.
+    """
+    return SkyPilotProvider(_FakeSkyCatalog())._candidate_accelerators(reqs)  # noqa: SLF001
 
 
 _CATALOGS: dict[str, Callable[[Placement], list[Offer]]] = {
@@ -831,11 +845,6 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             probe={"lifecycle.idle_timeout_s": 4242.0},
             expected=True,
         ),
-        "offer": _tracks(
-            lambda ln: _runpod_input(ln)["gpuTypeId"],
-            probe={"offer.gpu_type": "KF-PROBE-GPU"},
-            expected="KF-PROBE-GPU",
-        ),
         "backend_options": _tracks_cfg(
             lambda ln: _runpod_input(ln)["cloudType"],
             backend_options={"runpod": {"cloud_type": "community"}},
@@ -886,11 +895,6 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             lambda ln: ln.payload["launch_kwargs"]["idle_minutes_to_autostop"],
             probe={"lifecycle.idle_timeout_s": 4242.0},
             expected=70,
-        ),
-        "offer": _tracks(
-            lambda ln: _sky_resources(ln).get("accelerators"),
-            probe={"offer.gpu_type": "KF-PROBE-GPU"},
-            expected="KF-PROBE-GPU:1",
         ),
         # SkyPilot's namespace is read by the composition root and arrives as
         # constructor arguments, so the probe is at config level — the route
@@ -967,11 +971,6 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             lambda ln: _modal_request(ln)["scaledown_window_s"],
             probe={"lifecycle.idle_timeout_s": 4242.0},
             expected=4242,
-        ),
-        "offer": _tracks(
-            lambda ln: _modal_request(ln)["gpu"],
-            probe={"offer.gpu_type": "KF-PROBE-GPU"},
-            expected="KF-PROBE-GPU",
         ),
         "accelerators": _orders_by_preference(),
         "min_vram_gb": _filters(_above_every_vram, axis="min_vram_gb"),

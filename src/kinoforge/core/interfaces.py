@@ -88,7 +88,15 @@ class Placement:
 
 @dataclass(frozen=True)
 class Offer:
-    """A bookable compute offer returned by a provider."""
+    """A bookable compute offer from an enumerating provider's catalog.
+
+    compute-seam S4: NO LONGER A SEAM TYPE. ``find_offers`` left the ABC and
+    ``InstanceSpec.offer`` was deleted, so nothing portable carries an Offer any
+    more — it is the internal vocabulary of the three providers that have a
+    catalog (runpod, modal, local, which declare ``CATALOG_ENUMERATION``), plus
+    the ``kinoforge offers`` command that prints it. A declarative placer
+    (skypilot) never produces one.
+    """
 
     id: str
     gpu_type: str
@@ -280,7 +288,6 @@ class InstanceSpec:
     """Everything needed to create an instance, including guardrails + tags."""
 
     image: str
-    offer: Offer | None = None
     ports: tuple[str, ...] = ()
     volume_gb: int = 0
     volume_mount: str = ""
@@ -429,9 +436,6 @@ class ComputeProvider(ABC):
             The declared field-support mapping.
         """
         return {}
-
-    @abstractmethod
-    def find_offers(self, placement: Placement) -> list[Offer]: ...  # noqa: D102
 
     @abstractmethod
     def create_instance(self, spec: InstanceSpec) -> Instance: ...  # noqa: D102

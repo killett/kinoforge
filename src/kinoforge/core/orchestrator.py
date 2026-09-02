@@ -63,7 +63,6 @@ from kinoforge.core.interfaces import (
     Launch,
     ModelProfile,
     ModelProfileProvider,
-    Offer,
     PipelineState,
     RenderedProvision,
     Stage,
@@ -598,25 +597,26 @@ _CAPACITY_RETRY_INTERVAL_S: float = 25.0
 
 def _create_with_capacity_wait[T](
     *,
-    find_offers: Callable[[], list[Any]],
-    create: Callable[[list[Any]], T],
+    create: Callable[[], T],
     capacity_wait_s: float,
     retry_interval_s: float = _CAPACITY_RETRY_INTERVAL_S,
     clock: Clock | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> T:
-    """Retry ``find_offers`` + ``create`` while it raises CapacityError.
+    """Retry ``create`` while it raises CapacityError.
 
-    Capacity is fluid: a RunPod offer listed by find_offers can vanish by
-    create time, and a currently-empty pool can free up seconds later. Retry
-    the whole find+create on CapacityError, re-querying offers each attempt,
-    until ``capacity_wait_s`` elapses; then re-raise the last CapacityError.
-    Non-CapacityError propagates immediately. ``capacity_wait_s <= 0`` fails on
-    the first miss.
+    Capacity is fluid: a currently-empty pool can free up seconds later. Retry
+    ``create`` on CapacityError until ``capacity_wait_s`` elapses, then re-raise
+    the last one. Non-CapacityError propagates immediately.
+    ``capacity_wait_s <= 0`` fails on the first miss, which makes this a
+    pass-through on every provider that declares no wait window.
+
+    compute-seam S4 dropped the ``find_offers`` parameter: re-querying the
+    catalog between attempts is now the enumerating provider's own business,
+    inside its ``create_instance``.
 
     Args:
-        find_offers: Re-queries provider offers (fresh each attempt).
-        create: Builds the instance from offers; may raise CapacityError.
+        create: Creates the instance; may raise CapacityError.
         capacity_wait_s: Deadline; 0 disables retry.
         retry_interval_s: Sleep between attempts.
         clock: Injected clock (defaults to RealClock).
@@ -632,7 +632,7 @@ def _create_with_capacity_wait[T](
     start = the_clock.now()
     while True:
         try:
-            return create(find_offers())
+            return create()
         except CapacityError:
             if the_clock.now() - start >= capacity_wait_s:
                 raise
@@ -907,7 +907,8 @@ def _provision_instance_and_build_backend(
         ``engine.backend(instance, cfg_dict)``, hb_loop started or ``None``.
 
     Raises:
-        CapacityError: ``find_offers`` returned an empty list.
+        CapacityError: The provider found nothing bookable for the cfg's
+            placement, or every candidate it tried lacked capacity.
         AuthError: A var in ``rendered.env_required`` is absent from *creds*.
             Raised before ``create_instance`` is called.
         ProvisionFailed: Engine boot script crashed; instance already destroyed.
@@ -922,7 +923,6 @@ def _provision_instance_and_build_backend(
             after the instance is already created — that instance is destroyed
             before the exception propagates.
     """
-    hw_reqs = cfg.placement()
     lifecycle = cfg.lifecycle()
     image = cfg.compute.image if cfg.compute is not None else ""
     # THE single resolution site for the capacity window. It sits beside the
@@ -964,11 +964,10 @@ def _provision_instance_and_build_backend(
     # operator as several distinct guardrail problems instead of one.
     assert_launch_capabilities(cfg, launch=rendered.launch)
 
-    def _build_spec(offer: Offer) -> InstanceSpec:
+    def _build_spec() -> InstanceSpec:
         return build_instance_spec(
             cfg=cfg,
             rendered=rendered,
-            offer=offer,
             engine_name=resolved_engine.name,
             key_hash=key_hash,
             image=image,
@@ -986,29 +985,13 @@ def _provision_instance_and_build_backend(
     # capacity_wait_s elapses, then re-raise clean. Rides transient RunPod
     # capacity droughts instead of failing the run on the first miss. S1 made
     # the window provider-scoped — see build_capacity_wait_for.
-    def _find_offers() -> list[Offer]:
-        found = resolved_provider.find_offers(hw_reqs)
-        if not found:
-            prefix = "for discovery " if for_discovery else ""
-            raise CapacityError(
-                f"no offers available {prefix}from provider "
-                f"{getattr(resolved_provider, 'name', repr(resolved_provider))!r}"
-            )
-        return found
-
-    def _create(offers: list[Offer]) -> tuple[Instance, Offer]:
-        # compute-seam S4: the orchestrator hands over ONE spec and the
-        # provider owns selection from here. RunPod retries the rest of its own
-        # ranked catalog internally on CapacityError; providers without a
-        # catalog never had anything to iterate. The enumeration above survives
-        # because the capacity-WAIT window still re-queries between attempts,
-        # and because Task 8 has not yet deleted spec.offer.
-        chosen = offers[0]
-        return resolved_provider.create_instance(_build_spec(chosen)), chosen
-
-    instance, _chosen_offer = _create_with_capacity_wait(
-        find_offers=_find_offers,
-        create=_create,
+    # compute-seam S4: the orchestrator hands over ONE spec and the provider
+    # selects for itself — RunPod from its catalog, Modal from its GPU table,
+    # SkyPilot by handing constraints to its optimizer. The capacity-WAIT
+    # window survives because capacity is fluid: a provider that raises
+    # CapacityError now may succeed in 25 s.
+    instance = _create_with_capacity_wait(
+        create=lambda: resolved_provider.create_instance(_build_spec()),
         capacity_wait_s=capacity_wait_s,
     )
     # B7 — acquire the cooperative session-claim lock now that instance.id is
@@ -1767,17 +1750,11 @@ def deploy(
         backend = resolved_engine.backend(None, _cfg_dict(cfg))
         return DeployResult(instance=None, endpoints=backend.endpoints())
 
-    # Compute path: resolve provider and find offers.
+    # Compute path: resolve the provider. compute-seam S4 — selection happens
+    # inside create_instance, so there is no catalog read here and no
+    # "no offers" pre-check: an enumerating provider raises CapacityError from
+    # its own empty catalog, with its own message.
     resolved_provider = _resolve_provider(cfg, provider)
-    hw_reqs = cfg.placement()
-    offers = resolved_provider.find_offers(hw_reqs)
-
-    if not offers:
-        raise CapacityError(
-            f"no compute offers available from provider "
-            f"{getattr(resolved_provider, 'name', repr(resolved_provider))!r} "
-            f"for hardware requirements {hw_reqs!r}"
-        )
 
     lifecycle = cfg.lifecycle()
 
@@ -1791,7 +1768,7 @@ def deploy(
             f"  engine:           {resolved_engine.name}\n"
             f"  provider:         {getattr(resolved_provider, 'name', repr(resolved_provider))}\n"
             f"  model count:      {len(cfg.models)}\n"
-            f"  offers available: {len(offers)}\n"
+            f"  placement:        {cfg.placement()}\n"
             f"  lifecycle ceilings:\n"
             f"    idle_timeout_s:  {lifecycle.idle_timeout_s}\n"
             f"    max_lifetime_s:  {lifecycle.max_lifetime_s}\n"
@@ -1804,13 +1781,12 @@ def deploy(
     # Live run: create the instance.
     image = cfg.compute.image if cfg.compute is not None else ""
 
-    def _build_spec(offer: Offer) -> InstanceSpec:
+    def _build_spec() -> InstanceSpec:
         return build_instance_spec(
             cfg=cfg,
             rendered=RenderedProvision(
                 script="", image=image, ports=[], env_required=[]
             ),
-            offer=offer,
             engine_name=resolved_engine.name,
             key_hash=key_hash,
             image=image,
@@ -1821,8 +1797,7 @@ def deploy(
         )
 
     # compute-seam S4: selection and its retry belong to the provider.
-    _chosen_offer = offers[0]
-    instance = resolved_provider.create_instance(_build_spec(_chosen_offer))
+    instance = resolved_provider.create_instance(_build_spec())
 
     try:
         # Poll until ready (LocalProvider returns ready immediately; cloud providers

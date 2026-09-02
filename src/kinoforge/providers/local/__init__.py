@@ -188,7 +188,6 @@ class LocalProvider(ComputeProvider):
             "setup_steps": u,  # nothing is provisioned; never CONSUMED
             "launch": u,  # nothing is executed; never CONSUMED
             "lifecycle": u,  # no guardrail runs in-process
-            "offer": u,  # cost_rate is the literal 0.0
             "backend_options": u,  # Options is empty: no knob to consume
         }
 

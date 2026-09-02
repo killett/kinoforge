@@ -25,7 +25,6 @@ Self-registers under ``"runpod"`` when this module is imported.
 from __future__ import annotations
 
 import base64
-import dataclasses
 import gzip
 import json
 import logging
@@ -469,7 +468,6 @@ class RunPodProvider(ComputeProvider):
             "setup_steps": c,  # combined, then gzip+b64 into the script env var
             "launch": c,  # rendered and appended — RunPod's PID-1 convention
             "lifecycle": c,  # rendered into KINOFORGE_SELFTERM_SCRIPT
-            "offer": c,  # "gpuTypeId"
             "backend_options": c,  # "cloudType" / "restartPolicy"
         }
 
@@ -606,89 +604,52 @@ class RunPodProvider(ComputeProvider):
         self._created_instances[instance.id] = instance
         return instance
 
-    def _create_once(self, spec: InstanceSpec) -> Instance:
-        """Create exactly one pod or endpoint from *spec*, no retry.
+    def _create_once(self, spec: InstanceSpec, offer: Offer) -> Instance:
+        """Create exactly one pod or endpoint on *offer*, no retry.
 
         Args:
-            spec: The instance specification, with ``offer`` already chosen.
+            spec: The instance specification.
+            offer: The catalog offer this attempt books.
 
         Returns:
             The created :class:`~kinoforge.core.interfaces.Instance`.
         """
         mode = spec.tags.get("mode", "pod")
         if mode == "serverless":
-            return self._create_serverless(spec)
-        return self._create_pod(spec)
+            return self._create_serverless(spec, offer)
+        return self._create_pod(spec, offer)
 
     def _create_with_offer_retry(self, spec: InstanceSpec) -> Instance:
-        """Book the first offer that has capacity, in preference order.
+        """Book the first offer in its own catalog that has capacity.
 
         compute-seam S4 moved this loop out of the orchestrator, which was
         iterating a catalog on behalf of providers that do not have one. RunPod
-        does: :meth:`find_offers` returns it, already filtered and ranked by
-        ``placement.accelerators``.
-
-        Enumeration is LAZY on purpose. When the caller has already chosen an
-        offer (today's orchestrator, and the golden harness), the happy path
-        costs exactly one API call and books exactly the SKU it was handed —
-        eagerly enumerating to build a retry list would double every launch's
-        round trips and re-derive the choice on the path that works. The
-        catalog is read only once an attempt has actually hit CapacityError, or
-        when no offer was handed down at all. Task 8 deletes ``spec.offer`` and
-        the second branch becomes the only one.
+        does, and it now reads it here: :meth:`find_offers` returns it already
+        filtered and ranked by ``placement.accelerators``, with the pre-book
+        price ceiling applied — so an over-cap pod is never booked, which the
+        post-launch readback could only ever destroy after the fact.
 
         Args:
-            spec: The instance specification. ``spec.offer`` is the caller's
-                pre-selection when set; ``spec.placement`` drives the
-                provider's own selection otherwise.
+            spec: The instance specification. ``spec.placement`` drives both
+                the selection and its ranking.
 
         Returns:
             The created :class:`~kinoforge.core.interfaces.Instance`.
 
         Raises:
-            CapacityError: Every candidate offer reported no capacity, or the
-                catalog was empty. The last per-offer CapacityError is chained
-                as ``__cause__`` so the operator sees RunPod's own message.
+            CapacityError: The catalog was empty after filtering, or every
+                candidate reported no capacity. The last per-offer
+                CapacityError is chained as ``__cause__`` so the operator sees
+                RunPod's own message.
             Exception: Any NON-capacity error propagates immediately, without
                 trying another offer — every offer would fail it identically,
                 and retrying turns one clear error into N confusing ones.
         """
-        attempted: list[str] = []
+        candidates = self.find_offers(spec.placement)
         last_capacity_exc: CapacityError | None = None
-
-        if spec.offer is not None:
-            try:
-                return self._create_once(spec)
-            except CapacityError as exc:
-                last_capacity_exc = exc
-                attempted.append(spec.offer.id)
-                logging.getLogger(__name__).warning(
-                    "[offer-retry] %s @ $%.4f/hr unavailable: %s",
-                    spec.offer.gpu_type,
-                    spec.offer.cost_rate_usd_per_hr,
-                    exc,
-                )
-
-        try:
-            candidates = self.find_offers(spec.placement)
-        except Exception:
-            # The catalog read is the RETRY path's input, not the launch's. If
-            # it fails after a real CapacityError, re-raising the GraphQL error
-            # would replace RunPod's own "no capacity" message with a read
-            # failure the operator cannot act on.
-            if last_capacity_exc is not None:
-                # Re-chained to its OWN cause, not to the enumeration failure
-                # and not to None: the capacity error already carries RunPod's
-                # raw ValueError, and replacing or clearing it would blind the
-                # operator to the actual capacity reason.
-                raise last_capacity_exc from last_capacity_exc.__cause__
-            raise
         for offer in candidates:
-            if offer.id in attempted:
-                continue
-            attempted.append(offer.id)
             try:
-                return self._create_once(dataclasses.replace(spec, offer=offer))
+                return self._create_once(spec, offer)
             except CapacityError as exc:
                 last_capacity_exc = exc
                 logging.getLogger(__name__).warning(
@@ -697,10 +658,10 @@ class RunPodProvider(ComputeProvider):
                     offer.cost_rate_usd_per_hr,
                     exc,
                 )
-
+        tried = ", ".join(o.gpu_type for o in candidates) or "(empty catalog)"
         raise CapacityError(
-            f"all {len(attempted)} offers exhausted; provider 'runpod' "
-            f"has no current capacity"
+            f"all {len(candidates)} offers exhausted; provider 'runpod' has no "
+            f"current capacity for: {tried}"
         ) from last_capacity_exc
 
     def get_instance(self, instance_id: str) -> Instance:
@@ -1041,7 +1002,7 @@ class RunPodProvider(ComputeProvider):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _create_pod(self, spec: InstanceSpec) -> Instance:
+    def _create_pod(self, spec: InstanceSpec, offer: Offer) -> Instance:
         """Create a RunPod on-demand pod and return an Instance.
 
         When ``spec.setup_steps`` is non-empty, the combined steps plus the
@@ -1057,6 +1018,9 @@ class RunPodProvider(ComputeProvider):
                 provisions and then exits, billing with nothing listening.
 
         Args:
+            offer: The catalog offer this pod is booked on. compute-seam
+                S4 — the spec no longer carries it, so it comes down the
+                call chain from the candidate the retry loop chose.
             spec: Instance specification.
 
         Returns:
@@ -1075,7 +1039,7 @@ class RunPodProvider(ComputeProvider):
             script = combine_steps(spec.setup_steps) + "\n" + render_launch(spec.launch)
         docker_args = self._encode_provision_script(env, script)
 
-        gpu_type_id = spec.offer.gpu_type if spec.offer else ""
+        gpu_type_id = offer.gpu_type
         # Under ephemeral mode, suppress the alias-laden run_id from the
         # provider-visible pod name and stamp ``kinoforge-ephemeral=true``
         # on the Instance tags. Default mode is unchanged.
@@ -1094,7 +1058,7 @@ class RunPodProvider(ComputeProvider):
 
         resp = self._http_post(self._base_url, body)
         self._classify_capacity_error(resp, gpu_type_id=gpu_type_id)
-        return self._instance_from_create_response(spec, resp, _eph)
+        return self._instance_from_create_response(spec, offer, resp, _eph)
 
     def _assemble_create_env(self, spec: InstanceSpec) -> dict[str, str]:
         """Assemble the pod env payload for the create-pod mutation.
@@ -1326,6 +1290,7 @@ class RunPodProvider(ComputeProvider):
     def _instance_from_create_response(
         self,
         spec: InstanceSpec,
+        offer: Offer,
         resp: dict[str, Any],
         eph: EphemeralSession | None,
     ) -> Instance:
@@ -1333,6 +1298,9 @@ class RunPodProvider(ComputeProvider):
 
         Args:
             spec: Instance specification.
+            offer: The catalog offer this pod was booked on. compute-seam S4 —
+                the spec no longer carries it, so the rate comes down the call
+                chain from whichever candidate the retry loop actually booked.
             resp: Decoded GraphQL response of the create-pod mutation.
             eph: Active ephemeral session, if any (stamps
                 ``kinoforge-ephemeral=true`` on the Instance tags).
@@ -1382,15 +1350,16 @@ class RunPodProvider(ComputeProvider):
             created_at=time.time(),
             endpoints=instance_endpoints,
             tags=instance_tags,
-            cost_rate_usd_per_hr=(
-                spec.offer.cost_rate_usd_per_hr if spec.offer else 0.0
-            ),
+            cost_rate_usd_per_hr=offer.cost_rate_usd_per_hr,
         )
 
-    def _create_serverless(self, spec: InstanceSpec) -> Instance:
+    def _create_serverless(self, spec: InstanceSpec, offer: Offer) -> Instance:
         """Create a RunPod serverless endpoint and return an Instance.
 
         Args:
+            offer: The catalog offer this pod is booked on. compute-seam
+                S4 — the spec no longer carries it, so it comes down the
+                call chain from the candidate the retry loop chose.
             spec: Instance specification.
 
         Returns:

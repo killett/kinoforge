@@ -7,6 +7,14 @@ from typing import Any
 from kinoforge.core.interfaces import InstanceSpec, Launch, SetupStep
 from kinoforge.providers.skypilot import SkyPilotProvider
 
+#: compute-seam S4: SkyPilotProvider selects its accelerator inside
+#: create_instance, so any sky fake a create test drives must answer the
+#: catalog call. Two entries so a VRAM floor has something to exclude.
+_S4_ACCELERATORS: list[dict[str, object]] = [
+    {"accelerator_name": "T4", "vram_gb": 16, "cuda": "12.8", "price": 0.35},
+    {"accelerator_name": "A100", "vram_gb": 80, "cuda": "12.8", "price": 2.10},
+]
+
 
 class _FakeTask:
     """Stand-in for :class:`sky.Task` carrying the config dict for inspection."""
@@ -38,6 +46,10 @@ class _FakeSky:
     def __init__(self) -> None:
         self.launches: list[tuple[dict[str, Any], dict[str, Any]]] = []
         self.Task: _FakeTaskNamespace = _FakeTaskNamespace()
+
+    def list_accelerators(self, **_kw: object) -> list[dict[str, object]]:
+        """Answer S4's in-provider catalog read with a frozen list."""
+        return list(_S4_ACCELERATORS)
 
     def launch(self, task: Any, **kwargs: Any) -> tuple[None, None]:  # noqa: ANN401
         config: dict[str, Any] = task.config if isinstance(task, _FakeTask) else task

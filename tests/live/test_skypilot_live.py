@@ -177,16 +177,17 @@ def _t4_smoke_spec(cluster_name: str, offer: Any) -> InstanceSpec:
         ``InstanceSpec`` ready to pass to ``provider.create_instance``.
     """
     lifecycle = Lifecycle(idle_timeout_s=180, max_lifetime_s=1800)
+    accelerator = str(getattr(offer, "gpu_type", "") or "T4")
     return InstanceSpec(
         run_id=cluster_name,
         image="",  # empty → SkyPilot picks its default GPU VM image per cloud
         env={},
         tags={"layer": "layer-w-beta-smoke"},
         lifecycle=lifecycle,
-        offer=offer,
         launch=Launch(("nvidia-smi", "--query-gpu=name", "--format=csv,noheader")),
-        # use preemptible — GCP GPUS_ALL_REGIONS=0; PREEMPTIBLE_T4=1
-        placement=Placement(spot=True),
+        # use preemptible — GCP GPUS_ALL_REGIONS=0; PREEMPTIBLE_T4=1.
+        # S4: name the accelerator here — this is what the provider reads.
+        placement=Placement(spot=True, accelerators=(accelerator,)),
     )
 
 
@@ -284,7 +285,7 @@ def _teardown(provider: SkyPilotProvider, cluster_name: str) -> None:
 
 
 def test_skypilot_live_e2e_cpu_lifecycle_smoke() -> None:
-    """End-to-end live smoke: find_offers → create → status → endpoints → down.
+    """End-to-end live smoke: select → create → status → endpoints → down.
 
     Validates the lazy ``sky`` SDK path. Fixtures are written by the
     :class:`_RecordingProxy` wrapping every ``sky.*`` call; the test
@@ -295,9 +296,10 @@ def test_skypilot_live_e2e_cpu_lifecycle_smoke() -> None:
     provider = SkyPilotProvider(sky_client=_RecordingProxy(sky, FIXTURE_DIR))
 
     try:
-        offers = provider.find_offers(HW_REQS_CPU)
-        _log.info("find_offers returned %d offers", len(offers))
-        assert offers, "expected at least one CPU offer from sky.gpu_list()"
+        # compute-seam S4: selection is private and a CPU placement selects no
+        # accelerator at all. Asserting that decision is what the old
+        # "one synthetic CPU offer" assertion actually meant.
+        assert provider._select_accelerator(HW_REQS_CPU) is None  # noqa: SLF001
 
         lifecycle = Lifecycle(idle_timeout_s=60, max_lifetime_s=1800)
         spec = InstanceSpec(
@@ -306,7 +308,6 @@ def test_skypilot_live_e2e_cpu_lifecycle_smoke() -> None:
             env={},
             tags={"layer": "phase-31-smoke"},
             lifecycle=lifecycle,
-            offer=offers[0],
             launch=Launch(("sleep", "60")),
         )
         _log.info(
@@ -333,7 +334,7 @@ def test_skypilot_live_e2e_t4_gpu_lifecycle_smoke(cloud: str) -> None:
     """End-to-end live smoke: T4 GPU lifecycle via ``providers/skypilot``.
 
     Layer W+β. Cheapest GPU test that exercises the adapter end-to-end:
-    ``find_offers`` (T4 surfaced) → ``create_instance`` (accelerators=T4:1)
+    selection (T4 chosen from placement) → ``create_instance`` (accelerators=T4:1)
     → poll until ready → SSH ``nvidia-smi`` → assert T4 in stdout →
     4-tier teardown.
 
@@ -362,18 +363,20 @@ def test_skypilot_live_e2e_t4_gpu_lifecycle_smoke(cloud: str) -> None:
     )
 
     try:
-        offers = provider.find_offers(HW_REQS_T4)
-        _log.info("find_offers returned %d offers", len(offers))
-        t4_offers = [o for o in offers if "T4" in (getattr(o, "gpu_type", "") or "")]
+        # compute-seam S4: the accelerator is stated on placement and the
+        # provider selects from it. The pre-flight enumeration survives only as
+        # a SKIP guard — a cloud with no T4 listed cannot run this smoke, and
+        # skipping is cheaper than a launch that fails at capacity.
+        candidates = provider._candidate_accelerators(HW_REQS_T4)  # noqa: SLF001
+        t4_offers = [o for o in candidates if "T4" in (o.gpu_type or "")]
         if not t4_offers:
             pytest.skip(
-                f"no T4 offer surfaced for cloud={cloud!r}; "
+                f"no T4 accelerator surfaced for cloud={cloud!r}; "
                 "check sky.list_accelerators() / region quota"
             )
-        offer = t4_offers[0]
-        _log.info("picked T4 offer: %r", offer)
+        _log.info("T4 available: %r", t4_offers[0])
 
-        spec = _t4_smoke_spec(cluster_name, offer)
+        spec = _t4_smoke_spec(cluster_name, t4_offers[0])
         _log.info("launching cluster=%s accelerators=T4:1 autostop=3min", cluster_name)
         inst = provider.create_instance(spec)
 

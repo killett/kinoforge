@@ -13,14 +13,13 @@ from kinoforge.core.interfaces import InstanceSpec
 
 if TYPE_CHECKING:
     from kinoforge.core.config import Config
-    from kinoforge.core.interfaces import Lifecycle, Offer, RenderedProvision
+    from kinoforge.core.interfaces import Lifecycle, RenderedProvision
 
 
 def build_instance_spec(
     *,
     cfg: Config,
     rendered: RenderedProvision,
-    offer: Offer | None,
     engine_name: str,
     key_hash: str,
     image: str,
@@ -35,7 +34,6 @@ def build_instance_spec(
     Args:
         cfg: The loaded config.
         rendered: The engine's rendered provision payload.
-        offer: The chosen offer, or None on paths that do not select one.
         engine_name: Registry name of the resolved engine (goes into tags).
         key_hash: Capability-key hash (goes into tags; warm-reuse matches it).
         image: Fallback image when ``rendered.image`` is empty.
@@ -94,7 +92,6 @@ def build_instance_spec(
         backend_options.setdefault("runpod", {})["restart_policy"] = "never"
     return InstanceSpec(
         image=rendered.image or image,
-        offer=offer,
         ports=tuple(rendered.ports),
         lifecycle=lifecycle,
         tags=merged_tags,

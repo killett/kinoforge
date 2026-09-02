@@ -1274,18 +1274,19 @@ class _CountingProvider(LocalProvider):
         super().__init__()
         self._scripted_offers = offers
         self._raise_first = raise_first
-        self.calls: list[Offer] = []
+        self.calls: list[InstanceSpec] = []
 
     def find_offers(self, placement: Placement) -> list[Offer]:
         return list(self._scripted_offers)
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
-        assert spec.offer is not None
-        self.calls.append(spec.offer)
+        # S4: the spec carries no offer. The provider selects for itself, so
+        # what the orchestrator can be held to is HOW MANY times it asks.
+        self.calls.append(spec)
         if self._raise_first is not None and len(self.calls) == 1:
             raise self._raise_first
         return Instance(
-            id=f"pod-{spec.offer.id}",
+            id="pod-selected-by-provider",
             provider="local",
             status="ready",
             created_at=0.0,
@@ -1322,8 +1323,8 @@ def test_deploy_hands_the_provider_the_first_offer_and_creates_once() -> None:
     result = deploy(_compute_cfg(), provider=provider, engine=_make_engine())
 
     assert result.instance is not None
-    assert result.instance.id == "pod-offer-0"
-    assert [o.id for o in provider.calls] == ["offer-0"]
+    assert result.instance.id == "pod-selected-by-provider"
+    assert len(provider.calls) == 1
 
 
 def test_deploy_propagates_a_capacity_error_the_provider_could_not_ride_out() -> None:

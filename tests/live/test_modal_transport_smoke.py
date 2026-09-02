@@ -28,7 +28,6 @@ def test_modal_transport_end_to_end():
         InstanceSpec,
         Launch,
         Lifecycle,
-        Offer,
         SetupStep,
     )
     from kinoforge.providers.modal import ModalProvider
@@ -41,7 +40,6 @@ def test_modal_transport_end_to_end():
         # (this live-modal env, 3.13); python:3.11-slim tripped Modal's version
         # guard. Keep the image minor version aligned with the controller.
         image="python:3.13-slim",
-        offer=Offer("T4", "T4", 16, "12.4", 0.59, mode="serverless"),
         run_id=f"smoke{int(time.time())}",
         setup_steps=(SetupStep("echo 'no provisioning needed'"),),
         launch=Launch(("python", "-m", "http.server", "8000", "--bind", "0.0.0.0")),
