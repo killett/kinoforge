@@ -2009,40 +2009,79 @@ def _resolve_warm_instance(
     # The local ledger is authoritative for create-time fields under the
     # same-host scope (see the B5b deferral spec). Merge ledger tags
     # under the provider's tags so e.g. ``"mode": "pod"`` from the live
-    # query takes precedence over any stale tag-side state, then ask
-    # the provider to build the endpoints dict — providers compute
-    # endpoints deterministically from instance fields (e.g. RunPod's
-    # ``{pod_id}-{port}.proxy.runpod.net`` pattern) so the call is
-    # cheap, network-free, and idempotent.
+    # query takes precedence over any stale tag-side state — this alone
+    # fixes RunPod's ``ports`` tag being dropped by the sparse
+    # ``get_instance`` query.
+    #
+    # Endpoints are a separate hazard (F11): the recorded ledger row can
+    # be a dead process's endpoint (a skypilot ssh tunnel that died with
+    # the CLI that opened it), so it is a HINT, not a trusted value.
+    # ``_resolve_warm_endpoints`` seeds it onto the instance and then asks
+    # ``provider.ensure_endpoints`` for something live; a provider that
+    # can reconstruct a fresh endpoint (skypilot re-establishing the
+    # tunnel, RunPod's deterministic ``{pod_id}-{port}.proxy.runpod.net``)
+    # wins, one that can only echo the seed (Modal, whose
+    # ``build-<hash>.modal.run`` URL cannot be rebuilt from tags) changes
+    # nothing.
     #
     # Empirically caught 2026-06-18 against Wan 1.3B on RunPod, pod
     # ``di506yuuczuhht``: warm-reuse classify cleared LIVE, attach
     # succeeded, generation aborted immediately on the empty endpoints
-    # field.
+    # field. Still real, and now handled by the tag merge above plus
+    # RunPod's deterministic ``endpoints``/``ensure_endpoints``.
     entry_tags = entry.get("tags", {}) or {}
     merged_tags: dict[str, str] = {**entry_tags, **instance.tags}
     instance = dataclasses.replace(instance, tags=merged_tags)
-    endpoints_dict: dict[str, str] = {}
-    # Prefer endpoints recorded at cold-create time (e.g. ephemeral-index
-    # row) over the provider-deterministic reconstruction: the recorded
-    # dict already names the engine's port (RunPod sparse tags do not).
-    entry_endpoints = entry.get("endpoints")
-    if isinstance(entry_endpoints, dict) and entry_endpoints:
-        endpoints_dict = {str(k): str(v) for k, v in entry_endpoints.items()}
-    elif hasattr(provider, "endpoints"):
-        try:
-            endpoints_dict = provider.endpoints(instance)
-        except Exception as exc:  # noqa: BLE001 — best-effort enrichment
-            print(
-                f"warning: warm-attach endpoint reconstruction failed for "
-                f"{instance_id}: {type(exc).__name__}: {exc}. Downstream "
-                f"engine may not be able to construct the ready URL.",
-                file=sys.stderr,
-            )
+    endpoints_dict = _resolve_warm_endpoints(provider, instance, entry=entry)
     if endpoints_dict:
         instance = dataclasses.replace(instance, endpoints=endpoints_dict)
 
     return (instance, None)
+
+
+def _resolve_warm_endpoints(
+    provider: object,
+    instance: Instance,
+    *,
+    entry: Mapping[str, Any],
+) -> dict[str, str]:
+    """Return the endpoints a warm attach should actually use.
+
+    compute-seam S5 inverts the old preference. The recorded row is SEEDED
+    onto the instance first — Modal's ``build-<hash>.modal.run`` URL cannot be
+    rebuilt from tags, and ``ModalProvider.endpoints`` reads it off the
+    instance — and then the provider is asked. A provider that can establish
+    something live wins; one that echoes the seed changes nothing.
+
+    Args:
+        provider: The resolved compute provider.
+        instance: The instance being attached to, tags already merged.
+        entry: The ledger row.
+
+    Returns:
+        A port-keyed endpoint map, possibly empty.
+    """
+    recorded_raw = entry.get("endpoints")
+    recorded: dict[str, str] = (
+        {str(k): str(v) for k, v in recorded_raw.items()}
+        if isinstance(recorded_raw, dict)
+        else {}
+    )
+    seeded = dataclasses.replace(instance, endpoints=recorded)
+    ensure = getattr(provider, "ensure_endpoints", None)
+    if ensure is None:
+        return recorded
+    try:
+        live = ensure(seeded)
+    except Exception as exc:  # noqa: BLE001 — a fault must not abort the attach
+        print(
+            f"warning: live endpoint resolution failed for {instance.id}: "
+            f"{type(exc).__name__}: {exc}. Falling back to the recorded "
+            f"endpoint map, which may be stale.",
+            file=sys.stderr,
+        )
+        return recorded
+    return live or recorded
 
 
 def _refuse_reason_for_verdict(
