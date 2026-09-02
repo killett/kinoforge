@@ -23,6 +23,17 @@ Three claims, in cost order:
    a re-implementation of it) destroys the cluster and raises
    ``RateCapExceeded`` carrying that real number.
 
+This smoke covers the POST-LAUNCH arm on purpose. compute-seam S5 Task 8 added
+a PRE-launch refusal to ``SkyPilotProvider.create_instance``: it bounds the
+launch from sky's accelerator catalog and raises ``PreLaunchRateCapExceeded``
+before ``sky.launch`` when that bound already exceeds the cap. A $0.01 cap
+trips it, so the test forces the estimate unreadable
+(``_estimate_hourly_rate -> None``, the documented WARN-and-proceed path) to
+keep reaching the readback. The pre-launch arm has its own live smoke; between
+them both arms are covered, and neither test is weakened to accommodate the
+other. Nothing about the readback, the enforcement or the teardown is stubbed
+here.
+
 Why the enforcement function is driven directly rather than through
 ``kinoforge generate``: the full path would additionally run ``engine.provision``
 against a comfyui setup that is known to fail on this CPU box (it fetches Wan
@@ -192,7 +203,9 @@ def _ec2_type_or_error(cluster_name: str) -> str:
     return types[0] if types else "<none>"
 
 
-def test_s4_a_violated_rate_cap_destroys_the_instance() -> None:
+def test_s4_a_violated_rate_cap_destroys_the_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A cap below the billed rate tears the cluster down and raises.
 
     Bug caught, and it is F4 itself: before S4 the cap was a filter over a
@@ -256,6 +269,21 @@ def test_s4_a_violated_rate_cap_destroys_the_instance() -> None:
         "published_sku_rate_usd_per_hr": _SKU_USD_PER_HR,
         "at": _now_local(),
     }
+
+    # compute-seam S5 Task 8 added a PRE-launch refusal: create_instance now
+    # bounds the launch from sky's catalog and raises before sky.launch when
+    # the bound already exceeds the cap. A $0.01 cap trips it, which would end
+    # this smoke at create_instance and leave the POST-launch readback — the
+    # only thing this test exists to prove — unexercised. Forcing the estimate
+    # unreadable takes the documented WARN-and-proceed path, which is exactly
+    # the pre-Task-8 behaviour this smoke was written against. Nothing about
+    # the readback, the enforcement or the teardown is stubbed.
+    monkeypatch.setattr(
+        SkyPilotProvider,
+        "_estimate_hourly_rate",
+        lambda self, accelerator, placement: None,
+        raising=True,
+    )
 
     spec = dataclasses.replace(build_spec(cfg), run_id=cluster_name)
     # F12 — the durable pre-launch row. compute-seam S5 Task 5 deleted the

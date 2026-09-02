@@ -65,6 +65,7 @@ import logging
 import math
 import socket
 import subprocess
+import threading
 import time
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol, runtime_checkable
@@ -94,6 +95,12 @@ from kinoforge.providers.skypilot import watchdog
 from kinoforge.providers.skypilot.vast_compat import apply_vast_sdk_compat
 
 logger = logging.getLogger(__name__)
+
+#: Deadline for the pre-launch catalog price read
+#: (:meth:`SkyPilotProvider._estimate_hourly_rate`). It runs before anything is
+#: booked and before the instance-side watchdog is armed, so a wedged API
+#: server must cost seconds, not a hung launch. Expiry reads as "unreadable".
+_ESTIMATE_TIMEOUT_S = 20.0
 
 # Bridge sky's vast adapter to vastai-sdk >= 0.2 as soon as the provider is
 # imported; no-op when vastai_sdk is absent (default env) or already correct.
@@ -227,9 +234,9 @@ class PreLaunchRateCapExceeded(RateCapExceeded):
     Same type as far as every ``except RateCapExceeded`` handler is concerned
     — only the rendering differs. :class:`~kinoforge.core.errors.RateCapExceeded`
     renders the S4 post-launch story ("realized ... instance destroyed"), and
-    on this path both halves of that are false: the number is an estimate from
-    ``sky.optimize`` and no cluster was ever booked. An operator reading the
-    S4 wording here would go hunting for a resource that does not exist.
+    on this path both halves of that are false: the number is a catalog-grade
+    estimate and no cluster was ever booked. An operator reading the S4
+    wording here would go hunting for a resource that does not exist.
 
     Lives in the provider rather than in ``kinoforge.core.errors`` on purpose:
     ``core/errors.py`` is one of the modules embedded (base64) into the
@@ -237,6 +244,39 @@ class PreLaunchRateCapExceeded(RateCapExceeded):
     launch-payload goldens. Moving this rendering there is a reviewed act
     requiring a golden regeneration, not a refactor.
     """
+
+    def __init__(
+        self,
+        *,
+        realized: float | None,
+        cap: float,
+        instance_id: str,
+        placement_summary: str,
+    ) -> None:
+        """Initialise, then normalise ``args`` onto the pre-launch rendering.
+
+        Overriding :meth:`__str__` alone is not enough: the base
+        ``__init__`` already passed the S4 post-launch message to
+        ``Exception.__init__``, and ``repr()`` and ``args[0]`` read from
+        there, not from ``__str__``. The S4 live smoke writes
+        ``repr(exc)[:600]`` into a durable evidence file, so leaving ``args``
+        alone would put "instance destroyed" into an artifact describing a
+        cluster that was never booked. Rewriting ``args`` makes ``str``,
+        ``repr`` and ``args[0]`` agree.
+
+        Args:
+            realized: The pre-launch estimate in USD/hr, or None.
+            cap: The configured ceiling in USD per hour.
+            instance_id: The cluster name that was refused.
+            placement_summary: Human-readable identity of what was priced.
+        """
+        super().__init__(
+            realized=realized,
+            cap=cap,
+            instance_id=instance_id,
+            placement_summary=placement_summary,
+        )
+        self.args = (self.__str__(),)
 
     def __str__(self) -> str:
         """Render the violation as a pre-launch estimate against no resource.
@@ -826,26 +866,46 @@ class SkyPilotProvider(ComputeProvider):
     # ComputeProvider interface
     # ------------------------------------------------------------------
 
-    def _candidate_accelerators(self, placement: Placement) -> list[Offer]:
-        """Return the accelerators sky lists that satisfy *placement*, ranked.
+    def _catalog_offers(
+        self,
+        *,
+        name_filter: str | None = None,
+        quantity_filter: int | None = None,
+    ) -> list[Offer]:
+        """Read sky's accelerator catalog and parse it into Offers, UNFILTERED.
 
-        The catalog read behind :meth:`_select_accelerator`, kept separate so
-        the filtering and the choosing can each be tested for what they do.
-        Not public: SkyPilot has no bookable catalog — ``sky.list_accelerators``
-        describes what the optimizer may consider, and the optimizer still
-        picks cloud, region and instance type for itself.
+        The catalog read and parse, split out of
+        :meth:`_candidate_accelerators` so :meth:`_estimate_hourly_rate` can
+        reuse it without also inheriting its filters. That split is
+        load-bearing, not cosmetic: :func:`~kinoforge.core.offers.filter_offers`
+        drops every offer priced ABOVE ``placement.max_usd_per_hr``
+        (``core/offers.py:49``), so pricing through it would silently discard
+        the very over-cap offer the pre-launch refusal exists to catch and
+        report "unreadable" instead of refusing.
 
         Args:
-            placement: The portable resource block to filter and rank by.
+            name_filter: Optional accelerator name passed through to
+                ``sky.list_accelerators`` so a price lookup for one already
+                chosen accelerator does not pull the whole catalog.
+            quantity_filter: Optional accelerator count passed through, so the
+                prices returned are for instance types offering exactly that
+                many accelerators. ``InstanceTypeInfo.price`` is the price of
+                the whole INSTANCE, not of one card, so this is what keeps a
+                per-hour number comparable to the cap.
 
         Returns:
-            Offers passing the VRAM/CUDA/price filters, ranked by
-            ``placement.accelerators``; empty when nothing clears them.
+            One Offer per catalog record, in catalog order. No VRAM, CUDA or
+            price filtering is applied.
         """
         sky = self._sky()
-        raw = sky.list_accelerators(
-            **({} if self._clouds is None else {"clouds": self._clouds})
-        )
+        kwargs: dict[str, Any] = {}
+        if self._clouds is not None:
+            kwargs["clouds"] = self._clouds
+        if name_filter is not None:
+            kwargs["name_filter"] = name_filter
+        if quantity_filter is not None:
+            kwargs["quantity_filter"] = quantity_filter
+        raw = sky.list_accelerators(**kwargs)
         resolved = _resolve(sky, raw)
 
         # Normalise to an iterable of records. Modern shape is a dict-of-list;
@@ -879,7 +939,25 @@ class SkyPilotProvider(ComputeProvider):
                     mode="pod",
                 )
             )
-        return filter_offers(candidates, placement)
+        return candidates
+
+    def _candidate_accelerators(self, placement: Placement) -> list[Offer]:
+        """Return the accelerators sky lists that satisfy *placement*, ranked.
+
+        The catalog read behind :meth:`_select_accelerator`, kept separate so
+        the filtering and the choosing can each be tested for what they do.
+        Not public: SkyPilot has no bookable catalog — ``sky.list_accelerators``
+        describes what the optimizer may consider, and the optimizer still
+        picks cloud, region and instance type for itself.
+
+        Args:
+            placement: The portable resource block to filter and rank by.
+
+        Returns:
+            Offers passing the VRAM/CUDA/price filters, ranked by
+            ``placement.accelerators``; empty when nothing clears them.
+        """
+        return filter_offers(self._catalog_offers(), placement)
 
     def _select_accelerator(self, placement: Placement) -> str | None:
         """Return the accelerator name to pin, or None for a CPU-only task.
@@ -1091,27 +1169,33 @@ class SkyPilotProvider(ComputeProvider):
         # ``Task.setup`` before it returns, so a violation caught afterwards
         # discards several minutes of provisioning that was already paid for.
         cap = spec.placement.max_usd_per_hr
-        estimate = self._estimate_hourly_rate(task)
-        if estimate is None:
-            logger.warning(
-                "skypilot: pre-launch cost estimate unreadable for cluster %r; "
-                "launching and relying on the post-launch rate readback",
-                cluster_name,
-            )
-        elif cap > 0 and estimate > cap:
-            # ``cap <= 0`` means "no cap on this path". Placement's default is
-            # 2.20, so a zero can only come from an operator explicitly
-            # clearing it — and a $0.00 ceiling read literally would refuse
-            # every launch there is.
-            # PreLaunchRateCapExceeded, not the base class: no resource
-            # exists, so the S4 "realized ... instance destroyed" wording
-            # would send the operator hunting for a cluster never booked.
-            raise PreLaunchRateCapExceeded(
-                realized=estimate,
-                cap=cap,
-                instance_id=cluster_name,
-                placement_summary="provider=skypilot, source=sky.optimize",
-            )
+        # ``cap <= 0`` means "no cap on this path", so the estimate is not
+        # merely unused — it is not TAKEN. Placement's default is 2.20, so a
+        # zero can only come from an operator explicitly clearing one, and
+        # spending a catalog round trip (plus its hang risk) to produce a
+        # number nothing will read, then WARNING that it was unreadable, is
+        # cost and noise for no decision.
+        if cap > 0:
+            estimate = self._estimate_hourly_rate(accelerator, spec.placement)
+            if estimate is None:
+                logger.warning(
+                    "skypilot: pre-launch cost estimate unreadable for cluster "
+                    "%r; launching and relying on the post-launch rate readback",
+                    cluster_name,
+                )
+            elif estimate > cap:
+                # PreLaunchRateCapExceeded, not the base class: no resource
+                # exists, so the S4 "realized ... instance destroyed" wording
+                # would send the operator hunting for a cluster never booked.
+                raise PreLaunchRateCapExceeded(
+                    realized=estimate,
+                    cap=cap,
+                    instance_id=cluster_name,
+                    placement_summary=(
+                        f"provider=skypilot, accelerator={accelerator}:1, "
+                        f"source=sky.list_accelerators catalog floor"
+                    ),
+                )
         raw = sky.launch(task, **launch_kwargs)
         # Resolve a possible RequestId — the launch payload itself is not used
         # because the cluster name we passed *is* the canonical id and the
@@ -1288,50 +1372,126 @@ class SkyPilotProvider(ComputeProvider):
         except Exception:  # noqa: BLE001 — same reason
             return None
 
-    def _estimate_hourly_rate(self, task: Any) -> float | None:  # noqa: ANN401
-        """Return the optimizer's estimated USD/hr for ``task``, or None.
+    def _catalog_floor_price(self, accelerator: str) -> float | None:
+        """Return the cheapest catalog price for ``accelerator``, or None.
 
-        At the pinned skypilot-0.12.3.post1 ``sky.optimize`` is a
-        client/server call — ``sky/client/sdk.py:411`` POSTs ``/optimize``
-        and returns a ``RequestId['sky.Dag']`` — so it is resolved through
-        the same :func:`_resolve` path :meth:`create_instance` uses for
-        ``sky.launch``. It takes a ``sky.Dag`` (``sky/dag.py:26``), not a
-        Task, so one is built and the task added to it. The price then comes
-        off the optimized task's ``best_resources.get_cost(3600.0)``
-        (``sky/resources.py:1704``), which asserts on ``cloud`` and
-        ``_instance_type`` and can therefore raise.
-
-        Deliberately SEPARATE from :meth:`realized_rate`: this one is a
-        pre-launch guess about a plan, that one is a post-launch reading off
-        a booked cluster. Only the second can make a cap true, and collapsing
-        them would let a cheap estimate vouch for an expensive booking.
-
-        Best-effort by contract: any failure — the optimizer raising, a
-        RequestId that will not resolve, no ``best_resources``, ``get_cost``
-        raising, a shape this code does not expect — returns None and the
-        caller proceeds to launch, because S4's post-launch readback is what
-        makes the cap true. This only decides how much work a violation
-        throws away. It never raises.
+        The body of :meth:`_estimate_hourly_rate`, split out so the deadline
+        that bounds it is separable from the read it bounds.
 
         Args:
-            task: The ``sky.Task`` about to be launched.
+            accelerator: The accelerator name :meth:`create_instance` pinned.
+
+        Returns:
+            The lowest ``price`` sky's catalog reports for a single-accelerator
+            instance type of that name, or None when nothing priced matches.
+        """
+        # quantity_filter=1 because create_instance pins ``"<name>:1"``
+        # unconditionally, and InstanceTypeInfo.price is the price of the whole
+        # INSTANCE (sky/catalog/common.py) — an 8-GPU record would price a
+        # launch that is not the one being made.
+        offers = self._catalog_offers(name_filter=accelerator, quantity_filter=1)
+        wanted = accelerator.casefold()
+        prices = [
+            o.cost_rate_usd_per_hr
+            for o in offers
+            if o.gpu_type.casefold() == wanted and o.cost_rate_usd_per_hr > 0
+        ]
+        if not prices:
+            return None
+        # The MINIMUM, not the mean or the max: a lower bound can only ever
+        # produce a refusal that every possible booking would also violate, so
+        # it cannot refuse a launch that would have been in budget. A false
+        # refusal is the expensive mistake here — the post-launch readback
+        # still catches everything this bound lets through.
+        return min(prices)
+
+    def _estimate_hourly_rate(
+        self, accelerator: str | None, placement: Placement
+    ) -> float | None:
+        """Return a catalog-grade USD/hr lower bound for the launch, or None.
+
+        NOT an optimizer quote. ``sky.optimize`` cannot answer this at the
+        pinned skypilot-0.12.3.post1: ``/optimize`` is scheduled with
+        ``ignore_return_value=True`` (``sky/server/server.py:1422``), and the
+        executor then stores ``None`` instead of the optimized Dag
+        (``sky/server/requests/executor.py:568``), so
+        ``stream_and_get(<optimize request id>)`` returns ``None`` and no
+        price can ever be read back. Verified at the installed pin.
+
+        What this returns instead is the cheapest price sky's own catalog
+        (``sky.list_accelerators``, whose ``/list_accelerators`` route does
+        NOT ignore its return value — ``sky/server/server.py:1333``) reports
+        for a single-accelerator instance of the pinned accelerator, narrowed
+        to the same clouds the launch is pinned to. That is a LOWER BOUND on
+        what the launch can cost, not a quote: sky's optimizer still picks the
+        cloud, region and SKU for itself, and a booking can land above this
+        number. S4's post-launch :meth:`realized_rate` readback remains the
+        enforcement; this only decides how much work a violation throws away.
+
+        Deliberately SEPARATE from :meth:`realized_rate`: this one is a
+        pre-launch bound on a plan, that one is a post-launch reading off a
+        booked cluster. Only the second can make a cap true, and collapsing
+        them would let a cheap catalog number vouch for an expensive booking.
+
+        Bounded by an explicit deadline: ``list_accelerators`` is a call to
+        sky's API server, which can be slow or wedged, and this runs before
+        anything is booked AND before the instance-side watchdog is armed —
+        so a hang here would stall a launch with no guardrail running at all.
+        Expiry counts as unreadable; the worker is a daemon thread and is
+        abandoned rather than joined.
+
+        Best-effort by contract: any failure — the catalog read raising, the
+        deadline expiring, no priced record for the accelerator, a shape this
+        code does not expect — returns None and the caller proceeds to launch.
+        It never raises.
+
+        Args:
+            accelerator: The accelerator name :meth:`create_instance` pinned
+                into ``resources["accelerators"]``, or None for a CPU-only
+                task.
+            placement: The resource block the launch was built from. Read for
+                ``spot``, which the catalog price does not model.
 
         Returns:
             USD per hour, or None when the estimate is unreadable.
         """
+        if accelerator is None:
+            # CPU-only: sky's accelerator catalog has nothing to say about CPU
+            # SKUs, and there is no second catalog to consult. Unreadable, not
+            # zero — a zero would read as "free" and vouch for any cap.
+            return None
+        if placement.spot:
+            # The catalog carries a separate ``spot_price``; the parse this
+            # reuses reads only ``price`` (on-demand). Pricing a spot launch
+            # off the on-demand column would be a bound in the WRONG direction
+            # for a refusal — it would refuse launches that spot makes
+            # affordable. Report unreadable and let the readback do its job.
+            return None
+        result: list[float | None] = []
+
+        def _read() -> None:
+            try:
+                result.append(self._catalog_floor_price(accelerator))
+            except Exception:  # noqa: BLE001 — never blocks a launch
+                logger.debug(
+                    "skypilot: pre-launch catalog price read failed", exc_info=True
+                )
+                result.append(None)
+
         try:
-            sky = self._sky()
-            dag = sky.Dag()
-            dag.add(task)
-            optimized = _resolve(sky, sky.optimize(dag))
-            best = optimized.tasks[0].best_resources
-            if best is None:
-                return None
-            # get_cost takes SECONDS; 3600 makes the result USD/hr, the unit
-            # placement.max_usd_per_hr is expressed in.
-            rate = float(best.get_cost(3600.0))
-        except Exception:  # noqa: BLE001 — an estimate must never block a launch
-            logger.debug("skypilot: pre-launch cost estimate failed", exc_info=True)
+            worker = threading.Thread(
+                target=_read, name="kf-skypilot-estimate", daemon=True
+            )
+            worker.start()
+            worker.join(timeout=_ESTIMATE_TIMEOUT_S)
+        except Exception:  # noqa: BLE001 — even a thread-spawn fault is benign
+            logger.debug("skypilot: pre-launch estimate could not run", exc_info=True)
+            return None
+        if not result:
+            # Still running past the deadline (or died without appending).
+            return None
+        rate = result[0]
+        if rate is None:
             return None
         # A NaN comparison is False in both directions, so an unusable number
         # must be reported as unreadable rather than silently waved through.

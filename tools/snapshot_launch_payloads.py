@@ -570,37 +570,28 @@ def _capture_skypilot(
 
         @staticmethod
         def list_accelerators(**kwargs: Any) -> dict[str, list[dict[str, Any]]]:  # noqa: ANN401
-            """Return the frozen offline catalog (never a network call)."""
-            del kwargs
+            """Answer the frozen offline catalog — never a network call.
+
+            Two callers, deliberately answered differently:
+
+            * SELECTION (``_catalog_offers()`` with no ``name_filter``) gets
+              the frozen catalog, so a capture still runs through the real
+              selection code and the golden pins WHICH SKU a config picks.
+            * PRICING (``_estimate_hourly_rate`` -> ``_catalog_floor_price``,
+              which always passes ``name_filter``) gets ``{}``. The frozen
+              prices are flat global stand-ins, not per-cloud ones — vast
+              A100 is ~$0.93/hr where this table says $2.10 — so pricing a
+              named accelerator off them would refuse
+              ``skypilot-vast-diffusers-flashvsr-upscale`` (cap $1.00) on a
+              number that is fiction. A capture must not be gated by a price
+              this harness cannot know, so the estimate reports UNREADABLE
+              and the capture takes the documented WARN-and-proceed path —
+              exactly what it did before the estimate existed, which is why
+              the goldens stay byte-identical.
+            """
+            if kwargs.get("name_filter") is not None:
+                return {}
             return {name: [dict(rec)] for name, rec in _FROZEN_SKY_CATALOG.items()}
-
-        class Dag:
-            """Stand-in for ``sky.Dag`` so the estimate reaches ``optimize``.
-
-            Without it the provider's ``sky.Dag()`` would AttributeError and
-            the estimate would come back unreadable for the wrong reason —
-            the capture would still be correct, but it would stop exercising
-            the ``optimize`` refusal below.
-            """
-
-            def __init__(self) -> None:
-                self.tasks: list[Any] = []
-
-            def add(self, task: Any) -> None:  # noqa: ANN401
-                """Append ``task``, mirroring ``sky.Dag.add``."""
-                self.tasks.append(task)
-
-        @staticmethod
-        def optimize(dag: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-            """Refuse to estimate — the capture must not depend on a server.
-
-            Real ``sky.optimize`` POSTs to ``/optimize``. Raising makes the
-            provider's estimate unreadable, which is the documented
-            WARN-and-proceed path, so the captured payload is exactly the one
-            a real launch sends and the goldens stay byte-identical.
-            """
-            del dag, kwargs
-            raise RuntimeError("offline capture: no optimizer")
 
         @staticmethod
         def launch(task: Any, **kwargs: Any) -> Any:  # noqa: ANN401
