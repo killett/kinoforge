@@ -33,7 +33,6 @@ import pytest
 from kinoforge.core import registry
 from kinoforge.core.errors import ProvisionFailed
 from kinoforge.core.interfaces import (
-    Instance,
     InstanceSpec,
     Launch,
     Lifecycle,
@@ -824,24 +823,6 @@ def test_ac7_get_instance_raises_keyerror_when_absent() -> None:
 # ---------------------------------------------------------------------------
 # AC8: endpoints
 # ---------------------------------------------------------------------------
-
-
-def test_ac8_endpoints_returns_ssh_url() -> None:
-    """endpoints returns a dict with 'ssh' key containing 'ssh://<id>'."""
-    from kinoforge.providers.skypilot import SkyPilotProvider
-
-    fake = _FakeSky()
-    provider = SkyPilotProvider(sky_client=fake)
-    inst = Instance(
-        id="cluster-abc",
-        provider="skypilot",
-        status="ready",
-        created_at=time.time(),
-    )
-
-    ep = provider.endpoints(inst)
-    assert "ssh" in ep
-    assert ep["ssh"] == "ssh://cluster-abc"
 
 
 # ---------------------------------------------------------------------------

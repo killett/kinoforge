@@ -1092,14 +1092,12 @@ class SkyPilotProvider(ComputeProvider):
         # "8001"] means both are load-bearing — 8001 is the /tmp file server
         # the project's own live-smoke rule fetches bootstrap.log from.
         if spec.launch is not None:
-            opened: dict[str, _Tunnel] = {}
             port = ""
             try:
                 for port in spec.ports:
-                    local_port = self._alloc_port()
-                    proc = self._ssh_spawn(cluster_name, local_port, int(port))
-                    opened[port] = _Tunnel(proc=proc, local_port=local_port)
+                    self._ensure_tunnel(cluster_name, port)
             except Exception as exc:  # noqa: BLE001 — any spawn fault → clean fail
+                opened = self._tunnels.pop(cluster_name, {})
                 for tunnel in opened.values():
                     self._kill_tunnel(tunnel.proc)
                 # Best-effort teardown so a live-but-unreachable cluster is not
@@ -1112,10 +1110,9 @@ class SkyPilotProvider(ComputeProvider):
                     f"failed to open ssh tunnel to {cluster_name!r} for port "
                     f"{port}: {exc}"
                 ) from exc
-            self._tunnels[cluster_name] = opened
             endpoints = {
                 port: f"http://127.0.0.1:{tunnel.local_port}"
-                for port, tunnel in opened.items()
+                for port, tunnel in self._tunnels.get(cluster_name, {}).items()
             }
         # Success: hand the record over to the orchestrator's post-create
         # write. Deliberately NOT in a finally — the tunnel-failure path
@@ -1322,15 +1319,107 @@ class SkyPilotProvider(ComputeProvider):
     # the ABC default) is summarized on ComputeProvider.last_heartbeat.
 
     def endpoints(self, instance: Instance) -> dict[str, str]:
-        """Return the SSH endpoint for ``instance``.
+        """Return the live local URLs for tunnels THIS process holds.
+
+        Pure by contract: no spawn, no network. A cluster launched by another
+        process (a warm attach) yields ``{}`` here — ``kinoforge status``
+        prints the cluster name for those, and a caller that needs to talk to
+        the cluster calls :meth:`ensure_endpoints` instead.
 
         Args:
-            instance: The cluster whose endpoint to return.
+            instance: The cluster whose endpoints to report.
 
         Returns:
-            ``{"ssh": "ssh://<instance.id>"}``
+            ``{"8000": "http://127.0.0.1:53411", ...}``, or ``{}``.
         """
-        return {"ssh": f"ssh://{instance.id}"}
+        return {
+            port: f"http://127.0.0.1:{tunnel.local_port}"
+            for port, tunnel in (self._tunnels.get(instance.id) or {}).items()
+            if self._tunnel_alive(tunnel)
+        }
+
+    def ensure_endpoints(self, instance: Instance) -> dict[str, str]:
+        """Re-establish any missing or dead forward, then report the map.
+
+        This is the actual fix for F11's warm-attach hazard: the ledger branch
+        replayed a dead local port and the fallback handed an ``ssh://`` URL to
+        an HTTP client. Both are cured by asking the provider for a live
+        endpoint rather than replaying a recorded one.
+
+        Args:
+            instance: The cluster to reach.
+
+        Returns:
+            A port-keyed map of absolute local URLs; ``{}`` when the port list
+            is unknown.
+        """
+        ports = self._ports_for(instance)
+        if not ports:
+            logger.warning(
+                "skypilot: no port list for cluster %r (tags['ports'] absent "
+                "and no numeric endpoint keys recorded); cannot establish a "
+                "tunnel",
+                instance.id,
+            )
+            return {}
+        return {
+            port: f"http://127.0.0.1:{self._ensure_tunnel(instance.id, port)}"
+            for port in ports
+        }
+
+    @staticmethod
+    def _tunnel_alive(tunnel: _Tunnel) -> bool:
+        """True while the forward's subprocess is still running."""
+        try:
+            return tunnel.proc.poll() is None
+        except Exception:  # noqa: BLE001 — an unpollable handle is a dead one
+            return False
+
+    @staticmethod
+    def _ports_for(instance: Instance) -> tuple[str, ...]:
+        """Return the remote ports to forward for *instance*.
+
+        Prefers ``tags["ports"]`` (written at create time since S5); falls back
+        to the numeric keys of a recorded endpoint map, which is what a ledger
+        row written before S5 carries.
+
+        Args:
+            instance: The cluster in question.
+
+        Returns:
+            Declared ports in order, or an empty tuple.
+        """
+        raw = str(instance.tags.get("ports", ""))
+        tagged = tuple(p.strip() for p in raw.split(",") if p.strip())
+        if tagged:
+            return tagged
+        return tuple(k for k in instance.endpoints if k.isdigit())
+
+    def _ensure_tunnel(self, cluster_name: str, port: str) -> int:
+        """Return a live local port forwarding to ``port`` on the cluster.
+
+        Reuses an existing forward when its subprocess is still running;
+        otherwise reaps the dead one and spawns a replacement.
+
+        Args:
+            cluster_name: The cluster to forward to.
+            port: The remote port.
+
+        Returns:
+            The local port.
+        """
+        held = self._tunnels.setdefault(cluster_name, {})
+        existing = held.get(port)
+        if existing is not None and self._tunnel_alive(existing):
+            return existing.local_port
+        if existing is not None:
+            self._kill_tunnel(existing.proc)
+        local_port = self._alloc_port()
+        held[port] = _Tunnel(
+            proc=self._ssh_spawn(cluster_name, local_port, int(port)),
+            local_port=local_port,
+        )
+        return local_port
 
 
 # ---------------------------------------------------------------------------

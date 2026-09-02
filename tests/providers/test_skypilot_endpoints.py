@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from kinoforge.core.interfaces import InstanceSpec, Launch, Placement
+from kinoforge.core.interfaces import Instance, InstanceSpec, Launch, Placement
 from kinoforge.providers.skypilot import SkyPilotProvider
 
 
@@ -190,3 +190,108 @@ def test_destroy_kills_every_tunnel_even_when_down_raises() -> None:
 
     assert all(p.terminated for p in procs)
     assert provider._tunnels.get(inst.id) is None  # noqa: SLF001
+
+
+def test_endpoints_is_pure_and_reports_only_live_local_state() -> None:
+    """A read never spawns and never lies about a cluster it does not hold.
+
+    Bug caught: returning ``{"ssh": "ssh://<cluster>"}`` — an HTTP client
+    handed that string fails with an unusable error (finding F11), and a
+    status read that spawns ssh leaks a process per invocation.
+    """
+    provider = _provider(_FakeSky(), [])
+    stranger = Instance(
+        id="kf-not-ours",
+        provider="skypilot",
+        status="ready",
+        created_at=0.0,
+        endpoints={},
+        tags={"ports": "8000"},
+        cost_rate_usd_per_hr=0.0,
+    )
+    assert provider.endpoints(stranger) == {}
+
+
+def test_ensure_endpoints_respawns_a_dead_tunnel_on_a_fresh_port() -> None:
+    """A dead forward is repaired, not replayed.
+
+    Bug caught: warm-attach replays a recorded 127.0.0.1:<port> whose ssh
+    process died with the launching CLI, and every engine request connects to
+    nothing (finding F11, ledger branch).
+    """
+    spawns: list[tuple[str, int, int]] = []
+    provider = _provider(_FakeSky(), spawns)
+    inst = provider.create_instance(
+        _spec(ports=("8000",), launch=Launch(("python", "-m", "srv")))
+    )
+    assert inst.endpoints == {"8000": "http://127.0.0.1:50001"}
+
+    provider._tunnels[inst.id]["8000"].proc.die()  # noqa: SLF001
+
+    refreshed = provider.ensure_endpoints(inst)
+    assert refreshed == {"8000": "http://127.0.0.1:50002"}
+    assert len(spawns) == 2
+
+
+def test_ensure_endpoints_reuses_a_live_tunnel() -> None:
+    """A healthy forward is not churned.
+
+    Bug caught: an ``ensure`` that respawns unconditionally burns a local port
+    per call and drops in-flight requests on a working pod.
+    """
+    spawns: list[tuple[str, int, int]] = []
+    provider = _provider(_FakeSky(), spawns)
+    inst = provider.create_instance(
+        _spec(ports=("8000",), launch=Launch(("python", "-m", "srv")))
+    )
+    assert provider.ensure_endpoints(inst) == inst.endpoints
+    assert len(spawns) == 1
+
+
+def test_ensure_endpoints_rebuilds_from_the_ports_tag_in_a_fresh_process() -> None:
+    """A cross-process warm attach re-forwards from what the ledger recorded.
+
+    Bug caught: the second CLI process holds no tunnel map, so without a port
+    list it can only return {} and the warm attach fails with "has no
+    endpoints" (the 2026-07-12 Modal-shaped failure, skypilot flavour).
+    """
+    spawns: list[tuple[str, int, int]] = []
+    provider = _provider(_FakeSky(), spawns)
+    recorded = Instance(
+        id="kf-warm",
+        provider="skypilot",
+        status="ready",
+        created_at=0.0,
+        endpoints={"8000": "http://127.0.0.1:1"},  # a dead port from last run
+        tags={"ports": "8000,8001"},
+        cost_rate_usd_per_hr=0.0,
+    )
+    assert provider.ensure_endpoints(recorded) == {
+        "8000": "http://127.0.0.1:50001",
+        "8001": "http://127.0.0.1:50002",
+    }
+    assert [(c, r) for c, _l, r in spawns] == [("kf-warm", 8000), ("kf-warm", 8001)]
+
+
+def test_ensure_endpoints_without_a_port_list_returns_empty(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No ports known → say nothing, rather than guessing 8000.
+
+    Bug caught: a guessed port produces a URL that connects to whatever else
+    is listening locally, which is worse than an empty map the caller can
+    report honestly.
+    """
+    provider = _provider(_FakeSky(), [])
+    bare = Instance(
+        id="kf-bare",
+        provider="skypilot",
+        status="ready",
+        created_at=0.0,
+        endpoints={},
+        tags={},
+        cost_rate_usd_per_hr=0.0,
+    )
+    with caplog.at_level("WARNING"):
+        assert provider.ensure_endpoints(bare) == {}
+    assert "kf-bare" in caplog.text

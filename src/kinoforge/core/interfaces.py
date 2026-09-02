@@ -563,6 +563,32 @@ class ComputeProvider(ABC):
     @abstractmethod
     def endpoints(self, instance: Instance) -> dict[str, str]: ...  # noqa: D102
 
+    def ensure_endpoints(self, instance: Instance) -> dict[str, str]:
+        """Return endpoints, repairing any provider-side plumbing first.
+
+        compute-seam S5. ``endpoints`` is a pure read: it reports what is
+        already reachable and never creates anything, because three of its
+        callers are observational (``kinoforge status``, the instance
+        overview, ``doctor``) and a read that spawns an ssh process per
+        invocation is a leak, not a feature.
+
+        ``ensure_endpoints`` is the door for callers that are about to make
+        requests. The default is the plain read — correct for every provider
+        whose URL is a pure function of the instance (RunPod's proxy hostname,
+        Modal's recorded ``.modal.run`` URL, local's scheme URL). SkyPilot
+        overrides it because its endpoint is a local port held open by a
+        subprocess that does not survive the process that launched it
+        (finding F11).
+
+        Args:
+            instance: The instance whose endpoints are needed.
+
+        Returns:
+            A port-keyed map of absolute URLs; ``{}`` when none can be
+            established.
+        """
+        return self.endpoints(instance)
+
 
 class ModelSource(ABC):
     """Resolves a vendor-neutral ref into downloadable Artifact(s)."""
