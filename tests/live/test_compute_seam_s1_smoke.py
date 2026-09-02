@@ -802,10 +802,12 @@ def _teardown(
     survivors = [s for s in final_states if s not in _DEAD_STATES]
     teardown_clean = final_readable and not survivors and final_sky is None
 
-    # The provider writes a provisional "launching" ledger row before
-    # sky.launch and only forgets it on the SUCCESS path (F12). A launch that
-    # raises therefore leaves a row that `kinoforge list` reports as a live
-    # instance.
+    # A provisional "launching" ledger row is written before sky.launch (F12).
+    # compute-seam S5 moved that writer OUT of the provider and into the
+    # orchestrator, and these smokes call create_instance directly — so no
+    # deploy_session collapse ever runs and NOTHING but this teardown removes
+    # the row, on the success path or any other. `kinoforge list` would
+    # otherwise report it as a live instance forever.
     #
     # Dropping it is correct ONLY once the instance is confirmed dead. Doing it
     # unconditionally would erase the row in exactly the case it exists for:

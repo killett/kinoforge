@@ -658,7 +658,8 @@ class SkyPilotProvider(ComputeProvider):
             "volume_gb": u,  # no volume is attached
             "volume_mount": u,  # no volume is attached
             "env": c,  # task_config["envs"]
-            "tags": c,  # the F12 provisional row, then Instance.tags
+            "tags": c,  # Instance.tags on the returned instance (S5: the F12
+            #             provisional row is the orchestrator's, not ours)
             "run_id": c,  # task name + cluster_name
             "setup_steps": c,  # combined into Task.setup
             "launch": c,  # rendered into Task.run

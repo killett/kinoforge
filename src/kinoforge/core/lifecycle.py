@@ -644,13 +644,15 @@ class Ledger:
             if changed:
                 self._write_entries(entries)
 
-    def forget_provisional(self, provisional_id: str, *, real_id: str) -> bool:
-        """Drop the pre-launch ``launching`` row, but only once a real row exists.
+    def forget_provisional(
+        self, provisional_id: str, *, real_id: str | None = None
+    ) -> bool:
+        """Drop the pre-launch ``launching`` row without touching any real row.
 
         compute-seam S5 (finding F12). The orchestrator writes a provisional row
         keyed by ``run_id`` before ``create_instance``, and the real row once it
-        returns. Collapsing the two cannot be done with :meth:`forget`, for two
-        reasons that only bite together:
+        returns. Neither of the two outcomes can be expressed with
+        :meth:`forget`, for reasons that only bite on the same-key shape:
 
         * :meth:`forget` matches on **id alone**, and on SkyPilot the cluster
           name IS the ``run_id`` — so both rows share a key and a plain forget
@@ -659,32 +661,55 @@ class Ledger:
         * :meth:`record` **appends**, so not collapsing leaves two rows under
           one key and every per-id reader picks whichever it finds first.
 
-        This method is scoped by id AND by ``tags["kf_launch_phase"] ==
+        The delete is always scoped by id AND by ``tags["kf_launch_phase"] ==
         "launching"``, so it can only ever remove a row the orchestrator wrote
-        pre-launch. The "is there a real row?" check and the delete happen
-        inside one lock acquisition, so no concurrent writer can slip between
-        them and turn the check stale. Rewriting in place rather than
-        forget-then-record is the same discipline :meth:`set_cost_rate` uses,
-        and for the same reason: there must be no window in which zero rows
-        exist for a resource that has already been created.
+        pre-launch — a real row under the same id survives either way. That
+        matters on BOTH orchestrator paths, and *real_id* is what distinguishes
+        them:
+
+        * **Success** (*real_id* given): the collapse. Refuses unless a
+          non-provisional row already exists under *real_id*, so there is never
+          a window in which zero rows exist for a resource that has already been
+          created. The precondition and the delete share one lock acquisition,
+          so no concurrent writer can slip between them and turn the check
+          stale. Same in-place discipline as :meth:`set_cost_rate`, for the same
+          reason.
+        * **Failure** (*real_id* omitted): the cleanup. The create raised, so
+          there may be no real row to require — but a real row under the same id
+          can still exist from an EARLIER successful launch that reused this
+          ``run_id`` (a re-run with an explicit ``--run-id``, or a second
+          ``create_instance`` for one cluster). Unconditionally forgetting by id
+          there would delete a LIVE cluster's row. Phase scoping is what makes
+          this branch safe.
+
+        Note that this removes **every** phase-tagged row under
+        *provisional_id*, not just one. Two concurrent launches sharing a single
+        ``run_id`` would therefore collide: whichever finished first would drop
+        the other's in-flight ``launching`` row. kinoforge run ids are unique per
+        invocation, so this is out of reach in practice — but a caller that
+        deliberately reuses a run id across simultaneous launches does not get
+        F12 protection for the second one.
 
         Args:
             provisional_id: The key the provisional row was written under
                 (the client-side ``run_id``).
-            real_id: The id the provider actually returned. Equal to
-                *provisional_id* on SkyPilot; a server-assigned id elsewhere.
-                At least one non-provisional row must exist under this id for
-                anything to be removed.
+            real_id: The id the provider returned. Equal to *provisional_id* on
+                SkyPilot; a server-assigned id elsewhere. When given, at least
+                one non-provisional row must exist under it or nothing is
+                removed. ``None`` (the default) drops the provisional row with
+                no precondition — correct only when the create failed and there
+                is no real row to protect.
 
         Returns:
-            True when a provisional row was removed, False when nothing was
-            (no real row to fall back on, or no provisional row present).
+            True when at least one provisional row was removed, False when
+            nothing was (no real row to fall back on, or no provisional row
+            present).
         """
         with self._store.acquire_lock(
             f"ledger/{self._run_id}", ttl_s=self._mutate_ttl_s
         ):
             entries = self._read_entries()
-            if not any(
+            if real_id is not None and not any(
                 entry.get("id") == real_id and not _is_provisional(entry)
                 for entry in entries
             ):

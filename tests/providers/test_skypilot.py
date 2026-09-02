@@ -1329,6 +1329,40 @@ def test_autodown_false_opts_out() -> None:
     assert kwargs.get("down") is False, kwargs
 
 
+def test_create_instance_carries_spec_tags_onto_the_returned_instance() -> None:
+    """``spec.tags`` reaches ``Instance.tags`` — the provider's real consumption.
+
+    This is the ONLY test of that consumption, and it exists because the
+    field-consumption parity guard can no longer prove it. That guard observes
+    the pre-launch provisional row, which compute-seam S5 moved to the
+    orchestrator: the harness now BUILDS that row itself (with
+    ``tags=dict(spec.tags)``), so it proves the harness copies a dict, not that
+    SkyPilot consumes anything. ``_StopLaunch`` aborts inside ``sky.launch``, so
+    the capture never reaches the return statement this test drives.
+
+    Bug caught: deleting the ``**dict(spec.tags)`` spread at
+    ``providers/skypilot/__init__.py`` ``create_instance``'s return. Every tag a
+    caller set — ``kinoforge_engine``, ``kinoforge_key``, the operator's own
+    cost-attribution tags — would silently vanish from the ledger row, warm
+    attach could no longer match a cluster, and the parity guard would stay
+    green throughout.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+
+    instance = provider.create_instance(
+        _watchdog_spec(
+            run_id="kf-tags-probe",
+            tags={"kinoforge_engine": "wan", "cost_center": "sentinel"},
+        )
+    )
+
+    assert instance.tags["kinoforge_engine"] == "wan"
+    assert instance.tags["cost_center"] == "sentinel"
+
+
 # ---------------------------------------------------------------------------
 # The pre-launch provisional row (finding F12) used to be written HERE, by the
 # provider, and its tests lived here. compute-seam S5 Task 5 deleted that

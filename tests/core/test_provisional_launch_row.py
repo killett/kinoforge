@@ -606,6 +606,153 @@ def test_forget_provisional_refuses_when_no_real_row_exists(tmp_path: Path) -> N
     assert _ledger_ids(ledger) == ["kf-lonely"]
 
 
+def test_a_create_failure_spares_a_real_row_under_the_same_id(
+    tmp_path: Path,
+    fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
+    fake_provider: MagicMock,  # noqa: F811 — imported fixture
+) -> None:
+    """The FAILURE path is phase-scoped too, so a live cluster survives it.
+
+    Bug caught: cleaning up a failed create with ``Ledger.forget(run_id)``,
+    which matches on id alone. On the same-key shape a real row can already
+    exist under that id from an earlier successful launch that reused the run
+    id — a re-run with an explicit ``--run-id``, or the second
+    ``create_instance`` against one cluster that
+    tests/providers/test_skypilot_endpoints.py exercises. Forgetting by id there
+    deletes the LIVE cluster's only durable handle: the same zero-row hole the
+    success path closes, in the mirror branch, and newly reachable now that
+    SkyPilot goes through this writer.
+    """
+    ledger = Ledger(store=LocalArtifactStore(tmp_path / "ledger-root"))
+    # A previous launch under this same run id is already up and billing.
+    ledger.record(_same_key_instance("kf-run-reused"))
+    boom = RuntimeError("second create exploded")
+    fake_provider.create_instance.side_effect = boom
+
+    with pytest.raises(RuntimeError):
+        _provision_instance_and_build_backend(
+            **_provision_kwargs(
+                engine=fake_engine,
+                provider=fake_provider,
+                run_id="kf-run-reused",
+                ledger=ledger,
+                on_instance_created=None,
+                tmp_path=tmp_path,
+            )
+        )
+
+    # The ghost is gone and the live cluster's row is not.
+    assert _ledger_ids(ledger) == ["kf-run-reused"]
+    entry = ledger.read("kf-run-reused")
+    assert entry is not None
+    assert entry["cost_rate_usd_per_hr"] == 2.5
+    assert "kf_launch_phase" not in entry["tags"]
+
+
+def test_forget_provisional_without_a_real_id_needs_no_precondition(
+    tmp_path: Path,
+) -> None:
+    """``real_id=None`` drops the launching row with nothing to fall back on.
+
+    Bug caught: keeping the "a real row must exist" precondition on the failure
+    branch. The create raised, so usually NO real row exists — requiring one
+    would strand the very ghost the call exists to clear, and every failed
+    launch would leave a permanent row whose est_spend inflates forever.
+    """
+    ledger = Ledger(store=LocalArtifactStore(tmp_path))
+    ledger.record(
+        Instance(
+            id="kf-ghost",
+            provider="skypilot",
+            status="starting",
+            created_at=0.0,
+            tags={"kf_launch_phase": "launching"},
+        )
+    )
+
+    assert ledger.forget_provisional("kf-ghost") is True
+    assert ledger.entries() == []
+
+
+def test_a_refused_collapse_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """A refusal says so, naming both ids.
+
+    Bug caught: discarding ``forget_provisional``'s bool. A refusal is the
+    DESIGNED outcome when the real row never landed and keeping the row is
+    right — but silently it is indistinguishable from a healthy launch, so a
+    permanent duplicate (or a stale 'launching' row on a live instance) reaches
+    production with nothing to grep for.
+    """
+
+    class _RefusingLedger:
+        def forget_provisional(self, provisional_id: str, *, real_id: str) -> bool:
+            del provisional_id, real_id
+            return False
+
+    with caplog.at_level("WARNING"):
+        orchestrator._collapse_provisional_row(
+            _RefusingLedger(), "kf-run-r", "pod-real"
+        )
+
+    record = caplog.records[-1]
+    assert record.levelno == logging.WARNING
+    assert "kf-run-r" in record.getMessage()
+    assert "pod-real" in record.getMessage()
+
+
+def test_a_config_supplied_launch_phase_tag_cannot_reach_a_real_row(
+    tmp_path: Path,
+    fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
+    fake_provider: MagicMock,  # noqa: F811 — imported fixture
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``kf_launch_phase`` is reserved: a caller tag never reaches the spec.
+
+    Caller tags flow into ``spec.tags`` and from there onto the real
+    ``Instance.tags`` — SkyPilot spreads them verbatim. So a config setting
+    ``kf_launch_phase: launching`` would make the REAL row read as provisional,
+    the collapse precondition would never pass, and the launch would end in a
+    permanent two-row state with nothing raising.
+
+    Bug caught: trusting caller tags. This asserts on the SPEC the provider was
+    handed (the upstream fix), not merely on the provisional row — overriding
+    the key only on the provisional row leaves the real row poisoned, which is
+    the half-fix that looks correct.
+    """
+    ledger = Ledger(store=LocalArtifactStore(tmp_path / "ledger-root"))
+    seen: list[InstanceSpec] = []
+
+    def _create(spec: InstanceSpec) -> Instance:
+        seen.append(spec)
+        return _same_key_instance("kf-run-reserved")
+
+    fake_provider.create_instance.side_effect = _create
+
+    kwargs = _provision_kwargs(
+        engine=fake_engine,
+        provider=fake_provider,
+        run_id="kf-run-reserved",
+        ledger=ledger,
+        on_instance_created=ledger.record,
+        tmp_path=tmp_path,
+    )
+    kwargs["tags"] = {"kf_launch_phase": "launching", "cost_center": "keep-me"}
+
+    with caplog.at_level("WARNING"):
+        _provision_instance_and_build_backend(**kwargs)
+
+    assert "kf_launch_phase" not in seen[0].tags, (
+        "the reserved tag reached the spec, so it will reach the real row"
+    )
+    # Only the reserved key is dropped — an unrelated caller tag still lands.
+    assert seen[0].tags["cost_center"] == "keep-me"
+    assert any("kf_launch_phase" in r.getMessage() for r in caplog.records), (
+        "dropping a caller's tag silently is undiagnosable"
+    )
+    # And the end state is the one the strip protects: a clean single collapse.
+    assert _ledger_ids(ledger) == ["kf-run-reserved"]
+
+
 def test_a_collapse_fault_never_fails_the_launch(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

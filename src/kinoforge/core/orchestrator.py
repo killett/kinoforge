@@ -535,6 +535,41 @@ def _placement_summary(instance: Instance) -> str:
     return ", ".join(parts)
 
 
+def _strip_reserved_tags(
+    tags: dict[str, str],
+    logger: logging.Logger = _log,
+) -> dict[str, str]:
+    """Drop kinoforge-reserved keys from caller-supplied *tags*.
+
+    compute-seam S5. Only :data:`~kinoforge.core.lifecycle.LAUNCH_PHASE_TAG` is
+    reserved today, and it is reserved because the ledger's same-key collapse
+    reads it as ground truth: a real row carrying ``kf_launch_phase=launching``
+    is indistinguishable from a provisional one, and the collapse would refuse
+    forever. Caller tags reach the real row through ``spec.tags``, so a config
+    could otherwise set it.
+
+    Dropping rather than raising: an unknown tag is not worth failing a launch
+    over, and the WARNING names the key so it is diagnosable.
+
+    Args:
+        tags: Caller-supplied tags. Not mutated.
+        logger: Injected for testability.
+
+    Returns:
+        A new dict with every reserved key removed.
+    """
+    if LAUNCH_PHASE_TAG not in tags:
+        return dict(tags)
+    logger.warning(
+        "dropping reserved tag %r=%r from caller tags: kinoforge writes it on "
+        "the pre-launch provisional row and the ledger's collapse depends on "
+        "only that row carrying it",
+        LAUNCH_PHASE_TAG,
+        tags[LAUNCH_PHASE_TAG],
+    )
+    return {key: value for key, value in tags.items() if key != LAUNCH_PHASE_TAG}
+
+
 def _record_provisional_row(
     *,
     ledger: Any,  # noqa: ANN401 — Ledger, or any object exposing record/forget
@@ -588,7 +623,11 @@ def _record_provisional_row(
         created_at=now,
         endpoints={},
         tags={
-            **tags,
+            # Stripped, not merely overridden: direct callers (the golden
+            # harness, the live smokes) reach this helper without going through
+            # _provision_instance_and_build_backend's strip, and the WARNING is
+            # the only signal a config is trying to set a reserved key.
+            **_strip_reserved_tags(tags, logger),
             # Shared constants, not literals: this tag is the ONLY thing that
             # distinguishes this row from the real one when the two share an id
             # (SkyPilot), so a rename here that missed
@@ -618,11 +657,25 @@ def _forget_provisional_row(
     row_id: str | None,
     logger: logging.Logger = _log,
 ) -> None:
-    """Remove the provisional row, best-effort.
+    """Remove the provisional row after a FAILED create, best-effort.
 
-    Called on both outcomes: after the real row is recorded on success, and
-    immediately on failure. Never raises — on the success path the instance is
-    already live, and an exception here would fail a launch that worked.
+    A create that never produced a resource must not leave a row whose
+    ``est_spend`` inflates forever (``cli/_reconcile``'s "$210 phantom pod").
+
+    Uses the phase-scoped delete rather than ``Ledger.forget``, which matches on
+    id alone. On the same-key shape (SkyPilot: the cluster name IS the
+    ``run_id``) a real row can already exist under this id from an EARLIER
+    successful launch that reused the run id — a re-run with an explicit
+    ``--run-id``, or a second ``create_instance`` against one cluster. Forgetting
+    by id there would delete a LIVE cluster's only durable handle: the same
+    zero-row hole the success path closes, in the mirror branch. Phase scoping
+    removes only the ``launching`` row this launch wrote.
+
+    No ``real_id`` precondition: the create raised, so requiring a real row
+    would strand the very ghost this call exists to clear.
+
+    Never raises — bookkeeping must not replace the exception that explains why
+    the launch failed.
 
     Args:
         ledger: The ledger holding the row.
@@ -632,11 +685,11 @@ def _forget_provisional_row(
     if not row_id:
         return
     try:
-        ledger.forget(row_id)
+        ledger.forget_provisional(row_id)
     except Exception:  # noqa: BLE001 — bookkeeping must never fail a launch
         logger.warning(
-            "F12 provisional ledger forget failed for %r; the provisional "
-            "'launching' row may linger alongside the real record",
+            "F12 provisional ledger forget failed for %r; a stale 'launching' "
+            "row may linger for a launch that never produced a resource",
             row_id,
             exc_info=True,
         )
@@ -679,13 +732,27 @@ def _collapse_provisional_row(
     if not provisional_id:
         return
     try:
-        ledger.forget_provisional(provisional_id, real_id=instance_id)
+        collapsed = ledger.forget_provisional(provisional_id, real_id=instance_id)
     except Exception:  # noqa: BLE001 — bookkeeping must never fail a launch
         logger.warning(
             "F12 provisional ledger collapse failed for %r; the provisional "
             "'launching' row may linger alongside the real record",
             provisional_id,
             exc_info=True,
+        )
+        return
+    if not collapsed:
+        # A refusal is the DESIGNED outcome when the real row never landed, and
+        # keeping the row is right — but it is indistinguishable from a healthy
+        # launch unless it says so. Silence here is how a permanent duplicate
+        # (or a permanently stale 'launching' row on a live instance) reaches
+        # production with nothing to grep for.
+        logger.warning(
+            "F12: collapse refused for %r; no real row under %r — the "
+            "'launching' row remains, so this instance may show up as "
+            "provisional (or twice) in kinoforge list",
+            provisional_id,
+            instance_id,
         )
 
 
@@ -1108,6 +1175,16 @@ def _provision_instance_and_build_backend(
             after the instance is already created — that instance is destroyed
             before the exception propagates.
     """
+    # compute-seam S5 — ``kf_launch_phase`` is RESERVED. It is the only thing
+    # distinguishing the provisional row from the real one when the two share an
+    # id, and caller tags flow into ``spec.tags`` and from there onto the real
+    # ``Instance.tags`` (SkyPilot spreads them verbatim). A config that set this
+    # key would make the REAL row read as provisional: the collapse precondition
+    # would never pass, leaving a permanent two-row state with nothing raising.
+    # Stripping it here — above BOTH the provisional write and ``_build_spec`` —
+    # is what makes the phase tag a fact about the launch rather than about the
+    # config.
+    tags = _strip_reserved_tags(dict(tags or {}))
     lifecycle = cfg.lifecycle()
     image = cfg.compute.image if cfg.compute is not None else ""
     # THE single resolution site for the capacity window. It sits beside the
