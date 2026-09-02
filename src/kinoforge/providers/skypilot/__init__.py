@@ -1107,14 +1107,20 @@ class SkyPilotProvider(ComputeProvider):
             "ports": ",".join(spec.ports),
         }
         # S4 follow-up: what the optimizer actually booked, merged on top of
-        # the caller's own tags. An EMPTY selection value never shadows a
-        # spec tag the caller already set for the same key (e.g. a caller-set
-        # "accelerators" tag surviving a CPU booking whose readback for that
-        # key is "") — only a genuinely absent key, or a non-empty selection
-        # value, is allowed to land.
-        for key, value in self._selection_tags(cluster_name).items():
-            if value or key not in tags:
-                tags[key] = value
+        # the caller's own tags. Unconditional overwrite is correct here:
+        # `_selection_tags` already did the work of separating "could not
+        # read" (key OMITTED) from "read as falsy" (key present, value "") —
+        # every key it returns was genuinely read off the launched handle, so
+        # a caller-set tag under one of these four names (nothing reserves
+        # them; `_strip_reserved_tags` only reserves `LAUNCH_PHASE_TAG`) is a
+        # stale guess next to a truthful reading, not a value worth
+        # protecting. Re-guarding on truthiness here would re-conflate what
+        # the sentinel in `_selection_tags` just separated — e.g. a caller
+        # tag `accelerators: some-note` would survive a real CPU booking
+        # (`_selection_tags` legitimately returning `accelerators=""`),
+        # which is the exact "summary shows something other than what was
+        # booked" failure this task exists to fix.
+        tags.update(self._selection_tags(cluster_name))
         return Instance(
             id=cluster_name,
             provider=self.name,
@@ -1231,6 +1237,14 @@ class SkyPilotProvider(ComputeProvider):
         even with an empty/None value (e.g. ``accelerators`` on a CPU-only
         booking), is still written — that is a real "no accelerator" fact,
         not a read failure.
+
+        Trade-off: the read is wrapped in a single outer ``try/except``, so
+        one attribute raising on access (unusual, but not impossible for an
+        SDK object) discards every field read so far in the same call rather
+        than returning the three that succeeded. Accepted deliberately —
+        "never raises, never blocks a launch" is worth more than partial
+        credit here, and a per-field ``try/except`` would quadruple this
+        method's branch count for a fault mode that has never been observed.
 
         Args:
             cluster_name: The cluster to describe.
