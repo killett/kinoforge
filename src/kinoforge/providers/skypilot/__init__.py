@@ -215,6 +215,37 @@ def _resolve(sky_module: Any, result: Any) -> Any:  # noqa: ANN401
     return result
 
 
+#: Sentinel distinguishing "attribute absent" from "attribute present but
+#: None/empty" when reading a ``launched_resources`` record in
+#: :meth:`SkyPilotProvider._selection_tags`. ``getattr(obj, name, "")`` cannot
+#: make that distinction — both cases would collapse to ``""``.
+_MISSING = object()
+
+
+def _format_accelerators(value: Any) -> str:  # noqa: ANN401
+    """Format a ``launched_resources.accelerators`` value as ``"NAME:COUNT"``.
+
+    The real SDK exposes this as a dict (e.g. ``{"A100": 1}``) or ``None``
+    for a CPU-only booking; test fakes may pass a plain string directly.
+    Mirrors the ``"A100:1"`` shape :meth:`SkyPilotProvider.create_instance`
+    already writes into the Task config's ``resources["accelerators"]``, so a
+    cap-violation summary and the launch payload describe an accelerator the
+    same way.
+
+    Args:
+        value: The raw ``accelerators`` field — a dict, a string, or falsy.
+
+    Returns:
+        ``""`` when falsy; a comma-joined ``"NAME:COUNT"`` list otherwise
+        (a single entry has no comma).
+    """
+    if not value:
+        return ""
+    if isinstance(value, dict):
+        return ",".join(f"{name}:{count}" for name, count in value.items())
+    return str(value)
+
+
 def _coerce_float_field(record: Any, field: str) -> float:  # noqa: ANN401
     """Read ``field`` from ``record`` and coerce to ``float`` (0.0 on failure).
 
@@ -1069,18 +1100,28 @@ class SkyPilotProvider(ComputeProvider):
                 port: f"http://127.0.0.1:{tunnel.local_port}"
                 for port, tunnel in self._tunnels.get(cluster_name, {}).items()
             }
+        tags: dict[str, str] = {
+            **dict(spec.tags),
+            # S5 — same key RunPod uses (_pod_to_instance / endpoints), so
+            # ensure_endpoints and warm-attach have one reader for both.
+            "ports": ",".join(spec.ports),
+        }
+        # S4 follow-up: what the optimizer actually booked, merged on top of
+        # the caller's own tags. An EMPTY selection value never shadows a
+        # spec tag the caller already set for the same key (e.g. a caller-set
+        # "accelerators" tag surviving a CPU booking whose readback for that
+        # key is "") — only a genuinely absent key, or a non-empty selection
+        # value, is allowed to land.
+        for key, value in self._selection_tags(cluster_name).items():
+            if value or key not in tags:
+                tags[key] = value
         return Instance(
             id=cluster_name,
             provider=self.name,
             status="starting",
             created_at=time.time(),
             endpoints=endpoints,
-            tags={
-                **dict(spec.tags),
-                # S5 — same key RunPod uses (_pod_to_instance / endpoints), so
-                # ensure_endpoints and warm-attach have one reader for both.
-                "ports": ",".join(spec.ports),
-            },
+            tags=tags,
             # compute-seam S4: 0.0, not spec.offer's price. That assignment
             # WAS finding F4 — it reported the rate kinoforge asked for while
             # the optimizer booked whatever it liked (a $1.99 Lambda A100 under
@@ -1109,6 +1150,40 @@ class SkyPilotProvider(ComputeProvider):
                 return _cluster_record_to_instance(cluster)
         raise KeyError(f"no SkyPilot cluster found: {instance_id!r}")
 
+    def _launched_resources(self, cluster_name: str) -> Any | None:  # noqa: ANN401
+        """Return the launched-resources record for ``cluster_name``, or None.
+
+        Re-reads ``status()`` and pulls ``handle.launched_resources`` off the
+        matching cluster. Shared by :meth:`realized_rate` and
+        :meth:`_selection_tags` so sky's status/handle shape is parsed in
+        exactly one place — this method IS that parser; do not add a second
+        one. Never raises: any failure (unreachable API server, absent
+        handle, unknown cluster) collapses to ``None``, which both callers
+        already treat as "unreadable" rather than a crash.
+
+        Args:
+            cluster_name: The SkyPilot cluster to look up.
+
+        Returns:
+            The ``launched_resources`` object, or ``None`` when the cluster,
+            its handle, or its resources are unreadable.
+        """
+        sky = self._sky()
+        try:
+            clusters = _resolve(sky, sky.status())
+        except Exception:  # noqa: BLE001 — an unreadable read is not a crash
+            return None
+        for cluster in clusters or []:
+            if _record_field(cluster, "name") != cluster_name:
+                continue
+            handle = (
+                cluster.get("handle")
+                if isinstance(cluster, dict)
+                else getattr(cluster, "handle", None)
+            )
+            return getattr(handle, "launched_resources", None)
+        return None
+
     def realized_rate(self, instance: Instance) -> float | None:
         """Return the rate the optimizer's chosen resources will bill at.
 
@@ -1130,27 +1205,68 @@ class SkyPilotProvider(ComputeProvider):
             unreadable. Never raises — the caller tears the instance down on
             None rather than crashing mid-launch.
         """
-        sky = self._sky()
-        try:
-            clusters = _resolve(sky, sky.status())
-        except Exception:  # noqa: BLE001 — an unreadable rate is not a crash
+        launched = self._launched_resources(instance.id)
+        if launched is None:
             return None
-        for cluster in clusters or []:
-            if _record_field(cluster, "name") != instance.id:
-                continue
-            handle = (
-                cluster.get("handle")
-                if isinstance(cluster, dict)
-                else getattr(cluster, "handle", None)
-            )
-            launched = getattr(handle, "launched_resources", None)
+        try:
+            return float(launched.get_cost(3600))
+        except Exception:  # noqa: BLE001 — same reason
+            return None
+
+    def _selection_tags(self, cluster_name: str) -> dict[str, str]:
+        """Return sku / cloud / region / accelerators for a launched cluster.
+
+        S4 follow-up (finding: a SkyPilot ``RateCapExceeded`` read
+        ``provider=skypilot`` and nothing else). ``_placement_summary``
+        (``core/orchestrator.py``) reports only what an :class:`Instance`
+        holds, and a SkyPilot Instance held no selection identity — an
+        operator reading that violation could not tell "my cap is too low"
+        from "this went somewhere I did not intend". These are exactly the
+        four keys ``_placement_summary`` reads.
+
+        Keys the handle does not expose (attribute absent) are OMITTED, not
+        written as empty strings: ``_placement_summary`` already skips falsy
+        values, and a ``sku=`` with nothing after it reads as a broken tool
+        rather than as missing information. A key the handle DOES expose,
+        even with an empty/None value (e.g. ``accelerators`` on a CPU-only
+        booking), is still written — that is a real "no accelerator" fact,
+        not a read failure.
+
+        Args:
+            cluster_name: The cluster to describe.
+
+        Returns:
+            A tag mapping, possibly empty. Never raises — any fault is logged
+            at debug level and swallowed so a status-read hiccup can never
+            block or fail an otherwise-successful launch.
+        """
+        try:
+            launched = self._launched_resources(cluster_name)
             if launched is None:
-                return None
-            try:
-                return float(launched.get_cost(3600))
-            except Exception:  # noqa: BLE001 — same reason
-                return None
-        return None
+                return {}
+            tags: dict[str, str] = {}
+            for tag_key, attr_name in (
+                ("sku", "instance_type"),
+                ("cloud", "cloud"),
+                ("region", "region"),
+                ("accelerators", "accelerators"),
+            ):
+                value = getattr(launched, attr_name, _MISSING)
+                if value is _MISSING:
+                    continue
+                tags[tag_key] = (
+                    _format_accelerators(value)
+                    if tag_key == "accelerators"
+                    else ("" if value is None else str(value))
+                )
+        except Exception:  # noqa: BLE001 — a tag read must never block a launch
+            logger.debug(
+                "skypilot: could not read selection tags for cluster %r",
+                cluster_name,
+                exc_info=True,
+            )
+            return {}
+        return tags
 
     def list_instances(self) -> list[Instance]:
         """Return all active SkyPilot clusters.
