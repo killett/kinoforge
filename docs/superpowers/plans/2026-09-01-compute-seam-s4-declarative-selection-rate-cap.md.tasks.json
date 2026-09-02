@@ -175,7 +175,7 @@
       "id": "8",
       "planTask": 7,
       "subject": "Task 7: RunPod owns its own offer retry",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": ["7"],
       "metadata": {
         "files": [

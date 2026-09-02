@@ -140,11 +140,29 @@ _SERVERLESS_CREATE_RESPONSE: dict[str, Any] = {
 }
 
 
+_CAPACITY_OFFER = Offer(
+    id="rtx-4090",
+    gpu_type="NVIDIA GeForce RTX 4090",
+    vram_gb=24,
+    cuda="12.0",
+    cost_rate_usd_per_hr=0.69,
+    mode="pod",
+)
+
+
 @pytest.fixture()
 def pod_spec() -> InstanceSpec:
-    """InstanceSpec for pod mode with two exposed ports."""
+    """InstanceSpec for pod mode with two exposed ports.
+
+    Carries an offer because every real caller does: pre-S4 the orchestrator
+    chose one, and post-S4 RunPod chooses one from its own catalog before it
+    ever builds a create body. A spec with neither an offer nor a reachable
+    catalog is not a shape production can produce, and S4 makes it a clean
+    CapacityError rather than a create with no gpuTypeId.
+    """
     return InstanceSpec(
         image="runpod/pytorch:2.1",
+        offer=_CAPACITY_OFFER,
         lifecycle=Lifecycle(
             idle_timeout_s=1800,
             job_timeout_s=900,
@@ -157,9 +175,10 @@ def pod_spec() -> InstanceSpec:
 
 @pytest.fixture()
 def serverless_spec() -> InstanceSpec:
-    """InstanceSpec for serverless mode."""
+    """InstanceSpec for serverless mode, carrying an offer like a real caller."""
     return InstanceSpec(
         image="runpod/pytorch:2.1",
+        offer=_CAPACITY_OFFER,
         lifecycle=Lifecycle(
             job_timeout_s=600,
             max_workers=3,
@@ -412,6 +431,7 @@ def test_create_pod_appends_http_protocol_suffix_to_bare_ports() -> None:
     """
     layer_q_spec = InstanceSpec(
         image="runpod/pytorch:2.1",
+        offer=_CAPACITY_OFFER,
         ports=("8188",),  # bare port — caller doesn't know about protocol
         lifecycle=Lifecycle(
             idle_timeout_s=1800,
@@ -442,6 +462,7 @@ def test_create_pod_preserves_explicit_protocol_suffix_on_ports() -> None:
     """
     spec_with_explicit = InstanceSpec(
         image="runpod/pytorch:2.1",
+        offer=_CAPACITY_OFFER,
         ports=("22/tcp", "8188/http"),  # mix of explicit protocols
         lifecycle=Lifecycle(
             idle_timeout_s=1800,
@@ -478,6 +499,7 @@ def test_create_pod_populates_endpoints_eagerly_from_spec_ports() -> None:
     """
     layer_q_spec = InstanceSpec(
         image="runpod/pytorch:2.1",
+        offer=_CAPACITY_OFFER,
         ports=("8188",),  # Layer Q path: render_provision.ports → spec.ports
         lifecycle=Lifecycle(
             idle_timeout_s=1800,
@@ -531,19 +553,13 @@ def test_create_pod_populates_endpoints_from_legacy_tag_when_spec_ports_empty(
 # ---------------------------------------------------------------------------
 
 
-_CAPACITY_OFFER = Offer(
-    id="rtx-4090",
-    gpu_type="NVIDIA GeForce RTX 4090",
-    vram_gb=24,
-    cuda="12.0",
-    cost_rate_usd_per_hr=0.69,
-    mode="pod",
-)
-
-
 def _spec_with_offer(pod_spec: InstanceSpec) -> InstanceSpec:
-    """pod_spec fixture has no offer; attach _CAPACITY_OFFER for these tests."""
-    return dataclasses.replace(pod_spec, offer=_CAPACITY_OFFER)
+    """Identity since S4 — pod_spec now carries _CAPACITY_OFFER itself.
+
+    Kept as a named seam so the call sites still say WHY the offer matters:
+    the capacity message names the offer's gpu_type.
+    """
+    return pod_spec
 
 
 def test_create_instance_raises_capacity_error_on_no_resources(
@@ -1361,6 +1377,7 @@ def test_create_pod_transforms_env_dict_to_key_value_array() -> None:
 
     spec = InstanceSpec(
         image="runpod/pytorch:2.1",
+        offer=_CAPACITY_OFFER,
         lifecycle=Lifecycle(
             idle_timeout_s=1800,
             job_timeout_s=900,
@@ -1403,6 +1420,7 @@ def test_create_pod_raises_on_graphql_errors_block() -> None:
 
     spec = InstanceSpec(
         image="x",
+        offer=_CAPACITY_OFFER,
         lifecycle=Lifecycle(),
         tags={"mode": "pod"},
     )
@@ -1422,6 +1440,7 @@ def test_create_pod_raises_on_empty_pod_id() -> None:
 
     spec = InstanceSpec(
         image="x",
+        offer=_CAPACITY_OFFER,
         lifecycle=Lifecycle(),
         tags={"mode": "pod"},
     )

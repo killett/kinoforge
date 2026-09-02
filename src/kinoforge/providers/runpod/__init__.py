@@ -25,6 +25,7 @@ Self-registers under ``"runpod"`` when this module is imported.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import gzip
 import json
 import logging
@@ -601,13 +602,106 @@ class RunPodProvider(ComputeProvider):
         Returns:
             A new :class:`~kinoforge.core.interfaces.Instance`.
         """
-        mode = spec.tags.get("mode", "pod")
-        if mode == "serverless":
-            instance = self._create_serverless(spec)
-        else:
-            instance = self._create_pod(spec)
+        instance = self._create_with_offer_retry(spec)
         self._created_instances[instance.id] = instance
         return instance
+
+    def _create_once(self, spec: InstanceSpec) -> Instance:
+        """Create exactly one pod or endpoint from *spec*, no retry.
+
+        Args:
+            spec: The instance specification, with ``offer`` already chosen.
+
+        Returns:
+            The created :class:`~kinoforge.core.interfaces.Instance`.
+        """
+        mode = spec.tags.get("mode", "pod")
+        if mode == "serverless":
+            return self._create_serverless(spec)
+        return self._create_pod(spec)
+
+    def _create_with_offer_retry(self, spec: InstanceSpec) -> Instance:
+        """Book the first offer that has capacity, in preference order.
+
+        compute-seam S4 moved this loop out of the orchestrator, which was
+        iterating a catalog on behalf of providers that do not have one. RunPod
+        does: :meth:`find_offers` returns it, already filtered and ranked by
+        ``placement.accelerators``.
+
+        Enumeration is LAZY on purpose. When the caller has already chosen an
+        offer (today's orchestrator, and the golden harness), the happy path
+        costs exactly one API call and books exactly the SKU it was handed —
+        eagerly enumerating to build a retry list would double every launch's
+        round trips and re-derive the choice on the path that works. The
+        catalog is read only once an attempt has actually hit CapacityError, or
+        when no offer was handed down at all. Task 8 deletes ``spec.offer`` and
+        the second branch becomes the only one.
+
+        Args:
+            spec: The instance specification. ``spec.offer`` is the caller's
+                pre-selection when set; ``spec.placement`` drives the
+                provider's own selection otherwise.
+
+        Returns:
+            The created :class:`~kinoforge.core.interfaces.Instance`.
+
+        Raises:
+            CapacityError: Every candidate offer reported no capacity, or the
+                catalog was empty. The last per-offer CapacityError is chained
+                as ``__cause__`` so the operator sees RunPod's own message.
+            Exception: Any NON-capacity error propagates immediately, without
+                trying another offer — every offer would fail it identically,
+                and retrying turns one clear error into N confusing ones.
+        """
+        attempted: list[str] = []
+        last_capacity_exc: CapacityError | None = None
+
+        if spec.offer is not None:
+            try:
+                return self._create_once(spec)
+            except CapacityError as exc:
+                last_capacity_exc = exc
+                attempted.append(spec.offer.id)
+                logging.getLogger(__name__).warning(
+                    "[offer-retry] %s @ $%.4f/hr unavailable: %s",
+                    spec.offer.gpu_type,
+                    spec.offer.cost_rate_usd_per_hr,
+                    exc,
+                )
+
+        try:
+            candidates = self.find_offers(spec.placement)
+        except Exception:
+            # The catalog read is the RETRY path's input, not the launch's. If
+            # it fails after a real CapacityError, re-raising the GraphQL error
+            # would replace RunPod's own "no capacity" message with a read
+            # failure the operator cannot act on.
+            if last_capacity_exc is not None:
+                # Re-chained to its OWN cause, not to the enumeration failure
+                # and not to None: the capacity error already carries RunPod's
+                # raw ValueError, and replacing or clearing it would blind the
+                # operator to the actual capacity reason.
+                raise last_capacity_exc from last_capacity_exc.__cause__
+            raise
+        for offer in candidates:
+            if offer.id in attempted:
+                continue
+            attempted.append(offer.id)
+            try:
+                return self._create_once(dataclasses.replace(spec, offer=offer))
+            except CapacityError as exc:
+                last_capacity_exc = exc
+                logging.getLogger(__name__).warning(
+                    "[offer-retry] %s @ $%.4f/hr unavailable: %s",
+                    offer.gpu_type,
+                    offer.cost_rate_usd_per_hr,
+                    exc,
+                )
+
+        raise CapacityError(
+            f"all {len(attempted)} offers exhausted; provider 'runpod' "
+            f"has no current capacity"
+        ) from last_capacity_exc
 
     def get_instance(self, instance_id: str) -> Instance:
         """Return an :class:`~kinoforge.core.interfaces.Instance` by ID.

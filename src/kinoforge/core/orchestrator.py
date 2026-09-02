@@ -508,54 +508,6 @@ class _LazyClaim:
             self._cm = None
 
 
-def _create_with_offer_retry(
-    provider: ComputeProvider,
-    build_spec: Callable[[Offer], InstanceSpec],
-    offers: list[Offer],
-) -> tuple[Instance, Offer]:
-    """Iterate offers until create_instance succeeds.
-
-    The first offer is tried first (the list is already sorted by
-    filter_offers' gpu_preference). On CapacityError, continue to the
-    next offer. Any other exception propagates immediately — non-
-    capacity errors fail every offer identically.
-
-    Args:
-        provider: The resolved compute provider.
-        build_spec: Closure that builds an InstanceSpec for one offer.
-            Called once per offer attempted.
-        offers: Non-empty list of offers in attempt order.
-
-    Returns:
-        ``(instance, offer)`` — the first offer for which create_instance
-        succeeded, paired with the live instance.
-
-    Raises:
-        CapacityError: Every offer raised CapacityError. The last
-            per-offer CapacityError is chained as ``__cause__``.
-    """
-    last_capacity_exc: CapacityError | None = None
-    for offer in offers:
-        spec = build_spec(offer)
-        try:
-            instance = provider.create_instance(spec)
-            return instance, offer
-        except CapacityError as exc:
-            last_capacity_exc = exc
-            _log.warning(
-                "[offer-retry] %s @ $%.4f/hr unavailable: %s",
-                offer.gpu_type,
-                offer.cost_rate_usd_per_hr,
-                exc,
-            )
-            continue
-    raise CapacityError(
-        f"all {len(offers)} offers exhausted; provider "
-        f"{getattr(provider, 'name', repr(provider))!r} "
-        f"has no current capacity"
-    ) from last_capacity_exc
-
-
 def _placement_summary(instance: Instance) -> str:
     """Return a one-line identity of what was actually booked.
 
@@ -1045,7 +997,14 @@ def _provision_instance_and_build_backend(
         return found
 
     def _create(offers: list[Offer]) -> tuple[Instance, Offer]:
-        return _create_with_offer_retry(resolved_provider, _build_spec, offers)
+        # compute-seam S4: the orchestrator hands over ONE spec and the
+        # provider owns selection from here. RunPod retries the rest of its own
+        # ranked catalog internally on CapacityError; providers without a
+        # catalog never had anything to iterate. The enumeration above survives
+        # because the capacity-WAIT window still re-queries between attempts,
+        # and because Task 8 has not yet deleted spec.offer.
+        chosen = offers[0]
+        return resolved_provider.create_instance(_build_spec(chosen)), chosen
 
     instance, _chosen_offer = _create_with_capacity_wait(
         find_offers=_find_offers,
@@ -1861,9 +1820,9 @@ def deploy(
             tags=tags,
         )
 
-    instance, _chosen_offer = _create_with_offer_retry(
-        resolved_provider, _build_spec, offers
-    )
+    # compute-seam S4: selection and its retry belong to the provider.
+    _chosen_offer = offers[0]
+    instance = resolved_provider.create_instance(_build_spec(_chosen_offer))
 
     try:
         # Poll until ready (LocalProvider returns ready immediately; cloud providers
