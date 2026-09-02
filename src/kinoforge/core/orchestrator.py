@@ -530,6 +530,107 @@ def _placement_summary(instance: Instance) -> str:
     return ", ".join(parts)
 
 
+def _record_provisional_row(
+    *,
+    ledger: Any,  # noqa: ANN401 — Ledger, or any object exposing record/forget
+    run_id: str,
+    provider_name: str,
+    tags: dict[str, str],
+    max_age_s: int,
+    now: float,
+    logger: logging.Logger = _log,
+) -> str | None:
+    """Write the durable pre-launch row and return its id.
+
+    compute-seam S5 generalises Brief 1's SkyPilot-only fix (finding F12). A
+    ``create_instance`` call is multi-minute on every cloud provider, and until
+    it returns there is no durable record of the resource it may already have
+    created: a SIGKILL inside it leaves a billing pod, cluster or app that no
+    kinoforge command can see.
+
+    The row is keyed by the CLIENT-side id (``run_id``), which is not the
+    provider's id anywhere but SkyPilot — on RunPod it is the pod NAME, on
+    Modal the app run id. ``cli/_reconcile`` therefore adopts a ``launching``
+    row by name before it is allowed to forget one.
+
+    Never raises: bookkeeping must not be able to fail a launch that would
+    otherwise succeed. A fault forfeits F12 protection for this launch only,
+    and is logged rather than passed.
+
+    Args:
+        ledger: The ledger to write to.
+        run_id: The client-side id for this launch.
+        provider_name: The provider about to be called.
+        tags: Orchestrator tags to carry onto the row.
+        max_age_s: Lifecycle snapshot, so the reaper can age the row out.
+        now: Current epoch seconds (injected for testability).
+        logger: Injected for testability.
+
+    Returns:
+        The row id, or None when nothing was written.
+    """
+    if not run_id:
+        logger.warning(
+            "F12: no run_id for this launch; skipping the pre-launch "
+            "provisional row (a row with no id cannot be found or forgotten)"
+        )
+        return None
+    provisional = Instance(
+        id=run_id,
+        provider=provider_name,
+        status="starting",
+        created_at=now,
+        endpoints={},
+        tags={
+            **tags,
+            "kf_launch_phase": "launching",
+            "kf_run_id": run_id,
+            "kf_launched_at": repr(now),
+        },
+        cost_rate_usd_per_hr=0.0,
+    )
+    try:
+        ledger.record(provisional, max_age_s=max_age_s)
+    except Exception:  # noqa: BLE001 — ledger fault must not block a launch
+        logger.warning(
+            "F12 provisional ledger record failed for %r; this launch has no "
+            "pre-launch orphan protection until it completes",
+            run_id,
+            exc_info=True,
+        )
+        return None
+    return run_id
+
+
+def _forget_provisional_row(
+    ledger: Any,  # noqa: ANN401
+    row_id: str | None,
+    logger: logging.Logger = _log,
+) -> None:
+    """Remove the provisional row, best-effort.
+
+    Called on both outcomes: after the real row is recorded on success, and
+    immediately on failure. Never raises — on the success path the instance is
+    already live, and an exception here would fail a launch that worked.
+
+    Args:
+        ledger: The ledger holding the row.
+        row_id: The provisional row id, or None when none was written.
+        logger: Injected for testability.
+    """
+    if not row_id:
+        return
+    try:
+        ledger.forget(row_id)
+    except Exception:  # noqa: BLE001 — bookkeeping must never fail a launch
+        logger.warning(
+            "F12 provisional ledger forget failed for %r; the provisional "
+            "'launching' row may linger alongside the real record",
+            row_id,
+            exc_info=True,
+        )
+
+
 def _enforce_rate_cap(
     *,
     provider: ComputeProvider,
@@ -841,6 +942,7 @@ def _provision_instance_and_build_backend(
     cancel_token: CancelToken | None = None,
     start_heartbeat: Callable[[Instance], HeartbeatLoopProtocol] | None = None,
     capacity_wait_s: float | None = None,
+    provisional_ledger: Any | None = None,  # noqa: ANN401 — Ledger, duck-typed
 ) -> ProvisionResult:
     """Provision a compute instance and build a backend for it.
 
@@ -900,6 +1002,15 @@ def _provision_instance_and_build_backend(
             first miss" and must be stated, never inherited from a
             forgotten keyword — a caller that silently got ``0.0`` would
             lose RunPod's capacity retry with no signal at all.
+        provisional_ledger: compute-seam S5 (finding F12) — the ledger that
+            receives a durable ``kf_launch_phase=launching`` row keyed by
+            ``run_id`` BEFORE ``create_instance`` is called, so a kill inside
+            the multi-minute create still leaves a handle on whatever the
+            provider may already have booked. The row is forgotten after the
+            real row is recorded on success, and immediately on failure.
+            ``None`` (the default) disables the row entirely — every write and
+            forget is best-effort regardless, because bookkeeping must never
+            fail a launch that would otherwise succeed.
 
     Returns:
         :class:`ProvisionResult` ``(instance, backend, hb_loop)`` —
@@ -990,16 +1101,41 @@ def _provision_instance_and_build_backend(
     # SkyPilot by handing constraints to its optimizer. The capacity-WAIT
     # window survives because capacity is fluid: a provider that raises
     # CapacityError now may succeed in 25 s.
-    instance = _create_with_capacity_wait(
-        create=lambda: resolved_provider.create_instance(_build_spec()),
-        capacity_wait_s=capacity_wait_s,
+    #
+    # F12 — the row goes in ABOVE the capacity-wait loop, not inside it:
+    # ``Ledger.record`` appends, so one write per attempt would leave N rows
+    # for one launch and every reader would pick whichever it found first.
+    provisional_id = (
+        _record_provisional_row(
+            ledger=provisional_ledger,
+            run_id=run_id,
+            provider_name=getattr(resolved_provider, "name", "unknown"),
+            tags=dict(tags or {}),
+            max_age_s=int(lifecycle.max_lifetime_s),
+            now=time.time(),
+        )
+        if provisional_ledger is not None
+        else None
     )
+    try:
+        instance = _create_with_capacity_wait(
+            create=lambda: resolved_provider.create_instance(_build_spec()),
+            capacity_wait_s=capacity_wait_s,
+        )
+    except BaseException:
+        # A create that never produced a resource must not leave a row whose
+        # est_spend inflates forever (cli/_reconcile's "$210 phantom pod").
+        _forget_provisional_row(provisional_ledger, provisional_id)
+        raise
     # B7 — acquire the cooperative session-claim lock now that instance.id is
     # known, BEFORE engine.provision runs. The callback enters the outer
     # hold_until_first_tick context; release happens on the _LazyClaim
     # holder's __exit__ in deploy_session.
     if on_instance_created is not None:
         on_instance_created(instance)
+    # Order is load-bearing: the REAL row is written first, so no window
+    # exists in which a kill loses both rows.
+    _forget_provisional_row(provisional_ledger, provisional_id)
     # compute-seam S4: the cap is verified against what was LAUNCHED, not
     # filtered against a catalog the chooser may never have consulted. Runs
     # after on_instance_created (so a failed teardown still leaves a ledger row
@@ -1295,6 +1431,11 @@ def deploy_session(
     # ------------------------------------------------------------------
     resolved_engine = _resolve_engine(cfg, engine)
     resolved_provider: ComputeProvider | None = None
+    # compute-seam S5 (F12) — the ledger the ORCHESTRATOR writes the
+    # pre-launch provisional row into, for every provider. None on hosted
+    # engines (no create to protect) and on providers that still write the row
+    # themselves (see the Task 5 gate below).
+    _provisional_ledger: Ledger | None = None
     if resolved_engine.requires_compute:
         resolved_provider = _resolve_provider(cfg, provider)
         # F12 — hand the provider a ledger so it can write a durable row
@@ -1303,6 +1444,13 @@ def deploy_session(
         _install_launch_ledger = getattr(resolved_provider, "set_launch_ledger", None)
         if _install_launch_ledger is not None:
             _install_launch_ledger(Ledger(store=store))
+        # TASK 5 REMOVES THIS GATE, together with the provider-side
+        # ``set_launch_ledger`` seam above. Until then, a provider that writes
+        # its own provisional row must not also get the orchestrator's — both
+        # key the row on the same cluster name, and ``Ledger.record`` appends,
+        # so one launch would leave two identical rows.
+        if _install_launch_ledger is None:
+            _provisional_ledger = Ledger(store=store)
 
     # ------------------------------------------------------------------
     # Step 2.5 — UX A hosted preflight (Layer I)
@@ -1506,6 +1654,7 @@ def deploy_session(
                             cancel_token=cancel_token,
                             start_heartbeat=_start_heartbeat,
                             capacity_wait_s=capacity_wait_s,
+                            provisional_ledger=_provisional_ledger,
                         )
                         instance, backend, hb_loop = _result
                 else:
@@ -1551,6 +1700,7 @@ def deploy_session(
                             cancel_token=cancel_token,
                             start_heartbeat=_start_heartbeat,
                             capacity_wait_s=capacity_wait_s,
+                            provisional_ledger=_provisional_ledger,
                         )
                         instance, backend, hb_loop = _result
                 else:
