@@ -9,6 +9,7 @@ a create is about to happen on ANY provider.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -21,7 +22,7 @@ import kinoforge.engines.fake  # noqa: F401
 import kinoforge.providers.local  # noqa: F401
 import kinoforge.sources.http  # noqa: F401 — registers https:// source
 from kinoforge.core import orchestrator
-from kinoforge.core.errors import CapacityError
+from kinoforge.core.errors import CapacityError, ProvisionFailed
 from kinoforge.core.interfaces import Instance, InstanceSpec
 from kinoforge.core.lifecycle import Ledger
 from kinoforge.core.orchestrator import (
@@ -413,28 +414,55 @@ def test_the_row_survives_when_the_real_row_never_landed(
     assert entry["tags"]["kf_launch_phase"] == "launching"
 
 
-def test_the_row_survives_when_the_provider_id_equals_the_run_id(
+# ---------------------------------------------------------------------------
+# The same-key shape (SkyPilot: cluster name == run_id). ``Ledger.forget``
+# drops EVERY row whose id matches and ``Ledger.record`` appends, so this shape
+# has exactly two ways to go wrong and one correct outcome. Both failure
+# directions are pinned separately, because a fix for one is a plausible cause
+# of the other.
+# ---------------------------------------------------------------------------
+
+
+def _same_key_instance(run_id: str) -> Instance:
+    """Build the real Instance a same-key provider hands back.
+
+    Carries fields the provisional row provably does not — live endpoints and
+    a non-zero rate — so a test can tell WHICH row survived rather than only
+    how many did.
+
+    Args:
+        run_id: The client-side run id, which is also the provider's id here.
+
+    Returns:
+        The instance a SkyPilot-shaped ``create_instance`` would return.
+    """
+    return Instance(
+        id=run_id,
+        provider="fakeprovider",
+        status="ready",
+        created_at=0.0,
+        endpoints={"8000": f"http://127.0.0.1:8000/{run_id}"},
+        tags={"ports": "8000"},
+        cost_rate_usd_per_hr=2.5,
+    )
+
+
+def test_the_same_key_collapse_leaves_exactly_one_row(
     tmp_path: Path,
     fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
     fake_provider: MagicMock,  # noqa: F811 — imported fixture
 ) -> None:
-    """Same-key launches (SkyPilot) must not have both rows deleted.
+    """One launch, one row — even when both rows share a key.
 
-    Bug caught: ``Ledger.forget`` drops EVERY row whose id matches, so when
-    the provider's id IS the client id — a SkyPilot cluster name — forgetting
-    the provisional row takes the real row with it and the launch goes
-    invisible while it is live. SkyPilot cannot reach this path until Task 5
-    removes the ``set_launch_ledger`` gate, which is exactly why the guard has
-    to exist before then.
+    Bug caught: skipping the collapse (Task 4's stopgap did exactly that, to
+    avoid deleting both rows) leaves the provisional and the real row stacked
+    under one cluster name. ``kinoforge list`` then shows one cluster twice,
+    ``est_spend`` is double-counted, and every per-id reader — ``Ledger.read``,
+    ``cli/_reconcile`` — silently picks whichever it finds first, which is the
+    stale ``launching`` row.
     """
     ledger = Ledger(store=LocalArtifactStore(tmp_path / "ledger-root"))
-    fake_provider.create_instance.return_value = Instance(
-        id="kf-run-5",  # id == run_id: skypilot cluster-name semantics
-        provider="fakeprovider",
-        status="ready",
-        created_at=0.0,
-        endpoints={"8000": "https://kf-run-5-8000"},
-    )
+    fake_provider.create_instance.return_value = _same_key_instance("kf-run-5")
 
     _provision_instance_and_build_backend(
         **_provision_kwargs(
@@ -447,27 +475,377 @@ def test_the_row_survives_when_the_provider_id_equals_the_run_id(
         )
     )
 
-    # The real row survives. (It shares a key with the provisional one, so the
-    # duplicate is expected here — Task 5 owns collapsing it. Zero rows is the
-    # failure this guards against.)
-    assert ledger.read("kf-run-5") is not None
-    assert _ledger_ids(ledger) == ["kf-run-5", "kf-run-5"]
+    assert _ledger_ids(ledger) == ["kf-run-5"]
+
+
+def test_the_same_key_collapse_keeps_the_real_row_not_the_provisional(
+    tmp_path: Path,
+    fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
+    fake_provider: MagicMock,  # noqa: F811 — imported fixture
+) -> None:
+    """The survivor is the REAL row, and there is always at least one.
+
+    Bug caught (zero rows): collapsing with a plain ``Ledger.forget(run_id)``.
+    It drops every row with that id, so on the same-key shape it takes the real
+    row with it and a live, billing cluster becomes invisible to every
+    kinoforge command — the exact state F12 exists to make impossible.
+
+    Bug caught (wrong row): collapsing by forgetting the provisional row BEFORE
+    the real one is recorded, then having ``on_instance_created`` swallow its
+    own write. The count would look right at one, but the surviving row would
+    be the ``launching`` stub with no endpoints and a 0.0 rate.
+
+    The expected values come from the Instance the provider returns, not from
+    re-running the writer: endpoints and a 2.5/hr rate exist only on the real
+    row, and ``kf_launch_phase`` exists only on the provisional one.
+    """
+    ledger = Ledger(store=LocalArtifactStore(tmp_path / "ledger-root"))
+    fake_provider.create_instance.return_value = _same_key_instance("kf-run-5")
+
+    _provision_instance_and_build_backend(
+        **_provision_kwargs(
+            engine=fake_engine,
+            provider=fake_provider,
+            run_id="kf-run-5",
+            ledger=ledger,
+            on_instance_created=ledger.record,
+            tmp_path=tmp_path,
+        )
+    )
+
+    entry = ledger.read("kf-run-5")
+    assert entry is not None, "zero rows for a live instance"
+    assert entry["endpoints"] == {"8000": "http://127.0.0.1:8000/kf-run-5"}
+    assert entry["cost_rate_usd_per_hr"] == 2.5
+    assert "kf_launch_phase" not in entry["tags"]
+
+
+def test_the_same_key_row_survives_when_the_real_row_never_landed(
+    tmp_path: Path,
+    fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
+    fake_provider: MagicMock,  # noqa: F811 — imported fixture
+) -> None:
+    """No real row under the shared key means no collapse.
+
+    Bug caught: collapsing unconditionally on the same-key shape. The real
+    write is not guaranteed — ``on_instance_created`` is optional and
+    deploy_session's ``_record_then_install`` swallows its own ``ledger.record``
+    failure — so an unconditional drop of the ``launching`` row deletes the only
+    durable handle on a cluster that is already up and billing.
+    """
+    ledger = Ledger(store=LocalArtifactStore(tmp_path / "ledger-root"))
+    fake_provider.create_instance.return_value = _same_key_instance("kf-run-4")
+
+    _provision_instance_and_build_backend(
+        **_provision_kwargs(
+            engine=fake_engine,
+            provider=fake_provider,
+            run_id="kf-run-4",
+            ledger=ledger,
+            # Stands in for both real cases: no callback at all, and a callback
+            # that swallowed its own ledger.record failure.
+            on_instance_created=None,
+            tmp_path=tmp_path,
+        )
+    )
+
+    assert _ledger_ids(ledger) == ["kf-run-4"]
+    entry = ledger.read("kf-run-4")
+    assert entry is not None
+    assert entry["tags"]["kf_launch_phase"] == "launching"
+
+
+def test_forget_provisional_drops_only_the_launching_row(tmp_path: Path) -> None:
+    """``Ledger.forget_provisional`` is id-AND-phase scoped, not id scoped.
+
+    Bug caught: implementing the collapse as ``forget(provisional_id)``, which
+    matches on id alone and therefore removes the real row too whenever the two
+    share a key. Also catches a "drop the first match" implementation: the rows
+    are recorded provisional-first here, so dropping by position would look
+    correct, and the assertion on the SURVIVING row's rate is what tells them
+    apart.
+    """
+    ledger = Ledger(store=LocalArtifactStore(tmp_path))
+    ledger.record(
+        Instance(
+            id="kf-same",
+            provider="skypilot",
+            status="starting",
+            created_at=0.0,
+            tags={"kf_launch_phase": "launching", "kf_run_id": "kf-same"},
+        )
+    )
+    ledger.record(_same_key_instance("kf-same"))
+
+    assert ledger.forget_provisional("kf-same", real_id="kf-same") is True
+    remaining = ledger.entries()
+    assert len(remaining) == 1
+    assert remaining[0]["cost_rate_usd_per_hr"] == 2.5
+
+
+def test_forget_provisional_refuses_when_no_real_row_exists(tmp_path: Path) -> None:
+    """With nothing to fall back on, the provisional row stays.
+
+    Bug caught: dropping the row whenever the phase tag matches, regardless of
+    whether a real row exists. That is the zero-row hole in miniature — the
+    method is the single place the precondition and the delete happen under one
+    lock, so a concurrent writer cannot slip between them.
+    """
+    ledger = Ledger(store=LocalArtifactStore(tmp_path))
+    ledger.record(
+        Instance(
+            id="kf-lonely",
+            provider="skypilot",
+            status="starting",
+            created_at=0.0,
+            tags={"kf_launch_phase": "launching"},
+        )
+    )
+
+    assert ledger.forget_provisional("kf-lonely", real_id="kf-lonely") is False
+    assert _ledger_ids(ledger) == ["kf-lonely"]
+
+
+def test_a_collapse_fault_never_fails_the_launch(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failing collapse logs and returns — the instance is already live.
+
+    Bug caught: letting a store 5xx or lock-lease timeout from the collapse
+    propagate. At that point the instance is created, ready and billing, so
+    raising would turn a successful launch into a failure and the caller would
+    never receive the handle it needs to destroy it.
+    """
+
+    class _AngryLedger:
+        def forget_provisional(self, provisional_id: str, *, real_id: str) -> bool:
+            raise RuntimeError("store unavailable")
+
+    with caplog.at_level("WARNING"):
+        orchestrator._collapse_provisional_row(_AngryLedger(), "kf-run-c", "kf-run-c")
+    assert "kf-run-c" in caplog.text
+    record = caplog.records[-1]
+    assert record.levelno == logging.WARNING
+    assert record.exc_info is not None
 
 
 # ---------------------------------------------------------------------------
-# deploy_session wiring — AC7 ("every provider gets this") rests on three
-# lines: the two ``provisional_ledger=_provisional_ledger`` call sites and the
-# Task-5 gate that computes it. Deleting or inverting any of them leaves every
-# test above green while the feature is OFF in production.
+# Moved from tests/providers/test_skypilot.py (S5 Task 5). These claims were
+# written against the provider's private writer; the writer is gone, so each
+# one is re-stated against the orchestrator. They are kept rather than deleted
+# because the hazards they name — write-before-create, a row rich enough to act
+# on, a create that raises, no ledger at all, and the real Ledger satisfying the
+# duck-typed surface — are properties of the seam, not of SkyPilot.
+# ---------------------------------------------------------------------------
+
+
+def test_the_row_is_recorded_before_create_instance_is_entered(
+    tmp_path: Path,
+    fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
+    fake_provider: MagicMock,  # noqa: F811 — imported fixture
+) -> None:
+    """Record strictly precedes create, observed on one shared sequence.
+
+    Moved from ``test_ledger_row_is_written_before_launch``. A shared list
+    across both seams is used rather than mock call counts because the ORDER is
+    the whole claim.
+
+    Bug caught: moving the write below ``_create_with_capacity_wait`` — every
+    end-state assertion in this file would still pass, while a SIGKILL inside
+    the multi-minute create would again leave a billing resource nothing can
+    see.
+    """
+    sequence: list[str] = []
+
+    class _SequencingLedger(Ledger):
+        def record(self, instance: Instance, **kwargs: Any) -> None:
+            sequence.append("record")
+            super().record(instance, **kwargs)
+
+    ledger = _SequencingLedger(store=LocalArtifactStore(tmp_path / "ledger-root"))
+
+    def _create(spec: InstanceSpec) -> Instance:
+        del spec
+        sequence.append("create")
+        return _same_key_instance("kf-run-order")
+
+    fake_provider.create_instance.side_effect = _create
+
+    _provision_instance_and_build_backend(
+        **_provision_kwargs(
+            engine=fake_engine,
+            provider=fake_provider,
+            run_id="kf-run-order",
+            ledger=ledger,
+            on_instance_created=None,
+            tmp_path=tmp_path,
+        )
+    )
+
+    assert sequence == ["record", "create"]
+
+
+def test_the_row_carries_enough_to_find_and_destroy_the_resource(
+    tmp_path: Path,
+) -> None:
+    """The row names the resource, its provider, its run and its age limit.
+
+    Moved from ``test_provisional_row_carries_enough_to_find_and_destroy``. The
+    orchestrator cannot know the CLOUD (``kf_cloud``) or the watchdog deadline
+    (``kf_deadline_epoch``) the SkyPilot writer used to add — those are provider
+    facts — so the portable row carries the provider NAME instead, which is what
+    a reconciler actually needs to know who to ask.
+
+    Bug caught: a row with only an id. A later sweep could not tell which
+    provider to reach, which run it belonged to, or when the reaper is allowed
+    to age it out — so it could neither destroy it nor safely ignore it.
+    """
+    ledger = Ledger(store=LocalArtifactStore(tmp_path))
+
+    orchestrator._record_provisional_row(
+        ledger=ledger,
+        run_id="kf-provisional",
+        provider_name="skypilot",
+        tags={"kinoforge_engine": "wan"},
+        max_age_s=3600,
+        now=1_700_000_000.0,
+    )
+
+    entry = ledger.read("kf-provisional")
+    assert entry is not None
+    assert entry["provider"] == "skypilot"
+    assert entry["max_age_s"] == 3600
+    assert entry["tags"]["kf_launch_phase"] == "launching"
+    assert entry["tags"]["kf_run_id"] == "kf-provisional"
+    assert entry["tags"]["kinoforge_engine"] == "wan"
+    assert float(entry["tags"]["kf_launched_at"]) == 1_700_000_000.0
+
+
+def test_a_create_that_raises_after_the_resource_exists_keeps_nothing(
+    tmp_path: Path,
+    fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
+    fake_provider: MagicMock,  # noqa: F811 — imported fixture
+) -> None:
+    """A create that raises leaves no row — and that is now safe.
+
+    The SkyPilot version of this test (test_tunnel_failure_keeps_the_
+    provisional_row) asserted the OPPOSITE, because the provider raised
+    ProvisionFailed *after* the cluster was up and only the provisional row
+    could surface it. That is still true, so the provider's failure path must
+    tear the cluster down itself before raising — asserted in
+    tests/providers/test_skypilot_endpoints.py::
+    test_second_spawn_failure_kills_the_first_tunnel_and_the_cluster.
+
+    Bug caught: dropping BOTH the row and the teardown, which would restore
+    the invisible-billing-cluster hole in a new place.
+    """
+    ledger = Ledger(store=LocalArtifactStore(tmp_path / "ledger-root"))
+    boom = ProvisionFailed("failed to open ssh tunnel to 'kf-run-t' for port 8000")
+
+    def _create(spec: InstanceSpec) -> Instance:
+        del spec
+        # Same shape as SkyPilot's tunnel failure: the cluster IS up by now and
+        # create_instance has already best-effort torn it down.
+        raise boom
+
+    fake_provider.create_instance.side_effect = _create
+
+    with pytest.raises(ProvisionFailed) as excinfo:
+        _provision_instance_and_build_backend(
+            **_provision_kwargs(
+                engine=fake_engine,
+                provider=fake_provider,
+                run_id="kf-run-t",
+                ledger=ledger,
+                on_instance_created=None,
+                tmp_path=tmp_path,
+            )
+        )
+
+    assert excinfo.value is boom
+    assert ledger.entries() == []
+
+
+def test_no_ledger_is_a_no_op(
+    tmp_path: Path,
+    fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
+    fake_provider: MagicMock,  # noqa: F811 — imported fixture
+) -> None:
+    """``provisional_ledger=None`` provisions exactly as before.
+
+    Moved from ``test_no_ledger_installed_is_a_no_op``. ``None`` is the state
+    every hosted engine and every direct caller of this helper is in.
+
+    Bug caught: an unconditional ledger call — ``None.record(...)`` would
+    AttributeError and break every launch that does not supply a ledger.
+    """
+    kwargs = _provision_kwargs(
+        engine=fake_engine,
+        provider=fake_provider,
+        run_id="kf-no-ledger",
+        ledger=Ledger(store=LocalArtifactStore(tmp_path / "unused")),
+        on_instance_created=None,
+        tmp_path=tmp_path,
+    )
+    kwargs["provisional_ledger"] = None
+    fake_provider.create_instance.return_value = _same_key_instance("kf-no-ledger")
+
+    result = _provision_instance_and_build_backend(**kwargs)
+
+    assert result.instance.id == "kf-no-ledger"
+
+
+def test_the_real_ledger_satisfies_the_duck_typed_surface(
+    tmp_path: Path,
+    fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
+    fake_provider: MagicMock,  # noqa: F811 — imported fixture
+) -> None:
+    """A real ``Ledger`` — not a fake — round-trips the whole same-key path.
+
+    Moved from ``test_ledger_protocol_matches_the_real_ledger``. The
+    ``provisional_ledger`` parameter is typed ``Any`` and every call through it
+    is wrapped in a best-effort ``except``, so a method name the real class does
+    not have (``forget_provisional_row`` vs ``forget_provisional``) would be
+    swallowed as a WARNING and leave a duplicate row. A fake ledger cannot catch
+    that; only the real class can.
+
+    Bug caught: drift between the orchestrator's call and ``Ledger``'s actual
+    signature, which is invisible to mypy across an ``Any`` boundary.
+    """
+    store = LocalArtifactStore(tmp_path / "ledger-root")
+    ledger = Ledger(store=store)
+    fake_provider.create_instance.return_value = _same_key_instance("kf-real-ledger")
+
+    _provision_instance_and_build_backend(
+        **_provision_kwargs(
+            engine=fake_engine,
+            provider=fake_provider,
+            run_id="kf-real-ledger",
+            ledger=ledger,
+            on_instance_created=ledger.record,
+            tmp_path=tmp_path,
+        )
+    )
+
+    # A FRESH Ledger over the same store: the collapse has to have been durable,
+    # not just visible to the in-memory object that performed it.
+    assert _ledger_ids(Ledger(store=store)) == ["kf-real-ledger"]
+
+
+# ---------------------------------------------------------------------------
+# deploy_session wiring — AC7 ("every provider gets this") rests on the two
+# ``provisional_ledger=_provisional_ledger`` call sites. Deleting either one
+# leaves every test above green while the feature is OFF in production.
 # ---------------------------------------------------------------------------
 
 
 class _LedgerPeekProvider(LocalProvider):
     """LocalProvider that reads the ledger from INSIDE ``create_instance``.
 
-    Stands in for the non-SkyPilot providers (local / runpod / modal): it has
-    no ``set_launch_ledger``, and its ``create_instance`` returns a
-    server-assigned id (``local-<uuid>``) that is not the ``run_id``.
+    Stands in for the SERVER-assigned-id providers (local / runpod / modal):
+    its ``create_instance`` returns ``local-<uuid>``, which is not the
+    ``run_id``, so the provisional row and the real row occupy two distinct
+    ledger keys. ``_SameKeyProvider`` below covers the other shape.
 
     Attributes:
         seen: The row the orchestrator wrote for ``run_id``, as visible mid-
@@ -499,63 +877,44 @@ class _LedgerPeekProvider(LocalProvider):
         return super().create_instance(spec)
 
 
-class _SelfWritingProvider(LocalProvider):
-    """LocalProvider that writes its OWN provisional row, as SkyPilot does.
+class _SameKeyProvider(LocalProvider):
+    """LocalProvider that returns the run_id as its instance id, as SkyPilot does.
 
-    Exposes ``set_launch_ledger``, so the Task-5 gate in ``deploy_session``
-    must withhold the orchestrator's writer from it. Records the ids present
-    mid-create so a double write is directly observable: ``Ledger.record``
-    appends, so two writers on one key leave two rows.
+    A SkyPilot cluster name IS ``spec.run_id``, so the provisional row and the
+    real row land on the same ledger key. Before S5 Task 5 this provider shape
+    could not reach the orchestrator's writer at all: SkyPilot wrote its own row
+    and ``deploy_session`` gated the orchestrator's writer off for it. With the
+    gate and the private writer gone, this is the production shape.
 
     Attributes:
         rows_mid_create: Ledger ids visible from inside ``create_instance``.
     """
 
-    def __init__(self) -> None:
-        """Initialise with no ledger installed."""
-        super().__init__()
-        self._launch_ledger: Ledger | None = None
-        self.rows_mid_create: list[str] = []
-
-    def set_launch_ledger(self, ledger: Ledger) -> None:
-        """Accept the ledger the orchestrator hands to provider-side writers.
+    def __init__(self, ledger: Ledger) -> None:
+        """Initialise with a ledger over the session store.
 
         Args:
-            ledger: The ledger to write the provider's own row into.
+            ledger: A ledger reading the same store deploy_session writes to.
         """
-        self._launch_ledger = ledger
+        super().__init__()
+        self._peek_ledger = ledger
+        self.rows_mid_create: list[str] = []
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
-        """Write a provider-side provisional row, create, then forget it.
+        """Snapshot the ledger, then return an instance keyed by the run id.
 
         Args:
             spec: The instance specification.
 
         Returns:
-            The instance LocalProvider would have created anyway.
+            The instance LocalProvider would have created, re-keyed onto
+            ``spec.run_id`` so it collides with the provisional row.
         """
-        assert self._launch_ledger is not None, (
-            "deploy_session must install a launch ledger on a provider that "
-            "exposes set_launch_ledger"
-        )
-        run_id = spec.run_id or "local-cluster"
-        self._launch_ledger.record(
-            Instance(
-                id=run_id,
-                provider=self.name,
-                status="starting",
-                created_at=0.0,
-                endpoints={},
-                tags={"kf_launch_phase": "launching", "kf_run_id": run_id},
-            ),
-            max_age_s=60,
-        )
         self.rows_mid_create = [
-            str(entry["id"]) for entry in self._launch_ledger.entries()
+            str(entry["id"]) for entry in self._peek_ledger.entries()
         ]
         instance = super().create_instance(spec)
-        self._launch_ledger.forget(run_id)
-        return instance
+        return dataclasses.replace(instance, id=spec.run_id or instance.id)
 
 
 @pytest.mark.parametrize("warm_profile_cache", [False, True])
@@ -607,19 +966,20 @@ def test_deploy_session_writes_the_row_before_create(
     assert provider.seen["provider"] == "local"
 
 
-def test_deploy_session_does_not_double_write_for_a_self_writing_provider(
+def test_deploy_session_leaves_one_real_row_for_a_same_key_provider(
     tmp_path: Path,
 ) -> None:
-    """A provider with its own writer gets exactly one row, not two.
+    """End to end, a SkyPilot-shaped launch ends with one row: the real one.
 
-    Bug caught: inverting (or deleting) the Task-5 gate, so SkyPilot's
-    provider-side writer and the orchestrator's writer both record a row under
-    the same cluster name. ``Ledger.record`` appends, so the launch would carry
-    two identical rows and every reader would pick whichever it found first.
+    Bug caught: deleting the Task-5 gate (which withheld the orchestrator's
+    writer from providers that wrote their own row) without also collapsing the
+    duplicate the same-key shape then produces. Every helper-level test can be
+    green while a real ``kinoforge generate`` on SkyPilot leaves two rows per
+    cluster — or, if the collapse is written as a plain forget, none at all.
     """
     cfg = _compute_cfg()
     store = LocalArtifactStore(tmp_path)
-    provider = _SelfWritingProvider()
+    provider = _SameKeyProvider(Ledger(store=store))
 
     with deploy_session(
         cfg,
@@ -629,8 +989,16 @@ def test_deploy_session_does_not_double_write_for_a_self_writing_provider(
         run_id="kf-deploy-2",
     ) as session:
         assert session.instance is not None
+        assert session.instance.id == "kf-deploy-2"
 
     assert provider.rows_mid_create == ["kf-deploy-2"], (
-        "exactly one provisional row must exist mid-create; two means the "
-        "orchestrator wrote one alongside the provider's own"
+        "exactly one provisional row must exist mid-create; the orchestrator "
+        "is the only writer now"
+    )
+    ledger = Ledger(store=store)
+    assert _ledger_ids(ledger) == ["kf-deploy-2"]
+    entry = ledger.read("kf-deploy-2")
+    assert entry is not None
+    assert "kf_launch_phase" not in entry["tags"], (
+        "the provisional stub outlived the real row — the collapse kept the wrong one"
     )

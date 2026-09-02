@@ -67,7 +67,12 @@ from kinoforge.core.interfaces import (
     RenderedProvision,
     Stage,
 )
-from kinoforge.core.lifecycle import Ledger, destroy_confirmed
+from kinoforge.core.lifecycle import (
+    LAUNCH_PHASE_LAUNCHING,
+    LAUNCH_PHASE_TAG,
+    Ledger,
+    destroy_confirmed,
+)
 from kinoforge.core.logging import get_logger
 from kinoforge.core.pool import ConcurrentPool
 from kinoforge.core.profiles import JsonImageProfileCache, JsonProfileCache
@@ -584,7 +589,12 @@ def _record_provisional_row(
         endpoints={},
         tags={
             **tags,
-            "kf_launch_phase": "launching",
+            # Shared constants, not literals: this tag is the ONLY thing that
+            # distinguishes this row from the real one when the two share an id
+            # (SkyPilot), so a rename here that missed
+            # ``Ledger.forget_provisional`` would silently stop collapsing and
+            # ship two rows per cluster.
+            LAUNCH_PHASE_TAG: LAUNCH_PHASE_LAUNCHING,
             "kf_run_id": run_id,
             "kf_launched_at": repr(now),
         },
@@ -628,6 +638,53 @@ def _forget_provisional_row(
             "F12 provisional ledger forget failed for %r; the provisional "
             "'launching' row may linger alongside the real record",
             row_id,
+            exc_info=True,
+        )
+
+
+def _collapse_provisional_row(
+    ledger: Any,  # noqa: ANN401
+    provisional_id: str | None,
+    instance_id: str,
+    logger: logging.Logger = _log,
+) -> None:
+    """Collapse the provisional row onto the real one, best-effort.
+
+    Called on the success path only, AFTER ``on_instance_created`` has had its
+    chance to write the real row. Delegates the decision to
+    :meth:`~kinoforge.core.lifecycle.Ledger.forget_provisional` rather than
+    probing and then forgetting here, because the two shapes this has to serve
+    make a two-step version unsafe:
+
+    * ``provisional_id != instance_id`` (RunPod, Modal — the provider assigns
+      the id): two distinct keys, and a plain ``forget`` is correct.
+    * ``provisional_id == instance_id`` (SkyPilot — the cluster name IS the
+      run id): one key holding two rows. ``Ledger.forget`` matches on id alone
+      and would delete BOTH, leaving a live billing cluster invisible.
+
+    ``forget_provisional`` handles both under a single lock: it removes the row
+    only when it is phase-tagged ``launching`` AND a real row already exists to
+    survive it, so there is never a window with zero rows for a resource that
+    has already been created.
+
+    Never raises: the instance is live and billing by the time this runs, so an
+    exception here would fail a launch that actually succeeded.
+
+    Args:
+        ledger: The ledger holding both rows.
+        provisional_id: The provisional row id, or None when none was written.
+        instance_id: The id the provider returned.
+        logger: Injected for testability.
+    """
+    if not provisional_id:
+        return
+    try:
+        ledger.forget_provisional(provisional_id, real_id=instance_id)
+    except Exception:  # noqa: BLE001 — bookkeeping must never fail a launch
+        logger.warning(
+            "F12 provisional ledger collapse failed for %r; the provisional "
+            "'launching' row may linger alongside the real record",
+            provisional_id,
             exc_info=True,
         )
 
@@ -1007,11 +1064,27 @@ def _provision_instance_and_build_backend(
             receives a durable ``kf_launch_phase=launching`` row keyed by
             ``run_id`` BEFORE ``create_instance`` is called, so a kill inside
             the multi-minute create still leaves a handle on whatever the
-            provider may already have booked. The row is forgotten after the
-            real row is recorded on success, and immediately on failure.
-            ``None`` (the default) disables the row entirely — every write and
-            forget is best-effort regardless, because bookkeeping must never
-            fail a launch that would otherwise succeed.
+            provider may already have booked. The row is collapsed onto the
+            real row on success, and forgotten immediately on failure.
+            ``None`` (the default) disables the row entirely.
+
+            Duck-typed (hence ``Any``): ``kinoforge.core`` must not import a
+            concrete store, and every caller passes a
+            :class:`~kinoforge.core.lifecycle.Ledger`. THREE methods are used,
+            not two — a fake that implements only ``record``/``forget`` will
+            silently lose the collapse, because every call below is wrapped:
+
+            * ``record(instance, *, max_age_s=int)`` — the pre-launch write.
+            * ``forget(instance_id)`` — the failure path, which drops the row
+              outright.
+            * ``forget_provisional(provisional_id, *, real_id)`` — the success
+              path. Not ``forget``: on SkyPilot the provisional row and the
+              real row share a key (the cluster name IS the run id), so a plain
+              forget would delete both.
+
+            Every one of them is best-effort and its exception is swallowed and
+            logged, because bookkeeping must never fail a launch that would
+            otherwise succeed.
 
     Returns:
         :class:`ProvisionResult` ``(instance, backend, hb_loop)`` —
@@ -1135,33 +1208,18 @@ def _provision_instance_and_build_backend(
     if on_instance_created is not None:
         on_instance_created(instance)
     # Order is load-bearing: the REAL row is written first, so no window exists
-    # in which a kill loses both rows. Hence the forget is CONDITIONAL on
-    # evidence that the real row actually landed: ``on_instance_created`` is
-    # optional, and deploy_session's ``_record_then_install`` swallows its own
-    # ``ledger.record`` failure and returns normally. Forgetting unconditionally
-    # in either case would delete the only durable handle on an instance that is
-    # live and billing — precisely the state F12 exists to make impossible.
-    _real_row_present = False
-    try:
-        _real_row_present = (
-            provisional_ledger is not None
-            and provisional_ledger.read(instance.id) is not None
-        )
-    except Exception:  # noqa: BLE001 — the probe is best-effort like the rest
-        _log.warning(
-            "F12: could not confirm the real ledger row for %r; keeping the "
-            "provisional 'launching' row rather than risk losing both",
-            instance.id,
-            exc_info=True,
-        )
-    # ``provisional_id == instance.id`` means the provider's id IS the client
-    # id (SkyPilot: the cluster name). The real row then occupies the same key,
-    # and ``Ledger.forget`` drops EVERY row with that id — so a forget here
-    # would take the real row with it. Skipping leaves a duplicate key rather
-    # than no key at all; Task 5, which lets SkyPilot reach this path for the
-    # first time, owns collapsing that duplicate.
-    if _real_row_present and provisional_id != instance.id:
-        _forget_provisional_row(provisional_ledger, provisional_id)
+    # in which a kill loses both rows. The collapse is therefore CONDITIONAL on
+    # the real row actually being there — ``on_instance_created`` is optional,
+    # and deploy_session's ``_record_then_install`` swallows its own
+    # ``ledger.record`` failure and returns normally. Dropping the provisional
+    # row in either case would delete the only durable handle on an instance
+    # that is live and billing, which is precisely the state F12 exists to make
+    # impossible. That condition and the delete live together inside
+    # ``Ledger.forget_provisional``, under one lock — see
+    # ``_collapse_provisional_row`` for why the same-key (SkyPilot) shape makes
+    # a probe-then-forget version unsafe no matter how it is ordered here.
+    if provisional_ledger is not None:
+        _collapse_provisional_row(provisional_ledger, provisional_id, instance.id)
     # compute-seam S4: the cap is verified against what was LAUNCHED, not
     # filtered against a catalog the chooser may never have consulted. Runs
     # after on_instance_created (so a failed teardown still leaves a ledger row
@@ -1457,26 +1515,15 @@ def deploy_session(
     # ------------------------------------------------------------------
     resolved_engine = _resolve_engine(cfg, engine)
     resolved_provider: ComputeProvider | None = None
-    # compute-seam S5 (F12) — the ledger the ORCHESTRATOR writes the
-    # pre-launch provisional row into, for every provider. None on hosted
-    # engines (no create to protect) and on providers that still write the row
-    # themselves (see the Task 5 gate below).
+    # compute-seam S5 (F12) — the ledger the ORCHESTRATOR writes the pre-launch
+    # provisional row into, for EVERY provider. None only on hosted engines,
+    # which have no create to protect. S5 Task 5 deleted SkyPilot's private
+    # provider-side writer and the gate that kept the two apart, so this is now
+    # the one and only writer of that row.
     _provisional_ledger: Ledger | None = None
     if resolved_engine.requires_compute:
         resolved_provider = _resolve_provider(cfg, provider)
-        # F12 — hand the provider a ledger so it can write a durable row
-        # BEFORE its (multi-minute) create call. Duck-typed: core must not
-        # import provider modules, and ComputeProvider's ABC is out of scope.
-        _install_launch_ledger = getattr(resolved_provider, "set_launch_ledger", None)
-        if _install_launch_ledger is not None:
-            _install_launch_ledger(Ledger(store=store))
-        # TASK 5 REMOVES THIS GATE, together with the provider-side
-        # ``set_launch_ledger`` seam above. Until then, a provider that writes
-        # its own provisional row must not also get the orchestrator's — both
-        # key the row on the same cluster name, and ``Ledger.record`` appends,
-        # so one launch would leave two identical rows.
-        if _install_launch_ledger is None:
-            _provisional_ledger = Ledger(store=store)
+        _provisional_ledger = Ledger(store=store)
 
     # ------------------------------------------------------------------
     # Step 2.5 — UX A hosted preflight (Layer I)

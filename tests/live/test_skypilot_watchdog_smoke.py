@@ -95,6 +95,7 @@ from kinoforge.core.interfaces import (  # noqa: E402
     Placement,
 )
 from kinoforge.core.lifecycle import Ledger  # noqa: E402
+from kinoforge.core.orchestrator import _record_provisional_row  # noqa: E402
 from kinoforge.providers.skypilot import SkyPilotProvider  # noqa: E402
 from kinoforge.stores.local import LocalArtifactStore  # noqa: E402
 
@@ -370,12 +371,6 @@ def test_skypilot_cluster_dies_without_its_client() -> None:
     print(cluster_name, flush=True)
 
     provider = SkyPilotProvider(clouds=["aws"], region=_REGION)
-    # F12 — durable provisional row BEFORE the multi-minute sky.launch, so a
-    # process death during provisioning still leaves something `kinoforge
-    # list` / `kinoforge forget` can find and name. Rooted at the CLI's
-    # default state dir so it is discoverable without special flags.
-    provider.set_launch_ledger(Ledger(store=LocalArtifactStore(_STATE_DIR)))
-
     tunnel: Any = None
     try:
         # compute-seam S4: a CPU placement selects no accelerator, which is
@@ -400,6 +395,18 @@ def test_skypilot_cluster_dies_without_its_client() -> None:
             cluster_name,
             _REGION,
             _DEADLINE_S,
+        )
+        # F12 — the durable pre-launch row. compute-seam S5 Task 5 deleted the
+        # provider-side writer, so a smoke that drives create_instance directly
+        # (bypassing deploy_session) writes it the same way the orchestrator does.
+        # Rooted at the CLI's default state dir so it is discoverable without flags.
+        _record_provisional_row(
+            ledger=Ledger(store=LocalArtifactStore(_STATE_DIR)),
+            run_id=spec.run_id,
+            provider_name=provider.name,
+            tags=dict(spec.tags),
+            max_age_s=int(spec.lifecycle.max_lifetime_s),
+            now=time.time(),
         )
         launched_at = time.time()
 

@@ -404,6 +404,29 @@ _PROTECTED_LEDGER_KEYS: frozenset[str] = frozenset(
 # so accrued-spend, the cost dashboard, and budget-ceiling math reflect the
 # rate actually billed instead of the catalog rate snapshotted at provision.
 
+#: Tag key + value marking the orchestrator's pre-launch provisional row
+#: (compute-seam S5, finding F12). Written by
+#: ``kinoforge.core.orchestrator._record_provisional_row`` and the ONLY thing
+#: that distinguishes a provisional row from a real one when the two share an
+#: id — which they do on SkyPilot, where the cluster name is the run id.
+LAUNCH_PHASE_TAG = "kf_launch_phase"
+LAUNCH_PHASE_LAUNCHING = "launching"
+
+
+def _is_provisional(entry: dict) -> bool:  # type: ignore[type-arg]
+    """Return True when *entry* is a pre-launch provisional row.
+
+    Args:
+        entry: A ledger entry dict, as produced by :meth:`Ledger.record`.
+
+    Returns:
+        True when the entry carries ``kf_launch_phase="launching"``.
+    """
+    tags = entry.get("tags")
+    if not isinstance(tags, dict):
+        return False
+    return bool(tags.get(LAUNCH_PHASE_TAG) == LAUNCH_PHASE_LAUNCHING)
+
 
 class Ledger:
     """Persistent record of every launched instance, backed by an ArtifactStore.
@@ -620,6 +643,64 @@ class Ledger:
             # would resurrect it.
             if changed:
                 self._write_entries(entries)
+
+    def forget_provisional(self, provisional_id: str, *, real_id: str) -> bool:
+        """Drop the pre-launch ``launching`` row, but only once a real row exists.
+
+        compute-seam S5 (finding F12). The orchestrator writes a provisional row
+        keyed by ``run_id`` before ``create_instance``, and the real row once it
+        returns. Collapsing the two cannot be done with :meth:`forget`, for two
+        reasons that only bite together:
+
+        * :meth:`forget` matches on **id alone**, and on SkyPilot the cluster
+          name IS the ``run_id`` — so both rows share a key and a plain forget
+          deletes the real row along with the provisional one, leaving a live
+          billing cluster no kinoforge command can see.
+        * :meth:`record` **appends**, so not collapsing leaves two rows under
+          one key and every per-id reader picks whichever it finds first.
+
+        This method is scoped by id AND by ``tags["kf_launch_phase"] ==
+        "launching"``, so it can only ever remove a row the orchestrator wrote
+        pre-launch. The "is there a real row?" check and the delete happen
+        inside one lock acquisition, so no concurrent writer can slip between
+        them and turn the check stale. Rewriting in place rather than
+        forget-then-record is the same discipline :meth:`set_cost_rate` uses,
+        and for the same reason: there must be no window in which zero rows
+        exist for a resource that has already been created.
+
+        Args:
+            provisional_id: The key the provisional row was written under
+                (the client-side ``run_id``).
+            real_id: The id the provider actually returned. Equal to
+                *provisional_id* on SkyPilot; a server-assigned id elsewhere.
+                At least one non-provisional row must exist under this id for
+                anything to be removed.
+
+        Returns:
+            True when a provisional row was removed, False when nothing was
+            (no real row to fall back on, or no provisional row present).
+        """
+        with self._store.acquire_lock(
+            f"ledger/{self._run_id}", ttl_s=self._mutate_ttl_s
+        ):
+            entries = self._read_entries()
+            if not any(
+                entry.get("id") == real_id and not _is_provisional(entry)
+                for entry in entries
+            ):
+                # Nothing durable would survive the delete. The instance may
+                # well be live and billing, so the stale 'launching' row is
+                # strictly better than no row at all.
+                return False
+            survivors = [
+                entry
+                for entry in entries
+                if not (entry.get("id") == provisional_id and _is_provisional(entry))
+            ]
+            if len(survivors) == len(entries):
+                return False
+            self._write_entries(survivors)
+            return True
 
     def entries(self) -> list[dict]:  # type: ignore[type-arg]
         """Return all recorded entries.

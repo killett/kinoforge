@@ -138,6 +138,7 @@ if _REASONS:
 from kinoforge.core.config import load_config  # noqa: E402
 from kinoforge.core.credential_patterns import redact_string  # noqa: E402
 from kinoforge.core.lifecycle import Ledger  # noqa: E402
+from kinoforge.core.orchestrator import _record_provisional_row  # noqa: E402
 from kinoforge.providers.skypilot import SkyPilotProvider  # noqa: E402
 from kinoforge.stores.local import LocalArtifactStore  # noqa: E402
 from tools.snapshot_launch_payloads import build_spec, golden_path_for  # noqa: E402
@@ -904,7 +905,18 @@ def test_s1_migrated_cpu_config_matches_golden_and_boots_live() -> None:
 
     recording_sky = _InputRecordingSky(sky)
     provider = SkyPilotProvider(recording_sky, clouds=["aws"], region=_REGION)
-    provider.set_launch_ledger(Ledger(store=LocalArtifactStore(_STATE_DIR)))
+    # F12 — the durable pre-launch row. compute-seam S5 Task 5 deleted the
+    # provider-side writer, so a smoke that drives create_instance directly
+    # (bypassing deploy_session) writes it the same way the orchestrator does.
+    # Rooted at the CLI's default state dir so it is discoverable without flags.
+    _record_provisional_row(
+        ledger=Ledger(store=LocalArtifactStore(_STATE_DIR)),
+        run_id=spec.run_id,
+        provider_name=provider.name,
+        tags=dict(spec.tags),
+        max_age_s=int(spec.lifecycle.max_lifetime_s),
+        now=time.time(),
+    )
 
     evidence: dict[str, Any] = {
         "smoke": "compute-seam S1 — migrated config launches what it launched pre-S1",

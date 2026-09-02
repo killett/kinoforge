@@ -870,8 +870,10 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             probe={"env": {"KF_PROBE": "sentinel"}},
             expected="sentinel",
         ),
-        # Observed on the pre-launch provisional row (F12), which is the only
-        # Instance SkyPilot builds before sky.launch.
+        # Observed on the pre-launch provisional row (F12). S5 moved the writer
+        # from the provider to the orchestrator; the row is still the only
+        # Instance a skypilot capture can see, because _StopLaunch aborts
+        # inside sky.launch.
         "tags": _tracks(_probe_tag, probe={"tags": _PROBE_TAGS}, expected="sentinel"),
         "run_id": _tracks(
             lambda ln: ln.payload["launch_kwargs"]["cluster_name"],
