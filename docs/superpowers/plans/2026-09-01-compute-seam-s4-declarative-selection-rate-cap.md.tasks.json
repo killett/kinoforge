@@ -1,7 +1,7 @@
 {
   "plan": "docs/superpowers/plans/2026-09-01-compute-seam-s4-declarative-selection-rate-cap.md",
   "branch": "feat/compute-seam-s4-declarative-selection-rate-cap",
-  "lastUpdated": "2026-09-01T19:05:00-0700",
+  "lastUpdated": "2026-09-01T19:32:00-0700",
   "note": "Native task IDs 1-13 map to plan Tasks 0-12 (planTask = id - 1). Executed sequentially; each task blocked by its predecessor per the plan's 'ordering that matters'.",
   "tasks": [
     {
@@ -289,7 +289,7 @@
       "id": "12",
       "planTask": 11,
       "subject": "Task 11: Live smoke \u2014 the inverted path still books the right box (USER GATE)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         "11"
       ],
