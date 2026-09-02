@@ -22,10 +22,16 @@ Determinism contract (a golden that diffs on every run is worse than none):
 * Credentials are never read. Every value the engine declares in
   ``env_required``, and every value a provider asks its credential provider
   for, is the synthetic :data:`STUB_SECRET`.
-* Offer selection is NOT captured — offers come from a live catalog call.
-  Each config gets the frozen synthetic offer built by :func:`_catalog_offer`,
-  so the golden pins the spec -> payload mapping. Offer selection itself is
-  S4's subject.
+* Selection IS captured now, and is deterministic because the catalog it reads
+  is frozen here rather than fetched. compute-seam S4 moved SKU selection
+  inside each provider (``find_offers`` left the ABC and ``InstanceSpec.offer``
+  is gone), so the harness can no longer inject a chosen offer. Instead
+  :data:`_FROZEN_RUNPOD_CATALOG` and :data:`_FROZEN_SKY_CATALOG` are returned by
+  the injected transports, and Modal reads its own static
+  ``MODAL_GPU_CATALOG``. The determinism contract is therefore unchanged in
+  substance — a captured payload still depends only on the config — but it now
+  runs through the real selection code instead of around it, which means the
+  golden also pins WHICH SKU a config selects.
 """
 
 from __future__ import annotations
@@ -44,7 +50,6 @@ if TYPE_CHECKING:
     from kinoforge.core.interfaces import (
         Instance,
         InstanceSpec,
-        Offer,
         RenderedProvision,
     )
 
@@ -178,45 +183,17 @@ def compute_configs() -> list[Path]:
     ]
 
 
-def _catalog_offer(cfg: Config) -> Offer:
-    """Return the frozen synthetic offer standing in for a catalog lookup.
-
-    RunPod and SkyPilot enumerate offers over a network. Both are given a
-    deterministic offer built from the config's own placement block, so the
-    golden pins the spec -> payload mapping (which S1 changes) rather than
-    catalog contents (which S4 owns).
-
-    Args:
-        cfg: The loaded config.
-
-    Returns:
-        A GPU offer named after the config's first ``placement.accelerators``
-        entry, or the synthetic CPU offer SkyPilot's ``find_offers`` returns
-        for ``min_vram_gb == 0`` — the shape that makes ``create_instance``
-        request ``cpus``/``memory`` instead of an accelerator.
-    """
-    from kinoforge.core.interfaces import Offer
-
-    reqs = cfg.placement()
-    if reqs.min_vram_gb == 0:
-        # Mirrors SkyPilotProvider.find_offers' CPU short-circuit exactly.
-        return Offer(
-            id="sky-cpu-auto",
-            gpu_type="",
-            vram_gb=0,
-            cuda="0.0",
-            cost_rate_usd_per_hr=0.05,
-            mode="pod",
-        )
-    gpu = reqs.accelerators[0] if reqs.accelerators else "NVIDIA A100 80GB PCIe"
-    return Offer(
-        id=gpu,
-        gpu_type=gpu,
-        vram_gb=80,
-        cuda="12.4",
-        cost_rate_usd_per_hr=1.64,
-        mode="pod",
-    )
+#: Frozen accelerator catalog for the SkyPilot capture. compute-seam S4: the
+#: provider selects from this instead of from an offer the harness injected,
+#: so the captured payload still depends only on the config. Entries are
+#: ordered cheapest-first among those clearing a given VRAM floor, which is
+#: what ``_select_accelerator`` picks between.
+_FROZEN_SKY_CATALOG: dict[str, dict[str, Any]] = {
+    "T4": {"accelerator_name": "T4", "vram_gb": 16, "cuda": "12.8", "price": 0.35},
+    "L4": {"accelerator_name": "L4", "vram_gb": 24, "cuda": "12.8", "price": 0.80},
+    "A100": {"accelerator_name": "A100", "vram_gb": 80, "cuda": "12.8", "price": 2.10},
+    "H100": {"accelerator_name": "H100", "vram_gb": 80, "cuda": "12.8", "price": 3.95},
+}
 
 
 def _diagnostic_env(cfg: Config) -> dict[str, str] | None:
@@ -334,7 +311,6 @@ def build_spec(cfg: Config) -> InstanceSpec:
     return build_instance_spec(
         cfg=cfg,
         rendered=rendered,
-        offer=_catalog_offer(cfg),
         engine_name=engine.name,
         key_hash=GOLDEN_KEY_HASH,
         image=cfg.compute.image,
@@ -349,6 +325,55 @@ def build_spec(cfg: Config) -> InstanceSpec:
 # ---------------------------------------------------------------------------
 # Per-provider capture
 # ---------------------------------------------------------------------------
+
+
+#: Frozen RunPod catalog for the capture. Wide enough that every shipped
+#: config's placement finds its named accelerator, priced under the caps those
+#: configs set.
+_FROZEN_RUNPOD_CATALOG: dict[str, Any] = {
+    "data": {
+        "gpuTypes": [
+            {
+                "id": name,
+                "displayName": name,
+                "memoryInGb": vram,
+                "secureCloud": True,
+                "lowestPrice": {
+                    "minimumBidPrice": price,
+                    "uninterruptablePrice": price,
+                },
+            }
+            # Every accelerator any shipped runpod config names, priced under
+            # the tightest max_usd_per_hr among the configs that name it, so
+            # the pre-book price filter never empties a catalog the capture is
+            # not about. Derived from the configs, not invented.
+            for name, vram, price in (
+                ("NVIDIA RTX A4000", 16, 0.32),
+                ("NVIDIA RTX A5000", 24, 0.34),
+                ("NVIDIA GeForce RTX 4090", 24, 0.34),
+                ("NVIDIA RTX 4090", 24, 0.34),
+                ("RTX 4090", 24, 0.69),
+                ("NVIDIA GeForce RTX 3090", 24, 0.34),
+                ("NVIDIA L4", 24, 0.43),
+                ("A100 40GB", 40, 1.19),
+                # PCIe before the bare "A100 80GB" alias, deliberately: a
+                # config that names NO accelerator takes the first survivor in
+                # catalog order, and this ordering keeps those two goldens
+                # (cost, sweeper) pinned to the same SKU S1-S3 measured. The
+                # order of a real RunPod catalog response is not something
+                # kinoforge controls, so pinning one here is a fixture choice,
+                # not a claim about the API.
+                ("NVIDIA A100 80GB PCIe", 80, 1.64),
+                ("A100 80GB", 80, 1.64),
+                ("NVIDIA A100-SXM4-80GB", 80, 1.89),
+                ("H100 80GB", 80, 2.39),
+                ("NVIDIA H100 80GB HBM3", 80, 2.39),
+                ("NVIDIA H100 PCIe", 80, 2.39),
+                ("NVIDIA H100 NVL", 80, 2.49),
+            )
+        ]
+    }
+}
 
 
 def _capture_runpod(
@@ -378,6 +403,11 @@ def _capture_runpod(
     def _http_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
         del url
         captured.append(body)
+        if "gpuTypes" in str(body.get("query", "")):
+            # compute-seam S4: RunPod selects from its own catalog inside
+            # create_instance. Frozen here so the captured payload still
+            # depends only on the config, never on live catalog contents.
+            return _FROZEN_RUNPOD_CATALOG
         return {"data": {"podFindAndDeployOnDemand": {"id": "pod-golden"}}}
 
     provider = RunPodProvider(
@@ -390,7 +420,13 @@ def _capture_runpod(
         {
             "provider": "runpod",
             "seam": "http_post -> podFindAndDeployOnDemand variables.input",
-            "input": captured[0]["variables"]["input"],
+            # The create mutation, not the catalog read that now precedes it
+            # (compute-seam S4): the ratchet is about the payload, and index 0
+            # stopped being the payload the moment selection moved inside the
+            # provider.
+            "input": next(
+                b["variables"]["input"] for b in captured if "variables" in b
+            ),
         },
         instance,
     )
@@ -487,9 +523,22 @@ def _capture_skypilot(
             return config
 
     class _CapturingSky:
-        """Minimal ``sky`` module stand-in that records the launch call."""
+        """Minimal ``sky`` module stand-in that records the launch call.
+
+        Also answers ``list_accelerators`` from a FROZEN catalog: compute-seam
+        S4 made selection the provider's business, so a capture that could not
+        answer it would either crash or depend on a live catalog — and the
+        whole point of this ratchet is that a payload depends only on the
+        config.
+        """
 
         Task = _TaskNamespace
+
+        @staticmethod
+        def list_accelerators(**kwargs: Any) -> dict[str, list[dict[str, Any]]]:  # noqa: ANN401
+            """Return the frozen offline catalog (never a network call)."""
+            del kwargs
+            return {name: [dict(rec)] for name, rec in _FROZEN_SKY_CATALOG.items()}
 
         @staticmethod
         def launch(task: Any, **kwargs: Any) -> Any:  # noqa: ANN401

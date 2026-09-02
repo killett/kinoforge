@@ -51,10 +51,10 @@ from kinoforge.core.interfaces import (
     ComputeProvider,
     CredentialProvider,
     FieldSupport,
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Offer,
+    Placement,
     combine_steps,
     render_launch,
 )
@@ -372,9 +372,16 @@ class RunPodProvider(ComputeProvider):
         ``selfterm.py`` is a boot-relative money cap (audit B4, 67627cd0), not
         idle detection — RunPod idle reaping is controller-side only, which the
         design doc rules out as risk coverage.
+
+        RATE_DETERMINISTIC: the pod is booked on the ``gpuTypeId`` kinoforge
+        selected from RunPod's own catalog, so the price that survived the
+        pre-book filter is the price billed. CATALOG_ENUMERATION: that catalog
+        is real and listable, which is what ``kinoforge offers`` prints.
         """
         return frozenset(
             {
+                Capability.RATE_DETERMINISTIC,
+                Capability.CATALOG_ENUMERATION,
                 Capability.HEARTBEAT_READ,
                 Capability.RUNTIME_PROBE,
                 Capability.UTIL_SNAPSHOT,
@@ -461,7 +468,6 @@ class RunPodProvider(ComputeProvider):
             "setup_steps": c,  # combined, then gzip+b64 into the script env var
             "launch": c,  # rendered and appended — RunPod's PID-1 convention
             "lifecycle": c,  # rendered into KINOFORGE_SELFTERM_SCRIPT
-            "offer": c,  # "gpuTypeId"
             "backend_options": c,  # "cloudType" / "restartPolicy"
         }
 
@@ -526,7 +532,7 @@ class RunPodProvider(ComputeProvider):
     # ComputeProvider interface
     # ------------------------------------------------------------------
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, placement: Placement) -> list[Offer]:
         """Return RunPod GPU offers that satisfy ``reqs``.
 
         Calls the RunPod GraphQL API once to fetch available GPU types, converts
@@ -534,7 +540,7 @@ class RunPodProvider(ComputeProvider):
         filtering and sorting to :func:`~kinoforge.core.offers.filter_offers`.
 
         Args:
-            reqs: Hardware requirements to filter against.
+            placement: The portable resource block to filter against.
 
         Returns:
             Filtered and sorted list of :class:`~kinoforge.core.interfaces.Offer`
@@ -571,7 +577,7 @@ class RunPodProvider(ComputeProvider):
                     mode="pod",
                 )
             )
-        return filter_offers(raw_offers, reqs)
+        return filter_offers(raw_offers, placement)
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
         """Create a RunPod pod or serverless endpoint from ``spec``.
@@ -594,13 +600,69 @@ class RunPodProvider(ComputeProvider):
         Returns:
             A new :class:`~kinoforge.core.interfaces.Instance`.
         """
-        mode = spec.tags.get("mode", "pod")
-        if mode == "serverless":
-            instance = self._create_serverless(spec)
-        else:
-            instance = self._create_pod(spec)
+        instance = self._create_with_offer_retry(spec)
         self._created_instances[instance.id] = instance
         return instance
+
+    def _create_once(self, spec: InstanceSpec, offer: Offer) -> Instance:
+        """Create exactly one pod or endpoint on *offer*, no retry.
+
+        Args:
+            spec: The instance specification.
+            offer: The catalog offer this attempt books.
+
+        Returns:
+            The created :class:`~kinoforge.core.interfaces.Instance`.
+        """
+        mode = spec.tags.get("mode", "pod")
+        if mode == "serverless":
+            return self._create_serverless(spec, offer)
+        return self._create_pod(spec, offer)
+
+    def _create_with_offer_retry(self, spec: InstanceSpec) -> Instance:
+        """Book the first offer in its own catalog that has capacity.
+
+        compute-seam S4 moved this loop out of the orchestrator, which was
+        iterating a catalog on behalf of providers that do not have one. RunPod
+        does, and it now reads it here: :meth:`find_offers` returns it already
+        filtered and ranked by ``placement.accelerators``, with the pre-book
+        price ceiling applied — so an over-cap pod is never booked, which the
+        post-launch readback could only ever destroy after the fact.
+
+        Args:
+            spec: The instance specification. ``spec.placement`` drives both
+                the selection and its ranking.
+
+        Returns:
+            The created :class:`~kinoforge.core.interfaces.Instance`.
+
+        Raises:
+            CapacityError: The catalog was empty after filtering, or every
+                candidate reported no capacity. The last per-offer
+                CapacityError is chained as ``__cause__`` so the operator sees
+                RunPod's own message.
+            Exception: Any NON-capacity error propagates immediately, without
+                trying another offer — every offer would fail it identically,
+                and retrying turns one clear error into N confusing ones.
+        """
+        candidates = self.find_offers(spec.placement)
+        last_capacity_exc: CapacityError | None = None
+        for offer in candidates:
+            try:
+                return self._create_once(spec, offer)
+            except CapacityError as exc:
+                last_capacity_exc = exc
+                logging.getLogger(__name__).warning(
+                    "[offer-retry] %s @ $%.4f/hr unavailable: %s",
+                    offer.gpu_type,
+                    offer.cost_rate_usd_per_hr,
+                    exc,
+                )
+        tried = ", ".join(o.gpu_type for o in candidates) or "(empty catalog)"
+        raise CapacityError(
+            f"all {len(candidates)} offers exhausted; provider 'runpod' has no "
+            f"current capacity for: {tried}"
+        ) from last_capacity_exc
 
     def get_instance(self, instance_id: str) -> Instance:
         """Return an :class:`~kinoforge.core.interfaces.Instance` by ID.
@@ -633,6 +695,44 @@ class RunPodProvider(ComputeProvider):
         data = _unwrap_graphql_response(resp, context="list pods")
         pods: list[dict[str, Any]] = (data.get("myself") or {}).get("pods") or []
         return [_pod_to_instance(p) for p in pods]
+
+    def realized_rate(self, instance: Instance) -> float | None:
+        """Return the pod's own ``costPerHr``, or None when it is unreadable.
+
+        RunPod declares ``RATE_DETERMINISTIC`` because the pod is booked on the
+        ``gpuTypeId`` kinoforge selected from RunPod's catalog, so the filtered
+        catalog price already bounded the price before booking. The pod is
+        nonetheless the authority: a spot / community repricing moves
+        ``costPerHr`` away from the catalog snapshot.
+
+        Deliberately NOT via :func:`_pod_to_instance`, whose 0.0 fallback for a
+        missing ``costPerHr`` is right for the status surface and wrong here —
+        it would report an early-boot pod as free, and free passes every cap.
+
+        Args:
+            instance: The pod to price.
+
+        Returns:
+            USD per hour, or None when the pod is gone, the field is absent, or
+            the transport fails. Never raises.
+        """
+        try:
+            resp = self._http_post(self._base_url, {"query": _LIST_PODS_QUERY})
+            data = _unwrap_graphql_response(resp, context="list pods")
+        except Exception:  # noqa: BLE001 — an unreadable rate is not a crash
+            return None
+        pods: list[dict[str, Any]] = (data.get("myself") or {}).get("pods") or []
+        for pod in pods:
+            if str(pod.get("id", "")) != instance.id:
+                continue
+            raw = pod.get("costPerHr")
+            if raw is None:
+                return None
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                return None
+        return None
 
     def find_instance_by_tag(self, key: str, value: str) -> Instance | None:
         """Return the first 'ready' instance whose tags[key] == value, else None.
@@ -902,7 +1002,7 @@ class RunPodProvider(ComputeProvider):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _create_pod(self, spec: InstanceSpec) -> Instance:
+    def _create_pod(self, spec: InstanceSpec, offer: Offer) -> Instance:
         """Create a RunPod on-demand pod and return an Instance.
 
         When ``spec.setup_steps`` is non-empty, the combined steps plus the
@@ -918,6 +1018,9 @@ class RunPodProvider(ComputeProvider):
                 provisions and then exits, billing with nothing listening.
 
         Args:
+            offer: The catalog offer this pod is booked on. compute-seam
+                S4 — the spec no longer carries it, so it comes down the
+                call chain from the candidate the retry loop chose.
             spec: Instance specification.
 
         Returns:
@@ -936,7 +1039,7 @@ class RunPodProvider(ComputeProvider):
             script = combine_steps(spec.setup_steps) + "\n" + render_launch(spec.launch)
         docker_args = self._encode_provision_script(env, script)
 
-        gpu_type_id = spec.offer.gpu_type if spec.offer else ""
+        gpu_type_id = offer.gpu_type
         # Under ephemeral mode, suppress the alias-laden run_id from the
         # provider-visible pod name and stamp ``kinoforge-ephemeral=true``
         # on the Instance tags. Default mode is unchanged.
@@ -955,7 +1058,7 @@ class RunPodProvider(ComputeProvider):
 
         resp = self._http_post(self._base_url, body)
         self._classify_capacity_error(resp, gpu_type_id=gpu_type_id)
-        return self._instance_from_create_response(spec, resp, _eph)
+        return self._instance_from_create_response(spec, offer, resp, _eph)
 
     def _assemble_create_env(self, spec: InstanceSpec) -> dict[str, str]:
         """Assemble the pod env payload for the create-pod mutation.
@@ -1187,6 +1290,7 @@ class RunPodProvider(ComputeProvider):
     def _instance_from_create_response(
         self,
         spec: InstanceSpec,
+        offer: Offer,
         resp: dict[str, Any],
         eph: EphemeralSession | None,
     ) -> Instance:
@@ -1194,6 +1298,9 @@ class RunPodProvider(ComputeProvider):
 
         Args:
             spec: Instance specification.
+            offer: The catalog offer this pod was booked on. compute-seam S4 —
+                the spec no longer carries it, so the rate comes down the call
+                chain from whichever candidate the retry loop actually booked.
             resp: Decoded GraphQL response of the create-pod mutation.
             eph: Active ephemeral session, if any (stamps
                 ``kinoforge-ephemeral=true`` on the Instance tags).
@@ -1243,15 +1350,16 @@ class RunPodProvider(ComputeProvider):
             created_at=time.time(),
             endpoints=instance_endpoints,
             tags=instance_tags,
-            cost_rate_usd_per_hr=(
-                spec.offer.cost_rate_usd_per_hr if spec.offer else 0.0
-            ),
+            cost_rate_usd_per_hr=offer.cost_rate_usd_per_hr,
         )
 
-    def _create_serverless(self, spec: InstanceSpec) -> Instance:
+    def _create_serverless(self, spec: InstanceSpec, offer: Offer) -> Instance:
         """Create a RunPod serverless endpoint and return an Instance.
 
         Args:
+            offer: The catalog offer this pod is booked on. compute-seam
+                S4 — the spec no longer carries it, so it comes down the
+                call chain from the candidate the retry loop chose.
             spec: Instance specification.
 
         Returns:

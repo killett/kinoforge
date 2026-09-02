@@ -18,6 +18,7 @@ from kinoforge.core.interfaces import (
     Launch,
     Lifecycle,
     Offer,
+    Placement,
     RenderedProvision,
     SetupStep,
     combine_steps,
@@ -44,6 +45,12 @@ def fake_engine() -> MagicMock:
 def fake_provider() -> MagicMock:
     provider = MagicMock()
     provider.name = "fakeprovider"
+    # compute-seam S4: the orchestrator verifies the realized rate between
+    # create_instance and provision, so a mock provider has to answer with a
+    # number under the cfg cap. A bare MagicMock returns a MagicMock and the
+    # comparison TypeErrors -- which is the check doing its job.
+    provider.realized_rate.return_value = 1.0
+    provider.capabilities.return_value = frozenset()
     provider.find_offers.return_value = [
         Offer(
             id="X1",
@@ -76,6 +83,7 @@ def _make_cfg() -> MagicMock:
     # Return a real Lifecycle dataclass so dataclasses.asdict() works in the orchestrator
     # lifecycle-lift path.
     cfg.lifecycle.return_value = Lifecycle(boot_timeout_s=900.0)
+    cfg.placement.return_value = Placement(max_usd_per_hr=2.20)
     cfg.hardware_requirements.return_value = MagicMock()
     cfg.compute = MagicMock(image="should-be-overridden")
     cfg.model_dump.return_value = {
@@ -294,6 +302,12 @@ def test_orchestrator_polling_loop_preserves_endpoints_when_get_instance_strips_
     """
     provider = MagicMock()
     provider.name = "fakeprovider"
+    # compute-seam S4: the orchestrator verifies the realized rate between
+    # create_instance and provision, so a mock provider has to answer with a
+    # number under the cfg cap. A bare MagicMock returns a MagicMock and the
+    # comparison TypeErrors -- which is the check doing its job.
+    provider.realized_rate.return_value = 1.0
+    provider.capabilities.return_value = frozenset()
     provider.find_offers.return_value = [
         Offer(
             id="X1",

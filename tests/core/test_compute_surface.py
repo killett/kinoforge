@@ -15,10 +15,53 @@ from kinoforge.core.interfaces import (
     InstanceSpec,
     Launch,
     Lifecycle,
-    Offer,
     RenderedProvision,
 )
 from kinoforge.core.spec_builder import build_instance_spec
+
+#: compute-seam S4: providers select their own SKU inside create_instance, so a
+#: transport a create test drives must answer the catalog query first.
+_S4_GPU_TYPES: dict[str, object] = {
+    "data": {
+        "gpuTypes": [
+            {
+                "id": name,
+                "displayName": name,
+                "memoryInGb": vram,
+                "secureCloud": True,
+                "lowestPrice": {
+                    "minimumBidPrice": price,
+                    "uninterruptablePrice": price,
+                },
+            }
+            for name, vram, price in (
+                ("NVIDIA RTX A4000", 16, 0.32),
+                ("NVIDIA RTX A5000", 24, 0.44),
+                ("NVIDIA GeForce RTX 4090", 24, 0.69),
+                ("NVIDIA A100 80GB PCIe", 80, 1.64),
+            )
+        ]
+    }
+}
+
+
+def _s4_post(_url: str, body: dict[str, object]) -> dict[str, object]:
+    """Answer the S4 catalog read; everything else gets an empty response.
+
+    These tests are about WHICH BRANCH create_instance takes, not about the
+    create's own reply — but the provider now enumerates first, and an empty
+    catalog would make every branch end in CapacityError.
+    """
+    if "gpuTypes" in str(body.get("query", "")):
+        return _S4_GPU_TYPES
+    return {}
+
+
+_S4_ACCELERATORS: list[dict[str, object]] = [
+    {"accelerator_name": "T4", "vram_gb": 16, "cuda": "12.8", "price": 0.35},
+    {"accelerator_name": "A100", "vram_gb": 80, "cuda": "12.8", "price": 2.10},
+]
+
 
 _BASE = {
     "engine": {"kind": "diffusers", "precision": "bf16"},
@@ -63,9 +106,6 @@ def _spec(
     return build_instance_spec(
         cfg=cfg,
         rendered=rendered,
-        offer=Offer(
-            id="g", gpu_type="g", vram_gb=80, cuda="12.4", cost_rate_usd_per_hr=1.0
-        ),
         engine_name="diffusers",
         key_hash="abc",
         image="fallback:img",
@@ -148,7 +188,7 @@ def test_serverless_mode_reaches_the_serverless_branch() -> None:
     assert spec.tags["mode"] == "serverless"
 
     provider = RunPodProvider(
-        http_post=lambda _url, _body: {},
+        http_post=_s4_post,
         http_get=lambda _url: {},
     )
     with (
@@ -174,7 +214,7 @@ def test_pod_mode_takes_the_pod_branch() -> None:
 
     spec = _spec({"provider": "runpod", "image": "i"})
     provider = RunPodProvider(
-        http_post=lambda _url, _body: {},
+        http_post=_s4_post,
         http_get=lambda _url: {},
     )
     with (

@@ -36,34 +36,17 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class HardwareRequirements:
-    """Filter applied by ComputeProvider.find_offers; every field config-overridable.
-
-    Attributes:
-        min_vram_gb: Minimum GPU VRAM in GB; offers below this are excluded.
-        min_cuda: Minimum CUDA version string (semantic compare, e.g. "12.8").
-        max_usd_per_hr: Ceiling for pod-mode offers; serverless ignores.
-        gpu_preference: Ordered preference list among surviving offers.
-        disk_gb: Minimum container/instance disk in GB.
-    """
-
-    min_vram_gb: int = 48
-    min_cuda: str = "12.8"
-    max_usd_per_hr: float = 2.20
-    gpu_preference: tuple[str, ...] = ()
-    disk_gb: int = 100
-
-
-@dataclass(frozen=True)
 class Placement:
     """What to get. Not which SKU to book.
 
     compute-seam S1: the portable resource block every provider can honour.
-    ``HardwareRequirements`` above describes a CATALOG FILTER — what to
-    EXCLUDE while enumerating offers — which is a RunPod/SkyPilot-shaped
-    question. Placement states the requirement itself, so a provider that
-    schedules rather than enumerates (Modal) can honour it directly. S4
-    inverts selection onto this and deletes the filter.
+    S4 folded the old ``HardwareRequirements`` into it. That type described a
+    CATALOG FILTER — what to EXCLUDE while enumerating offers — which is a
+    RunPod/SkyPilot-shaped question naming five numbers this block already
+    carried. Placement states the requirement itself, so a provider that
+    schedules rather than enumerates (Modal) can honour it directly, and the
+    enumerating providers pass it to
+    :func:`kinoforge.core.offers.filter_offers` themselves.
 
     Defaults deliberately match the pre-S1 ``HardwareRequirements`` defaults
     so a config that set no block launches exactly what it launched before.
@@ -105,7 +88,15 @@ class Placement:
 
 @dataclass(frozen=True)
 class Offer:
-    """A bookable compute offer returned by a provider."""
+    """A bookable compute offer from an enumerating provider's catalog.
+
+    compute-seam S4: NO LONGER A SEAM TYPE. ``find_offers`` left the ABC and
+    ``InstanceSpec.offer`` was deleted, so nothing portable carries an Offer any
+    more — it is the internal vocabulary of the three providers that have a
+    catalog (runpod, modal, local, which declare ``CATALOG_ENUMERATION``), plus
+    the ``kinoforge offers`` command that prints it. A declarative placer
+    (skypilot) never produces one.
+    """
 
     id: str
     gpu_type: str
@@ -297,7 +288,6 @@ class InstanceSpec:
     """Everything needed to create an instance, including guardrails + tags."""
 
     image: str
-    offer: Offer | None = None
     ports: tuple[str, ...] = ()
     volume_gb: int = 0
     volume_mount: str = ""
@@ -448,9 +438,6 @@ class ComputeProvider(ABC):
         return {}
 
     @abstractmethod
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]: ...  # noqa: D102
-
-    @abstractmethod
     def create_instance(self, spec: InstanceSpec) -> Instance: ...  # noqa: D102
 
     @abstractmethod
@@ -501,6 +488,28 @@ class ComputeProvider(ABC):
         Returns:
             A :class:`RuntimeProbe` populated from a live provider query,
             or ``None`` when the provider lacks runtime-probe substrate.
+        """
+        return None
+
+    def realized_rate(self, instance: Instance) -> float | None:
+        """Return the hourly rate *instance* will actually bill at.
+
+        Read AFTER launch, from whatever source this provider's rate
+        capability names: the launched handle where the provider chooses the
+        SKU (``RATE_READBACK``), the catalog price where the requested SKU is
+        the billed one (``RATE_DETERMINISTIC``).
+
+        The default is ``None``, not ``0.0``: a provider that never implements
+        this must fail the ``rate_source_declared`` validation rather than
+        report every instance as free, since free passes every cap.
+
+        Args:
+            instance: The instance to price, already created.
+
+        Returns:
+            The rate in USD per hour, or None when it cannot be read. Never
+            raises: an unreadable rate is a decision for the caller (which
+            tears the instance down), not a crash mid-launch.
         """
         return None
 

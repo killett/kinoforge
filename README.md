@@ -426,12 +426,19 @@ reading a `doctor` WARN as "the migration broke something" — it didn't, and th
 - **`disk_gb` is a WARN on every provider, not wired anywhere.** RunPod hardcodes
   `containerDiskInGb`; SkyPilot hardcodes its own `disk_size` by instance tier. The WARN names the
   provider's actual value so a mismatch is visible, but nothing about the run changes.
-- **SkyPilot's `max_usd_per_hr` is also a WARN**, not read by the optimizer — spend on that path is
-  bounded by the instance-side deadline watchdog, not a per-SKU price filter. Read the WARN text
-  rather than assuming a dollar bound: the watchdog kills at whichever comes first of
-  `budget_usd` ÷ the booked rate or `max_lifetime`, and **at `lifecycle.budget: 0` the budget arm
-  is inactive — nothing bounds that run in dollars, only in time**
-  (`_skypilot_rate_cap`, `validation/checks/field_support.py`).
+- **SkyPilot's `max_usd_per_hr` is a WARN about the REQUEST, and a hard cap after launch.**
+  The optimizer does not read it — it picks cloud, region and SKU itself — so nothing narrows the
+  request by price. Since compute-seam S4 (2026-09-01) that is no longer where the story ends: the
+  orchestrator reads the realized rate off the launched cluster
+  (`SkyPilotProvider.realized_rate`) and, if it exceeds the cap, **destroys the cluster and raises
+  `RateCapExceeded`** before `engine.provision` runs. Two things follow. First, a cap violation now
+  costs you the boot, not the run — on SkyPilot the teardown happens after `Task.setup` has already
+  executed, because that is when `sky.launch` returns. Second, `Instance.cost_rate_usd_per_hr` and
+  everything reading it (`kinoforge list`, `est_spend`, the budget watchdog) now carry the rate that
+  was READ BACK rather than the one requested. The watchdog still kills at whichever comes first of
+  `budget_usd` ÷ rate or `max_lifetime`, and **at `lifecycle.budget: 0` the budget arm is inactive —
+  nothing bounds that run in dollars, only in time** (`_skypilot_rate_cap`,
+  `validation/checks/field_support.py`).
 - **`accelerator_count` is the one field that is a hard `ConfigError` on the three billed
   providers** (`runpod`, `skypilot`, `modal`) when set to anything but its default. No provider
   reads it, and — unlike `disk_gb` or `max_usd_per_hr` — nothing else bounds that risk, so there is

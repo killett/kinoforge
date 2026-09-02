@@ -14,7 +14,6 @@ from kinoforge.core.interfaces import (
     InstanceSpec,
     Launch,
     Lifecycle,
-    Offer,
     RenderedProvision,
     SetupStep,
 )
@@ -34,21 +33,10 @@ def _rendered(**over: object) -> RenderedProvision:
     return RenderedProvision(**base)  # type: ignore[arg-type]
 
 
-def _offer() -> Offer:
-    return Offer(
-        id="NVIDIA A100 80GB PCIe",
-        gpu_type="NVIDIA A100 80GB PCIe",
-        vram_gb=80,
-        cuda="12.4",
-        cost_rate_usd_per_hr=1.64,
-    )
-
-
 def _build(**over: object) -> InstanceSpec:
     kwargs: dict[str, object] = {
         "cfg": load_config(_CFG),
         "rendered": _rendered(),
-        "offer": _offer(),
         "engine_name": "diffusers",
         "key_hash": "abc123",
         "image": "fallback:img",

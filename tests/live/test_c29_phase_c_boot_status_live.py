@@ -108,7 +108,7 @@ def test_c29_phase_c_status_shows_liveness_during_boot() -> None:
     from kinoforge.core.cancel import CancelToken
     from kinoforge.core.credentials import EnvCredentialProvider
     from kinoforge.core.heartbeat_loop import HeartbeatLoop
-    from kinoforge.core.interfaces import HardwareRequirements, InstanceSpec
+    from kinoforge.core.interfaces import InstanceSpec, Placement
     from kinoforge.providers.runpod import RunPodProvider
     from kinoforge.providers.runpod.heartbeat import RunPodGraphQLHeartbeatEndpoint
     from kinoforge.providers.runpod.util import RunPodGraphQLUtilEndpoint
@@ -122,9 +122,7 @@ def test_c29_phase_c_status_shows_liveness_during_boot() -> None:
         creds=creds,
         heartbeat_endpoint=RunPodGraphQLHeartbeatEndpoint(api_key=api_key),
     )
-    reqs = HardwareRequirements(
-        min_vram_gb=0, min_cuda="0.0", max_usd_per_hr=10.0, disk_gb=0
-    )
+    reqs = Placement(min_vram_gb=0, min_cuda="0.0", max_usd_per_hr=10.0, disk_gb=0)
     offers = provider.find_offers(reqs)
     assert offers, "no RunPod offers available"
     cheapest = min(offers, key=lambda o: o.cost_rate_usd_per_hr)
@@ -143,7 +141,6 @@ def test_c29_phase_c_status_shows_liveness_during_boot() -> None:
 
     spec = InstanceSpec(
         image="mirror.gcr.io/library/alpine:latest",
-        offer=cheapest,
         env={},
     )
     instance = provider.create_instance(spec)

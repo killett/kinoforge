@@ -89,10 +89,10 @@ if _REASONS:
 
 # Imports below are evaluated only when the skip gate above passes.
 from kinoforge.core.interfaces import (  # noqa: E402
-    HardwareRequirements,
     InstanceSpec,
     Launch,
     Lifecycle,
+    Placement,
 )
 from kinoforge.core.lifecycle import Ledger  # noqa: E402
 from kinoforge.providers.skypilot import SkyPilotProvider  # noqa: E402
@@ -378,17 +378,19 @@ def test_skypilot_cluster_dies_without_its_client() -> None:
 
     tunnel: Any = None
     try:
-        offers = provider.find_offers(
-            HardwareRequirements(min_vram_gb=0, min_cuda="0.0")
-        )
-        assert offers, "no CPU offer surfaced from find_offers"
+        # compute-seam S4: a CPU placement selects no accelerator, which is
+        # the decision the old "one synthetic CPU offer" assertion stood in
+        # for. The spec below carries that placement, so the provider makes
+        # the same call at launch.
+        cpu_placement = Placement(min_vram_gb=0, min_cuda="0.0")
+        assert provider._select_accelerator(cpu_placement) is None  # noqa: SLF001
         spec = InstanceSpec(
+            placement=cpu_placement,
             run_id=cluster_name,
             image="",
             env={},
             tags={"smoke": "skypilot-watchdog"},
             lifecycle=Lifecycle(idle_timeout_s=600, max_lifetime_s=_DEADLINE_S),
-            offer=offers[0],
             # Never terminates -> the cluster can never go idle. This is the
             # exact server-mode shape that makes autostop inert (F1).
             launch=Launch(("sleep", "3600")),

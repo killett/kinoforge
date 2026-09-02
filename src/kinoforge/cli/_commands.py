@@ -286,11 +286,12 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     instance = None
     if provider is not None:
-        hw_reqs = cfg.hardware_requirements()
-        offers = provider.find_offers(hw_reqs)
-        if not offers:
-            print("error: no compute offers available", file=sys.stderr)
-            return 1
+        # compute-seam S4: no enumeration here. find_offers left the ABC — only
+        # runpod/modal/local have a catalog at all — and the provider now
+        # selects from `spec.placement` inside create_instance, raising its own
+        # CapacityError with its own message when nothing satisfies it. The
+        # pre-check this replaces could only ever produce a vaguer version of
+        # that error, and on skypilot it could not run at all.
         import dataclasses as _dc
 
         from kinoforge.core.interfaces import InstanceSpec
@@ -315,7 +316,6 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
         }
         spec = InstanceSpec(
             image=rendered.image or (cfg.compute.image if cfg.compute else ""),
-            offer=offers[0],
             ports=tuple(rendered.ports),
             lifecycle=cfg.lifecycle(),
             env=rendered_env,

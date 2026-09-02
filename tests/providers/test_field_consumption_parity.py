@@ -38,7 +38,6 @@ from kinoforge.core import registry
 from kinoforge.core.interfaces import (
     CredentialProvider,
     FieldSupport,
-    HardwareRequirements,
     InstanceSpec,
     Offer,
     Placement,
@@ -65,7 +64,6 @@ _SPEC_PORTABLE = {
     "setup_steps",
     "launch",
     "lifecycle",
-    "offer",
     "backend_options",
 }
 
@@ -454,6 +452,9 @@ def _runpod_mode_selects_its_mutation() -> _Proof:
 
             def post(_url: str, body: dict[str, Any]) -> dict[str, Any]:
                 sent.append(body)
+                if "gpuTypes" in str(body.get("query", "")):
+                    # S4: create_instance reads the catalog before it creates.
+                    return _RUNPOD_GPU_TYPES
                 return {
                     "data": {
                         "podFindAndDeployOnDemand": {"id": "pod-probe"},
@@ -467,7 +468,13 @@ def _runpod_mode_selects_its_mutation() -> _Proof:
             provider.create_instance(
                 dataclasses.replace(spec, tags={**spec.tags, "mode": mode})
             )
-            return str(sent[0]["query"])
+            return str(
+                next(
+                    b["query"]
+                    for b in sent
+                    if "gpuTypes" not in str(b.get("query", ""))
+                )
+            )
 
         pod, serverless = sent_query("pod"), sent_query("serverless")
         if pod == serverless:
@@ -609,7 +616,7 @@ class _FakeSkyCatalog:
         return list(_SKY_ACCELERATORS)
 
 
-def _runpod_offers(reqs: HardwareRequirements) -> list[Offer]:
+def _runpod_offers(reqs: Placement) -> list[Offer]:
     """Return RunPod's own ``find_offers`` output over the fake GPU-type list."""
     provider = RunPodProvider(
         _StubCreds(),
@@ -619,12 +626,18 @@ def _runpod_offers(reqs: HardwareRequirements) -> list[Offer]:
     return provider.find_offers(reqs)
 
 
-def _skypilot_offers(reqs: HardwareRequirements) -> list[Offer]:
-    """Return SkyPilot's own ``find_offers`` output over the fake catalog."""
-    return SkyPilotProvider(_FakeSkyCatalog()).find_offers(reqs)
+def _skypilot_offers(reqs: Placement) -> list[Offer]:
+    """Return the accelerators SkyPilot would consider, filtered and ranked.
+
+    compute-seam S4 made SkyPilot's selection private (it has no bookable
+    catalog to publish). The probe goes through ``_candidate_accelerators``,
+    which is the filtering-and-ranking half of that selection — the half these
+    placement proofs are about.
+    """
+    return SkyPilotProvider(_FakeSkyCatalog())._candidate_accelerators(reqs)  # noqa: SLF001
 
 
-_CATALOGS: dict[str, Callable[[HardwareRequirements], list[Offer]]] = {
+_CATALOGS: dict[str, Callable[[Placement], list[Offer]]] = {
     "local": lambda reqs: LocalProvider().find_offers(reqs),
     "modal": lambda reqs: ModalProvider().find_offers(reqs),
     "runpod": _runpod_offers,
@@ -634,29 +647,29 @@ _CATALOGS: dict[str, Callable[[HardwareRequirements], list[Offer]]] = {
 #: Deliberately permissive so every provider's catalog survives it and each
 #: probe below narrows exactly one axis. ``min_vram_gb`` is 1 rather than 0
 #: because 0 makes SkyPilot short-circuit to its synthetic CPU offer.
-_BASE_REQS = HardwareRequirements(
+_BASE_REQS = Placement(
     min_vram_gb=1,
     min_cuda="0.0",
     max_usd_per_hr=1_000_000.0,
-    gpu_preference=(),
+    accelerators=(),
     disk_gb=0,
 )
 
-_Narrow = Callable[[list[Offer]], HardwareRequirements]
+_Narrow = Callable[[list[Offer]], Placement]
 
 
-def _above_every_vram(base: list[Offer]) -> HardwareRequirements:
+def _above_every_vram(base: list[Offer]) -> Placement:
     """Return reqs whose VRAM floor is above every offer in ``base``."""
     return dataclasses.replace(_BASE_REQS, min_vram_gb=max(o.vram_gb for o in base) + 1)
 
 
-def _above_every_cuda(base: list[Offer]) -> HardwareRequirements:
+def _above_every_cuda(base: list[Offer]) -> Placement:
     """Return reqs whose CUDA floor no real catalog entry can meet."""
     del base
     return dataclasses.replace(_BASE_REQS, min_cuda="99.0")
 
 
-def _below_every_price(base: list[Offer]) -> HardwareRequirements:
+def _below_every_price(base: list[Offer]) -> Placement:
     """Return reqs whose price ceiling is below every offer in ``base``.
 
     A free catalog (LocalProvider bills nothing) needs a NEGATIVE ceiling to
@@ -701,7 +714,7 @@ def _orders_by_preference() -> _Proof:
                 "the offline catalog has fewer than two distinct accelerators, "
                 "so an ordering probe proves nothing"
             )
-        ranked = catalog(dataclasses.replace(_BASE_REQS, gpu_preference=(wanted,)))
+        ranked = catalog(dataclasses.replace(_BASE_REQS, accelerators=(wanted,)))
         if not ranked or ranked[0].gpu_type != wanted:
             return (
                 f"preferring {wanted!r} did not put it first; got "
@@ -832,11 +845,6 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             probe={"lifecycle.idle_timeout_s": 4242.0},
             expected=True,
         ),
-        "offer": _tracks(
-            lambda ln: _runpod_input(ln)["gpuTypeId"],
-            probe={"offer.gpu_type": "KF-PROBE-GPU"},
-            expected="KF-PROBE-GPU",
-        ),
         "backend_options": _tracks_cfg(
             lambda ln: _runpod_input(ln)["cloudType"],
             backend_options={"runpod": {"cloud_type": "community"}},
@@ -887,11 +895,6 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             lambda ln: ln.payload["launch_kwargs"]["idle_minutes_to_autostop"],
             probe={"lifecycle.idle_timeout_s": 4242.0},
             expected=70,
-        ),
-        "offer": _tracks(
-            lambda ln: _sky_resources(ln).get("accelerators"),
-            probe={"offer.gpu_type": "KF-PROBE-GPU"},
-            expected="KF-PROBE-GPU:1",
         ),
         # SkyPilot's namespace is read by the composition root and arrives as
         # constructor arguments, so the probe is at config level — the route
@@ -968,11 +971,6 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             lambda ln: _modal_request(ln)["scaledown_window_s"],
             probe={"lifecycle.idle_timeout_s": 4242.0},
             expected=4242,
-        ),
-        "offer": _tracks(
-            lambda ln: _modal_request(ln)["gpu"],
-            probe={"offer.gpu_type": "KF-PROBE-GPU"},
-            expected="KF-PROBE-GPU",
         ),
         "accelerators": _orders_by_preference(),
         "min_vram_gb": _filters(_above_every_vram, axis="min_vram_gb"),

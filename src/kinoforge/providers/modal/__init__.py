@@ -19,13 +19,14 @@ from pydantic import BaseModel, ConfigDict
 from kinoforge.core import registry
 from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.ephemeral import EphemeralSession
+from kinoforge.core.errors import CapacityError
 from kinoforge.core.interfaces import (
     ComputeProvider,
     FieldSupport,
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Offer,
+    Placement,
     combine_steps,
     render_launch,
 )
@@ -37,7 +38,7 @@ from kinoforge.providers.modal._app import (
     default_list,
     default_stop,
 )
-from kinoforge.providers.modal._catalog import modal_offers
+from kinoforge.providers.modal._catalog import MODAL_GPU_CATALOG, modal_offers
 
 _DESTROY_POLL_MAX_ITERS: int = 40  # 40 × 3s ≈ 120s upper bound (mirror SkyPilot)
 
@@ -78,9 +79,15 @@ class ModalProvider(ComputeProvider):
         ON_INSTANCE_DEADLINE is the ``@app.function(timeout=...)`` cap. Modal
         does NOT honour cfg's ``lifecycle.job_timeout``, so JOB_TIMEOUT is
         absent, and there is no wire-level heartbeat read.
+
+        RATE_DETERMINISTIC: the function runs on the GPU class kinoforge asked
+        for, so ``MODAL_GPU_CATALOG``'s price for that class is the rate.
+        CATALOG_ENUMERATION: that catalog is a real, listable table.
         """
         return frozenset(
             {
+                Capability.RATE_DETERMINISTIC,
+                Capability.CATALOG_ENUMERATION,
                 Capability.RUNTIME_PROBE,
                 Capability.UTIL_SNAPSHOT,
                 Capability.IDLE_AUTOSTOP,
@@ -155,7 +162,6 @@ class ModalProvider(ComputeProvider):
             "setup_steps": c,  # partitioned into the image bake + boot script
             "launch": c,  # ModalAppRequest.launch_line
             "lifecycle": c,  # scaledown_window_s + startup_timeout_s
-            "offer": c,  # ModalAppRequest.gpu
             "backend_options": u,  # Options is empty: no knob to consume
         }
 
@@ -194,9 +200,9 @@ class ModalProvider(ComputeProvider):
         self._deployments: dict[str, dict[str, Any]] = {}
 
     # -- offers -------------------------------------------------------------
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, placement: Placement) -> list[Offer]:
         """Return Modal catalog offers meeting ``reqs``."""
-        return modal_offers(reqs)
+        return modal_offers(placement)
 
     # -- lifecycle ----------------------------------------------------------
     def create_instance(self, spec: InstanceSpec) -> Instance:
@@ -220,8 +226,18 @@ class ModalProvider(ComputeProvider):
                 f"server boot command); got setup_steps={len(spec.setup_steps)} "
                 f"launch={spec.launch!r}"
             )
-        if spec.offer is None:
-            raise ValueError("ModalProvider requires spec.offer (GPU selection)")
+        # compute-seam S4: Modal picks its own GPU class from the portable
+        # placement block. It schedules rather than books a host, so a caller
+        # pre-deciding a SKU never had anything to pin here beyond the class
+        # name this lookup produces.
+        candidates = modal_offers(spec.placement)
+        if not candidates:
+            raise CapacityError(
+                f"no Modal GPU class satisfies the placement "
+                f"(min_vram_gb={spec.placement.min_vram_gb}, "
+                f"accelerators={spec.placement.accelerators or '(any)'})"
+            )
+        chosen = candidates[0]
 
         # Ephemeral runs must not leak the subcommand/timestamp-bearing
         # run_id into the app name: `modal app stop` only STOPS an app, and
@@ -263,7 +279,7 @@ class ModalProvider(ComputeProvider):
         req = ModalAppRequest(
             run_id=app_run_id,
             image=spec.image,
-            gpu=spec.offer.gpu_type,
+            gpu=chosen.gpu_type,
             provision_script=boot_script,
             launch_line=launch_line,
             env=env,
@@ -278,6 +294,11 @@ class ModalProvider(ComputeProvider):
             "app": app,
             "url": url,
             "name": f"kinoforge-{app_run_id}",
+            # compute-seam S4: the booked GPU class is what realized_rate()
+            # prices against. The Instance carries no accelerator field, so
+            # without this the rate would have to be inferred from a number
+            # that is itself the thing being verified.
+            "gpu": req.gpu,
         }
         return Instance(
             id=app_run_id,
@@ -286,8 +307,34 @@ class ModalProvider(ComputeProvider):
             created_at=self._clock(),
             endpoints={"8000": url},
             tags=dict(spec.tags),
-            cost_rate_usd_per_hr=spec.offer.cost_rate_usd_per_hr,
+            cost_rate_usd_per_hr=chosen.cost_rate_usd_per_hr,
         )
+
+    def realized_rate(self, instance: Instance) -> float | None:
+        """Return the catalog price of the GPU class this app booked.
+
+        Modal declares ``RATE_DETERMINISTIC``: the function runs on the GPU
+        class the request named, so ``MODAL_GPU_CATALOG``'s price for that
+        class IS the rate — no read off a live host happens or could. That
+        makes this the ONLY thing able to enforce a cap on Modal, because
+        every catalog entry is ``mode="serverless"`` and
+        :func:`~kinoforge.core.offers.filter_offers` applies its price ceiling
+        to ``mode == "pod"`` offers only.
+
+        Args:
+            instance: The deployed app to price.
+
+        Returns:
+            USD per hour from the catalog; the instance's own recorded rate
+            when this process never deployed it (a warm attach); None when
+            neither is known. Never raises.
+        """
+        gpu = str(self._deployments.get(instance.id, {}).get("gpu", ""))
+        if gpu:
+            for offer in MODAL_GPU_CATALOG:
+                if offer.gpu_type == gpu:
+                    return offer.cost_rate_usd_per_hr
+        return instance.cost_rate_usd_per_hr or None
 
     def _modal_mod(self) -> Any:  # noqa: ANN401
         """Return the injected/real ``modal`` module (``None`` if unavailable).

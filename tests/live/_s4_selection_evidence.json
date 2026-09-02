@@ -1,0 +1,163 @@
+{
+  "smoke": "compute-seam S4 \u2014 the inverted path still books the right box",
+  "task": "task-11 (S4 Part B live proof)",
+  "config": "examples/configs/skypilot-cpu.yaml",
+  "cluster_name": "kinoforge-s4-sel-229e7c2f",
+  "engine": "comfyui",
+  "claim": "with find_offers off the ABC and InstanceSpec.offer deleted, nobody hands SkyPilot a SKU; it reads placement and its optimizer picks. This asserts the pick still lands on the SKU and AZ S2 and S3 both measured \u2014 which the golden ratchet cannot assert, because it pins the request rather than what the cloud does with it.",
+  "preflight": {
+    "exit_code": 0,
+    "log": "preflight: PASS - safe to spend (0 pods, 0 sky clusters, clean tree)"
+  },
+  "started_at": "2026-09-01T19:23:28.921816-07:00",
+  "utilisation_samples": [
+    {
+      "reachable": false,
+      "cpu_idle_pct": null,
+      "mem_used_mb": null,
+      "mem_total_mb": null,
+      "raw": null,
+      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s4-sel-229e7c2f: Name or service not known",
+      "at": "2026-09-01T19:24:45.191416-07:00",
+      "elapsed_s": 75.0,
+      "sky_status": "starting",
+      "create_thread_alive": true
+    },
+    {
+      "reachable": false,
+      "cpu_idle_pct": null,
+      "mem_used_mb": null,
+      "mem_total_mb": null,
+      "raw": null,
+      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s4-sel-229e7c2f: Name or service not known",
+      "at": "2026-09-01T19:26:00.995950-07:00",
+      "elapsed_s": 151.3,
+      "sky_status": "starting",
+      "create_thread_alive": true
+    },
+    {
+      "reachable": true,
+      "cpu_idle_pct": 96.7,
+      "mem_total_mb": 3816,
+      "mem_used_mb": 826,
+      "raw": "%Cpu(s):  0.0 us,  3.3 sy,  0.0 ni, 96.7 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st\nMem:            3816         826         154           2        2836        2689",
+      "note": null,
+      "at": "2026-09-01T19:27:18.535112-07:00",
+      "elapsed_s": 227.1,
+      "sky_status": "ready",
+      "create_thread_alive": true
+    }
+  ],
+  "selection": {
+    "status": "computed",
+    "accelerator": null,
+    "placement": {
+      "min_vram_gb": 0,
+      "accelerators": [],
+      "region": "us-west-2",
+      "max_usd_per_hr": 0.5
+    },
+    "at": "2026-09-01T19:23:28.924204-07:00"
+  },
+  "booked": {
+    "status": "matches-s2-and-s3",
+    "instance_types": [
+      "c6i.large"
+    ],
+    "azs": [
+      "us-west-2a"
+    ],
+    "at": "2026-09-01T19:27:22.164582-07:00"
+  },
+  "rate": {
+    "status": "under-cap",
+    "realized_usd_per_hr": 0.085,
+    "cap_usd_per_hr": 0.5,
+    "published_usd_per_hr": 0.085,
+    "source": "AWS on-demand list price, us-west-2",
+    "at": "2026-09-01T19:27:25.195601-07:00",
+    "drift_vs_published": 0.0
+  },
+  "cluster_state": {
+    "observed_ready": true,
+    "statuses_seen": [
+      "starting",
+      "starting",
+      "ready"
+    ],
+    "ready_at": "2026-09-01T19:27:18.535296-07:00",
+    "ready_after_s": 227.1
+  },
+  "launched_at": "2026-09-01T19:23:28.924386-07:00",
+  "teardown": {
+    "started_at": "2026-09-01T19:27:25.195652-07:00",
+    "passes": [
+      {
+        "at": "2026-09-01T19:27:25.195668-07:00",
+        "forced_instance_ids": [
+          "i-076b4946123b12999"
+        ],
+        "sky_status": "ready",
+        "destroy_instance": "ok",
+        "ec2_states": [
+          "shutting-down"
+        ],
+        "ec2_readable": true,
+        "launch_thread_alive": false
+      },
+      {
+        "at": "2026-09-01T19:27:54.835084-07:00",
+        "forced_instance_ids": [
+          "i-076b4946123b12999"
+        ],
+        "sky_status": null,
+        "ec2_states": [
+          "shutting-down"
+        ],
+        "ec2_readable": true,
+        "launch_thread_alive": false
+      },
+      {
+        "at": "2026-09-01T19:28:20.605168-07:00",
+        "forced_instance_ids": [
+          "i-076b4946123b12999"
+        ],
+        "sky_status": null,
+        "ec2_states": [
+          "terminated"
+        ],
+        "ec2_readable": true,
+        "launch_thread_alive": false
+      }
+    ],
+    "final_ec2_states": [
+      "terminated"
+    ],
+    "final_ec2_readable": true,
+    "final_sky_status": null,
+    "clean_streak": 2,
+    "finished_at": "2026-09-01T19:28:29.238762-07:00",
+    "ledger_forget": "ok"
+  },
+  "outcome": "PROVEN",
+  "finished_at": "2026-09-01T19:28:29.239980-07:00",
+  "captured_at": "2026-09-01T19:28:29.239980-07:00",
+  "billable_wall_clock_s": 300.3,
+  "estimated_spend_usd": 0.0071,
+  "spend_basis": "list price 0.085 USD/hr for c6i.large in us-west-2, times billable wall clock \u2014 an estimate, not a reading of the invoice",
+  "post_exit_verification": {
+    "note": "Run AFTER the pytest process exited. A mid-run teardown line is not proof (2026-06-22 Phase-P1); these three reads are.",
+    "kinoforge_list": [
+      "[instance overview] No running instances.",
+      "No instances recorded in ledger."
+    ],
+    "sky_status": "No existing clusters.",
+    "ec2_describe_instances": {
+      "instance_id": "i-076b4946123b12999",
+      "instance_type": "c6i.large",
+      "state_after_exit": "terminated",
+      "polls_to_terminated": 1
+    },
+    "at": "2026-09-01T19:29:02-0700"
+  }
+}

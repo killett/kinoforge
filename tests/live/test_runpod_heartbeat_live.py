@@ -15,7 +15,7 @@ Test discipline:
   injection at the wire layer — this IS the wire test).
 
 Caveats vs plan HEREDOC:
-- ``HardwareRequirements`` has fields ``min_vram_gb``, ``min_cuda``,
+- ``Placement`` has fields ``min_vram_gb``, ``min_cuda``,
   ``max_usd_per_hr`` — NOT ``gpu_count``/``cpu_count``/``cuda_min``.
   RunPod's ``find_offers`` returns GPU-pod offers only (the GraphQL
   ``gpuTypes`` endpoint has no CPU-only surface). We use relaxed
@@ -71,7 +71,7 @@ def test_runpod_heartbeat_round_trip_against_live_pod() -> None:
     - Pod-side tag persistence across ~5s of network IO
     """
     from kinoforge.core.credentials import EnvCredentialProvider
-    from kinoforge.core.interfaces import HardwareRequirements, InstanceSpec
+    from kinoforge.core.interfaces import InstanceSpec, Placement
     from kinoforge.providers.runpod import RunPodProvider
     from kinoforge.providers.runpod.heartbeat import RunPodGraphQLHeartbeatEndpoint
 
@@ -89,7 +89,7 @@ def test_runpod_heartbeat_round_trip_against_live_pod() -> None:
     # returns GPU pod offers (no CPU-only endpoint).  Use very relaxed
     # requirements (min_vram_gb=0, min_cuda="0.0") so nothing gets
     # filtered out, then take the cheapest by cost_rate_usd_per_hr.
-    reqs = HardwareRequirements(
+    reqs = Placement(
         min_vram_gb=0,
         min_cuda="0.0",
         max_usd_per_hr=10.0,  # allow anything; we cap by budget check below
@@ -112,7 +112,6 @@ def test_runpod_heartbeat_round_trip_against_live_pod() -> None:
     )
 
     spec = InstanceSpec(
-        offer=cheapest,
         image="mirror.gcr.io/library/alpine:latest",
         env={},
     )

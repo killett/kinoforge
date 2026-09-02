@@ -40,7 +40,6 @@ from kinoforge.core.interfaces import (
     ConditioningAsset,
     GenerationJob,
     GenerationRequest,
-    HardwareRequirements,
     ImageProfile,
     ImageProfileProvider,
     Instance,
@@ -48,6 +47,7 @@ from kinoforge.core.interfaces import (
     ModelProfile,
     ModelProfileProvider,
     Offer,
+    Placement,
     Segment,
 )
 from kinoforge.core.orchestrator import DeployResult, deploy, deploy_session, generate
@@ -127,7 +127,7 @@ def _hosted_cfg() -> Config:
 class _RaisingProviderSpy(LocalProvider):
     """Raises AssertionError the moment any method is called."""
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, reqs: Placement) -> list[Offer]:
         raise AssertionError("find_offers called on hosted engine path")
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
@@ -1258,64 +1258,44 @@ def test_generate_tears_down_compute_on_validate_spec_failure(
 
 
 # ---------------------------------------------------------------------------
-# Layer P Task 7 item #2: orchestrator offer-retry across CapacityError
+# compute-seam S4: the offer-retry loop MOVED into RunPodProvider.
 # ---------------------------------------------------------------------------
+# The five tests that lived here now live in
+# tests/providers/test_runpod_offer_retry.py, re-pointed at
+# RunPodProvider.create_instance with their assertions carried over. What
+# remains here is the orchestrator's half of the contract: it hands the
+# provider ONE spec and does not iterate on its behalf.
 
 
-class _OfferRetryProvider(LocalProvider):
-    """Fake provider scripted per-call to test offer-retry mechanics.
+class _CountingProvider(LocalProvider):
+    """Counts create_instance calls and can fail the first one."""
 
-    Configured with a list of offers from find_offers() and a parallel
-    list of outcomes:
-        "capacity" -> raise CapacityError(...) on create_instance
-        "value"    -> raise ValueError("non-capacity") on create_instance
-        "ok"       -> return a real Instance with id derived from the offer
-
-    Records every (offer, outcome) pair so tests can assert iteration
-    order and call count.
-    """
-
-    def __init__(self, offers: list[Offer], outcomes: list[str]) -> None:
+    def __init__(self, offers: list[Offer], raise_first: Exception | None) -> None:
         super().__init__()
-        if len(offers) != len(outcomes):
-            raise AssertionError("offers and outcomes must be same length")
         self._scripted_offers = offers
-        self._outcomes = outcomes
-        self._index = 0
-        self.calls: list[Offer] = []
-        # Track CapacityError exceptions so identity-check can verify __cause__
-        self.last_capacity_excs: list[CapacityError] = []
+        self._raise_first = raise_first
+        self.calls: list[InstanceSpec] = []
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, placement: Placement) -> list[Offer]:
         return list(self._scripted_offers)
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
-        idx = self._index
-        self._index += 1
-        assert spec.offer is not None
-        self.calls.append(spec.offer)
-        outcome = self._outcomes[idx]
-        if outcome == "capacity":
-            exc = CapacityError(
-                f"RunPod has no current capacity for {spec.offer.gpu_type!r}"
-            )
-            self.last_capacity_excs.append(exc)
-            raise exc
-        if outcome == "value":
-            raise ValueError("non-capacity error from provider")
-        if outcome == "ok":
-            return Instance(
-                id=f"pod-{spec.offer.id}",
-                provider="local",
-                status="ready",  # skip the get_instance poll
-                created_at=0.0,
-                tags=dict(spec.tags),
-            )
-        raise AssertionError(f"unknown outcome {outcome!r}")
+        # S4: the spec carries no offer. The provider selects for itself, so
+        # what the orchestrator can be held to is HOW MANY times it asks.
+        self.calls.append(spec)
+        if self._raise_first is not None and len(self.calls) == 1:
+            raise self._raise_first
+        return Instance(
+            id="pod-selected-by-provider",
+            provider="local",
+            status="ready",
+            created_at=0.0,
+            tags=dict(spec.tags),
+        )
 
 
 def _three_offers() -> list[Offer]:
-    """Three distinct offers ordered by gpu_preference (already sorted)."""
+    """Three distinct offers ordered by preference (already sorted)."""
     return [
         Offer(
             id=f"offer-{i}",
@@ -1329,134 +1309,38 @@ def _three_offers() -> list[Offer]:
     ]
 
 
-def test_deploy_retries_next_offer_on_capacity_error() -> None:
-    """deploy() walks past the first CapacityError and uses offer[1].
+def test_deploy_hands_the_provider_the_first_offer_and_creates_once() -> None:
+    """The orchestrator selects nothing beyond handing over the ranked head.
 
-    Bug catch: if _create_with_offer_retry isn't wired into deploy(),
-    deploy crashes on the first CapacityError exactly as PROGRESS:182
-    describes. The chosen-instance id assertion locks the off-by-one
-    case where the helper returns offers[0]'s spec but advances past it.
+    Bug caught: keeping an orchestrator-side loop after the provider grew its
+    own means a capacity drought is retried TWICE over — N provider-internal
+    attempts per orchestrator attempt — turning one slow launch into N^2 API
+    calls against a provider that is already rate-limiting.
     """
     offers = _three_offers()
-    provider = _OfferRetryProvider(offers, ["capacity", "ok", "ok"])
-    cfg = _compute_cfg()
-    engine = _make_engine()
+    provider = _CountingProvider(offers, raise_first=None)
 
-    result = deploy(cfg, provider=provider, engine=engine)
+    result = deploy(_compute_cfg(), provider=provider, engine=_make_engine())
 
     assert result.instance is not None
-    assert result.instance.id == "pod-offer-1"
-    assert [o.id for o in provider.calls] == ["offer-0", "offer-1"]
+    assert result.instance.id == "pod-selected-by-provider"
+    assert len(provider.calls) == 1
 
 
-def test_deploy_iterates_offers_in_input_order() -> None:
-    """deploy() walks offers in exact find_offers-returned order.
+def test_deploy_propagates_a_capacity_error_the_provider_could_not_ride_out() -> None:
+    """A CapacityError out of create_instance is now terminal for the attempt.
 
-    Bug catch: a future change that uses set() / reversed() / random
-    iteration silently breaks the cost-aware sort done by filter_offers.
-    Cheapest available offer would no longer be tried first.
+    Bug caught: swallowing it here would hide the provider's own exhausted
+    message behind a second, emptier one — and the provider has already tried
+    every offer it has by the time it raises.
     """
     offers = _three_offers()
-    # offer[3] would succeed if it existed; here we exhaust 2 then succeed
-    # to keep the assertion focused on iteration order only
-    provider = _OfferRetryProvider(offers, ["capacity", "capacity", "ok"])
-    cfg = _compute_cfg()
-    engine = _make_engine()
+    provider = _CountingProvider(offers, raise_first=CapacityError("no capacity"))
 
-    deploy(cfg, provider=provider, engine=engine)
+    with pytest.raises(CapacityError, match="no capacity"):
+        deploy(_compute_cfg(), provider=provider, engine=_make_engine())
 
-    assert [o.id for o in provider.calls] == ["offer-0", "offer-1", "offer-2"]
-
-
-def test_deploy_raises_capacity_error_when_all_offers_exhausted() -> None:
-    """Every offer raises CapacityError → final exc is CapacityError with chain.
-
-    Bug catch: raising ValueError, KinoforgeError, or a fresh
-    CapacityError without __cause__ blinds the operator to the last
-    real RunPod message. Identity check on __cause__ catches misuse
-    of `raise X from None` (or no `from` at all, which falls through to
-    the in-handler implicit chaining and wraps the wrong exception).
-    """
-    offers = _three_offers()
-    provider = _OfferRetryProvider(offers, ["capacity", "capacity", "capacity"])
-    cfg = _compute_cfg()
-    engine = _make_engine()
-
-    with pytest.raises(CapacityError) as exc_info:
-        deploy(cfg, provider=provider, engine=engine)
-
-    assert "3 offers exhausted" in str(exc_info.value)
-    assert isinstance(exc_info.value.__cause__, CapacityError)
-    # Identity: the chained cause IS the last per-offer exception
-    assert exc_info.value.__cause__ is provider.last_capacity_excs[-1]
-
-
-def test_deploy_does_not_retry_on_non_capacity_error() -> None:
-    """Non-CapacityError exceptions propagate after exactly 1 create call.
-
-    Bug catch: a too-broad `except Exception:` in the retry helper
-    would silently retry auth / config errors across every offer,
-    burning time and obscuring the real failure.
-    """
-    offers = _three_offers()
-    provider = _OfferRetryProvider(offers, ["value", "ok", "ok"])
-    cfg = _compute_cfg()
-    engine = _make_engine()
-
-    with pytest.raises(ValueError, match="non-capacity"):
-        deploy(cfg, provider=provider, engine=engine)
-
-    assert len(provider.calls) == 1, (
-        f"non-CapacityError must propagate immediately; "
-        f"got {len(provider.calls)} create_instance calls"
-    )
-
-
-def test_provision_instance_helper_retries_next_offer_on_capacity_error(
-    tmp_path: Path,
-) -> None:
-    """The deploy_session compute helper retries identically to deploy().
-
-    Tests `_provision_instance_and_build_backend` directly because it
-    is the actual site of the second `offers[0]` (PROGRESS:182 only
-    flagged deploy()'s site at line 626; this one at line 283 was
-    silently sharing the same bug). Tested at the helper level rather
-    than through `with deploy_session(...)` to avoid pulling in
-    provisioner / profile-cache machinery unrelated to offer-retry.
-
-    Bug catch: forgetting to rewire _provision_instance_and_build_backend
-    leaves generate() and batch_generate() broken on the same capacity
-    blip — a silent regression with no observable difference in deploy()
-    tests.
-    """
-    from kinoforge.core.orchestrator import _provision_instance_and_build_backend
-
-    offers = _three_offers()
-    provider = _OfferRetryProvider(offers, ["capacity", "ok", "ok"])
-    cfg = _compute_cfg()
-    engine = _make_engine()
-    store = LocalArtifactStore(tmp_path)
-
-    # Patch the in-helper provisioner to a no-op so the test focuses on
-    # the offer-retry mechanism rather than weights / profile cache I/O.
-    with patch(
-        "kinoforge.core.orchestrator._provision_compute_once",
-        return_value=None,
-    ):
-        instance, _backend, _hb = _provision_instance_and_build_backend(
-            resolved_engine=engine,
-            resolved_provider=provider,
-            cfg=cfg,
-            run_id="t",
-            key=cfg.capability_key(),
-            creds=None,
-            store=store,
-            state_dir=tmp_path,
-            for_discovery=False,
-        )
-
-    assert instance.id == "pod-offer-1"
-    assert [o.id for o in provider.calls] == ["offer-0", "offer-1"]
+    assert len(provider.calls) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1676,7 +1560,7 @@ class _InstanceSupplyProvider(LocalProvider):
         self.destroy_calls: list[str] = []
         self.find_offers_calls: int = 0
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, reqs: Placement) -> list[Offer]:
         self.find_offers_calls += 1
         return super().find_offers(reqs)
 

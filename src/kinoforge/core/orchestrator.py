@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from kinoforge.core import registry
 from kinoforge.core.cancel import CancelToken
-from kinoforge.core.capabilities import WorkloadShape
+from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.config import Config
 from kinoforge.core.credentials import EnvCredentialProvider
@@ -42,6 +42,7 @@ from kinoforge.core.errors import (
     ProfileNotCached,
     ProvisionFailed,
     ProvisionTimeout,
+    RateCapExceeded,
     TeardownError,
     ValidationError,
 )
@@ -62,7 +63,6 @@ from kinoforge.core.interfaces import (
     Launch,
     ModelProfile,
     ModelProfileProvider,
-    Offer,
     PipelineState,
     RenderedProvision,
     Stage,
@@ -507,52 +507,89 @@ class _LazyClaim:
             self._cm = None
 
 
-def _create_with_offer_retry(
-    provider: ComputeProvider,
-    build_spec: Callable[[Offer], InstanceSpec],
-    offers: list[Offer],
-) -> tuple[Instance, Offer]:
-    """Iterate offers until create_instance succeeds.
+def _placement_summary(instance: Instance) -> str:
+    """Return a one-line identity of what was actually booked.
 
-    The first offer is tried first (the list is already sorted by
-    filter_offers' gpu_preference). On CapacityError, continue to the
-    next offer. Any other exception propagates immediately — non-
-    capacity errors fail every offer identically.
+    Kept to what an :class:`Instance` really holds — provider plus whatever
+    selection tags the provider chose to record. An operator reading a cap
+    violation needs to tell "my cap is too low" from "this went somewhere I
+    did not intend", and only the identity distinguishes them.
 
     Args:
-        provider: The resolved compute provider.
-        build_spec: Closure that builds an InstanceSpec for one offer.
-            Called once per offer attempted.
-        offers: Non-empty list of offers in attempt order.
+        instance: The launched instance.
 
     Returns:
-        ``(instance, offer)`` — the first offer for which create_instance
-        succeeded, paired with the live instance.
+        e.g. ``"sku=A100:1, cloud=lambda, provider=skypilot"``.
+    """
+    parts = [
+        f"{key}={instance.tags[key]}"
+        for key in ("sku", "cloud", "region", "accelerators")
+        if instance.tags.get(key)
+    ]
+    parts.append(f"provider={instance.provider}")
+    return ", ".join(parts)
+
+
+def _enforce_rate_cap(
+    *,
+    provider: ComputeProvider,
+    instance: Instance,
+    cap: float,
+    logger: logging.Logger = _log,
+) -> float | None:
+    """Destroy *instance* and raise when it bills above *cap*.
+
+    Args:
+        provider: The provider that launched it.
+        instance: The freshly created instance.
+        cap: ``placement.max_usd_per_hr``.
+        logger: Injected for testability.
+
+    Returns:
+        The realized rate, or None when it could not be read on a provider
+        whose catalog price already bounded the booking.
 
     Raises:
-        CapacityError: Every offer raised CapacityError. The last
-            per-offer CapacityError is chained as ``__cause__``.
+        RateCapExceeded: The realized rate exceeds *cap*, or could not be read
+            on a provider that chooses its own SKU. The instance is destroyed
+            first; a teardown failure is folded into the same error rather
+            than replacing it.
     """
-    last_capacity_exc: CapacityError | None = None
-    for offer in offers:
-        spec = build_spec(offer)
-        try:
-            instance = provider.create_instance(spec)
-            return instance, offer
-        except CapacityError as exc:
-            last_capacity_exc = exc
-            _log.warning(
-                "[offer-retry] %s @ $%.4f/hr unavailable: %s",
-                offer.gpu_type,
-                offer.cost_rate_usd_per_hr,
-                exc,
-            )
-            continue
-    raise CapacityError(
-        f"all {len(offers)} offers exhausted; provider "
-        f"{getattr(provider, 'name', repr(provider))!r} "
-        f"has no current capacity"
-    ) from last_capacity_exc
+    declared = provider.capabilities()
+    realized = provider.realized_rate(instance)
+    if realized is not None and realized <= cap:
+        return realized
+    if realized is None and Capability.RATE_READBACK not in declared:
+        # The catalog already bounded this before booking; an unreadable
+        # readback is a missing nicety, not a money risk.
+        logger.warning(
+            "[rate-cap] %s: realized rate unreadable; the catalog price "
+            "bounded this launch before it was booked",
+            instance.id,
+        )
+        return None
+
+    summary = _placement_summary(instance)
+    teardown_error: str | None = None
+    try:
+        provider.destroy_instance(instance.id)
+    except Exception as exc:  # noqa: BLE001 — folded into the raised error
+        teardown_error = repr(exc)
+        logger.error(
+            "[rate-cap] %s: teardown FAILED after a cap violation; the "
+            "instance is still billing and its ledger row is the only "
+            "handle on it",
+            instance.id,
+        )
+    err = RateCapExceeded(
+        realized=realized,
+        cap=cap,
+        instance_id=instance.id,
+        placement_summary=summary,
+    )
+    if teardown_error is not None:
+        err.args = (f"{err.args[0]}\n  TEARDOWN ALSO FAILED: {teardown_error}",)
+    raise err
 
 
 _CAPACITY_RETRY_INTERVAL_S: float = 25.0
@@ -560,25 +597,26 @@ _CAPACITY_RETRY_INTERVAL_S: float = 25.0
 
 def _create_with_capacity_wait[T](
     *,
-    find_offers: Callable[[], list[Any]],
-    create: Callable[[list[Any]], T],
+    create: Callable[[], T],
     capacity_wait_s: float,
     retry_interval_s: float = _CAPACITY_RETRY_INTERVAL_S,
     clock: Clock | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> T:
-    """Retry ``find_offers`` + ``create`` while it raises CapacityError.
+    """Retry ``create`` while it raises CapacityError.
 
-    Capacity is fluid: a RunPod offer listed by find_offers can vanish by
-    create time, and a currently-empty pool can free up seconds later. Retry
-    the whole find+create on CapacityError, re-querying offers each attempt,
-    until ``capacity_wait_s`` elapses; then re-raise the last CapacityError.
-    Non-CapacityError propagates immediately. ``capacity_wait_s <= 0`` fails on
-    the first miss.
+    Capacity is fluid: a currently-empty pool can free up seconds later. Retry
+    ``create`` on CapacityError until ``capacity_wait_s`` elapses, then re-raise
+    the last one. Non-CapacityError propagates immediately.
+    ``capacity_wait_s <= 0`` fails on the first miss, which makes this a
+    pass-through on every provider that declares no wait window.
+
+    compute-seam S4 dropped the ``find_offers`` parameter: re-querying the
+    catalog between attempts is now the enumerating provider's own business,
+    inside its ``create_instance``.
 
     Args:
-        find_offers: Re-queries provider offers (fresh each attempt).
-        create: Builds the instance from offers; may raise CapacityError.
+        create: Creates the instance; may raise CapacityError.
         capacity_wait_s: Deadline; 0 disables retry.
         retry_interval_s: Sleep between attempts.
         clock: Injected clock (defaults to RealClock).
@@ -594,7 +632,7 @@ def _create_with_capacity_wait[T](
     start = the_clock.now()
     while True:
         try:
-            return create(find_offers())
+            return create()
         except CapacityError:
             if the_clock.now() - start >= capacity_wait_s:
                 raise
@@ -799,6 +837,7 @@ def _provision_instance_and_build_backend(
     for_discovery: bool,
     tags: dict[str, str] | None = None,
     on_instance_created: Callable[[Instance], None] | None = None,
+    on_rate_verified: Callable[[Instance], None] | None = None,
     cancel_token: CancelToken | None = None,
     start_heartbeat: Callable[[Instance], HeartbeatLoopProtocol] | None = None,
     capacity_wait_s: float | None = None,
@@ -827,6 +866,13 @@ def _provision_instance_and_build_backend(
             immediately after ``create_instance`` returns, with the
             freshly-created ``Instance``. B7 uses this seam to enter
             ``hold_until_first_tick`` before ``engine.provision`` runs.
+        on_rate_verified: compute-seam S4 — optional callback fired at most
+            once, with the instance carrying the REALIZED hourly rate, after
+            the cap check passes. Not fired when the rate was unreadable (the
+            recorded catalog number is then the best available and must
+            survive). The row was already written by ``on_instance_created``,
+            so this corrects it in place rather than recording a second one:
+            ``Ledger.record`` appends.
         cancel_token: C29 cooperative cancellation. Forwarded into
             ``_provision_compute_once`` so a boot-phase reap raises
             ``Cancelled`` from inside ``engine.wait_for_ready``. Task 5 adds
@@ -861,7 +907,8 @@ def _provision_instance_and_build_backend(
         ``engine.backend(instance, cfg_dict)``, hb_loop started or ``None``.
 
     Raises:
-        CapacityError: ``find_offers`` returned an empty list.
+        CapacityError: The provider found nothing bookable for the cfg's
+            placement, or every candidate it tried lacked capacity.
         AuthError: A var in ``rendered.env_required`` is absent from *creds*.
             Raised before ``create_instance`` is called.
         ProvisionFailed: Engine boot script crashed; instance already destroyed.
@@ -876,7 +923,6 @@ def _provision_instance_and_build_backend(
             after the instance is already created — that instance is destroyed
             before the exception propagates.
     """
-    hw_reqs = cfg.hardware_requirements()
     lifecycle = cfg.lifecycle()
     image = cfg.compute.image if cfg.compute is not None else ""
     # THE single resolution site for the capacity window. It sits beside the
@@ -918,11 +964,10 @@ def _provision_instance_and_build_backend(
     # operator as several distinct guardrail problems instead of one.
     assert_launch_capabilities(cfg, launch=rendered.launch)
 
-    def _build_spec(offer: Offer) -> InstanceSpec:
+    def _build_spec() -> InstanceSpec:
         return build_instance_spec(
             cfg=cfg,
             rendered=rendered,
-            offer=offer,
             engine_name=resolved_engine.name,
             key_hash=key_hash,
             image=image,
@@ -940,22 +985,13 @@ def _provision_instance_and_build_backend(
     # capacity_wait_s elapses, then re-raise clean. Rides transient RunPod
     # capacity droughts instead of failing the run on the first miss. S1 made
     # the window provider-scoped — see build_capacity_wait_for.
-    def _find_offers() -> list[Offer]:
-        found = resolved_provider.find_offers(hw_reqs)
-        if not found:
-            prefix = "for discovery " if for_discovery else ""
-            raise CapacityError(
-                f"no offers available {prefix}from provider "
-                f"{getattr(resolved_provider, 'name', repr(resolved_provider))!r}"
-            )
-        return found
-
-    def _create(offers: list[Offer]) -> tuple[Instance, Offer]:
-        return _create_with_offer_retry(resolved_provider, _build_spec, offers)
-
-    instance, _chosen_offer = _create_with_capacity_wait(
-        find_offers=_find_offers,
-        create=_create,
+    # compute-seam S4: the orchestrator hands over ONE spec and the provider
+    # selects for itself — RunPod from its catalog, Modal from its GPU table,
+    # SkyPilot by handing constraints to its optimizer. The capacity-WAIT
+    # window survives because capacity is fluid: a provider that raises
+    # CapacityError now may succeed in 25 s.
+    instance = _create_with_capacity_wait(
+        create=lambda: resolved_provider.create_instance(_build_spec()),
         capacity_wait_s=capacity_wait_s,
     )
     # B7 — acquire the cooperative session-claim lock now that instance.id is
@@ -964,6 +1000,29 @@ def _provision_instance_and_build_backend(
     # holder's __exit__ in deploy_session.
     if on_instance_created is not None:
         on_instance_created(instance)
+    # compute-seam S4: the cap is verified against what was LAUNCHED, not
+    # filtered against a catalog the chooser may never have consulted. Runs
+    # after on_instance_created (so a failed teardown still leaves a ledger row
+    # pointing at the live instance) and before _wait_for_provider_ready and
+    # engine.provision, so a violation is torn down before the expensive part
+    # of a boot — on RunPod and Modal. On SkyPilot `sky.launch` already ran
+    # Task.setup by the time it returned, so there the teardown discards work
+    # that has been done; that is the accepted trade (design §14) and a
+    # pre-launch estimate is an S5 follow-up.
+    realized_rate = _enforce_rate_cap(
+        provider=resolved_provider,
+        instance=instance,
+        cap=cfg.placement().max_usd_per_hr,
+    )
+    if realized_rate is not None:
+        # S4 closes F4 here: every downstream surface — the ledger row,
+        # est_spend, `kinoforge list`, every lifecycle.budget computation —
+        # reads cost_rate_usd_per_hr, and until now that was the number
+        # kinoforge ASKED for. An unreadable rate leaves the recorded catalog
+        # number alone rather than zeroing a pod that is very much billing.
+        instance = dataclasses.replace(instance, cost_rate_usd_per_hr=realized_rate)
+        if on_rate_verified is not None:
+            on_rate_verified(instance)
     # Status-only polling: preserve endpoints + tags from create_instance.
     # provider.get_instance(id) re-queries the API but the GraphQL `pod` query
     # only returns id/desiredStatus/imageName — endpoints + ports tag are
@@ -1304,6 +1363,23 @@ def deploy_session(
             )
         claim_holder.install(inst)
 
+    def _correct_recorded_rate(inst: Instance) -> None:
+        """Rewrite the ledger row's rate with the one read off the instance.
+
+        compute-seam S4. Deliberately NOT a second ``_record_then_install``:
+        ``Ledger.record`` appends, so re-firing it would leave two rows for one
+        instance and re-enter the claim. This corrects the one row in place.
+        """
+        try:
+            _ledger_for_claim.set_cost_rate(inst.id, inst.cost_rate_usd_per_hr)
+        except Exception as rate_exc:  # noqa: BLE001
+            _log.warning(
+                "S4: ledger.set_cost_rate failed for %s: %s "
+                "(the row keeps the pre-launch rate)",
+                inst.id,
+                rate_exc,
+            )
+
     # ------------------------------------------------------------------
     # C29 — build the start_heartbeat closure ONCE per deploy_session.
     #
@@ -1426,6 +1502,7 @@ def deploy_session(
                             for_discovery=True,
                             tags=tags,
                             on_instance_created=_record_then_install,
+                            on_rate_verified=_correct_recorded_rate,
                             cancel_token=cancel_token,
                             start_heartbeat=_start_heartbeat,
                             capacity_wait_s=capacity_wait_s,
@@ -1470,6 +1547,7 @@ def deploy_session(
                             for_discovery=False,
                             tags=tags,
                             on_instance_created=_record_then_install,
+                            on_rate_verified=_correct_recorded_rate,
                             cancel_token=cancel_token,
                             start_heartbeat=_start_heartbeat,
                             capacity_wait_s=capacity_wait_s,
@@ -1633,7 +1711,7 @@ def deploy(
     2. Resolve the engine (registry or injection).
     3. If ``engine.requires_compute == False`` (hosted): skip compute entirely,
        return a ``DeployResult`` with ``instance=None`` and the engine's endpoints.
-    4. Resolve the provider.  Call ``provider.find_offers(cfg.hardware_requirements())``;
+    4. Resolve the provider.  Call ``provider.find_offers(cfg.placement())``;
        raise ``CapacityError`` if the list is empty.
     5. **Dry-run:** print a vendor/engine-neutral plan and return a
        ``DeployResult(instance=None, plan_text=...)``.  ``create_instance`` is
@@ -1659,7 +1737,7 @@ def deploy(
         A ``DeployResult`` describing the outcome.
 
     Raises:
-        CapacityError: No compute offer satisfies ``cfg.hardware_requirements()``.
+        CapacityError: No compute offer satisfies ``cfg.placement()``.
     """
     key = cfg.capability_key()
     resolved_engine = _resolve_engine(cfg, engine)
@@ -1672,17 +1750,11 @@ def deploy(
         backend = resolved_engine.backend(None, _cfg_dict(cfg))
         return DeployResult(instance=None, endpoints=backend.endpoints())
 
-    # Compute path: resolve provider and find offers.
+    # Compute path: resolve the provider. compute-seam S4 — selection happens
+    # inside create_instance, so there is no catalog read here and no
+    # "no offers" pre-check: an enumerating provider raises CapacityError from
+    # its own empty catalog, with its own message.
     resolved_provider = _resolve_provider(cfg, provider)
-    hw_reqs = cfg.hardware_requirements()
-    offers = resolved_provider.find_offers(hw_reqs)
-
-    if not offers:
-        raise CapacityError(
-            f"no compute offers available from provider "
-            f"{getattr(resolved_provider, 'name', repr(resolved_provider))!r} "
-            f"for hardware requirements {hw_reqs!r}"
-        )
 
     lifecycle = cfg.lifecycle()
 
@@ -1696,7 +1768,7 @@ def deploy(
             f"  engine:           {resolved_engine.name}\n"
             f"  provider:         {getattr(resolved_provider, 'name', repr(resolved_provider))}\n"
             f"  model count:      {len(cfg.models)}\n"
-            f"  offers available: {len(offers)}\n"
+            f"  placement:        {cfg.placement()}\n"
             f"  lifecycle ceilings:\n"
             f"    idle_timeout_s:  {lifecycle.idle_timeout_s}\n"
             f"    max_lifetime_s:  {lifecycle.max_lifetime_s}\n"
@@ -1709,13 +1781,12 @@ def deploy(
     # Live run: create the instance.
     image = cfg.compute.image if cfg.compute is not None else ""
 
-    def _build_spec(offer: Offer) -> InstanceSpec:
+    def _build_spec() -> InstanceSpec:
         return build_instance_spec(
             cfg=cfg,
             rendered=RenderedProvision(
                 script="", image=image, ports=[], env_required=[]
             ),
-            offer=offer,
             engine_name=resolved_engine.name,
             key_hash=key_hash,
             image=image,
@@ -1725,9 +1796,8 @@ def deploy(
             tags=tags,
         )
 
-    instance, _chosen_offer = _create_with_offer_retry(
-        resolved_provider, _build_spec, offers
-    )
+    # compute-seam S4: selection and its retry belong to the provider.
+    instance = resolved_provider.create_instance(_build_spec())
 
     try:
         # Poll until ready (LocalProvider returns ready immediately; cloud providers
@@ -1897,7 +1967,7 @@ def generate(
         CapabilityMismatch: The live backend's capabilities differ from the
             cached profile; instance has already been destroyed before this
             propagates.
-        CapacityError: No compute offer satisfies ``cfg.hardware_requirements()``.
+        CapacityError: No compute offer satisfies ``cfg.placement()``.
         UnknownAdapter: ``cfg.keyframe.engine`` is not registered in the image-engine
             registry.
         ValidationError: The ``request`` fails mode/role/kind validation, or a

@@ -124,7 +124,8 @@ _COMPUTE_DEFAULTS: dict[str, Any] = {
 _RUNPOD_CONTAINER_DISK_GB = 250
 
 #: SkyPilot's ``resources.setdefault("disk_size", 60 if is_gpu else 30)``.
-#: The CPU arm is reached when ``find_offers`` short-circuits to the synthetic
+#: The CPU arm is reached when ``_select_accelerator`` returns None (the S4
+#: replacement for what used to be a short-circuit to the synthetic
 #: ``sky-cpu-auto`` offer, which it does exactly when ``min_vram_gb == 0``.
 _SKY_DISK_GB_GPU = 60
 _SKY_DISK_GB_CPU = 30
@@ -239,7 +240,8 @@ def _skypilot_disk(cfg: Config) -> str:
     """Name the ``disk_size`` SkyPilot really pins for THIS cfg.
 
     Which arm of ``setdefault("disk_size", 60 if is_gpu else 30)`` applies is
-    knowable at load: ``find_offers`` returns the synthetic ``sky-cpu-auto``
+    knowable at load: ``_select_accelerator`` returns None (pre-S4: the
+    synthetic ``sky-cpu-auto`` offer)
     offer (no ``gpu_type``, hence the 30 GB arm) exactly when
     ``min_vram_gb == 0``. Printing both numbers would leave the operator to
     guess which one caps their download.

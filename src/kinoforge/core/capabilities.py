@@ -26,6 +26,7 @@ __all__ = [
     "capabilities_for",
     "consumes_for",
     "provider_billed",
+    "provider_class_for",
     "provider_registered",
 ]
 
@@ -43,6 +44,19 @@ class Capability(StrEnum):
     JOB_TIMEOUT          — the provider enforces cfg's per-job timeout.
     PAUSE_BILLING        — ``stop_instance()`` pauses billing without destroying.
     BALANCE_QUERY        — live account balance readable from the provider.
+    RATE_READBACK        — the provider CHOOSES the SKU, so the rate is only
+                           knowable by reading it back off the launched
+                           instance. skypilot.
+    RATE_DETERMINISTIC   — the requested SKU is the billed SKU, so the catalog
+                           price is the rate. runpod, modal, local.
+    CATALOG_ENUMERATION  — the provider can list what is bookable. Gates
+                           ``kinoforge offers``. runpod, modal, local; NOT
+                           skypilot, whose optimizer takes constraints rather
+                           than publishing a catalog.
+
+    The two rate members are mutually exclusive: they are opposite claims
+    about who chooses the SKU, and a provider declaring both would leave the
+    enforcement point free to pick whichever branch it tested first.
     """
 
     HEARTBEAT_READ = "HEARTBEAT_READ"
@@ -53,6 +67,9 @@ class Capability(StrEnum):
     JOB_TIMEOUT = "JOB_TIMEOUT"
     PAUSE_BILLING = "PAUSE_BILLING"
     BALANCE_QUERY = "BALANCE_QUERY"
+    RATE_READBACK = "RATE_READBACK"
+    RATE_DETERMINISTIC = "RATE_DETERMINISTIC"
+    CATALOG_ENUMERATION = "CATALOG_ENUMERATION"
 
 
 class WorkloadShape(StrEnum):
@@ -96,6 +113,23 @@ def _provider_class(provider_kind: str) -> type[ComputeProvider] | None:
         _ensure_adapters_imported()
         cls = registry.provider_class(provider_kind)
     return cls
+
+
+def provider_class_for(provider_kind: str) -> type[ComputeProvider] | None:
+    """Return the registered provider CLASS for ``provider_kind``, or None.
+
+    The public face of the same lazy lookup :func:`capabilities_for` uses, for
+    the validation checks that inspect a provider class directly rather than
+    only its declared set (see
+    :func:`kinoforge.validation.checks.capabilities.rate_source_declared`).
+
+    Args:
+        provider_kind: Registry key, e.g. ``"skypilot"``.
+
+    Returns:
+        The provider class, or None for an unknown provider.
+    """
+    return _provider_class(provider_kind)
 
 
 def capabilities_for(

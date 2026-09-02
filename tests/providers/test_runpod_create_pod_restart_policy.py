@@ -28,6 +28,39 @@ import pytest
 from kinoforge.core.interfaces import InstanceSpec, Offer
 from kinoforge.providers.runpod import RunPodProvider
 
+#: compute-seam S4: RunPod selects its own SKU inside create_instance, so every
+#: transport a create test drives must answer the catalog query first.
+_S4_GPU_TYPES: dict[str, object] = {
+    "data": {
+        "gpuTypes": [
+            {
+                "id": name,
+                "displayName": name,
+                "memoryInGb": vram,
+                "secureCloud": True,
+                "lowestPrice": {
+                    "minimumBidPrice": price,
+                    "uninterruptablePrice": price,
+                },
+            }
+            # Wide enough that both shapes of shipped config find something: a
+            # DEFAULT Placement (48 GB floor, $2.20 cap) and the cheap
+            # interpolate configs (16 GB floor, $1.00 cap, named 24 GB SKUs).
+            for name, vram, price in (
+                ("NVIDIA RTX A4000", 16, 0.32),
+                ("NVIDIA RTX A5000", 24, 0.44),
+                ("NVIDIA GeForce RTX 4090", 24, 0.69),
+                ("NVIDIA A100 80GB PCIe", 80, 1.64),
+            )
+        ]
+    }
+}
+
+
+def _create_body(captured: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
+    """Return the create-mutation body, skipping S4's catalog read."""
+    return next(b for _u, b in captured if "gpuTypes" not in str(b.get("query", "")))
+
 
 def _capture_post() -> tuple[
     list[tuple[str, dict[str, Any]]],
@@ -37,6 +70,8 @@ def _capture_post() -> tuple[
 
     def _http_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
         captured.append((url, body))
+        if "gpuTypes" in str(body.get("query", "")):
+            return _S4_GPU_TYPES
         return {"data": {"podFindAndDeployOnDemand": {"id": "pod-xyz"}}}
 
     return captured, _http_post
@@ -61,9 +96,9 @@ def test_default_restart_policy_does_not_emit_field() -> None:
     """Backward compat: default spec wire-shape unchanged."""
     captured, post = _capture_post()
     p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
-    spec = InstanceSpec(image="runpod/pytorch:latest", offer=_offer())
+    spec = InstanceSpec(image="runpod/pytorch:latest")
     p.create_instance(spec)
-    assert "restartPolicy" not in _input(captured[0][1])
+    assert "restartPolicy" not in _input(_create_body(captured))
 
 
 def test_never_with_schema_supported_emits_field_on_wire(tmp_path: Path) -> None:
@@ -73,7 +108,6 @@ def test_never_with_schema_supported_emits_field_on_wire(tmp_path: Path) -> None
     p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
-        offer=_offer(),
         backend_options={"runpod": {"restart_policy": "never"}},
     )
     with patch(
@@ -81,7 +115,7 @@ def test_never_with_schema_supported_emits_field_on_wire(tmp_path: Path) -> None
         sidecar,
     ):
         p.create_instance(spec)
-    assert _input(captured[0][1]).get("restartPolicy") == "NEVER"
+    assert _input(_create_body(captured)).get("restartPolicy") == "NEVER"
 
 
 def test_never_with_schema_unsupported_skips_field(tmp_path: Path) -> None:
@@ -91,7 +125,6 @@ def test_never_with_schema_unsupported_skips_field(tmp_path: Path) -> None:
     p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
-        offer=_offer(),
         backend_options={"runpod": {"restart_policy": "never"}},
     )
     with patch(
@@ -99,7 +132,7 @@ def test_never_with_schema_unsupported_skips_field(tmp_path: Path) -> None:
         sidecar,
     ):
         p.create_instance(spec)
-    assert "restartPolicy" not in _input(captured[0][1])
+    assert "restartPolicy" not in _input(_create_body(captured))
 
 
 def test_never_with_sidecar_missing_skips_field(tmp_path: Path) -> None:
@@ -108,7 +141,6 @@ def test_never_with_sidecar_missing_skips_field(tmp_path: Path) -> None:
     p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
-        offer=_offer(),
         backend_options={"runpod": {"restart_policy": "never"}},
     )
     with patch(
@@ -116,7 +148,7 @@ def test_never_with_sidecar_missing_skips_field(tmp_path: Path) -> None:
         tmp_path / "absent.json",
     ):
         p.create_instance(spec)
-    assert "restartPolicy" not in _input(captured[0][1])
+    assert "restartPolicy" not in _input(_create_body(captured))
 
 
 def test_unsupported_schema_warning_describes_actual_default_behaviour(
@@ -143,7 +175,6 @@ def test_unsupported_schema_warning_describes_actual_default_behaviour(
     p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
-        offer=_offer(),
         backend_options={"runpod": {"restart_policy": "never"}},
     )
 

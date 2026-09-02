@@ -33,6 +33,50 @@ class BudgetExceeded(KinoforgeError):
     """Estimated spend crossed the configured budget ceiling."""
 
 
+class RateCapExceeded(KinoforgeError):
+    """A launched instance bills above ``placement.max_usd_per_hr``.
+
+    Raised after ``create_instance`` and before ``engine.provision``, once the
+    instance has been destroyed. Names both numbers and the identity of what
+    was launched: an operator seeing only "over budget" cannot tell a cap that
+    is too low from a placement that went somewhere unintended.
+
+    Attributes:
+        realized: The rate read back, or None when it could not be read.
+        cap: The configured ceiling.
+        instance_id: The instance that was launched and then destroyed.
+        placement_summary: Human-readable identity of what was booked, e.g.
+            ``"sku=A100:1, cloud=lambda, region=us-west-2"``.
+    """
+
+    def __init__(
+        self,
+        *,
+        realized: float | None,
+        cap: float,
+        instance_id: str,
+        placement_summary: str,
+    ) -> None:
+        """Initialise with both numbers and the launched identity.
+
+        Args:
+            realized: The rate read back, or None when it was unreadable.
+            cap: The configured ceiling in USD per hour.
+            instance_id: The instance that was launched and then destroyed.
+            placement_summary: Human-readable identity of what was booked.
+        """
+        self.realized = realized
+        self.cap = cap
+        self.instance_id = instance_id
+        self.placement_summary = placement_summary
+        rate = f"${realized:.4f}/hr" if realized is not None else "<unreadable>"
+        super().__init__(
+            f"realized {rate} exceeds cap ${cap:.4f}/hr\n"
+            f"  ({placement_summary}, instance={instance_id})\n"
+            f"  instance destroyed"
+        )
+
+
 class Cancelled(KinoforgeError):
     """Raised when a CancelToken is set mid-operation.
 

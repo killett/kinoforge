@@ -26,6 +26,7 @@ from unittest import mock
 
 import pytest
 
+from kinoforge.core.config import load_config
 from tools.snapshot_launch_payloads import (
     EXCLUDED_CONFIGS,
     FROZEN_EPOCH,
@@ -311,19 +312,27 @@ def test_capture_freezes_the_clock(stem: str) -> None:
 def test_frozen_epoch_actually_lands_in_the_payload() -> None:
     """SkyPilot's watchdog deadline is derived from :data:`FROZEN_EPOCH`.
 
-    ``skypilot-gpu.yaml`` sets ``budget: 0.10`` and the synthetic offer costs
-    $1.64/hr, so the budget deadline is ``0.10 / 1.64 * 3600 = 219.51 s`` past
-    launch — earlier than the 1800 s ``max_lifetime`` — giving
-    ``1756000000 + 219.51``.
+    ``skypilot-gpu.yaml`` sets ``budget: 0.10`` and ``max_usd_per_hr: 1.00``,
+    so the budget deadline is ``0.10 / 1.00 * 3600 = 360 s`` past launch —
+    earlier than the 1800 s ``max_lifetime`` — giving ``1756000000 + 360``.
+
+    compute-seam S4 changed the rate this is computed from. Pre-S4 it was the
+    harness's synthetic offer price ($1.64/hr); the provider has no offer now
+    and cannot know the realized rate at create time, so it uses the ceiling
+    the operator set. That is the conservative direction: the cap is an upper
+    bound on the billed rate, so budget/cap is a LOWER bound on the time the
+    budget lasts, and the deadline lands early rather than late.
 
     Bug caught: the freeze silently stops applying to the watchdog (e.g. the
     provider starts reading a monotonic clock), so the deadline in the golden
     is a real wall-clock instant and the golden rots into a value nobody can
     reproduce.
     """
-    payload = capture_payload(_CONFIG_DIR / "skypilot-gpu.yaml")
+    cfg_path = _CONFIG_DIR / "skypilot-gpu.yaml"
+    payload = capture_payload(cfg_path)
     setup: str = payload["task_config"]["setup"]
-    assert f"'{FROZEN_EPOCH + 0.1 / 1.64 * 3600.0!r}'" in setup, (
+    cap = load_config(str(cfg_path)).placement().max_usd_per_hr
+    assert f"'{FROZEN_EPOCH + 0.1 / cap * 3600.0!r}'" in setup, (
         "watchdog deadline is not the frozen-epoch-derived value"
     )
 

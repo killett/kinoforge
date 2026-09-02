@@ -120,7 +120,7 @@ def _post_capture_body(
 def test_runpod_util_disk_field_probe() -> None:
     """Pick cheapest RunPod offer; try each disk-field selection set; record outcome."""
     from kinoforge.core.credentials import EnvCredentialProvider
-    from kinoforge.core.interfaces import HardwareRequirements, InstanceSpec
+    from kinoforge.core.interfaces import InstanceSpec, Placement
     from kinoforge.providers.runpod import RunPodProvider
 
     creds = EnvCredentialProvider()
@@ -128,7 +128,7 @@ def test_runpod_util_disk_field_probe() -> None:
     assert api_key, "RUNPOD_API_KEY must be set for live probe"
 
     provider = RunPodProvider(creds=creds)
-    reqs = HardwareRequirements(
+    reqs = Placement(
         min_vram_gb=0,
         min_cuda="0.0",
         max_usd_per_hr=10.0,
@@ -150,7 +150,6 @@ def test_runpod_util_disk_field_probe() -> None:
 
     spec = InstanceSpec(
         image="mirror.gcr.io/library/alpine:latest",
-        offer=cheapest,
         env={},
     )
     instance = provider.create_instance(spec)

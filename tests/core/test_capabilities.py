@@ -14,8 +14,13 @@ from kinoforge.core.capabilities import (
 from kinoforge.core.interfaces import ComputeProvider
 
 
-def test_capability_members_are_exactly_the_declared_eight() -> None:
-    """Vocabulary is closed — a stray member means an undesigned capability."""
+def test_capability_members_are_exactly_the_declared_eleven() -> None:
+    """Vocabulary is closed — a stray member means an undesigned capability.
+
+    Widened from eight to eleven by compute-seam S4, which split how a rate is
+    known (RATE_READBACK vs RATE_DETERMINISTIC) from whether a catalog can be
+    listed at all (CATALOG_ENUMERATION).
+    """
     assert {c.value for c in Capability} == {
         "HEARTBEAT_READ",
         "RUNTIME_PROBE",
@@ -25,6 +30,9 @@ def test_capability_members_are_exactly_the_declared_eight() -> None:
         "JOB_TIMEOUT",
         "PAUSE_BILLING",
         "BALANCE_QUERY",
+        "RATE_READBACK",
+        "RATE_DETERMINISTIC",
+        "CATALOG_ENUMERATION",
     }
 
 

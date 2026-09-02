@@ -71,14 +71,14 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from kinoforge.core import registry
 from kinoforge.core.capabilities import Capability, WorkloadShape
-from kinoforge.core.errors import KinoforgeError, ProvisionFailed
+from kinoforge.core.errors import CapacityError, KinoforgeError, ProvisionFailed
 from kinoforge.core.interfaces import (
     ComputeProvider,
     FieldSupport,
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Offer,
+    Placement,
     combine_steps,
     render_launch,
 )
@@ -579,8 +579,15 @@ class SkyPilotProvider(ComputeProvider):
         a server spec's launch becomes a never-terminating ``Task.run``,
         so ``job_lib.is_cluster_idle()`` is permanently False (verification
         doc F1) and the 60 s AutostopEvent tick resets the timer forever.
+
+        RATE_READBACK, not RATE_DETERMINISTIC: the launch pins an accelerator
+        NAME and sky's optimizer then picks cloud, region and SKU on its own,
+        so the only honest price is one read back off the launched cluster
+        (:meth:`realized_rate`). CATALOG_ENUMERATION is absent for the same
+        reason — there is no catalog here to list, only an optimizer that
+        takes constraints.
         """
-        caps = {Capability.ON_INSTANCE_DEADLINE}
+        caps = {Capability.ON_INSTANCE_DEADLINE, Capability.RATE_READBACK}
         if shape is WorkloadShape.BATCH:
             caps.add(Capability.IDLE_AUTOSTOP)
         return frozenset(caps)
@@ -664,7 +671,6 @@ class SkyPilotProvider(ComputeProvider):
             "setup_steps": c,  # combined into Task.setup
             "launch": c,  # rendered into Task.run
             "lifecycle": c,  # idle_minutes_to_autostop + the watchdog deadline
-            "offer": c,  # resources["accelerators"] / cpus+memory
             "backend_options": c,  # cloud pin + retry_until_up, via _adapters
         }
 
@@ -773,55 +779,23 @@ class SkyPilotProvider(ComputeProvider):
     # ComputeProvider interface
     # ------------------------------------------------------------------
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
-        """Return SkyPilot offers matching ``reqs``.
+    def _candidate_accelerators(self, placement: Placement) -> list[Offer]:
+        """Return the accelerators sky lists that satisfy *placement*, ranked.
 
-        For CPU-class workloads (``reqs.min_vram_gb == 0``) the returned
-        offer is a synthetic ``sky-cpu-auto`` entry — SkyPilot picks the
-        actual SKU from ``cpus``/``memory`` constraints set on the
-        :class:`sky.Task` at launch time, not from a discrete catalog.
-        Calling :func:`sky.list_accelerators` with its default
-        ``gpus_only=True`` returns no candidates for CPU workloads, which
-        would otherwise break ``find_offers`` for the CPU smoke and any
-        downstream caller passing ``min_vram_gb=0``.
-
-        For GPU workloads (``reqs.min_vram_gb > 0``) calls
-        :func:`sky.list_accelerators` (the modern replacement for the
-        removed ``sky.gpu_list``) to obtain available accelerators,
-        converts each entry to an :class:`~kinoforge.core.interfaces.Offer`,
-        then delegates filtering and sorting to
-        :func:`~kinoforge.core.offers.filter_offers`.
-
-        The accelerator return shape is ``dict[str, list[InstanceTypeInfo]]``:
-        each key is an accelerator name (e.g. ``"A100"``) and each value is a
-        list of candidate :class:`InstanceTypeInfo` records (one per
-        region/instance type / cloud). Test fakes may return either this
-        mapping shape or a flat ``list`` of dict records — both are handled.
+        The catalog read behind :meth:`_select_accelerator`, kept separate so
+        the filtering and the choosing can each be tested for what they do.
+        Not public: SkyPilot has no bookable catalog — ``sky.list_accelerators``
+        describes what the optimizer may consider, and the optimizer still
+        picks cloud, region and instance type for itself.
 
         Args:
-            reqs: Hardware requirements to filter against.
+            placement: The portable resource block to filter and rank by.
 
         Returns:
-            Filtered and sorted list of :class:`~kinoforge.core.interfaces.Offer`
-            objects. For ``reqs.min_vram_gb == 0`` the list always contains a
-            single synthetic CPU offer.
+            Offers passing the VRAM/CUDA/price filters, ranked by
+            ``placement.accelerators``; empty when nothing clears them.
         """
         sky = self._sky()
-        if reqs.min_vram_gb == 0:
-            # CPU short-circuit: ``list_accelerators(gpus_only=True)`` returns
-            # an empty dict for CPU smokes, so synthesise a single offer that
-            # signals downstream ``create_instance`` to set CPU resource
-            # constraints on the Task (see create_instance below).
-            return [
-                Offer(
-                    id="sky-cpu-auto",
-                    gpu_type="",
-                    vram_gb=0,
-                    cuda="0.0",
-                    cost_rate_usd_per_hr=0.05,
-                    mode="pod",
-                )
-            ]
         raw = sky.list_accelerators(
             **({} if self._clouds is None else {"clouds": self._clouds})
         )
@@ -836,7 +810,7 @@ class SkyPilotProvider(ComputeProvider):
         else:
             records.extend(resolved)
 
-        raw_offers: list[Offer] = []
+        candidates: list[Offer] = []
         for info in records:
             # Prefer the modern ``accelerator_name`` field; fall back to legacy
             # ``name`` (used by offline fakes).
@@ -844,24 +818,72 @@ class SkyPilotProvider(ComputeProvider):
                 info, "name"
             )
             # ``device_memory`` (modern) is a free-form string like ``"80GB"``;
-            # offline fakes provide ``vram_gb`` directly. Try the int field first,
-            # then a light string parse of device_memory.
-            vram_gb: int = _coerce_vram_gb(info)
-            cuda: str = _record_field(info, "cuda", default="12.0")
-            cost: float = _coerce_float_field(info, "price") or _coerce_float_field(
-                info, "cost_rate_usd_per_hr"
-            )
-            raw_offers.append(
+            # offline fakes provide ``vram_gb`` directly.
+            candidates.append(
                 Offer(
                     id=gpu_name,
                     gpu_type=gpu_name,
-                    vram_gb=vram_gb,
-                    cuda=cuda,
-                    cost_rate_usd_per_hr=cost,
+                    vram_gb=_coerce_vram_gb(info),
+                    cuda=_record_field(info, "cuda", default="12.0"),
+                    cost_rate_usd_per_hr=(
+                        _coerce_float_field(info, "price")
+                        or _coerce_float_field(info, "cost_rate_usd_per_hr")
+                    ),
                     mode="pod",
                 )
             )
-        return filter_offers(raw_offers, reqs)
+        return filter_offers(candidates, placement)
+
+    def _select_accelerator(self, placement: Placement) -> str | None:
+        """Return the accelerator name to pin, or None for a CPU-only task.
+
+        compute-seam S4: selection is the provider's business, so this is a
+        private step of :meth:`create_instance` rather than the public
+        ``find_offers`` it replaced. SkyPilot has no bookable catalog to
+        enumerate — its optimizer takes constraints and picks cloud, region and
+        instance type itself — so publishing one invited callers to treat a
+        synthetic list as inventory.
+
+        Three cases, in the order they are cheapest to answer:
+
+        * ``min_vram_gb == 0`` and no named accelerator -> None. The task then
+          requests ``cpus``/``memory`` and sky picks the cheapest CPU SKU.
+          This is the ``examples/configs/skypilot-cpu.yaml`` path, which both
+          the S2 and S3 live smokes ran on.
+        * an operator-named accelerator -> the first one, with NO catalog read
+          at all: they said what they want.
+        * a VRAM floor with no name -> the cheapest accelerator sky lists that
+          clears it. Two shipped configs (``skypilot-gpu``,
+          ``skypilot-lambda-comfyui``) are this shape, so the enumeration
+          cannot simply be deleted.
+
+        Args:
+            placement: The portable resource block.
+
+        Returns:
+            An accelerator name, or None for a CPU-only task.
+
+        Raises:
+            CapacityError: A VRAM/CUDA floor no listed accelerator clears.
+                Refused here rather than launched without an accelerator,
+                which would book a CPU box for a GPU render and fail minutes
+                later at model load, on a cluster that is billing.
+        """
+        if placement.accelerators:
+            return placement.accelerators[0]
+        if placement.min_vram_gb == 0:
+            return None
+        surviving = self._candidate_accelerators(placement)
+        if not surviving:
+            raise CapacityError(
+                f"no accelerator sky lists clears the placement floor "
+                f"(min_vram_gb={placement.min_vram_gb}, "
+                f"min_cuda={placement.min_cuda!r}); name one in "
+                f"compute.placement.accelerators or lower the floor"
+            )
+        # Cheapest first among survivors: filter_offers ranks by the operator's
+        # accelerators list, which is empty on this branch by construction.
+        return min(surviving, key=lambda o: o.cost_rate_usd_per_hr).gpu_type
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
         """Launch a SkyPilot cluster from ``spec``.
@@ -875,13 +897,13 @@ class SkyPilotProvider(ComputeProvider):
         only :class:`sky.Task` / :class:`sky.Dag` — passing a raw dict raises
         ``TypeError``.
 
-        Resource selection:
-          * If ``spec.offer`` is the synthetic CPU offer
-            (``offer.gpu_type == ""`` and ``offer.vram_gb == 0``) the task
-            requests ``cpus="1+", memory="2+"`` so SkyPilot picks the
-            cheapest CPU SKU.
-          * Otherwise, if ``spec.offer.gpu_type`` is non-empty, the task
-            requests ``accelerators="<gpu_type>:1"``.
+        Resource selection (compute-seam S4 — from ``spec.placement``, via
+        :meth:`_select_accelerator`):
+          * No named accelerator and ``min_vram_gb == 0`` -> the task requests
+            ``cpus="1+", memory="2+"`` so SkyPilot picks the cheapest CPU SKU.
+          * Otherwise the task requests ``accelerators="<name>:1"``, where the
+            name is the operator's first ``placement.accelerators`` entry, or
+            the cheapest accelerator sky lists that clears the VRAM floor.
 
         ``setup`` always starts with the instance-side deadline watchdog's
         arming step (:func:`kinoforge.providers.skypilot.watchdog.RENDER_ARM`)
@@ -908,14 +930,16 @@ class SkyPilotProvider(ComputeProvider):
         resources: dict[str, Any] = {}
         if spec.image:
             resources["image_id"] = _normalize_image_id(spec.image)
-        # Resource selection: CPU synthetic offer triggers ``cpus``/``memory``
-        # so SkyPilot picks the cheapest CPU SKU; a GPU offer triggers
-        # ``accelerators=<gpu_type>:1``.
-        if spec.offer is not None and not spec.offer.gpu_type:
+        # compute-seam S4: CPU-vs-GPU comes from PLACEMENT, not from a
+        # synthetic offer a caller handed down. Pre-S4 the signal was
+        # ``spec.offer.gpu_type`` being empty, which find_offers produced from
+        # exactly the same ``min_vram_gb == 0`` test now made directly.
+        accelerator = self._select_accelerator(spec.placement)
+        if accelerator is None:
             resources["cpus"] = "1+"
             resources["memory"] = "2+"
-        elif spec.offer is not None and spec.offer.gpu_type:
-            resources["accelerators"] = f"{spec.offer.gpu_type}:1"
+        else:
+            resources["accelerators"] = f"{accelerator}:1"
 
         task_config: dict[str, Any] = {
             "name": spec.run_id or "kinoforge-skypilot",
@@ -930,7 +954,7 @@ class SkyPilotProvider(ComputeProvider):
             # ``400 Invalid`` error. GPU offers therefore default to 60 GB (a
             # small head-room above the 50 GB floor). CPU smokes use 30 GB
             # (the CPU base images are ~20 GB).
-            is_gpu = bool(spec.offer is not None and spec.offer.gpu_type)
+            is_gpu = accelerator is not None
             default_disk_gb = 60 if is_gpu else 30
             resources.setdefault("disk_size", default_disk_gb)
             # Spot/preemptible: maps spec.placement.spot → SkyPilot's
@@ -962,9 +986,13 @@ class SkyPilotProvider(ComputeProvider):
             launch_epoch=launch_epoch,
             max_lifetime_s=spec.lifecycle.max_lifetime_s,
             budget_usd=spec.lifecycle.budget_usd,
-            rate_usd_per_hr=(
-                spec.offer.cost_rate_usd_per_hr if spec.offer is not None else 0.0
-            ),
+            # compute-seam S4: there is no offer to price from here, and the
+            # realized rate is not readable until the cluster exists. The
+            # operator's ceiling is the conservative stand-in: a rate that is
+            # too HIGH only moves the budget deadline earlier, which is the
+            # safe direction for a guardrail that has to survive the
+            # controller dying.
+            rate_usd_per_hr=spec.placement.max_usd_per_hr,
         )
         # The watchdog is armed at the TOP of setup, before the provision
         # script's installs: SkyPilot autostop cannot fire for a server-mode
@@ -1018,9 +1046,7 @@ class SkyPilotProvider(ComputeProvider):
                 "kf_launched_at": repr(launch_epoch),
                 "kf_deadline_epoch": repr(deadline_epoch),
             },
-            cost_rate_usd_per_hr=(
-                spec.offer.cost_rate_usd_per_hr if spec.offer is not None else 0.0
-            ),
+            cost_rate_usd_per_hr=0.0,
         )
         if self._launch_ledger is not None:
             # Bookkeeping must never be able to fail a launch that would
@@ -1102,9 +1128,13 @@ class SkyPilotProvider(ComputeProvider):
             created_at=time.time(),
             endpoints=endpoints,
             tags=dict(spec.tags),
-            cost_rate_usd_per_hr=(
-                spec.offer.cost_rate_usd_per_hr if spec.offer else 0.0
-            ),
+            # compute-seam S4: 0.0, not spec.offer's price. That assignment
+            # WAS finding F4 — it reported the rate kinoforge asked for while
+            # the optimizer booked whatever it liked (a $1.99 Lambda A100 under
+            # a $1.09 ceiling). A provider that cannot know the rate at create
+            # time must not guess one; the orchestrator fills this in from
+            # realized_rate() immediately after the cap check.
+            cost_rate_usd_per_hr=0.0,
         )
 
     def get_instance(self, instance_id: str) -> Instance:
@@ -1125,6 +1155,49 @@ class SkyPilotProvider(ComputeProvider):
             if _record_field(cluster, "name") == instance_id:
                 return _cluster_record_to_instance(cluster)
         raise KeyError(f"no SkyPilot cluster found: {instance_id!r}")
+
+    def realized_rate(self, instance: Instance) -> float | None:
+        """Return the rate the optimizer's chosen resources will bill at.
+
+        The launch payload is discarded by :meth:`create_instance` (the cluster
+        name is the canonical id), so the handle is re-read from ``status()``.
+        That also makes this correct on a warm attach, where no launch payload
+        exists at all.
+
+        This is the whole point of SkyPilot declaring ``RATE_READBACK``: the
+        launch pins an accelerator NAME and the optimizer picks cloud, region
+        and SKU itself, so the asked-for catalog price is not the billed price
+        (verification finding F4 — a $1.99 Lambda A100 under a $1.09 ceiling).
+
+        Args:
+            instance: The cluster to price.
+
+        Returns:
+            USD per hour, or None when the cluster, its handle or its price is
+            unreadable. Never raises — the caller tears the instance down on
+            None rather than crashing mid-launch.
+        """
+        sky = self._sky()
+        try:
+            clusters = _resolve(sky, sky.status())
+        except Exception:  # noqa: BLE001 — an unreadable rate is not a crash
+            return None
+        for cluster in clusters or []:
+            if _record_field(cluster, "name") != instance.id:
+                continue
+            handle = (
+                cluster.get("handle")
+                if isinstance(cluster, dict)
+                else getattr(cluster, "handle", None)
+            )
+            launched = getattr(handle, "launched_resources", None)
+            if launched is None:
+                return None
+            try:
+                return float(launched.get_cost(3600))
+            except Exception:  # noqa: BLE001 — same reason
+                return None
+        return None
 
     def list_instances(self) -> list[Instance]:
         """Return all active SkyPilot clusters.

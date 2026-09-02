@@ -1,0 +1,162 @@
+{
+  "smoke": "compute-seam S4 \u2014 a violated rate cap tears the instance down",
+  "task": "task-5 (S4 Part A live proof)",
+  "config": "examples/configs/skypilot-cpu.yaml",
+  "cluster_name": "kinoforge-s4-cap-b2bb8f06",
+  "engine": "comfyui",
+  "why_this_shape": "_enforce_rate_cap is driven directly against a REAL provider and a REAL launched cluster. The full generate path would first run engine.provision against a comfyui setup known to fail on this CPU box (it fetches Wan weights with a synthetic token), so the run would die of an unrelated cause before reaching the check. Nothing about the enforcement path itself is stubbed.",
+  "preflight": {
+    "exit_code": 0,
+    "log": "preflight: PASS - safe to spend (0 pods, 0 sky clusters, clean tree)"
+  },
+  "started_at": "2026-09-01T16:38:00.133310-07:00",
+  "utilisation_samples": [
+    {
+      "reachable": false,
+      "cpu_idle_pct": null,
+      "mem_used_mb": null,
+      "mem_total_mb": null,
+      "raw": null,
+      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s4-cap-b2bb8f06: Name or service not known",
+      "at": "2026-09-01T16:39:15.914164-07:00",
+      "elapsed_s": 75.0,
+      "sky_status": "starting",
+      "create_thread_alive": true
+    },
+    {
+      "reachable": false,
+      "cpu_idle_pct": null,
+      "mem_used_mb": null,
+      "mem_total_mb": null,
+      "raw": null,
+      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s4-cap-b2bb8f06: Name or service not known",
+      "at": "2026-09-01T16:40:31.779278-07:00",
+      "elapsed_s": 150.8,
+      "sky_status": "starting",
+      "create_thread_alive": true
+    },
+    {
+      "reachable": false,
+      "cpu_idle_pct": null,
+      "mem_used_mb": null,
+      "mem_total_mb": null,
+      "raw": null,
+      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s4-cap-b2bb8f06: Name or service not known",
+      "at": "2026-09-01T16:41:47.423051-07:00",
+      "elapsed_s": 226.6,
+      "sky_status": "starting",
+      "create_thread_alive": true
+    },
+    {
+      "reachable": true,
+      "cpu_idle_pct": 96.7,
+      "mem_total_mb": 3816,
+      "mem_used_mb": 1080,
+      "raw": "%Cpu(s):  0.0 us,  0.0 sy,  0.0 ni, 96.7 id,  0.0 wa,  0.0 hi,  0.0 si,  3.3 st\nMem:            3816        1080         534           2        2201        2435",
+      "note": null,
+      "at": "2026-09-01T16:43:05.205076-07:00",
+      "elapsed_s": 302.3,
+      "sky_status": "ready",
+      "create_thread_alive": false
+    }
+  ],
+  "cap": {
+    "status": "from-config",
+    "max_usd_per_hr": 0.01,
+    "published_sku_rate_usd_per_hr": 0.085,
+    "at": "2026-09-01T16:38:00.133757-07:00"
+  },
+  "readback": {
+    "status": "cross-checked",
+    "realized_usd_per_hr": 0.085,
+    "cross_check": {
+      "ec2_instance_type": "c6i.large",
+      "published_usd_per_hr": 0.085,
+      "source": "AWS on-demand list price, us-west-2"
+    },
+    "at": "2026-09-01T16:43:10.571432-07:00",
+    "drift_vs_published": 0.0
+  },
+  "enforcement": {
+    "status": "destroyed-and-raised",
+    "realized": 0.085,
+    "cap": 0.01,
+    "instance_id": "kinoforge-s4-cap-b2bb8f06",
+    "placement_summary": "provider=skypilot",
+    "message": "realized $0.0850/hr exceeds cap $0.0100/hr\n  (provider=skypilot, instance=kinoforge-s4-cap-b2bb8f06)\n  instance destroyed",
+    "at": "2026-09-01T16:43:27.197532-07:00"
+  },
+  "cluster_state": {
+    "observed_ready": true,
+    "statuses_seen": [
+      "starting",
+      "starting",
+      "starting",
+      "ready"
+    ],
+    "ready_at": "2026-09-01T16:43:05.205191-07:00",
+    "ready_after_s": 302.3
+  },
+  "launched_at": "2026-09-01T16:38:00.134537-07:00",
+  "create_instance_returned": "starting",
+  "teardown": {
+    "started_at": "2026-09-01T16:43:27.198970-07:00",
+    "passes": [
+      {
+        "at": "2026-09-01T16:43:27.199036-07:00",
+        "forced_instance_ids": [
+          "i-044fdaadbfe519d21"
+        ],
+        "sky_status": null,
+        "ec2_states": [
+          "shutting-down"
+        ],
+        "ec2_readable": true,
+        "launch_thread_alive": false
+      },
+      {
+        "at": "2026-09-01T16:43:54.318303-07:00",
+        "forced_instance_ids": [
+          "i-044fdaadbfe519d21"
+        ],
+        "sky_status": null,
+        "ec2_states": [
+          "shutting-down"
+        ],
+        "ec2_readable": true,
+        "launch_thread_alive": false
+      }
+    ],
+    "final_ec2_states": [
+      "shutting-down"
+    ],
+    "final_ec2_readable": true,
+    "final_sky_status": null,
+    "clean_streak": 2,
+    "finished_at": "2026-09-01T16:44:02.769006-07:00",
+    "ledger_forget": "ok"
+  },
+  "outcome": "PROVEN",
+  "finished_at": "2026-09-01T16:44:02.770070-07:00",
+  "captured_at": "2026-09-01T16:44:02.770070-07:00",
+  "billable_wall_clock_s": 362.6,
+  "estimated_spend_usd": 0.0086,
+  "spend_basis": "list price 0.085 USD/hr for c6i.large in us-west-2, times billable wall clock \u2014 an estimate, not a reading of the invoice",
+  "post_exit_verification": {
+    "note": "Run AFTER the pytest process exited. A mid-run 'No running instances' line is not proof of teardown (2026-06-22 Phase-P1); these three reads are.",
+    "kinoforge_list": [
+      "[instance overview] No running instances.",
+      "No instances recorded in ledger."
+    ],
+    "sky_status": "No existing clusters.",
+    "ec2_describe_instances": {
+      "instance_id": "i-044fdaadbfe519d21",
+      "instance_type": "c6i.large",
+      "state_at_teardown_exit": "shutting-down",
+      "state_after_settle": "terminated",
+      "polls_to_terminated": 2
+    },
+    "at": "2026-09-01T16:45:44-0700"
+  },
+  "known_limitation": "placement_summary reads 'provider=skypilot' with no sku/cloud/region part: a SkyPilotProvider Instance carries none of those tags, and _placement_summary deliberately reports only what an Instance actually holds rather than inventing fields. The identity an operator needs is still there (the cluster name), and the SKU is one `sky status` away. Enriching skypilot's instance tags is an S5 follow-up."
+}

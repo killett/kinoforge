@@ -22,11 +22,11 @@ from kinoforge.core.clock import FakeClock
 from kinoforge.core.errors import BudgetExceeded, TeardownError
 from kinoforge.core.interfaces import (
     ComputeProvider,
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Lifecycle,
     Offer,
+    Placement,
 )
 from kinoforge.core.lifecycle import (
     BudgetTracker,
@@ -87,7 +87,7 @@ class _EasyProvider(ComputeProvider):
         """Return live instances."""
         return list(self._instances.values())
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:  # noqa: D102
+    def find_offers(self, reqs: Placement) -> list[Offer]:  # noqa: D102
         return []
 
     def create_instance(self, spec: InstanceSpec) -> Instance:  # noqa: D102
@@ -131,7 +131,7 @@ class _FlakyProvider(ComputeProvider):
         """Return live instances."""
         return list(self._instances.values())
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:  # noqa: D102
+    def find_offers(self, reqs: Placement) -> list[Offer]:  # noqa: D102
         return []
 
     def create_instance(self, spec: InstanceSpec) -> Instance:  # noqa: D102
@@ -173,7 +173,7 @@ class _DefiantProvider(ComputeProvider):
         """Return live instances (always present)."""
         return list(self._instances.values())
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:  # noqa: D102
+    def find_offers(self, reqs: Placement) -> list[Offer]:  # noqa: D102
         return []
 
     def create_instance(self, spec: InstanceSpec) -> Instance:  # noqa: D102

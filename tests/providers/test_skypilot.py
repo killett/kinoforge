@@ -33,12 +33,11 @@ import pytest
 from kinoforge.core import registry
 from kinoforge.core.errors import ProvisionFailed
 from kinoforge.core.interfaces import (
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Launch,
     Lifecycle,
-    Offer,
+    Placement,
     SetupStep,
 )
 
@@ -156,12 +155,20 @@ class _FakeSky:
 # ---------------------------------------------------------------------------
 
 
-def _make_spec(idle_timeout_s: float = 7200.0) -> InstanceSpec:
-    """Build a minimal InstanceSpec for testing."""
-    return InstanceSpec(
-        image="pytorch/pytorch:2.3-cuda12.1-cudnn9-devel",
-        lifecycle=Lifecycle(idle_timeout_s=idle_timeout_s),
-    )
+def _make_spec(idle_timeout_s: float = 7200.0, **overrides: Any) -> InstanceSpec:
+    """Build a minimal InstanceSpec for testing.
+
+    Names an accelerator on placement: compute-seam S4 made the provider
+    select for itself, and a spec that named none would send it to the catalog
+    on every create test.
+    """
+    base: dict[str, Any] = {
+        "image": "pytorch/pytorch:2.3-cuda12.1-cudnn9-devel",
+        "lifecycle": Lifecycle(idle_timeout_s=idle_timeout_s),
+        "placement": Placement(accelerators=("A100",)),
+    }
+    base.update(overrides)
+    return InstanceSpec(**base)
 
 
 def _sample_gpu_list() -> list[dict[str, Any]]:
@@ -253,8 +260,10 @@ def test_ac2_all_methods_use_injected_client_without_touching_real_sky() -> None
     provider = SkyPilotProvider(sky_client=fake)
 
     # find_offers
-    reqs = HardwareRequirements(min_vram_gb=40)
-    provider.find_offers(reqs)
+    reqs = Placement(min_vram_gb=40)
+    provider._candidate_accelerators(  # noqa: SLF001
+        reqs
+    )
 
     # create_instance
     spec = _make_spec()
@@ -297,16 +306,16 @@ def test_ac2_all_methods_use_injected_client_without_touching_real_sky() -> None
 # ---------------------------------------------------------------------------
 
 
-def test_ac3_find_offers_calls_gpu_list_and_converts_to_offers() -> None:
-    """find_offers calls gpu_list() and returns filtered Offer objects."""
+def test_ac3_candidate_accelerators_calls_gpu_list_and_converts_to_offers() -> None:
+    """_candidate_accelerators calls gpu_list() and returns filtered Offer objects."""
     from kinoforge.providers.skypilot import SkyPilotProvider
 
     fake = _FakeSky(accelerator_result=_sample_gpu_list())
     provider = SkyPilotProvider(sky_client=fake)
 
     # With min_vram_gb=48, only A100 (80 GB) should survive
-    reqs = HardwareRequirements(min_vram_gb=48, min_cuda="12.0")
-    offers = provider.find_offers(reqs)
+    reqs = Placement(min_vram_gb=48, min_cuda="12.0")
+    offers = provider._candidate_accelerators(reqs)  # noqa: SLF001
 
     assert len(offers) == 1
     assert offers[0].gpu_type == "A100"
@@ -314,7 +323,7 @@ def test_ac3_find_offers_calls_gpu_list_and_converts_to_offers() -> None:
     assert offers[0].cost_rate_usd_per_hr == 1.50
 
 
-def test_ac3_find_offers_returns_all_when_generous_gpu_filter() -> None:
+def test_ac3_candidate_accelerators_returns_all_when_generous_gpu_filter() -> None:
     """find_offers returns all GPU offers when requirements are generous.
 
     Uses a low-but-non-zero ``min_vram_gb`` to exercise the GPU path —
@@ -326,42 +335,29 @@ def test_ac3_find_offers_returns_all_when_generous_gpu_filter() -> None:
     fake = _FakeSky(accelerator_result=_sample_gpu_list())
     provider = SkyPilotProvider(sky_client=fake)
 
-    reqs = HardwareRequirements(min_vram_gb=1, min_cuda="11.0", max_usd_per_hr=9.99)
-    offers = provider.find_offers(reqs)
+    reqs = Placement(min_vram_gb=1, min_cuda="11.0", max_usd_per_hr=9.99)
+    offers = provider._candidate_accelerators(reqs)  # noqa: SLF001
     assert len(offers) == 2
 
 
-def test_ac3_find_offers_cpu_short_circuits_to_synthetic_offer() -> None:
-    """``find_offers(min_vram_gb=0)`` returns a single synthetic CPU offer.
+def test_ac3_a_cpu_placement_selects_no_accelerator_at_all() -> None:
+    """min_vram_gb == 0 with no named accelerator -> a CPU-only task.
 
     A bug that would catch: real :func:`sky.list_accelerators` defaults to
-    ``gpus_only=True`` and returns an empty mapping for CPU workloads.
-    Without the short-circuit, ``find_offers`` would return ``[]`` and
-    the orchestrator (or the live CPU smoke) would fail with 'no offers
-    matched requirements'.
+    ``gpus_only=True`` and returns an empty mapping for CPU workloads. Pre-S4
+    that was papered over with a synthetic "sky-cpu-auto" offer; S4 makes the
+    decision directly, so this asserts the DECISION (no accelerator) rather
+    than the placeholder that used to encode it.
     """
     from kinoforge.providers.skypilot import SkyPilotProvider
 
     fake = _FakeSky(accelerator_result={})  # what real list_accelerators returns
     provider = SkyPilotProvider(sky_client=fake)
 
-    offers = provider.find_offers(HardwareRequirements(min_vram_gb=0))
-
-    assert len(offers) == 1, "CPU short-circuit must return exactly one synthetic offer"
-    cpu_offer = offers[0]
-    assert cpu_offer.gpu_type == "", "CPU offer must declare empty gpu_type"
-    assert cpu_offer.vram_gb == 0, "CPU offer must declare vram_gb=0"
-    assert cpu_offer.id == "sky-cpu-auto"
-    assert cpu_offer.mode == "pod"
-    # The CPU short-circuit must NOT invoke list_accelerators — it would
-    # be wasted work for the live path (the call requires SkyPilot's
-    # cluster catalog to be initialised which the CPU smoke skips).
-    assert fake.list_accelerators_call_count == 0, (
-        "CPU short-circuit must not call list_accelerators"
-    )
+    assert provider._select_accelerator(Placement(min_vram_gb=0)) is None  # noqa: SLF001
 
 
-def test_ac3_find_offers_gpu_path_still_calls_list_accelerators() -> None:
+def test_ac3_candidate_accelerators_gpu_path_still_calls_list_accelerators() -> None:
     """Non-zero ``min_vram_gb`` still routes through ``list_accelerators``.
 
     A bug that would catch: regressing the CPU short-circuit to always-on
@@ -373,7 +369,9 @@ def test_ac3_find_offers_gpu_path_still_calls_list_accelerators() -> None:
     fake = _FakeSky(accelerator_result=_sample_gpu_list())
     provider = SkyPilotProvider(sky_client=fake)
 
-    offers = provider.find_offers(HardwareRequirements(min_vram_gb=8))
+    offers = provider._candidate_accelerators(  # noqa: SLF001
+        Placement(min_vram_gb=8)
+    )
 
     assert fake.list_accelerators_call_count == 1
     assert all(o.gpu_type for o in offers), (
@@ -527,27 +525,23 @@ def test_ac4_create_instance_cpu_offer_sets_cpus_and_memory_resources() -> None:
     fake = _FakeSky()
     provider = SkyPilotProvider(sky_client=fake)
 
-    cpu_offer = Offer(
-        id="sky-cpu-auto",
-        gpu_type="",
-        vram_gb=0,
-        cuda="0.0",
-        cost_rate_usd_per_hr=0.05,
-        mode="pod",
-    )
-    spec = _make_spec()
-    spec.offer = cpu_offer
+    # S4: a CPU box is stated on placement (no accelerator, no VRAM floor),
+    # not encoded in a synthetic offer the caller passes down.
+    spec = _make_spec(placement=Placement(min_vram_gb=0))
     provider.create_instance(spec)
 
     cfg = fake.Task.from_yaml_config_calls[0]
     resources = cfg["resources"]
     assert resources.get("cpus") == "1+", (
-        "CPU offer must request cpus='1+' so SkyPilot picks the cheapest CPU SKU"
+        "a CPU placement must request cpus='1+' so SkyPilot picks the cheapest CPU SKU"
     )
     assert resources.get("memory") == "2+", (
-        "CPU offer must request memory='2+' so SkyPilot picks the cheapest CPU SKU"
+        "a CPU placement must request memory='2+' so SkyPilot picks the "
+        "cheapest CPU SKU"
     )
-    assert "accelerators" not in resources, "CPU offer must not request accelerators"
+    assert "accelerators" not in resources, (
+        "a CPU placement must not request accelerators"
+    )
 
 
 def test_ac4_create_instance_gpu_offer_sets_accelerators() -> None:
@@ -562,22 +556,16 @@ def test_ac4_create_instance_gpu_offer_sets_accelerators() -> None:
     fake = _FakeSky()
     provider = SkyPilotProvider(sky_client=fake)
 
-    gpu_offer = Offer(
-        id="A100",
-        gpu_type="A100",
-        vram_gb=80,
-        cuda="12.1",
-        cost_rate_usd_per_hr=1.50,
-        mode="pod",
-    )
-    spec = _make_spec()
-    spec.offer = gpu_offer
+    # S4: the accelerator is named on placement; the provider reads it there.
+    spec = _make_spec(placement=Placement(accelerators=("A100",)))
     provider.create_instance(spec)
 
     cfg = fake.Task.from_yaml_config_calls[0]
     resources = cfg["resources"]
     assert resources.get("accelerators") == "A100:1"
-    assert "cpus" not in resources, "GPU offer must not also request CPU resources"
+    assert "cpus" not in resources, (
+        "a GPU placement must not also request CPU resources"
+    )
 
 
 def test_ac4_create_instance_region_lands_in_resources_when_set() -> None:
@@ -688,7 +676,10 @@ def test_ac4_create_instance_defaults_disk_size_to_30_gb() -> None:
 
     fake = _FakeSky()
     provider = SkyPilotProvider(sky_client=fake)
-    provider.create_instance(_make_spec())
+    # S4: "CPU box" is a placement, not an absent offer. The 30 GB default is
+    # the CPU arm; the GPU arm (60 GB, above the ~50 GB GPU base image) is
+    # asserted by the sibling test below.
+    provider.create_instance(_make_spec(placement=Placement(min_vram_gb=0)))
 
     cfg = fake.Task.from_yaml_config_calls[0]
     assert "resources" in cfg, (
@@ -700,6 +691,25 @@ def test_ac4_create_instance_defaults_disk_size_to_30_gb() -> None:
         "per-project SSD_TOTAL_GB=250 quota (SkyPilot's own default of "
         "256 GB exceeds that quota on a fresh project)"
     )
+
+
+def test_ac4_create_instance_defaults_disk_size_to_60_gb_for_a_gpu() -> None:
+    """The GPU arm of the same default.
+
+    A bug that would catch: collapsing both arms to 30 GB. GPU images (e.g.
+    ``skypilot-gcp-gpu-ubuntu-241030``) carry a ~50 GB base OS layer and GCP
+    rejects ``disk_size`` below the image size with a ``400 Invalid``, so a
+    GPU launch on 30 GB fails at provision time rather than at load.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+    provider.create_instance(_make_spec(placement=Placement(accelerators=("A100",))))
+
+    cfg = fake.Task.from_yaml_config_calls[0]
+    assert cfg["resources"].get("disk_size") == 60
+    assert cfg["resources"].get("accelerators") == "A100:1"
 
 
 # ---------------------------------------------------------------------------
@@ -1108,8 +1118,8 @@ def test_find_offers_flattens_dict_of_list_from_real_list_accelerators() -> None
     # Generous-but-non-zero VRAM so both records survive the filter and the
     # CPU short-circuit does NOT trigger (A100=80GB$1.50, T4=16GB$0.40;
     # provider parses cuda default as "12.0").
-    offers = provider.find_offers(
-        HardwareRequirements(min_vram_gb=1, min_cuda="12.0", max_usd_per_hr=9.99)
+    offers = provider._candidate_accelerators(  # noqa: SLF001
+        Placement(min_vram_gb=1, min_cuda="12.0", max_usd_per_hr=9.99)
     )
     gpu_types = {o.gpu_type for o in offers}
     assert "A100" in gpu_types, "A100 record must surface as an Offer"
@@ -1132,7 +1142,9 @@ def test_find_offers_calls_list_accelerators_not_gpu_list() -> None:
     provider = SkyPilotProvider(sky_client=fake)
     # Use a non-zero VRAM so the CPU short-circuit doesn't trigger and the
     # GPU path actually invokes list_accelerators.
-    provider.find_offers(HardwareRequirements(min_vram_gb=1))
+    provider._candidate_accelerators(  # noqa: SLF001
+        Placement(min_vram_gb=1)
+    )
 
     assert fake.list_accelerators_call_count == 1, (
         "find_offers must invoke sky.list_accelerators (gpu_list is removed)"
@@ -1240,14 +1252,9 @@ def _watchdog_spec(**overrides: Any) -> InstanceSpec:
         "env": {},
         "tags": {},
         "lifecycle": Lifecycle(idle_timeout_s=600, max_lifetime_s=18000),
-        "offer": Offer(
-            id="sky-cpu-auto",
-            gpu_type="",
-            vram_gb=0,
-            cuda="0.0",
-            cost_rate_usd_per_hr=0.0,
-            mode="pod",
-        ),
+        # S4: name the accelerator so the watchdog tests do not depend on a
+        # catalog read they are not about.
+        "placement": Placement(accelerators=("A100",)),
     }
     base.update(overrides)
     return InstanceSpec(**base)

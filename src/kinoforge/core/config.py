@@ -4,7 +4,7 @@ Loads a YAML config into a validated model that:
 - Parses human-readable duration strings (e.g. "2h", "30m", "90s") to seconds.
 - Rejects nonsensical cross-field combinations (idle >= lifetime, etc.).
 - Derives a CapabilityKey for cache lookup.
-- Exposes Lifecycle, Placement and HardwareRequirements with defaults applied.
+- Exposes Lifecycle and Placement with defaults applied.
 """
 
 from __future__ import annotations
@@ -20,9 +20,6 @@ from pydantic import ValidationError as PydanticValidationError
 
 from kinoforge.core.errors import ConfigError
 from kinoforge.core.interfaces import CapabilityKey
-from kinoforge.core.interfaces import (
-    HardwareRequirements as InterfaceHardwareRequirements,
-)
 from kinoforge.core.interfaces import Lifecycle as InterfaceLifecycle
 from kinoforge.core.interfaces import Placement as InterfacePlacement
 from kinoforge.core.lora import LoraEntry
@@ -783,7 +780,7 @@ class PlacementConfig(BaseModel):
     enumerating provider returns, so it is portable.
 
     ``extra="forbid"`` is load-bearing: pydantic's default would silently drop
-    a stale ``gpu_preference:`` and hand ``find_offers`` an empty preference
+    a stale ``gpu_preference:`` and hand offer selection an empty preference
     list — the operator's GPU ordering gone with no message.
 
     Attributes:
@@ -1619,26 +1616,6 @@ class Config(BaseModel):
             region=p.region,
             spot=p.spot,
             max_usd_per_hr=p.max_usd_per_hr,
-        )
-
-    def hardware_requirements(self) -> InterfaceHardwareRequirements:
-        """Return HardwareRequirements with defaults applied.
-
-        A pure shim over :meth:`placement` — every field, ``min_cuda``
-        included, comes from the portable block. Kept because
-        ``ComputeProvider.find_offers`` still consumes a catalog filter; S4
-        inverts selection onto ``Placement`` and deletes this.
-
-        Returns:
-            An interfaces.HardwareRequirements instance.
-        """
-        p = self.placement()
-        return InterfaceHardwareRequirements(
-            min_vram_gb=p.min_vram_gb,
-            min_cuda=p.min_cuda,
-            max_usd_per_hr=p.max_usd_per_hr,
-            gpu_preference=p.accelerators,
-            disk_gb=p.disk_gb,
         )
 
     def backend_options_for(self, provider_name: str) -> Any:  # noqa: ANN401

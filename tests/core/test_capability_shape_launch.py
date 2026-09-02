@@ -13,14 +13,14 @@ import kinoforge.engines.fake  # noqa: F401
 import kinoforge.providers.local  # noqa: F401
 from kinoforge.core.capabilities import WorkloadShape
 from kinoforge.core.config import Config, load_config
-from kinoforge.core.errors import CapacityError, ValidationError
+from kinoforge.core.errors import ValidationError
 from kinoforge.core.interfaces import (
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Launch,
     ModelProfile,
     Offer,
+    Placement,
 )
 from kinoforge.core.orchestrator import (
     _provision_instance_and_build_backend,
@@ -134,11 +134,11 @@ class _RecordingProvider(LocalProvider):
         self.create_calls: list[InstanceSpec] = []
         self.find_offers_calls = 0
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, reqs: Placement) -> list[Offer]:
         """Return one fixed offer regardless of ``reqs``, counting the call.
 
         Args:
-            reqs: Ignored; the caller's HardwareRequirements.
+            reqs: Ignored; the caller's Placement.
 
         Returns:
             A single-element offer list, enough to drive one retry iteration.
@@ -238,11 +238,14 @@ def test_error_gap_raises_before_create_end_to_end(
 
 
 class _FlakyProvider(LocalProvider):
-    """Two offers; the first create raises CapacityError, the second aborts.
+    """Two offers; the create aborts immediately.
 
-    Drives ``_create_with_offer_retry`` through a real retry without letting
-    the run continue into wait_for_ready / engine.provision — the second
-    create raises a non-CapacityError so the call returns immediately.
+    compute-seam S4 moved offer-retry into the provider, so the orchestrator
+    calls create_instance exactly once. The abort keeps the run out of
+    wait_for_ready / engine.provision, which is all this module needs — the
+    claim under test is how many times the capability check runs BEFORE the
+    create, and the two offers still exist so a per-offer regression would
+    show up as two check calls.
     """
 
     def __init__(self) -> None:
@@ -250,11 +253,11 @@ class _FlakyProvider(LocalProvider):
         super().__init__()
         self.create_calls: list[InstanceSpec] = []
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, reqs: Placement) -> list[Offer]:
         """Return two offers so the retry loop has somewhere to go.
 
         Args:
-            reqs: Ignored; the caller's HardwareRequirements.
+            reqs: Ignored; the caller's Placement.
 
         Returns:
             Two offers differing only in id.
@@ -273,22 +276,19 @@ class _FlakyProvider(LocalProvider):
         ]
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
-        """Fail with CapacityError first, then abort the run.
+        """Abort the run before any downstream provisioning.
 
         Args:
-            spec: The InstanceSpec built for this offer.
+            spec: The InstanceSpec built for the chosen offer.
 
         Returns:
             Never returns.
 
         Raises:
-            CapacityError: On the first call, to drive one retry.
-            RuntimeError: On the second, to end the run without exercising
-                the whole downstream provisioning path.
+            RuntimeError: Always, to end the run without exercising the whole
+                downstream provisioning path.
         """
         self.create_calls.append(spec)
-        if len(self.create_calls) == 1:
-            raise CapacityError("offer-0 exhausted")
         raise RuntimeError("stop here")
 
 
@@ -345,7 +345,8 @@ def test_launch_capability_check_runs_once_not_once_per_offer(
             for_discovery=False,
         )
 
-    # Both offers were really attempted — the retry loop ran ...
-    assert len(provider.create_calls) == 2
-    # ... and the capability re-check still ran exactly once.
+    # S4: the orchestrator hands the provider one spec and does not iterate ...
+    assert len(provider.create_calls) == 1
+    # ... and the capability re-check ran exactly once, hoisted above the
+    # capacity-wait loop rather than sitting inside _build_spec.
     assert len(calls) == 1

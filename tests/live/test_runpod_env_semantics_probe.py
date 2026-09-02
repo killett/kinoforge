@@ -50,7 +50,7 @@ def _gate_on_live_env() -> None:
 def test_runpod_env_array_merge_semantics() -> None:
     """Determine env-array semantics; write sidecar; destroy pod."""
     from kinoforge.core.credentials import EnvCredentialProvider
-    from kinoforge.core.interfaces import HardwareRequirements, InstanceSpec
+    from kinoforge.core.interfaces import InstanceSpec, Placement
     from kinoforge.providers.runpod import RunPodProvider
 
     creds = EnvCredentialProvider()
@@ -60,7 +60,7 @@ def test_runpod_env_array_merge_semantics() -> None:
     provider = RunPodProvider(creds=creds)
 
     # Pick the cheapest offer; the probe is GraphQL-only — no GPU needed.
-    reqs = HardwareRequirements(
+    reqs = Placement(
         min_vram_gb=0,
         min_cuda="0.0",
         max_usd_per_hr=10.0,
@@ -81,7 +81,6 @@ def test_runpod_env_array_merge_semantics() -> None:
     )
 
     spec = InstanceSpec(
-        offer=cheapest,
         image="mirror.gcr.io/library/alpine:latest",
         env={_PROBE_KEEP_A[0]: _PROBE_KEEP_A[1], _PROBE_KEEP_B[0]: _PROBE_KEEP_B[1]},
     )

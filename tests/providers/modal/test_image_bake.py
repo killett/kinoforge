@@ -13,7 +13,7 @@ import base64
 import gzip
 from typing import Any
 
-from kinoforge.core.interfaces import InstanceSpec, Launch, Lifecycle, Offer, SetupStep
+from kinoforge.core.interfaces import InstanceSpec, Launch, Lifecycle, SetupStep
 from kinoforge.providers.modal import ModalProvider
 from kinoforge.providers.modal._app import ModalAppRequest, build_modal_app
 
@@ -149,13 +149,6 @@ def test_no_build_script_skips_run_commands() -> None:
 def _spec(**over: Any) -> InstanceSpec:
     base: dict[str, Any] = dict(
         image="python:3.13-slim",
-        offer=Offer(
-            id="A100-80GB",
-            gpu_type="A100-80GB",
-            vram_gb=80,
-            cuda="12.4",
-            cost_rate_usd_per_hr=3.0,
-        ),
         run_id="run1",
         setup_steps=(SetupStep("echo hi"),),
         launch=Launch(("python", "-m", "s")),

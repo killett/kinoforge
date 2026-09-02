@@ -53,7 +53,7 @@ def test_a14b_config_targets_80gb_wan22():
 def test_a14b_config_selects_80gb_offer_first():
     cfg = load_config(CFG_A14B)
     assert cfg.compute is not None
-    offers = modal_offers(cfg.hardware_requirements())
+    offers = modal_offers(cfg.placement())
     assert offers, "expected at least one 80GB offer"
     assert offers[0].vram_gb >= 80
     assert offers[0].gpu_type == "A100-80GB"  # cheapest 80GB, first in preference
@@ -87,7 +87,7 @@ def test_flashvsr_config_is_upscale_only_80gb_cp313():
 def test_flashvsr_config_selects_80gb_offer_first():
     cfg = load_config(CFG_FLASHVSR)
     assert cfg.compute is not None
-    offers = modal_offers(cfg.hardware_requirements())
+    offers = modal_offers(cfg.placement())
     assert offers, "expected at least one 80GB offer"
     assert offers[0].vram_gb >= 80
     assert offers[0].gpu_type == "A100-80GB"

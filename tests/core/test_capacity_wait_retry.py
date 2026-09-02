@@ -1,4 +1,8 @@
-"""Capacity-wait retry: re-query offers + retry create on CapacityError.
+"""Capacity-wait retry: retry create on CapacityError until the window closes.
+
+compute-seam S4 dropped the ``find_offers`` seam. Re-querying the catalog
+between attempts is now the enumerating provider's own business, inside its
+``create_instance`` — this loop only owns the WAIT.
 
 Compute-seam S1 made the window provider-scoped: it is sourced from
 ``compute.backend_options.runpod.capacity_wait_s`` and threaded from the
@@ -34,22 +38,15 @@ class _Clock:
 def test_retries_then_succeeds() -> None:
     # Bug caught: a transient capacity miss fails the whole run instead of
     # riding the ~seconds-to-minutes drought RunPod recovers from.
-    query_calls = {"n": 0}
-
-    def find_offers() -> list[str]:
-        query_calls["n"] += 1
-        return ["offer"]  # non-empty
-
     attempts = {"n": 0}
 
-    def create(_offers: list[str]) -> str:
+    def create() -> str:
         attempts["n"] += 1
         if attempts["n"] < 3:
             raise CapacityError("no capacity")
         return "instance-ok"
 
     result = _create_with_capacity_wait(
-        find_offers=find_offers,
         create=create,
         capacity_wait_s=300.0,
         retry_interval_s=25.0,
@@ -58,17 +55,15 @@ def test_retries_then_succeeds() -> None:
     )
     assert result == "instance-ok"
     assert attempts["n"] == 3
-    assert query_calls["n"] == 3  # re-queried offers each attempt
 
 
 def test_zero_wait_fails_on_first_miss() -> None:
     # Bug caught: capacity_wait=0 (smoke) still hangs retrying.
-    def create(_offers: list[str]) -> str:
+    def create() -> str:
         raise CapacityError("no capacity")
 
     with pytest.raises(CapacityError):
         _create_with_capacity_wait(
-            find_offers=lambda: ["offer"],
             create=create,
             capacity_wait_s=0.0,
             retry_interval_s=25.0,
@@ -79,12 +74,11 @@ def test_zero_wait_fails_on_first_miss() -> None:
 
 def test_deadline_exceeded_reraises() -> None:
     # Bug caught: an infinite loop when capacity never returns.
-    def create(_offers: list[str]) -> str:
+    def create() -> str:
         raise CapacityError("still no capacity")
 
     with pytest.raises(CapacityError):
         _create_with_capacity_wait(
-            find_offers=lambda: ["offer"],
             create=create,
             capacity_wait_s=60.0,
             retry_interval_s=25.0,
@@ -95,12 +89,11 @@ def test_deadline_exceeded_reraises() -> None:
 
 def test_non_capacity_error_propagates() -> None:
     # Bug caught: a hard create error (auth/schema) is swallowed as retryable.
-    def create(_offers: list[str]) -> str:
+    def create() -> str:
         raise RuntimeError("bad schema")
 
     with pytest.raises(RuntimeError):
         _create_with_capacity_wait(
-            find_offers=lambda: ["offer"],
             create=create,
             capacity_wait_s=300.0,
             retry_interval_s=25.0,

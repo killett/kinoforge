@@ -40,15 +40,15 @@ import subprocess
 import sys
 import time
 import urllib.request
-from dataclasses import replace
 
 from kinoforge.core.credentials import EnvCredentialProvider
 from kinoforge.core.dotenv_loader import load_env_file
 from kinoforge.core.interfaces import (
-    HardwareRequirements,
     InstanceSpec,
     Launch,
     Lifecycle,
+    Offer,
+    Placement,
     SetupStep,
     combine_steps,
 )
@@ -235,7 +235,7 @@ def _spec_for_build(release_id: int, gh_token: str) -> InstanceSpec:
     )
 
 
-def _pick_offer(provider: RunPodProvider) -> object:
+def _pick_offer(provider: RunPodProvider) -> Offer:
     """Ask the provider for an 80GB-tier offer, cheapest first.
 
     Deliberately NOT the bottom-tier A6000: two consecutive builds on
@@ -245,11 +245,11 @@ def _pick_offer(provider: RunPodProvider) -> object:
     The A100/H100 tier carried 24 F-single smoke pods without a single
     unexplained deletion. ~25 min build ≈ $0.80, inside the $2 ceiling.
     """
-    reqs = HardwareRequirements(
+    reqs = Placement(
         min_vram_gb=80,
         min_cuda="12.4",
         max_usd_per_hr=2.5,
-        gpu_preference=(
+        accelerators=(
             "NVIDIA A100 80GB PCIe",
             "NVIDIA A100-SXM4-80GB",
             "NVIDIA H100 80GB HBM3",
@@ -364,11 +364,13 @@ def main() -> int:
     provider = RunPodProvider(creds=EnvCredentialProvider())
     offer = _pick_offer(provider)
     _log(
-        f"picked offer gpu={offer.gpu_type!r} "  # type: ignore[attr-defined]
-        f"rate=${offer.cost_rate_usd_per_hr:.2f}/hr"  # type: ignore[attr-defined]
+        f"picked offer gpu={offer.gpu_type!r} rate=${offer.cost_rate_usd_per_hr:.2f}/hr"
     )
 
-    spec = replace(_spec_for_build(release_id, gh_token), offer=offer)  # type: ignore[arg-type]
+    # compute-seam S4: the spec carries no offer — the provider selects from
+    # its own catalog. The pick above is kept for the log line, which is what
+    # tells an operator which SKU this build is about to cost them.
+    spec = _spec_for_build(release_id, gh_token)
     _log(f"provision script len={len(combine_steps(spec.setup_steps))} bytes")
 
     inst = provider.create_instance(spec)

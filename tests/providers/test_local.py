@@ -3,7 +3,7 @@
 import pytest
 
 from kinoforge.core.clock import FakeClock
-from kinoforge.core.interfaces import HardwareRequirements, InstanceSpec
+from kinoforge.core.interfaces import InstanceSpec, Placement
 from kinoforge.providers.local import LocalProvider
 
 
@@ -25,8 +25,8 @@ def test_provider_name(provider: LocalProvider) -> None:
 
 
 def test_find_offers_returns_default_compliant_offer(provider: LocalProvider) -> None:
-    """AC #6: find_offers returns >= 1 offer satisfying HardwareRequirements defaults."""
-    reqs = HardwareRequirements()
+    """AC #6: find_offers returns >= 1 offer satisfying Placement defaults."""
+    reqs = Placement()
     offers = provider.find_offers(reqs)
     assert len(offers) >= 1
     for o in offers:
@@ -36,7 +36,7 @@ def test_find_offers_returns_default_compliant_offer(provider: LocalProvider) ->
 
 def test_find_offers_uses_filter(provider: LocalProvider) -> None:
     """AC #6b: filter_offers is honoured — a restrictive override excludes local offers."""
-    reqs = HardwareRequirements(min_vram_gb=999)  # no real card has 999 GB VRAM
+    reqs = Placement(min_vram_gb=999)  # no real card has 999 GB VRAM
     offers = provider.find_offers(reqs)
     assert offers == []
 

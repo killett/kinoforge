@@ -10,6 +10,39 @@ from typing import Any
 from kinoforge.core.interfaces import InstanceSpec, Launch, Offer, SetupStep
 from kinoforge.providers.runpod import RunPodProvider
 
+#: compute-seam S4: RunPod selects its own SKU inside create_instance, so every
+#: transport a create test drives must answer the catalog query first.
+_S4_GPU_TYPES: dict[str, object] = {
+    "data": {
+        "gpuTypes": [
+            {
+                "id": name,
+                "displayName": name,
+                "memoryInGb": vram,
+                "secureCloud": True,
+                "lowestPrice": {
+                    "minimumBidPrice": price,
+                    "uninterruptablePrice": price,
+                },
+            }
+            # Wide enough that both shapes of shipped config find something: a
+            # DEFAULT Placement (48 GB floor, $2.20 cap) and the cheap
+            # interpolate configs (16 GB floor, $1.00 cap, named 24 GB SKUs).
+            for name, vram, price in (
+                ("NVIDIA RTX A4000", 16, 0.32),
+                ("NVIDIA RTX A5000", 24, 0.44),
+                ("NVIDIA GeForce RTX 4090", 24, 0.69),
+                ("NVIDIA A100 80GB PCIe", 80, 1.64),
+            )
+        ]
+    }
+}
+
+
+def _create_body(captured: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
+    """Return the create-mutation body, skipping S4's catalog read."""
+    return next(b for _u, b in captured if "gpuTypes" not in str(b.get("query", "")))
+
 
 def _capture_post() -> tuple[
     list[tuple[str, dict[str, Any]]],
@@ -19,6 +52,8 @@ def _capture_post() -> tuple[
 
     def _http_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
         captured.append((url, body))
+        if "gpuTypes" in str(body.get("query", "")):
+            return _S4_GPU_TYPES
         return {"data": {"podFindAndDeployOnDemand": {"id": "pod-xyz"}}}
 
     return captured, _http_post
@@ -38,9 +73,9 @@ def test_create_pod_without_provision_script_emits_empty_docker_args() -> None:
     """When spec.provision_script is None, dockerArgs stays empty."""
     captured, post = _capture_post()
     p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
-    spec = InstanceSpec(image="runpod/pytorch:latest", offer=_offer())
+    spec = InstanceSpec(image="runpod/pytorch:latest")
     p.create_instance(spec)
-    body = captured[0][1]
+    body = _create_body(captured)
     assert body["variables"]["input"]["dockerArgs"] == ""
 
 
@@ -56,12 +91,11 @@ def test_create_pod_provision_script_gzip_base64_round_trips() -> None:
     script = "set -euo pipefail\ncd /workspace\necho ok"
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
-        offer=_offer(),
         setup_steps=(SetupStep(script),),
         launch=Launch(("python", "main.py")),
     )
     p.create_instance(spec)
-    body = captured[0][1]
+    body = _create_body(captured)
     env_list = body["variables"]["input"]["env"]
     env_map = {item["key"]: item["value"] for item in env_list}
     assert "KINOFORGE_PROVISION_SCRIPT" in env_map
@@ -82,13 +116,13 @@ def test_create_pod_gzip_shrinks_large_provision_script() -> None:
     script = "echo provisioning line\n" * 8000  # ~176 KB, highly compressible
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
-        offer=_offer(),
         setup_steps=(SetupStep(script),),
         launch=Launch(("python", "main.py")),
     )
     p.create_instance(spec)
     env_map = {
-        i["key"]: i["value"] for i in captured[0][1]["variables"]["input"]["env"]
+        i["key"]: i["value"]
+        for i in _create_body(captured)["variables"]["input"]["env"]
     }
     value = env_map["KINOFORGE_PROVISION_SCRIPT"]
     plain_b64_len = len(base64.b64encode(script.encode("utf-8")))
@@ -104,12 +138,11 @@ def test_create_pod_with_provision_script_assembles_docker_args() -> None:
     p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
-        offer=_offer(),
         setup_steps=(SetupStep("echo hi"),),
         launch=Launch(("python", "main.py")),
     )
     p.create_instance(spec)
-    body = captured[0][1]
+    body = _create_body(captured)
     assert body["variables"]["input"]["dockerArgs"] == (
         'bash -c "echo $KINOFORGE_PROVISION_SCRIPT | base64 -d | gzip -d > /tmp/p.sh '
         '&& chmod +x /tmp/p.sh && bash /tmp/p.sh"'
@@ -122,12 +155,11 @@ def test_create_pod_image_name_preserved() -> None:
     p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
     spec = InstanceSpec(
         image="custom/image:v1",
-        offer=_offer(),
         setup_steps=(SetupStep("echo"),),
         launch=Launch(("echo",)),
     )
     p.create_instance(spec)
-    body = captured[0][1]
+    body = _create_body(captured)
     assert body["variables"]["input"]["imageName"] == "custom/image:v1"
 
 
@@ -137,13 +169,12 @@ def test_create_pod_strips_runpod_api_key_from_env() -> None:
     p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
-        offer=_offer(),
         env={"RUNPOD_API_KEY": "should-not-leak", "HF_TOKEN": "hf_xxxxxxxxxxxxxx"},
         setup_steps=(SetupStep("echo"),),
         launch=Launch(("echo",)),
     )
     p.create_instance(spec)
-    body = captured[0][1]
+    body = _create_body(captured)
     env_list = body["variables"]["input"]["env"]
     env_map = {item["key"]: item["value"] for item in env_list}
     assert "RUNPOD_API_KEY" not in env_map
@@ -161,12 +192,11 @@ def test_create_pod_with_script_but_no_run_cmd_still_encodes_script() -> None:
     p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
-        offer=_offer(),
         setup_steps=(SetupStep("set -euo pipefail\necho ok"),),
         launch=Launch(("python", "-m", "server")),
     )
     p.create_instance(spec)
-    body = captured[0][1]
+    body = _create_body(captured)
     env_list = body["variables"]["input"]["env"]
     env_map = {item["key"]: item["value"] for item in env_list}
     assert "KINOFORGE_PROVISION_SCRIPT" in env_map
@@ -190,11 +220,10 @@ def test_create_pod_base64_envelope_does_not_match_credential_leak_patterns() ->
     )
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
-        offer=_offer(),
         setup_steps=(SetupStep(script),),
         launch=Launch(("python", "main.py")),
     )
     p.create_instance(spec)
-    body = captured[0][1]
+    body = _create_body(captured)
     hits = _audit_for_leaks(body)
     assert hits == [], f"leak detected in encoded script: {hits!r}"

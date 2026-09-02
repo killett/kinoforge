@@ -31,7 +31,6 @@ from kinoforge.core.interfaces import (
     InstanceSpec,
     Launch,
     Lifecycle,
-    Offer,
     SetupStep,
 )
 from kinoforge.core.util_endpoints import provider_util_supported
@@ -42,6 +41,37 @@ from kinoforge.providers.skypilot import SkyPilotProvider
 
 PROVIDERS = [LocalProvider, ModalProvider, RunPodProvider, SkyPilotProvider]
 REGISTERED = ["local", "runpod", "skypilot", "modal"]
+
+
+#: compute-seam S4: providers select their own SKU inside create_instance, so a
+#: transport a create test drives must answer the catalog query first.
+_S4_GPU_TYPES: dict[str, object] = {
+    "data": {
+        "gpuTypes": [
+            {
+                "id": name,
+                "displayName": name,
+                "memoryInGb": vram,
+                "secureCloud": True,
+                "lowestPrice": {
+                    "minimumBidPrice": price,
+                    "uninterruptablePrice": price,
+                },
+            }
+            for name, vram, price in (
+                ("NVIDIA RTX A4000", 16, 0.32),
+                ("NVIDIA RTX A5000", 24, 0.44),
+                ("NVIDIA GeForce RTX 4090", 24, 0.69),
+                ("NVIDIA A100 80GB PCIe", 80, 1.64),
+            )
+        ]
+    }
+}
+
+_S4_ACCELERATORS: list[dict[str, object]] = [
+    {"accelerator_name": "T4", "vram_gb": 16, "cuda": "12.8", "price": 0.35},
+    {"accelerator_name": "A100", "vram_gb": 80, "cuda": "12.8", "price": 2.10},
+]
 
 
 def _overrides(cls: type, method: str) -> bool:
@@ -83,6 +113,8 @@ def test_declared_matrix_matches_the_design_doc() -> None:
             Capability.HEARTBEAT_READ,
             Capability.UTIL_SNAPSHOT,
             Capability.PAUSE_BILLING,
+            Capability.RATE_DETERMINISTIC,
+            Capability.CATALOG_ENUMERATION,
         }
     )
     assert RunPodProvider.capabilities() == frozenset(
@@ -94,6 +126,8 @@ def test_declared_matrix_matches_the_design_doc() -> None:
             Capability.JOB_TIMEOUT,
             Capability.PAUSE_BILLING,
             Capability.BALANCE_QUERY,
+            Capability.RATE_DETERMINISTIC,
+            Capability.CATALOG_ENUMERATION,
         }
     )
     assert ModalProvider.capabilities() == frozenset(
@@ -102,10 +136,12 @@ def test_declared_matrix_matches_the_design_doc() -> None:
             Capability.UTIL_SNAPSHOT,
             Capability.IDLE_AUTOSTOP,
             Capability.ON_INSTANCE_DEADLINE,
+            Capability.RATE_DETERMINISTIC,
+            Capability.CATALOG_ENUMERATION,
         }
     )
     assert SkyPilotProvider.capabilities() == frozenset(
-        {Capability.ON_INSTANCE_DEADLINE}
+        {Capability.ON_INSTANCE_DEADLINE, Capability.RATE_READBACK}
     )
 
 
@@ -132,6 +168,9 @@ def test_runpod_job_timeout_declaration_matches_the_create_payload() -> None:
     captured: list[dict[str, Any]] = []
 
     def _post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+
+        if "gpuTypes" in str(body.get("query", "")):
+            return _S4_GPU_TYPES
         del url
         captured.append(body)
         return {"data": {"saveTemplate": {"id": "ep-1"}}}
@@ -140,14 +179,6 @@ def test_runpod_job_timeout_declaration_matches_the_create_payload() -> None:
     provider.create_instance(
         InstanceSpec(
             image="runpod/pytorch:latest",
-            offer=Offer(
-                id="NVIDIA A100 80GB PCIe",
-                gpu_type="NVIDIA A100 80GB PCIe",
-                vram_gb=80,
-                cuda="12.4",
-                cost_rate_usd_per_hr=1.64,
-                mode="serverless",
-            ),
             lifecycle=Lifecycle(job_timeout_s=1234.0),
             tags={"mode": "serverless"},
         )
@@ -188,7 +219,6 @@ def test_modal_idle_autostop_declaration_matches_the_built_app_request() -> None
     provider.create_instance(
         InstanceSpec(
             image="img:latest",
-            offer=Offer("A10", "A10", 24, "12.4", 1.10, mode="serverless"),
             run_id="r1",
             setup_steps=(SetupStep("echo hi"),),
             launch=Launch(("python", "-m", "server")),
@@ -228,6 +258,11 @@ def test_skypilot_on_instance_deadline_declaration_matches_the_rendered_setup() 
         def __init__(self) -> None:
             self.launches: list[dict[str, Any]] = []
             self.Task = _FakeTaskNamespace()  # noqa: N815 — mirrors sky.Task
+
+        def list_accelerators(self, **_kw: object) -> object:
+            """Answer S4\'s in-provider catalog read with a frozen list."""
+
+            return list(_S4_ACCELERATORS)
 
         def launch(self, task: Any, **kwargs: Any) -> tuple[None, None]:
             del kwargs
@@ -337,3 +372,38 @@ def test_predicate_answers_are_unchanged_from_the_string_tables() -> None:
         "runpod",
     }
     assert {n for n in REGISTERED if provider_balance_supported(n)} == {"runpod"}
+
+
+def test_a_provider_with_no_rate_source_is_a_load_error() -> None:
+    """Bug caught: without this, a fifth provider that never implements
+    realized_rate() reaches the enforcement point returning None, and the only
+    honest response there is to destroy every instance it ever launches. The
+    refusal belongs at load, where it costs nothing."""
+    from kinoforge.validation.checks.capabilities import rate_source_declared
+    from kinoforge.validation.protocol import Severity
+
+    class _Priceless:
+        name = "priceless"
+
+        @classmethod
+        def capabilities(cls, shape: object = None) -> frozenset[Capability]:
+            return frozenset({Capability.HEARTBEAT_READ})
+
+    gaps = rate_source_declared(_Priceless)
+    assert [g.severity for g in gaps] == [Severity.ERROR]
+    assert "RATE_READBACK" in gaps[0].detail
+    assert "RATE_DETERMINISTIC" in gaps[0].detail
+    assert "priceless" in gaps[0].detail
+
+
+@pytest.mark.parametrize("provider_name", ["skypilot", "runpod", "modal", "local"])
+def test_every_shipped_provider_declares_a_rate_source(provider_name: str) -> None:
+    """The check refuses nobody today. Bug caught: shipping a check that fires
+    on a real config turns doctor into noise operators learn to skip."""
+    import kinoforge._adapters  # noqa: F401
+    from kinoforge.core import registry
+    from kinoforge.validation.checks.capabilities import rate_source_declared
+
+    cls = registry.provider_class(provider_name)
+    assert cls is not None
+    assert rate_source_declared(cls) == []

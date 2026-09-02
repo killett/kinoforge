@@ -18,10 +18,10 @@ from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.interfaces import (
     ComputeProvider,
     FieldSupport,
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Offer,
+    Placement,
 )
 from kinoforge.core.offers import filter_offers
 
@@ -107,9 +107,18 @@ class LocalProvider(ComputeProvider):
         seam, not a measurement. It stays declared because the endpoint does
         return snapshots and LocalProvider is unbilled, so no money decision
         rides on it.
+
+        RATE_DETERMINISTIC is declared even though nothing is billed: the
+        synthetic catalog's price is the literal ``0.0``, and it is the rate,
+        which is exactly what the capability claims. Declaring neither would
+        make an otherwise valid local config a validation ERROR.
+        CATALOG_ENUMERATION covers the synthetic catalog ``find_offers``
+        returns.
         """
         return frozenset(
             {
+                Capability.RATE_DETERMINISTIC,
+                Capability.CATALOG_ENUMERATION,
                 Capability.HEARTBEAT_READ,
                 Capability.UTIL_SNAPSHOT,
                 Capability.PAUSE_BILLING,
@@ -179,7 +188,6 @@ class LocalProvider(ComputeProvider):
             "setup_steps": u,  # nothing is provisioned; never CONSUMED
             "launch": u,  # nothing is executed; never CONSUMED
             "lifecycle": u,  # no guardrail runs in-process
-            "offer": u,  # cost_rate is the literal 0.0
             "backend_options": u,  # Options is empty: no knob to consume
         }
 
@@ -197,19 +205,19 @@ class LocalProvider(ComputeProvider):
     # ComputeProvider interface
     # ------------------------------------------------------------------
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, placement: Placement) -> list[Offer]:
         """Return synthetic local offers that satisfy ``reqs``.
 
         Delegates filtering to ``filter_offers`` so callers' hardware
         overrides are fully respected.
 
         Args:
-            reqs: Hardware requirements to filter against.
+            placement: The portable resource block to filter against.
 
         Returns:
             Filtered (and sorted) list of ``Offer`` objects.
         """
-        return filter_offers(_SYNTHETIC_OFFERS, reqs)
+        return filter_offers(_SYNTHETIC_OFFERS, placement)
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
         """Create and record a new in-process instance.
@@ -246,6 +254,21 @@ class LocalProvider(ComputeProvider):
             KeyError: No instance is registered under ``instance_id``.
         """
         return self._instances[instance_id]
+
+    def realized_rate(self, instance: Instance) -> float | None:
+        """Return ``0.0`` — the literal price of an in-process instance.
+
+        Not None: None means "unreadable", and nothing about a local instance
+        is unreadable. Its catalog price IS zero, which is what
+        ``RATE_DETERMINISTIC`` claims.
+
+        Args:
+            instance: The in-process instance to price.
+
+        Returns:
+            ``0.0``, always.
+        """
+        return 0.0
 
     def list_instances(self) -> list[Instance]:
         """Return all live (non-destroyed) instances.

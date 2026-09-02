@@ -51,6 +51,47 @@ from tools.snapshot_launch_payloads import GOLDEN_RUN_ID, STUB_SECRET, capture_l
 _CFG = "examples/configs/runpod-diffusers-rife-60fps-interpolate.yaml"
 
 
+#: compute-seam S4: RunPod selects its own SKU inside create_instance, so every
+#: transport a create test drives must answer the catalog query first.
+_S4_GPU_TYPES: dict[str, object] = {
+    "data": {
+        "gpuTypes": [
+            {
+                "id": name,
+                "displayName": name,
+                "memoryInGb": vram,
+                "secureCloud": True,
+                "lowestPrice": {
+                    "minimumBidPrice": price,
+                    "uninterruptablePrice": price,
+                },
+            }
+            # Wide enough that both shapes of shipped config find something: a
+            # DEFAULT Placement (48 GB floor, $2.20 cap) and the cheap
+            # interpolate configs (16 GB floor, $1.00 cap, named 24 GB SKUs).
+            for name, vram, price in (
+                ("NVIDIA RTX A4000", 16, 0.32),
+                ("NVIDIA RTX A5000", 24, 0.44),
+                ("NVIDIA GeForce RTX 4090", 24, 0.69),
+                ("NVIDIA A100 80GB PCIe", 80, 1.64),
+            )
+        ]
+    }
+}
+
+
+def _create_body(captured: list[Any]) -> dict[str, Any]:
+    """Return the create-mutation body, skipping S4's catalog read."""
+    for item in captured:
+        body = item[1] if isinstance(item, tuple) else item
+        if "gpuTypes" not in str(body.get("query", "")):
+            return dict(body)
+    raise AssertionError("no create mutation was sent")
+
+
+_create_body_entry = _create_body
+
+
 def _capture_post() -> tuple[
     list[tuple[str, dict[str, Any]]],
     Callable[[str, dict[str, Any]], dict[str, Any]],
@@ -58,6 +99,10 @@ def _capture_post() -> tuple[
     captured: list[tuple[str, dict[str, Any]]] = []
 
     def _http_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        if "gpuTypes" in str(body.get("query", "")):
+            # S4: create_instance reads the catalog before it creates. Not
+            # recorded, so the payload assertions stay about the create body.
+            return _S4_GPU_TYPES
         captured.append((url, body))
         return {"data": {"podFindAndDeployOnDemand": {"id": "pod-xyz"}}}
 
@@ -95,7 +140,6 @@ def _build_spec(
     return build_instance_spec(
         cfg=cfg,
         rendered=_rendered(),
-        offer=_offer(),
         engine_name="diffusers",
         key_hash="abc123",
         image="fallback:img",
@@ -122,7 +166,7 @@ def test_default_diagnostic_env_empty_does_not_inject_diag_keys() -> None:
     p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
     spec = _build_spec(diagnostic_mode=False)
     p.create_instance(spec)
-    keys = _env_keys(captured[0][1])
+    keys = _env_keys(_create_body(captured))
     assert "HF_TOKEN" in keys
     assert "KINOFORGE_DIAG_BUCKET" not in keys
     assert "AWS_ACCESS_KEY_ID" not in keys
@@ -148,7 +192,7 @@ def test_diagnostic_env_overlay_merged_into_pod_env() -> None:
     }
     spec = _build_spec(diagnostic_mode=True, diagnostic_env=overlay)
     p.create_instance(spec)
-    body = captured[0][1]
+    body = _create_body(captured)
     assert "HF_TOKEN" in _env_keys(body)
     for key, expected_value in overlay.items():
         assert _env_value(body, key) == expected_value, (
@@ -166,7 +210,10 @@ def test_diagnostic_env_does_not_overwrite_user_env() -> None:
         diagnostic_env={"KINOFORGE_DIAG_BUCKET": "default-overlay-bucket"},
     )
     p.create_instance(spec)
-    assert _env_value(captured[0][1], "KINOFORGE_DIAG_BUCKET") == "user-override-bucket"
+    assert (
+        _env_value(_create_body(captured), "KINOFORGE_DIAG_BUCKET")
+        == "user-override-bucket"
+    )
 
 
 def _turn_on_diagnostic_mode(cfg: Any) -> Any:  # noqa: ANN401 — Config, tool-provided

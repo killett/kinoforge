@@ -35,7 +35,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
@@ -203,6 +203,7 @@ def main() -> int:
     from kinoforge.core.config import load_config
     from kinoforge.core.credentials import EnvCredentialProvider
     from kinoforge.core.interfaces import InstanceSpec
+    from kinoforge.providers.runpod import RunPodProvider
 
     cfg = load_config(args.workflow_yaml)
     if cfg.engine.comfyui is None or cfg.compute is None:
@@ -374,8 +375,9 @@ def main() -> int:
         f"--- rendered.ports={rendered.ports}  env_required={rendered.env_required} ---"
     )
 
-    reqs = cfg.hardware_requirements()
-    offers = provider.find_offers(reqs)
+    reqs = cfg.placement()
+    # compute-seam S4: enumeration is a RunPod capability, not an ABC method.
+    offers = cast("RunPodProvider", provider).find_offers(reqs)
     if not offers:
         safe_print("diagnose_pod_boot: no offers")
         return 1
@@ -400,7 +402,6 @@ def main() -> int:
     for offer in offers:
         spec = InstanceSpec(
             image=rendered.image,
-            offer=offer,
             ports=tuple(rendered.ports),
             volume_gb=cfg.compute.placement.disk_gb or 50,
             volume_mount="/workspace",

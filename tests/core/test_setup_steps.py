@@ -126,7 +126,6 @@ def test_spec_builder_threads_the_new_pair() -> None:
     from kinoforge.core.config import Config
     from kinoforge.core.interfaces import (
         Lifecycle,
-        Offer,
         RenderedProvision,
     )
     from kinoforge.core.spec_builder import build_instance_spec
@@ -150,9 +149,6 @@ def test_spec_builder_threads_the_new_pair() -> None:
     spec = build_instance_spec(
         cfg=cfg,
         rendered=rendered,
-        offer=Offer(
-            id="g", gpu_type="g", vram_gb=80, cuda="12.4", cost_rate_usd_per_hr=1.0
-        ),
         engine_name="diffusers",
         key_hash="abc",
         image="fallback:img",

@@ -1,7 +1,7 @@
 """Behavior: ModalProvider registration, offers, and heartbeat semantics."""
 
 from kinoforge.core import registry
-from kinoforge.core.interfaces import HardwareRequirements, Launch, SetupStep
+from kinoforge.core.interfaces import Launch, Placement, SetupStep
 from kinoforge.providers.modal import ModalProvider
 
 
@@ -14,7 +14,7 @@ def test_registry_resolves_modal():
 
 
 def test_find_offers_returns_filtered_catalog():
-    offers = ModalProvider().find_offers(HardwareRequirements(min_vram_gb=80))
+    offers = ModalProvider().find_offers(Placement(min_vram_gb=80))
     assert {o.id for o in offers} == {"A100-80GB", "H100"}
 
 
@@ -27,7 +27,7 @@ def test_last_heartbeat_is_none_and_heartbeat_is_noop():
 
 
 def test_create_instance_deploys_and_returns_endpoint():
-    from kinoforge.core.interfaces import InstanceSpec, Lifecycle, Offer
+    from kinoforge.core.interfaces import InstanceSpec, Lifecycle
 
     captured = {}
 
@@ -42,7 +42,6 @@ def test_create_instance_deploys_and_returns_endpoint():
     provider = ModalProvider(app_factory=fake_factory, deployer=fake_deploy)
     spec = InstanceSpec(
         image="runpod/pytorch:2.4.0-cuda12.4",
-        offer=Offer("A10", "A10", 24, "12.4", 1.10, mode="serverless"),
         run_id="run777",
         setup_steps=(SetupStep("echo hi"),),
         launch=Launch(("python", "-m", "server")),
@@ -55,8 +54,11 @@ def test_create_instance_deploys_and_returns_endpoint():
     assert inst.provider == "modal"
     assert inst.status == "starting"
     assert inst.endpoints == {"8000": "https://ws--kinoforge-run777-server.modal.run"}
-    assert inst.cost_rate_usd_per_hr == 1.10
-    assert captured["req"].gpu == "A10"
+    # S4: Modal selects its GPU class from placement, so both the class and
+    # its price come from MODAL_GPU_CATALOG rather than from an offer the
+    # caller handed down. This spec names none, so the catalog head wins.
+    assert captured["req"].gpu == "L40S"
+    assert inst.cost_rate_usd_per_hr == 1.95
     assert captured["req"].scaledown_window_s == 300
 
 
@@ -66,12 +68,11 @@ def test_create_instance_requires_a_launch():
     Bug caught: deploying it anyway produces an app that answers nothing, and
     the failure surfaces much later as a boot timeout rather than here.
     """
-    from kinoforge.core.interfaces import InstanceSpec, Offer
+    from kinoforge.core.interfaces import InstanceSpec
 
     provider = ModalProvider()
     spec = InstanceSpec(
         image="img",
-        offer=Offer("A10", "A10", 24, "12.4", 1.10, mode="serverless"),
         run_id="r",
         setup_steps=(SetupStep("echo hi"),),
         launch=None,  # no server → invalid for Modal
@@ -134,7 +135,7 @@ def test_create_instance_uses_opaque_name_under_ephemeral():
     import re
 
     from kinoforge.core.ephemeral import EphemeralSession
-    from kinoforge.core.interfaces import InstanceSpec, Lifecycle, Offer
+    from kinoforge.core.interfaces import InstanceSpec, Lifecycle
 
     captured = {}
 
@@ -148,7 +149,6 @@ def test_create_instance_uses_opaque_name_under_ephemeral():
     provider = ModalProvider(app_factory=fake_factory, deployer=fake_deploy)
     spec = InstanceSpec(
         image="python:3.13-slim",
-        offer=Offer("A10", "A10", 24, "12.4", 1.10, mode="serverless"),
         run_id="upscale-20260712-200409",  # the leaky id ephemeral must hide
         setup_steps=(SetupStep("echo hi"),),
         launch=Launch(("python", "-m", "server")),
@@ -168,7 +168,7 @@ def test_create_instance_uses_opaque_name_under_ephemeral():
 def test_create_instance_name_unchanged_without_ephemeral():
     """Bug caught: opaque naming accidentally applied to normal runs would
     break warm-attach ledger keys and every log/teardown that names the app."""
-    from kinoforge.core.interfaces import InstanceSpec, Lifecycle, Offer
+    from kinoforge.core.interfaces import InstanceSpec, Lifecycle
 
     def fake_factory(req, modal_mod):
         return ("APP", "SERVERFN")
@@ -179,7 +179,6 @@ def test_create_instance_name_unchanged_without_ephemeral():
     provider = ModalProvider(app_factory=fake_factory, deployer=fake_deploy)
     spec = InstanceSpec(
         image="python:3.13-slim",
-        offer=Offer("A10", "A10", 24, "12.4", 1.10, mode="serverless"),
         run_id="run777",
         setup_steps=(SetupStep("echo hi"),),
         launch=Launch(("python", "-m", "server")),

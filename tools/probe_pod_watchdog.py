@@ -47,6 +47,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
@@ -230,19 +231,23 @@ def main() -> int:
     from kinoforge.core import registry
     from kinoforge.core.credentials import EnvCredentialProvider
     from kinoforge.core.interfaces import (
-        HardwareRequirements,
         InstanceSpec,
         Launch,
         Lifecycle,
+        Placement,
         SetupStep,
     )
+    from kinoforge.providers.runpod import RunPodProvider
     from kinoforge.providers.runpod.selfterm import RENDER as render_selfterm
 
     creds = EnvCredentialProvider()
-    provider = registry.get_provider("runpod")()
-    provider._creds = creds  # type: ignore[attr-defined]
+    # compute-seam S4: find_offers left the ABC, so this has to be the
+    # concrete provider — enumeration is a RunPod capability now, not a
+    # promise every ComputeProvider makes.
+    provider = cast("RunPodProvider", registry.get_provider("runpod")())
+    provider._creds = creds  # noqa: SLF001
 
-    reqs = HardwareRequirements(min_vram_gb=8, max_usd_per_hr=0.50)
+    reqs = Placement(min_vram_gb=8, max_usd_per_hr=0.50)
     all_offers = provider.find_offers(reqs)
     # Filter to NVIDIA-only — the runpod/pytorch CUDA image fails to start
     # on AMD GPUs (MI300X etc.); container is allocated but the bash
@@ -267,7 +272,6 @@ def main() -> int:
     )
     spec = InstanceSpec(
         image="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
-        offer=offer,
         ports=("9000",),
         volume_gb=10,
         volume_mount="/workspace",

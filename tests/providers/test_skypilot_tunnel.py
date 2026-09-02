@@ -7,8 +7,21 @@ from typing import Any
 import pytest
 
 from kinoforge.core.errors import ProvisionFailed
-from kinoforge.core.interfaces import InstanceSpec, Launch, Offer, SetupStep
+from kinoforge.core.interfaces import (
+    InstanceSpec,
+    Launch,
+    Placement,
+    SetupStep,
+)
 from kinoforge.providers.skypilot import SkyPilotProvider
+
+#: compute-seam S4: SkyPilotProvider selects its accelerator inside
+#: create_instance, so any sky fake a create test drives must answer the
+#: catalog call. Two entries so a VRAM floor has something to exclude.
+_S4_ACCELERATORS: list[dict[str, object]] = [
+    {"accelerator_name": "T4", "vram_gb": 16, "cuda": "12.8", "price": 0.35},
+    {"accelerator_name": "A100", "vram_gb": 80, "cuda": "12.8", "price": 2.10},
+]
 
 
 class _FakeTask:
@@ -24,6 +37,10 @@ class _FakeSky:
 
     def __init__(self) -> None:
         self.downed: list[str] = []
+
+    def list_accelerators(self, **_kw: object) -> list[dict[str, object]]:
+        """Answer S4's in-provider catalog read with a frozen list."""
+        return list(_S4_ACCELERATORS)
 
     def launch(self, task: Any, **kw: Any) -> tuple[None, None]:
         return (None, None)
@@ -43,24 +60,16 @@ class _FakeProc:
         self.terminated = True
 
 
-def _gpu_offer() -> Offer:
-    return Offer(
-        id="RTX_A6000",
-        gpu_type="RTX_A6000",
-        vram_gb=48,
-        cuda="12.4",
-        cost_rate_usd_per_hr=0.50,
-        mode="pod",
-    )
-
-
 def _server_spec() -> InstanceSpec:
     return InstanceSpec(
         image="runpod/pytorch:2.8.0",
-        offer=_gpu_offer(),
         ports=("8000",),
         env={},
         run_id="kf-vast-test",
+        # S4: the accelerator is named on PLACEMENT now. Pre-S4 this spec
+        # carried an Offer; the provider read the name off it. Naming it here
+        # also means no catalog read happens at all on this path.
+        placement=Placement(accelerators=("RTX_A6000",)),
         setup_steps=(SetupStep("#!/bin/sh\ntrue"),),
         launch=Launch(("python", "-m", "server")),
     )
@@ -69,9 +78,6 @@ def _server_spec() -> InstanceSpec:
 def _cpu_spec() -> InstanceSpec:
     return InstanceSpec(
         image="",
-        offer=Offer(
-            id="cpu", gpu_type="", vram_gb=0, cuda="", cost_rate_usd_per_hr=0.0
-        ),
         ports=(),
         env={},
         run_id="kf-cpu-test",

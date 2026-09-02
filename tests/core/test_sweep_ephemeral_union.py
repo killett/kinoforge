@@ -13,10 +13,10 @@ from kinoforge.core.clock import FakeClock
 from kinoforge.core.errors import TransportError
 from kinoforge.core.interfaces import (
     ComputeProvider,
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Offer,
+    Placement,
 )
 from kinoforge.core.lifecycle import Ledger
 from kinoforge.core.reaper import Verdict
@@ -51,7 +51,7 @@ class _FakeProvider(ComputeProvider):
         return result
 
     # ABC stubs (unused in these tests)
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, reqs: Placement) -> list[Offer]:
         return []
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
