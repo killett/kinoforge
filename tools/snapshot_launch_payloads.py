@@ -574,6 +574,34 @@ def _capture_skypilot(
             del kwargs
             return {name: [dict(rec)] for name, rec in _FROZEN_SKY_CATALOG.items()}
 
+        class Dag:
+            """Stand-in for ``sky.Dag`` so the estimate reaches ``optimize``.
+
+            Without it the provider's ``sky.Dag()`` would AttributeError and
+            the estimate would come back unreadable for the wrong reason —
+            the capture would still be correct, but it would stop exercising
+            the ``optimize`` refusal below.
+            """
+
+            def __init__(self) -> None:
+                self.tasks: list[Any] = []
+
+            def add(self, task: Any) -> None:  # noqa: ANN401
+                """Append ``task``, mirroring ``sky.Dag.add``."""
+                self.tasks.append(task)
+
+        @staticmethod
+        def optimize(dag: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+            """Refuse to estimate — the capture must not depend on a server.
+
+            Real ``sky.optimize`` POSTs to ``/optimize``. Raising makes the
+            provider's estimate unreadable, which is the documented
+            WARN-and-proceed path, so the captured payload is exactly the one
+            a real launch sends and the goldens stay byte-identical.
+            """
+            del dag, kwargs
+            raise RuntimeError("offline capture: no optimizer")
+
         @staticmethod
         def launch(task: Any, **kwargs: Any) -> Any:  # noqa: ANN401
             """Record ``launch_kwargs`` then abort before any real work."""

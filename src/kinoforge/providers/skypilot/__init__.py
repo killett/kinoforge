@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
 import socket
 import subprocess
 import time
@@ -72,7 +73,12 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from kinoforge.core import registry
 from kinoforge.core.capabilities import Capability, WorkloadShape
-from kinoforge.core.errors import CapacityError, KinoforgeError, ProvisionFailed
+from kinoforge.core.errors import (
+    CapacityError,
+    KinoforgeError,
+    ProvisionFailed,
+    RateCapExceeded,
+)
 from kinoforge.core.interfaces import (
     ComputeProvider,
     FieldSupport,
@@ -213,6 +219,40 @@ def _resolve(sky_module: Any, result: Any) -> Any:  # noqa: ANN401
     if isinstance(result, str):
         return sky_module.stream_and_get(result)
     return result
+
+
+class PreLaunchRateCapExceeded(RateCapExceeded):
+    """A cap violation caught BEFORE anything was created.
+
+    Same type as far as every ``except RateCapExceeded`` handler is concerned
+    — only the rendering differs. :class:`~kinoforge.core.errors.RateCapExceeded`
+    renders the S4 post-launch story ("realized ... instance destroyed"), and
+    on this path both halves of that are false: the number is an estimate from
+    ``sky.optimize`` and no cluster was ever booked. An operator reading the
+    S4 wording here would go hunting for a resource that does not exist.
+
+    Lives in the provider rather than in ``kinoforge.core.errors`` on purpose:
+    ``core/errors.py`` is one of the modules embedded (base64) into the
+    upscale/interpolate provision scripts, so editing it rewrites 13 frozen
+    launch-payload goldens. Moving this rendering there is a reviewed act
+    requiring a golden regeneration, not a refactor.
+    """
+
+    def __str__(self) -> str:
+        """Render the violation as a pre-launch estimate against no resource.
+
+        Returns:
+            A message naming the estimate, the cap, the cluster name that was
+            refused, and the fact that nothing was launched.
+        """
+        rate = (
+            f"${self.realized:.4f}/hr" if self.realized is not None else "<unreadable>"
+        )
+        return (
+            f"PRE-LAUNCH estimate {rate} exceeds cap ${self.cap:.4f}/hr\n"
+            f"  ({self.placement_summary}, cluster={self.instance_id})\n"
+            f"  nothing was launched"
+        )
 
 
 #: Sentinel distinguishing "attribute absent" from "attribute present but
@@ -1043,6 +1083,35 @@ class SkyPilotProvider(ComputeProvider):
         # collapse could not be expressed provider-side at all — the real row
         # shares this cluster's key, so a provider-side ``forget`` would have
         # taken it too. See ``tests/core/test_provisional_launch_row.py``.
+        #
+        # compute-seam S5 Task 8 — refuse an over-cap plan while refusing is
+        # still free. S4's post-launch ``realized_rate`` readback is what makes
+        # the cap TRUE and it stays exactly where it is; this only decides how
+        # much work a violation throws away. On SkyPilot ``sky.launch`` runs
+        # ``Task.setup`` before it returns, so a violation caught afterwards
+        # discards several minutes of provisioning that was already paid for.
+        cap = spec.placement.max_usd_per_hr
+        estimate = self._estimate_hourly_rate(task)
+        if estimate is None:
+            logger.warning(
+                "skypilot: pre-launch cost estimate unreadable for cluster %r; "
+                "launching and relying on the post-launch rate readback",
+                cluster_name,
+            )
+        elif cap > 0 and estimate > cap:
+            # ``cap <= 0`` means "no cap on this path". Placement's default is
+            # 2.20, so a zero can only come from an operator explicitly
+            # clearing it — and a $0.00 ceiling read literally would refuse
+            # every launch there is.
+            # PreLaunchRateCapExceeded, not the base class: no resource
+            # exists, so the S4 "realized ... instance destroyed" wording
+            # would send the operator hunting for a cluster never booked.
+            raise PreLaunchRateCapExceeded(
+                realized=estimate,
+                cap=cap,
+                instance_id=cluster_name,
+                placement_summary="provider=skypilot, source=sky.optimize",
+            )
         raw = sky.launch(task, **launch_kwargs)
         # Resolve a possible RequestId — the launch payload itself is not used
         # because the cluster name we passed *is* the canonical id and the
@@ -1218,6 +1287,57 @@ class SkyPilotProvider(ComputeProvider):
             return float(launched.get_cost(3600))
         except Exception:  # noqa: BLE001 — same reason
             return None
+
+    def _estimate_hourly_rate(self, task: Any) -> float | None:  # noqa: ANN401
+        """Return the optimizer's estimated USD/hr for ``task``, or None.
+
+        At the pinned skypilot-0.12.3.post1 ``sky.optimize`` is a
+        client/server call — ``sky/client/sdk.py:411`` POSTs ``/optimize``
+        and returns a ``RequestId['sky.Dag']`` — so it is resolved through
+        the same :func:`_resolve` path :meth:`create_instance` uses for
+        ``sky.launch``. It takes a ``sky.Dag`` (``sky/dag.py:26``), not a
+        Task, so one is built and the task added to it. The price then comes
+        off the optimized task's ``best_resources.get_cost(3600.0)``
+        (``sky/resources.py:1704``), which asserts on ``cloud`` and
+        ``_instance_type`` and can therefore raise.
+
+        Deliberately SEPARATE from :meth:`realized_rate`: this one is a
+        pre-launch guess about a plan, that one is a post-launch reading off
+        a booked cluster. Only the second can make a cap true, and collapsing
+        them would let a cheap estimate vouch for an expensive booking.
+
+        Best-effort by contract: any failure — the optimizer raising, a
+        RequestId that will not resolve, no ``best_resources``, ``get_cost``
+        raising, a shape this code does not expect — returns None and the
+        caller proceeds to launch, because S4's post-launch readback is what
+        makes the cap true. This only decides how much work a violation
+        throws away. It never raises.
+
+        Args:
+            task: The ``sky.Task`` about to be launched.
+
+        Returns:
+            USD per hour, or None when the estimate is unreadable.
+        """
+        try:
+            sky = self._sky()
+            dag = sky.Dag()
+            dag.add(task)
+            optimized = _resolve(sky, sky.optimize(dag))
+            best = optimized.tasks[0].best_resources
+            if best is None:
+                return None
+            # get_cost takes SECONDS; 3600 makes the result USD/hr, the unit
+            # placement.max_usd_per_hr is expressed in.
+            rate = float(best.get_cost(3600.0))
+        except Exception:  # noqa: BLE001 — an estimate must never block a launch
+            logger.debug("skypilot: pre-launch cost estimate failed", exc_info=True)
+            return None
+        # A NaN comparison is False in both directions, so an unusable number
+        # must be reported as unreadable rather than silently waved through.
+        if not math.isfinite(rate) or rate < 0:
+            return None
+        return rate
 
     def _selection_tags(self, cluster_name: str) -> dict[str, str]:
         """Return sku / cloud / region / accelerators for a launched cluster.
