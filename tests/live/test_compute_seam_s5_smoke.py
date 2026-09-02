@@ -25,7 +25,8 @@ Three claims, in cost order:
    ``PreLaunchRateCapExceeded`` while ``sky status`` (an independent oracle,
    not merely the absence of an exception) shows no cluster. A cap ABOVE it
    must NOT refuse, so the claim cannot be satisfied by refusing everything.
-3. **tunnel repair, ~$0.01** — a real ``c6i.large`` serving HTTP on 8000 and
+3. **tunnel repair, ~$0.04 (ceiling ~$0.064)** — a real ``c6i.large`` serving
+   HTTP on 8000 and
    8001, both endpoints answering 200, both forwards killed the way a dying
    CLI kills them, and ``ensure_endpoints`` handing back DIFFERENT local ports
    that both answer 200 again. Plus: exactly one ledger row for the cluster
@@ -70,19 +71,42 @@ booking a live ``g4dn.xlarge`` at $0.526/hr to prove the point. The
 "nothing was booked" assertion is still made against ``sky status`` and the EC2
 oracle, neither of which is this harness's own code.
 
+What claim 3 actually launches, and what it costs
+-------------------------------------------------
+NOT ``ubuntu:22.04``. The config's ``compute.image`` says that, but
+``build_instance_spec`` resolves ``rendered.image or image`` and the comfyui
+engine's render wins, so the spec this smoke launches carries
+``runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`` (probed
+2026-09-02). Two consequences, and both matter:
+
+* python3.11 IS on that image. The interpreter-resolution shim in
+  :data:`_SERVE_SCRIPT` is belt-and-braces against a future engine render, not
+  a workaround for a missing interpreter.
+* SkyPilot pulls that multi-GB CUDA-devel layer onto a 2-vCPU ``c6i.large``
+  before it marks the cluster UP. That pull is why S2 measured UP at t+1474 s
+  on this exact config and SKU, and it is why the instance-side watchdog
+  deadline has to be raised deliberately for this smoke — see
+  :data:`_WATCHDOG_MAX_LIFETIME_S`.
+
+Realistic spend for claim 3 is therefore **~$0.04**, not a cent: ~1474 s of
+boot plus the assertion sequence and teardown at $0.085/hr. The ceiling is
+~$0.064, set by :data:`_WATCHDOG_MAX_LIFETIME_S` (2700 s), which bounds the
+cluster's life even if this process dies.
+
 Known live risk for claim 3, stated up front
 --------------------------------------------
 The forwards are ``ssh -L <local>:localhost:<remote>`` through sky's generated
-ssh config, and this config pins ``image: ubuntu:22.04`` (normalised to
-``docker:ubuntu:22.04``). If sky's ssh alias were to land on the HOST VM while
-the servers run inside the container, ``localhost:8000`` on the remote end
-would have no listener and both HTTP checks would fail for a reason that has
-nothing to do with S5. The seam itself is not speculative — entry #21 of
+ssh config. If sky's ssh alias were to land on the HOST VM while the servers
+run inside the container, ``localhost:8000`` on the remote end would have no
+listener and both HTTP checks would fail for a reason that has nothing to do
+with S5. The seam itself is not speculative — entry #21 of
 ``successful-generations.md`` drove a whole FlashVSR upscale over exactly this
 ``ssh -L`` tunnel on a SkyPilot cluster — but that was a different cloud and
-image, so :func:`_remote_listeners` captures ``ss -ltn`` into the evidence when
-an HTTP check fails, to tell "S5 is broken" apart from "the listener is on the
-other side of the container boundary".
+image, so both :func:`_remote_listeners` (``ss -ltn``: is anything listening on
+this side of the boundary?) and :func:`_capture_setup_log` (the job log, where
+``kinoforge-s5 serving with $PY`` lands if the servers started at all) are
+captured on EVERY failed HTTP check. Together they separate "S5 is broken" from
+"ssh landed on the host VM" from "the servers never started".
 
 Operational notes inherited from S1/S2/S3/S4, and they are not optional:
 
@@ -118,6 +142,7 @@ import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -182,6 +207,7 @@ from kinoforge.stores.local import LocalArtifactStore  # noqa: E402
 from tests.live.test_compute_seam_s1_smoke import (  # noqa: E402
     _ID_QUERY,
     _REGION,
+    _TYPE_QUERY,
     Ec2QueryFailed,
     _aws_ec2_query,
     _capture_setup_log,
@@ -206,10 +232,29 @@ _UTIL_POLL_INTERVAL_S = 75.0
 #: before the boot is treated as dead rather than slow. Not applied afterwards:
 #: two idle ``http.server`` processes are supposed to look like nothing.
 _STALL_CONSECUTIVE_PROBES = 3
-#: Ceiling on the wait for the live cluster. S2 reached UP at t+1474 s on this
-#: same config and SKU; the S4 rate-cap smoke took 302 s. A ceiling, not an
-#: expected duration.
-_CREATE_TIMEOUT_S = 2100.0
+#: The instance-side watchdog deadline this smoke launches with, RAISED from
+#: the config's own ``max_lifetime: 30m``. Deliberate, and the numbers force it:
+#: ``watchdog.compute_deadline`` returns ``min(max_lifetime_s, budget/rate)`` =
+#: ``min(1800, 0.5/0.5*3600) = 1800`` for this config, S2 measured UP on this
+#: exact config and SKU at t+1474 s, and the assertion sequence after that
+#: (two HTTP settles at up to 180 s each, the tunnel kill, then two more) can
+#: legitimately want another ~750 s. 1474 + 750 > 1800, so at the shipped
+#: deadline a boot only 20% slower than S2's would be killed MID-ASSERTION and
+#: the smoke would report an S5 failure that is really a watchdog expiry —
+#: after the money is spent. 2700 s leaves ~1200 s of headroom past a
+#: S2-speed boot. The budget arm does not bind (3600 s), so this is the whole
+#: bound; the cost of raising it is a worst-case ceiling of ~$0.064 instead of
+#: ~$0.043, which is the right trade for not paying for an uninterpretable run.
+_WATCHDOG_MAX_LIFETIME_S = 2700.0
+#: Ceiling on the wait for ``create_instance`` to return. Deliberately BELOW
+#: :data:`_WATCHDOG_MAX_LIFETIME_S` so that when it fires the box is still
+#: alive: ``_capture_setup_log`` can still read the remote log, and the
+#: utilisation samples still describe a running machine. A create timeout at or
+#: above the watchdog deadline is dead code — the watchdog would have killed
+#: the cluster first and the diagnosis would be gone. S2 reached UP at
+#: t+1474 s; the S4 rate-cap smoke took 302 s. A ceiling, not an expected
+#: duration.
+_CREATE_TIMEOUT_S = 1500.0
 #: How long an endpoint may take to answer before the check gives up. The run
 #: command has to start two servers after sky.launch returns.
 _HTTP_SETTLE_S = 180.0
@@ -248,9 +293,16 @@ _PREFLIGHT_LOG_ENV = "KINOFORGE_S5_PREFLIGHT_LOG"
 
 #: Claim 3's run command. ``render_launch`` joins ``argv`` VERBATIM (it does not
 #: shell-quote — see ``core/interfaces.render_launch``), so the script is quoted
-#: here explicitly. The python interpreter is resolved rather than assumed:
-#: ``docker:ubuntu:22.04`` ships no ``python3`` of its own, and the one on PATH
-#: is whatever sky's runtime setup installed.
+#: here explicitly.
+#:
+#: The interpreter is resolved rather than named. Not because the image lacks
+#: one — it does not. The image that actually launches is NOT the config's
+#: ``compute.image: ubuntu:22.04``: ``build_instance_spec`` takes
+#: ``rendered.image or image`` and the comfyui engine's render wins, so the spec
+#: carries ``runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`` (probed
+#: 2026-09-02), which ships python3.11. The resolution chain is therefore
+#: belt-and-braces against a future engine render, not a fix for a missing
+#: interpreter, and the ``echo`` is the breadcrumb that says which one won.
 _SERVE_SCRIPT = (
     'PY="$(command -v python3 || command -v python)"; '
     'test -n "$PY" || PY="$HOME/miniconda3/bin/python3"; '
@@ -429,9 +481,18 @@ class _UtilPoller:
         self._thread.start()
 
     def stop(self) -> None:
-        """Stop polling and wait briefly for the thread to notice."""
+        """Stop polling and wait briefly for the thread to notice.
+
+        Safe to call when :meth:`start` never ran or raised: joining a thread
+        that was never started raises ``RuntimeError``, and this is called from
+        the ``finally`` that also tears the cluster down — so an unguarded join
+        would propagate out of the ``finally`` BEFORE ``_teardown`` and leave a
+        live cluster billing. ``ident`` is None until the thread actually
+        starts, which is exactly the discriminator needed.
+        """
         self._stop.set()
-        self._thread.join(timeout=30.0)
+        if self._thread.ident is not None:
+            self._thread.join(timeout=30.0)
 
     def _loop(self) -> None:
         """Probe on the cadence until stopped, appending to :attr:`samples`."""
@@ -562,16 +623,29 @@ def _rows_for(ledger: Ledger, instance_id: str) -> list[dict[str, Any]]:
     return [e for e in ledger.entries() if e.get("id") == instance_id]
 
 
-def _local_ports_of(endpoints: dict[str, str]) -> dict[str, str]:
+def _local_ports_of(endpoints: dict[str, str]) -> dict[str, int | None]:
     """Return the ``port -> local port`` view of an endpoint map.
+
+    Parsed, not split on the last colon: ``rsplit(":", 1)`` records a
+    plausible-looking number for any shape that is not
+    ``http://127.0.0.1:<port>``, which is precisely the case this evidence
+    exists to make visible. ``urlsplit(...).port`` returns None instead, so a
+    malformed endpoint reads as unknown rather than as a port.
 
     Args:
         endpoints: ``{"8000": "http://127.0.0.1:53411", ...}``.
 
     Returns:
-        ``{"8000": "53411", ...}``; the URL tail, whatever its shape.
+        ``{"8000": 53411, ...}``; None for any URL with no parseable port.
     """
-    return {port: url.rsplit(":", 1)[-1] for port, url in endpoints.items()}
+    parsed: dict[str, int | None] = {}
+    for port, url in endpoints.items():
+        try:
+            parsed[port] = urllib.parse.urlsplit(url).port
+        except ValueError:
+            # urlsplit raises on an out-of-range port literal.
+            parsed[port] = None
+    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -900,13 +974,18 @@ def test_s5_claim2_over_cap_plan_is_refused_before_anything_is_booked() -> None:
 
         # --- (d) nothing was booked, per INDEPENDENT oracles --------------
         sky_status = _sky_status_of(refusing_provider, refused_cluster)
+        # ``ec2_error`` is BOUND here rather than written straight into the
+        # evidence: the dict below replaces the whole key, so an error written
+        # in the except branch would be erased a few lines later and the
+        # ``assert ec2_readable`` that follows would fail with its cause gone.
+        ec2_error: str | None = None
         try:
             ec2_ids = [str(i) for i in _aws_ec2_query(refused_cluster, _ID_QUERY)]
             ec2_readable = True
         except Ec2QueryFailed as exc:
             ec2_ids = []
             ec2_readable = False
-            evidence["nothing_booked"] = {"ec2_query_error": str(exc)}
+            ec2_error = str(exc)
         ledger = Ledger(store=LocalArtifactStore(_STATE_DIR))
         ledger_rows = _rows_for(ledger, refused_cluster)
         evidence["nothing_booked"] = {
@@ -914,6 +993,7 @@ def test_s5_claim2_over_cap_plan_is_refused_before_anything_is_booked() -> None:
             "sky_status": sky_status,
             "ec2_instance_ids": ec2_ids if ec2_readable else None,
             "ec2_readable": ec2_readable,
+            "ec2_query_error": ec2_error,
             "ledger_rows": ledger_rows,
             "at": _now_local(),
         }
@@ -923,8 +1003,8 @@ def test_s5_claim2_over_cap_plan_is_refused_before_anything_is_booked() -> None:
             f"exception is not evidence, this is"
         )
         assert ec2_readable, (
-            "the EC2 oracle could not be read, so what exists is UNKNOWN — "
-            "which is not the same as nothing"
+            f"the EC2 oracle could not be read ({ec2_error}), so what exists "
+            f"is UNKNOWN — which is not the same as nothing"
         )
         assert ec2_ids == [], (
             f"EC2 reports instances {ec2_ids!r} tagged for a cluster that was "
@@ -1022,7 +1102,7 @@ def test_s5_claim2_over_cap_plan_is_refused_before_anything_is_booked() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Claim 3 — tunnel repair on a live cluster, ~$0.01
+# Claim 3 — tunnel repair on a live cluster, ~$0.04 (ceiling ~$0.064)
 # ---------------------------------------------------------------------------
 
 
@@ -1063,18 +1143,35 @@ def test_s5_claim3_live_cluster_serves_both_ports_and_repairs_both_tunnels() -> 
     # also entirely irrelevant to what this claim measures. The provider still
     # emits the instance-side watchdog arm at the top of Task.setup, so the
     # cluster is still bounded if this process dies.
+    #
+    # The instance-side watchdog deadline is raised from the config's own
+    # 30 min to _WATCHDOG_MAX_LIFETIME_S. Deliberate and load-bearing — see
+    # that constant: at 30 min a boot only 20% slower than S2's measured
+    # 1474 s would be killed mid-assertion, and the smoke would report an S5
+    # failure that is really a watchdog expiry, after the money is spent.
+    base_spec = build_spec(cfg)
     spec = dataclasses.replace(
-        build_spec(cfg),
+        base_spec,
         run_id=cluster_name,
         ports=_PORTS,
         setup_steps=(),
         launch=Launch(argv=("bash", "-lc", shlex.quote(_SERVE_SCRIPT))),
+        lifecycle=dataclasses.replace(
+            base_spec.lifecycle, max_lifetime_s=_WATCHDOG_MAX_LIFETIME_S
+        ),
     )
 
     claim: dict[str, Any] = {
         "status": "not-reached",
         "cluster_name": cluster_name,
         "expected_sku": _CPU_SKU,
+        "launched_image": spec.image,
+        "image_source": (
+            "engine render (build_instance_spec takes `rendered.image or "
+            "image`), NOT compute.image — see the module docstring"
+        ),
+        "watchdog_max_lifetime_s": _WATCHDOG_MAX_LIFETIME_S,
+        "create_timeout_s": _CREATE_TIMEOUT_S,
         "preflight": _preflight_record(),
         "run_command": _SERVE_SCRIPT,
         "utilisation_samples": [],
@@ -1150,6 +1247,39 @@ def test_s5_claim3_live_cluster_serves_both_ports_and_repairs_both_tunnels() -> 
             f"under test"
         )
         instance: Instance = create_result["instance"]
+        # How much cluster life is left before the instance-side watchdog
+        # autodowns the box. Recorded HERE, at the moment the assertions are
+        # about to start, so a failure late in the sequence is self-diagnosing:
+        # a small or negative number means the watchdog expired mid-assertion
+        # and the failure says nothing about S5.
+        claim["deadline_remaining_s"] = round(
+            _WATCHDOG_MAX_LIFETIME_S - (time.time() - launched_at), 1
+        )
+
+        # --- 0. the box the spend estimate is priced off -------------------
+        # S1 makes this assertion and says why: `resources.cpus: "1+"` lets
+        # sky's optimizer pick, so a regression that quietly booked a bigger
+        # box is invisible to every other check in this file — and every
+        # USD figure below is computed from _CPU_SKU_USD_PER_HR.
+        sku_launched = sorted(
+            {str(t) for t in _aws_ec2_query(cluster_name, _TYPE_QUERY)}
+        )
+        claim["sku_launched"] = sku_launched
+        claim["sku_tag"] = instance.tags.get("sku")
+        assert sku_launched == [_CPU_SKU], (
+            f"EC2 reports {sku_launched!r} for {cluster_name!r}, not "
+            f"[{_CPU_SKU!r}]. An empty list means the box was never observed; "
+            f"any other value means sky's optimizer booked a SKU this smoke's "
+            f"cost envelope does not cover, and every estimated_spend_usd "
+            f"below (priced at {_CPU_SKU_USD_PER_HR} USD/hr) is wrong"
+        )
+        assert instance.tags.get("sku") == _CPU_SKU, (
+            f"instance.tags['sku'] is {instance.tags.get('sku')!r} while EC2 "
+            f"reports {sku_launched!r} — Task 7 put the booked SKU on the "
+            f"Instance, and an omitted or disagreeing tag means "
+            f"_selection_tags could not read the handle, so what a "
+            f"RateCapExceeded would report about this cluster is unknown"
+        )
 
         # --- 1. both declared ports came back, and both serve --------------
         claim["endpoints_at_create"] = dict(instance.endpoints)
@@ -1247,7 +1377,13 @@ def test_s5_claim3_live_cluster_serves_both_ports_and_repairs_both_tunnels() -> 
             record = _http_ok(url)
             claim["http_after"].append({"port": port, **record})
             if record["status"] != 200:
-                claim["remote_listeners"] = _remote_listeners(cluster_name)
+                # Both, symmetrically with the pre-repair check: the listener
+                # probe answers "is anything bound on this side of the
+                # container boundary?" and the job log answers "did the
+                # servers ever start?". Either alone leaves the other
+                # explanation open.
+                claim["remote_listeners_after"] = _remote_listeners(cluster_name)
+                claim["remote_log_tail_after"] = _capture_setup_log(cluster_name)
             assert record["status"] == 200, (
                 f"repaired endpoint {url!r} for remote port {port} did not "
                 f"answer 200 within {_HTTP_SETTLE_S:.0f}s (last error "
@@ -1257,8 +1393,17 @@ def test_s5_claim3_live_cluster_serves_both_ports_and_repairs_both_tunnels() -> 
         claim["status"] = "PROVEN"
         _log.info("S5 tunnel repair proven for %s", cluster_name)
     finally:
-        poller.stop()
-        claim["utilisation_samples"] = poller.samples
+        # Nothing may stand between entering this `finally` and _teardown. The
+        # poller is bookkeeping; the teardown is the only thing keeping a
+        # cluster from outliving this process. `stop()` is already guarded
+        # against a never-started thread, and this is the second belt: any
+        # fault in the poller or in serialising its samples is recorded and
+        # stepped over, never propagated past the teardown below.
+        try:
+            poller.stop()
+            claim["utilisation_samples"] = poller.samples
+        except Exception as exc:  # noqa: BLE001 — must never preempt teardown
+            claim["util_poller_error"] = repr(exc)[:300]
         try:
             claim["teardown"] = _teardown(
                 provider, cluster_name, create_thread=create_thread
@@ -1277,8 +1422,11 @@ def test_s5_claim3_live_cluster_serves_both_ports_and_repairs_both_tunnels() -> 
         )
         claim["spend_basis"] = (
             f"list price {_CPU_SKU_USD_PER_HR} USD/hr for {_CPU_SKU} in "
-            f"{_REGION}, times billable wall clock — an estimate, not a "
-            f"reading of the invoice"
+            f"{_REGION} (the SKU asserted against the EC2 oracle above), times "
+            f"billable wall clock — an estimate, not a reading of the invoice. "
+            f"Ceiling is {_WATCHDOG_MAX_LIFETIME_S / 3600.0 * _CPU_SKU_USD_PER_HR:.3f} "
+            f"USD, set by the instance-side watchdog at "
+            f"{_WATCHDOG_MAX_LIFETIME_S:.0f}s"
         )
         _ENDPOINT_EVIDENCE["outcome"] = (
             "PROVEN"
