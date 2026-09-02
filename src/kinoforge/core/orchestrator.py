@@ -1137,21 +1137,38 @@ def _provision_instance_and_build_backend(
 
             Duck-typed (hence ``Any``): ``kinoforge.core`` must not import a
             concrete store, and every caller passes a
-            :class:`~kinoforge.core.lifecycle.Ledger`. THREE methods are used,
-            not two — a fake that implements only ``record``/``forget`` will
-            silently lose the collapse, because every call below is wrapped:
+            :class:`~kinoforge.core.lifecycle.Ledger`. TWO methods are used, and
+            ``forget`` is NOT one of them — a fake built around ``forget`` loses
+            BOTH cleanup paths, and does so silently, because every call below
+            is wrapped:
 
             * ``record(instance, *, max_age_s=int)`` — the pre-launch write.
-            * ``forget(instance_id)`` — the failure path, which drops the row
-              outright.
-            * ``forget_provisional(provisional_id, *, real_id)`` — the success
-              path. Not ``forget``: on SkyPilot the provisional row and the
-              real row share a key (the cluster name IS the run id), so a plain
-              forget would delete both.
+            * ``forget_provisional(provisional_id) -> bool`` — the FAILURE path
+              (:func:`_forget_provisional_row`), with no ``real_id``: the create
+              raised, so requiring a real row would strand the very ghost the
+              call exists to clear. Still not ``forget``, because a real row can
+              exist under this id from an earlier launch that reused the run id.
+            * ``forget_provisional(provisional_id, *, real_id) -> bool`` — the
+              SUCCESS path (:func:`_collapse_provisional_row`). On SkyPilot the
+              provisional row and the real row share a key (the cluster name IS
+              the run id), so a plain forget would delete both.
 
-            Every one of them is best-effort and its exception is swallowed and
-            logged, because bookkeeping must never fail a launch that would
-            otherwise succeed.
+            Two further expectations that only bite a hand-rolled fake, since
+            :class:`~kinoforge.core.lifecycle.Ledger` satisfies them for free:
+
+            * The return value is READ, not discarded. ``False`` from the
+              success-path call means the collapse was refused and is logged as
+              a warning; a fake that returns ``None`` reports every healthy
+              launch as a refusal.
+            * The refusal check is a read over the rows the REAL row was written
+              into — by ``on_instance_created``, through a *different* ledger
+              object over the same store. A fake that keeps a private, unshared
+              list therefore never sees the real row and refuses every collapse,
+              leaving a permanently stale ``launching`` row on a live instance.
+
+            Every call is best-effort and its exception is swallowed and logged,
+            because bookkeeping must never fail a launch that would otherwise
+            succeed.
 
     Returns:
         :class:`ProvisionResult` ``(instance, backend, hb_loop)`` —

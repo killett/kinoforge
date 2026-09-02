@@ -156,12 +156,15 @@ class _RecordingLedger:
         """
         del instance_id
 
-    def forget_provisional(self, provisional_id: str, *, real_id: str) -> bool:
+    def forget_provisional(
+        self, provisional_id: str, *, real_id: str | None = None
+    ) -> bool:
         """Ignore the collapse call.
 
         Args:
             provisional_id: Ignored; the capture never reaches the success path.
-            real_id: Ignored, for the same reason.
+            real_id: Ignored, for the same reason. Optional, mirroring
+                ``Ledger.forget_provisional`` — the failure path omits it.
 
         Returns:
             Always False — nothing was removed.

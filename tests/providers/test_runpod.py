@@ -1151,6 +1151,62 @@ def test_list_instances_query_selects_cost_per_hr_field() -> None:
     )
 
 
+def test_list_instances_selects_and_tags_the_pod_name() -> None:
+    """myself.pods must select ``name``, and it must reach ``tags["name"]``.
+
+    compute-seam S5. ``cli/_reconcile`` resolves a ``kf_launch_phase=launching``
+    row — keyed by the CLIENT-side run_id, which on RunPod is the pod NAME — by
+    scanning ``list_instances()`` for an instance whose ``tags["name"]`` equals
+    that run_id.
+
+    Bug caught: dropping either half (the field from the selection set, or the
+    tag from :func:`_pod_to_instance`) makes every RunPod launching row match
+    nothing, so the reconciler ages out the only durable handle on a live,
+    billing pod — F12 protection that is silently inert on RunPod.
+    """
+    list_response: dict[str, Any] = {
+        "data": {
+            "myself": {
+                "pods": [
+                    {
+                        "id": "pod-1",
+                        "name": "kf-run-42",
+                        "desiredStatus": "RUNNING",
+                        "imageName": "img:1",
+                        "costPerHr": 0.45,
+                    }
+                ]
+            }
+        }
+    }
+    http_post = HttpPostSpy(response=list_response)
+    provider = RunPodProvider(http_post=http_post)
+
+    instances = provider.list_instances()
+
+    query = _create_calls(http_post)[0][1]["query"]
+    assert "name" in query, (
+        f"GraphQL myself.pods query missing name field; got: {query!r}"
+    )
+    assert instances[0].tags["name"] == "kf-run-42"
+
+
+def test_list_instances_tags_an_empty_name_when_the_pod_has_none() -> None:
+    """A pod dict without ``name`` yields ``""``, not a KeyError.
+
+    Bug caught: ``pod["name"]`` raising on a partial GraphQL selection set (or
+    a serverless/early-boot response) would break ``kinoforge list`` outright;
+    and a ``None`` tag value would violate ``Instance.tags``' ``dict[str, str]``
+    shape. ``""`` matches no run_id, so an unnamed pod is simply never adopted.
+    """
+    list_response: dict[str, Any] = {
+        "data": {"myself": {"pods": [{"id": "pod-1", "desiredStatus": "RUNNING"}]}}
+    }
+    provider = RunPodProvider(http_post=HttpPostSpy(response=list_response))
+
+    assert provider.list_instances()[0].tags["name"] == ""
+
+
 def test_list_instances_populates_cost_rate_from_cost_per_hr() -> None:
     """list_instances threads each pod's costPerHr through to Instance.
 
