@@ -9,23 +9,33 @@ a create is about to happen on ANY provider.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
 
+# Import providers/engines/sources so they self-register for deploy_session.
+import kinoforge.engines.fake  # noqa: F401
+import kinoforge.providers.local  # noqa: F401
+import kinoforge.sources.http  # noqa: F401 — registers https:// source
 from kinoforge.core import orchestrator
 from kinoforge.core.errors import CapacityError
 from kinoforge.core.interfaces import Instance, InstanceSpec
 from kinoforge.core.lifecycle import Ledger
-from kinoforge.core.orchestrator import _provision_instance_and_build_backend
+from kinoforge.core.orchestrator import (
+    _provision_instance_and_build_backend,
+    deploy_session,
+)
+from kinoforge.providers.local import LocalProvider
 from kinoforge.stores.local import LocalArtifactStore
 
-# Reuse the orchestrator fakes the provision tests already drive
-# ``_provision_instance_and_build_backend`` with, rather than standing up a
-# parallel set that could drift from the real call contract. Imported as
-# fixtures, so pytest resolves ``fake_engine`` / ``fake_provider`` here too.
+# Reuse the scaffolding the orchestrator tests already drive these seams with,
+# rather than standing up a parallel set that could drift from the real call
+# contract. ``fake_engine`` / ``fake_provider`` are imported as fixtures, so
+# pytest resolves them here too.
+from tests.core.test_orchestrator import _compute_cfg, _make_engine
 from tests.core.test_orchestrator_render_provision import (  # noqa: F401
     _make_cfg,
     fake_engine,
@@ -170,6 +180,12 @@ def test_a_ledger_fault_never_fails_the_launch(
             is None
         )
     assert "kf-run-2" in caplog.text
+    # The diagnosis is the point of the log line: a WARNING carrying the
+    # traceback. Dropping either — logging at DEBUG, or losing exc_info — turns
+    # a silent forfeiture of F12 protection into something unattributable.
+    record = caplog.records[-1]
+    assert record.levelno == logging.WARNING
+    assert record.exc_info is not None
 
 
 def test_forget_is_best_effort(caplog: pytest.LogCaptureFixture) -> None:
@@ -187,6 +203,9 @@ def test_forget_is_best_effort(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level("WARNING"):
         orchestrator._forget_provisional_row(_AngryLedger(), "kf-run-3")
     assert "kf-run-3" in caplog.text
+    record = caplog.records[-1]
+    assert record.levelno == logging.WARNING
+    assert record.exc_info is not None
 
 
 def test_success_records_the_real_row_before_forgetting_the_provisional(
@@ -349,3 +368,269 @@ def test_capacity_retry_writes_the_row_once(
     assert observed == [["kf-run-7"], ["kf-run-7"], ["kf-run-7"]]
     # And the successful launch still ends with exactly the real row.
     assert _ledger_ids(ledger) == ["pod-xyz"]
+
+
+def test_the_row_survives_when_the_real_row_never_landed(
+    tmp_path: Path,
+    fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
+    fake_provider: MagicMock,  # noqa: F811 — imported fixture
+) -> None:
+    """No real row, no forget — the live instance stays visible.
+
+    Bug caught: forgetting unconditionally after ``on_instance_created``
+    RETURNS. The callback is optional (defaults to None), and
+    deploy_session's ``_record_then_install`` catches its own
+    ``ledger.record`` failure, logs a warning and returns normally. In either
+    case an unconditional forget deletes the ONLY durable handle on an
+    instance that is already live and billing — which is the exact state F12
+    exists to make impossible, reintroduced on the success path.
+    """
+    ledger = Ledger(store=LocalArtifactStore(tmp_path / "ledger-root"))
+    fake_provider.create_instance.return_value = Instance(
+        id="pod-abc",
+        provider="fakeprovider",
+        status="ready",
+        created_at=0.0,
+        endpoints={"8000": "https://pod-abc-8000"},
+    )
+
+    _provision_instance_and_build_backend(
+        **_provision_kwargs(
+            engine=fake_engine,
+            provider=fake_provider,
+            run_id="kf-run-6",
+            ledger=ledger,
+            # Stands in for both real cases: no callback at all, and a
+            # callback that swallowed its own ledger.record failure.
+            on_instance_created=None,
+            tmp_path=tmp_path,
+        )
+    )
+
+    assert _ledger_ids(ledger) == ["kf-run-6"]
+    entry = ledger.read("kf-run-6")
+    assert entry is not None
+    assert entry["tags"]["kf_launch_phase"] == "launching"
+
+
+def test_the_row_survives_when_the_provider_id_equals_the_run_id(
+    tmp_path: Path,
+    fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
+    fake_provider: MagicMock,  # noqa: F811 — imported fixture
+) -> None:
+    """Same-key launches (SkyPilot) must not have both rows deleted.
+
+    Bug caught: ``Ledger.forget`` drops EVERY row whose id matches, so when
+    the provider's id IS the client id — a SkyPilot cluster name — forgetting
+    the provisional row takes the real row with it and the launch goes
+    invisible while it is live. SkyPilot cannot reach this path until Task 5
+    removes the ``set_launch_ledger`` gate, which is exactly why the guard has
+    to exist before then.
+    """
+    ledger = Ledger(store=LocalArtifactStore(tmp_path / "ledger-root"))
+    fake_provider.create_instance.return_value = Instance(
+        id="kf-run-5",  # id == run_id: skypilot cluster-name semantics
+        provider="fakeprovider",
+        status="ready",
+        created_at=0.0,
+        endpoints={"8000": "https://kf-run-5-8000"},
+    )
+
+    _provision_instance_and_build_backend(
+        **_provision_kwargs(
+            engine=fake_engine,
+            provider=fake_provider,
+            run_id="kf-run-5",
+            ledger=ledger,
+            on_instance_created=ledger.record,
+            tmp_path=tmp_path,
+        )
+    )
+
+    # The real row survives. (It shares a key with the provisional one, so the
+    # duplicate is expected here — Task 5 owns collapsing it. Zero rows is the
+    # failure this guards against.)
+    assert ledger.read("kf-run-5") is not None
+    assert _ledger_ids(ledger) == ["kf-run-5", "kf-run-5"]
+
+
+# ---------------------------------------------------------------------------
+# deploy_session wiring — AC7 ("every provider gets this") rests on three
+# lines: the two ``provisional_ledger=_provisional_ledger`` call sites and the
+# Task-5 gate that computes it. Deleting or inverting any of them leaves every
+# test above green while the feature is OFF in production.
+# ---------------------------------------------------------------------------
+
+
+class _LedgerPeekProvider(LocalProvider):
+    """LocalProvider that reads the ledger from INSIDE ``create_instance``.
+
+    Stands in for the non-SkyPilot providers (local / runpod / modal): it has
+    no ``set_launch_ledger``, and its ``create_instance`` returns a
+    server-assigned id (``local-<uuid>``) that is not the ``run_id``.
+
+    Attributes:
+        seen: The row the orchestrator wrote for ``run_id``, as visible mid-
+            create, or None when no row was there.
+    """
+
+    def __init__(self, ledger: Ledger, run_id: str) -> None:
+        """Initialise the peeking provider.
+
+        Args:
+            ledger: A ledger over the same store the orchestrator writes to.
+            run_id: The key the provisional row is expected under.
+        """
+        super().__init__()
+        self._peek_ledger = ledger
+        self._peek_run_id = run_id
+        self.seen: dict[str, Any] | None = None
+
+    def create_instance(self, spec: InstanceSpec) -> Instance:
+        """Snapshot the provisional row, then create as usual.
+
+        Args:
+            spec: The instance specification.
+
+        Returns:
+            The instance LocalProvider would have created anyway.
+        """
+        self.seen = self._peek_ledger.read(self._peek_run_id)
+        return super().create_instance(spec)
+
+
+class _SelfWritingProvider(LocalProvider):
+    """LocalProvider that writes its OWN provisional row, as SkyPilot does.
+
+    Exposes ``set_launch_ledger``, so the Task-5 gate in ``deploy_session``
+    must withhold the orchestrator's writer from it. Records the ids present
+    mid-create so a double write is directly observable: ``Ledger.record``
+    appends, so two writers on one key leave two rows.
+
+    Attributes:
+        rows_mid_create: Ledger ids visible from inside ``create_instance``.
+    """
+
+    def __init__(self) -> None:
+        """Initialise with no ledger installed."""
+        super().__init__()
+        self._launch_ledger: Ledger | None = None
+        self.rows_mid_create: list[str] = []
+
+    def set_launch_ledger(self, ledger: Ledger) -> None:
+        """Accept the ledger the orchestrator hands to provider-side writers.
+
+        Args:
+            ledger: The ledger to write the provider's own row into.
+        """
+        self._launch_ledger = ledger
+
+    def create_instance(self, spec: InstanceSpec) -> Instance:
+        """Write a provider-side provisional row, create, then forget it.
+
+        Args:
+            spec: The instance specification.
+
+        Returns:
+            The instance LocalProvider would have created anyway.
+        """
+        assert self._launch_ledger is not None, (
+            "deploy_session must install a launch ledger on a provider that "
+            "exposes set_launch_ledger"
+        )
+        run_id = spec.run_id or "local-cluster"
+        self._launch_ledger.record(
+            Instance(
+                id=run_id,
+                provider=self.name,
+                status="starting",
+                created_at=0.0,
+                endpoints={},
+                tags={"kf_launch_phase": "launching", "kf_run_id": run_id},
+            ),
+            max_age_s=60,
+        )
+        self.rows_mid_create = [
+            str(entry["id"]) for entry in self._launch_ledger.entries()
+        ]
+        instance = super().create_instance(spec)
+        self._launch_ledger.forget(run_id)
+        return instance
+
+
+@pytest.mark.parametrize("warm_profile_cache", [False, True])
+def test_deploy_session_writes_the_row_before_create(
+    tmp_path: Path, warm_profile_cache: bool
+) -> None:
+    """deploy_session hands the ledger down on BOTH provision call sites.
+
+    Bug caught: dropping ``provisional_ledger=_provisional_ledger`` at either
+    ``_provision_instance_and_build_backend`` call site — the cache-miss
+    (discovery) branch or the cache-hit branch — leaves every unit test above
+    green while no production launch writes a row at all.
+
+    Args:
+        tmp_path: Per-test store root.
+        warm_profile_cache: When True, a seed session populates the profile
+            cache first, so the launch under test goes through the cache-HIT
+            call site instead of the discovery one.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+
+    if warm_profile_cache:
+        with deploy_session(
+            cfg,
+            store=store,
+            engine=_make_engine(),
+            provider=LocalProvider(),
+            run_id="seed",
+        ):
+            pass
+
+    provider = _LedgerPeekProvider(Ledger(store=store), run_id="kf-deploy-1")
+    with deploy_session(
+        cfg,
+        store=store,
+        engine=_make_engine(),
+        provider=provider,
+        run_id="kf-deploy-1",
+    ) as session:
+        assert session.instance is not None
+
+    assert provider.seen is not None, (
+        "no provisional row was visible from inside create_instance — "
+        "deploy_session did not pass provisional_ledger down"
+    )
+    assert provider.seen["tags"]["kf_launch_phase"] == "launching"
+    assert provider.seen["tags"]["kf_run_id"] == "kf-deploy-1"
+    assert provider.seen["provider"] == "local"
+
+
+def test_deploy_session_does_not_double_write_for_a_self_writing_provider(
+    tmp_path: Path,
+) -> None:
+    """A provider with its own writer gets exactly one row, not two.
+
+    Bug caught: inverting (or deleting) the Task-5 gate, so SkyPilot's
+    provider-side writer and the orchestrator's writer both record a row under
+    the same cluster name. ``Ledger.record`` appends, so the launch would carry
+    two identical rows and every reader would pick whichever it found first.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    provider = _SelfWritingProvider()
+
+    with deploy_session(
+        cfg,
+        store=store,
+        engine=_make_engine(),
+        provider=provider,
+        run_id="kf-deploy-2",
+    ) as session:
+        assert session.instance is not None
+
+    assert provider.rows_mid_create == ["kf-deploy-2"], (
+        "exactly one provisional row must exist mid-create; two means the "
+        "orchestrator wrote one alongside the provider's own"
+    )

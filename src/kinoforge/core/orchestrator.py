@@ -550,8 +550,9 @@ def _record_provisional_row(
 
     The row is keyed by the CLIENT-side id (``run_id``), which is not the
     provider's id anywhere but SkyPilot — on RunPod it is the pod NAME, on
-    Modal the app run id. ``cli/_reconcile`` therefore adopts a ``launching``
-    row by name before it is allowed to forget one.
+    Modal the app run id. Task 6 teaches ``cli/_reconcile`` to adopt a
+    ``launching`` row by name before it is allowed to forget one; until then
+    the row is durable but the reconciler cannot yet act on it.
 
     Never raises: bookkeeping must not be able to fail a launch that would
     otherwise succeed. A fault forfeits F12 protection for this launch only,
@@ -1133,9 +1134,34 @@ def _provision_instance_and_build_backend(
     # holder's __exit__ in deploy_session.
     if on_instance_created is not None:
         on_instance_created(instance)
-    # Order is load-bearing: the REAL row is written first, so no window
-    # exists in which a kill loses both rows.
-    _forget_provisional_row(provisional_ledger, provisional_id)
+    # Order is load-bearing: the REAL row is written first, so no window exists
+    # in which a kill loses both rows. Hence the forget is CONDITIONAL on
+    # evidence that the real row actually landed: ``on_instance_created`` is
+    # optional, and deploy_session's ``_record_then_install`` swallows its own
+    # ``ledger.record`` failure and returns normally. Forgetting unconditionally
+    # in either case would delete the only durable handle on an instance that is
+    # live and billing — precisely the state F12 exists to make impossible.
+    _real_row_present = False
+    try:
+        _real_row_present = (
+            provisional_ledger is not None
+            and provisional_ledger.read(instance.id) is not None
+        )
+    except Exception:  # noqa: BLE001 — the probe is best-effort like the rest
+        _log.warning(
+            "F12: could not confirm the real ledger row for %r; keeping the "
+            "provisional 'launching' row rather than risk losing both",
+            instance.id,
+            exc_info=True,
+        )
+    # ``provisional_id == instance.id`` means the provider's id IS the client
+    # id (SkyPilot: the cluster name). The real row then occupies the same key,
+    # and ``Ledger.forget`` drops EVERY row with that id — so a forget here
+    # would take the real row with it. Skipping leaves a duplicate key rather
+    # than no key at all; Task 5, which lets SkyPilot reach this path for the
+    # first time, owns collapsing that duplicate.
+    if _real_row_present and provisional_id != instance.id:
+        _forget_provisional_row(provisional_ledger, provisional_id)
     # compute-seam S4: the cap is verified against what was LAUNCHED, not
     # filtered against a catalog the chooser may never have consulted. Runs
     # after on_instance_created (so a failed teardown still leaves a ledger row
