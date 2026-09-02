@@ -36,34 +36,17 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class HardwareRequirements:
-    """Filter applied by ComputeProvider.find_offers; every field config-overridable.
-
-    Attributes:
-        min_vram_gb: Minimum GPU VRAM in GB; offers below this are excluded.
-        min_cuda: Minimum CUDA version string (semantic compare, e.g. "12.8").
-        max_usd_per_hr: Ceiling for pod-mode offers; serverless ignores.
-        gpu_preference: Ordered preference list among surviving offers.
-        disk_gb: Minimum container/instance disk in GB.
-    """
-
-    min_vram_gb: int = 48
-    min_cuda: str = "12.8"
-    max_usd_per_hr: float = 2.20
-    gpu_preference: tuple[str, ...] = ()
-    disk_gb: int = 100
-
-
-@dataclass(frozen=True)
 class Placement:
     """What to get. Not which SKU to book.
 
     compute-seam S1: the portable resource block every provider can honour.
-    ``HardwareRequirements`` above describes a CATALOG FILTER — what to
-    EXCLUDE while enumerating offers — which is a RunPod/SkyPilot-shaped
-    question. Placement states the requirement itself, so a provider that
-    schedules rather than enumerates (Modal) can honour it directly. S4
-    inverts selection onto this and deletes the filter.
+    S4 folded the old ``HardwareRequirements`` into it. That type described a
+    CATALOG FILTER — what to EXCLUDE while enumerating offers — which is a
+    RunPod/SkyPilot-shaped question naming five numbers this block already
+    carried. Placement states the requirement itself, so a provider that
+    schedules rather than enumerates (Modal) can honour it directly, and the
+    enumerating providers pass it to
+    :func:`kinoforge.core.offers.filter_offers` themselves.
 
     Defaults deliberately match the pre-S1 ``HardwareRequirements`` defaults
     so a config that set no block launches exactly what it launched before.
@@ -448,7 +431,7 @@ class ComputeProvider(ABC):
         return {}
 
     @abstractmethod
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]: ...  # noqa: D102
+    def find_offers(self, placement: Placement) -> list[Offer]: ...  # noqa: D102
 
     @abstractmethod
     def create_instance(self, spec: InstanceSpec) -> Instance: ...  # noqa: D102

@@ -89,10 +89,10 @@ if _REASONS:
 
 # Imports below are evaluated only when the skip gate above passes.
 from kinoforge.core.interfaces import (  # noqa: E402
-    HardwareRequirements,
     InstanceSpec,
     Launch,
     Lifecycle,
+    Placement,
 )
 from kinoforge.core.lifecycle import Ledger  # noqa: E402
 from kinoforge.providers.skypilot import SkyPilotProvider  # noqa: E402
@@ -378,9 +378,7 @@ def test_skypilot_cluster_dies_without_its_client() -> None:
 
     tunnel: Any = None
     try:
-        offers = provider.find_offers(
-            HardwareRequirements(min_vram_gb=0, min_cuda="0.0")
-        )
+        offers = provider.find_offers(Placement(min_vram_gb=0, min_cuda="0.0"))
         assert offers, "no CPU offer surfaced from find_offers"
         spec = InstanceSpec(
             run_id=cluster_name,

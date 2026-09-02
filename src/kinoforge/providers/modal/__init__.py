@@ -22,10 +22,10 @@ from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.interfaces import (
     ComputeProvider,
     FieldSupport,
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Offer,
+    Placement,
     combine_steps,
     render_launch,
 )
@@ -200,9 +200,9 @@ class ModalProvider(ComputeProvider):
         self._deployments: dict[str, dict[str, Any]] = {}
 
     # -- offers -------------------------------------------------------------
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, placement: Placement) -> list[Offer]:
         """Return Modal catalog offers meeting ``reqs``."""
-        return modal_offers(reqs)
+        return modal_offers(placement)
 
     # -- lifecycle ----------------------------------------------------------
     def create_instance(self, spec: InstanceSpec) -> Instance:

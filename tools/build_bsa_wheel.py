@@ -45,10 +45,10 @@ from dataclasses import replace
 from kinoforge.core.credentials import EnvCredentialProvider
 from kinoforge.core.dotenv_loader import load_env_file
 from kinoforge.core.interfaces import (
-    HardwareRequirements,
     InstanceSpec,
     Launch,
     Lifecycle,
+    Placement,
     SetupStep,
     combine_steps,
 )
@@ -245,11 +245,11 @@ def _pick_offer(provider: RunPodProvider) -> object:
     The A100/H100 tier carried 24 F-single smoke pods without a single
     unexplained deletion. ~25 min build ≈ $0.80, inside the $2 ceiling.
     """
-    reqs = HardwareRequirements(
+    reqs = Placement(
         min_vram_gb=80,
         min_cuda="12.4",
         max_usd_per_hr=2.5,
-        gpu_preference=(
+        accelerators=(
             "NVIDIA A100 80GB PCIe",
             "NVIDIA A100-SXM4-80GB",
             "NVIDIA H100 80GB HBM3",

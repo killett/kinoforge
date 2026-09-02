@@ -36,10 +36,10 @@ from kinoforge.core.config import load_config
 from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.interfaces import (
     ComputeProvider,
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Offer,
+    Placement,
 )
 from kinoforge.core.warm_reuse.ephemeral_index import (
     EphemeralIndex,
@@ -82,7 +82,7 @@ class _FakeLocalProvider(ComputeProvider):
     def __init__(self, instance: Instance) -> None:
         self._instance = instance
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, reqs: Placement) -> list[Offer]:
         del reqs
         return []
 

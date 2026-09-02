@@ -33,12 +33,12 @@ import pytest
 from kinoforge.core import registry
 from kinoforge.core.errors import ProvisionFailed
 from kinoforge.core.interfaces import (
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Launch,
     Lifecycle,
     Offer,
+    Placement,
     SetupStep,
 )
 
@@ -253,7 +253,7 @@ def test_ac2_all_methods_use_injected_client_without_touching_real_sky() -> None
     provider = SkyPilotProvider(sky_client=fake)
 
     # find_offers
-    reqs = HardwareRequirements(min_vram_gb=40)
+    reqs = Placement(min_vram_gb=40)
     provider.find_offers(reqs)
 
     # create_instance
@@ -305,7 +305,7 @@ def test_ac3_find_offers_calls_gpu_list_and_converts_to_offers() -> None:
     provider = SkyPilotProvider(sky_client=fake)
 
     # With min_vram_gb=48, only A100 (80 GB) should survive
-    reqs = HardwareRequirements(min_vram_gb=48, min_cuda="12.0")
+    reqs = Placement(min_vram_gb=48, min_cuda="12.0")
     offers = provider.find_offers(reqs)
 
     assert len(offers) == 1
@@ -326,7 +326,7 @@ def test_ac3_find_offers_returns_all_when_generous_gpu_filter() -> None:
     fake = _FakeSky(accelerator_result=_sample_gpu_list())
     provider = SkyPilotProvider(sky_client=fake)
 
-    reqs = HardwareRequirements(min_vram_gb=1, min_cuda="11.0", max_usd_per_hr=9.99)
+    reqs = Placement(min_vram_gb=1, min_cuda="11.0", max_usd_per_hr=9.99)
     offers = provider.find_offers(reqs)
     assert len(offers) == 2
 
@@ -345,7 +345,7 @@ def test_ac3_find_offers_cpu_short_circuits_to_synthetic_offer() -> None:
     fake = _FakeSky(accelerator_result={})  # what real list_accelerators returns
     provider = SkyPilotProvider(sky_client=fake)
 
-    offers = provider.find_offers(HardwareRequirements(min_vram_gb=0))
+    offers = provider.find_offers(Placement(min_vram_gb=0))
 
     assert len(offers) == 1, "CPU short-circuit must return exactly one synthetic offer"
     cpu_offer = offers[0]
@@ -373,7 +373,7 @@ def test_ac3_find_offers_gpu_path_still_calls_list_accelerators() -> None:
     fake = _FakeSky(accelerator_result=_sample_gpu_list())
     provider = SkyPilotProvider(sky_client=fake)
 
-    offers = provider.find_offers(HardwareRequirements(min_vram_gb=8))
+    offers = provider.find_offers(Placement(min_vram_gb=8))
 
     assert fake.list_accelerators_call_count == 1
     assert all(o.gpu_type for o in offers), (
@@ -1109,7 +1109,7 @@ def test_find_offers_flattens_dict_of_list_from_real_list_accelerators() -> None
     # CPU short-circuit does NOT trigger (A100=80GB$1.50, T4=16GB$0.40;
     # provider parses cuda default as "12.0").
     offers = provider.find_offers(
-        HardwareRequirements(min_vram_gb=1, min_cuda="12.0", max_usd_per_hr=9.99)
+        Placement(min_vram_gb=1, min_cuda="12.0", max_usd_per_hr=9.99)
     )
     gpu_types = {o.gpu_type for o in offers}
     assert "A100" in gpu_types, "A100 record must surface as an Offer"
@@ -1132,7 +1132,7 @@ def test_find_offers_calls_list_accelerators_not_gpu_list() -> None:
     provider = SkyPilotProvider(sky_client=fake)
     # Use a non-zero VRAM so the CPU short-circuit doesn't trigger and the
     # GPU path actually invokes list_accelerators.
-    provider.find_offers(HardwareRequirements(min_vram_gb=1))
+    provider.find_offers(Placement(min_vram_gb=1))
 
     assert fake.list_accelerators_call_count == 1, (
         "find_offers must invoke sky.list_accelerators (gpu_list is removed)"

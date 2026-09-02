@@ -374,7 +374,7 @@ def main() -> int:
         f"--- rendered.ports={rendered.ports}  env_required={rendered.env_required} ---"
     )
 
-    reqs = cfg.hardware_requirements()
+    reqs = cfg.placement()
     offers = provider.find_offers(reqs)
     if not offers:
         safe_print("diagnose_pod_boot: no offers")

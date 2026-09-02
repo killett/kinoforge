@@ -18,10 +18,10 @@ import kinoforge._adapters  # noqa: F401 — side-effect: register builtins
 from kinoforge.cli._commands import _cmd_provision
 from kinoforge.cli.context import SessionContext
 from kinoforge.core.interfaces import (
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Offer,
+    Placement,
     combine_steps,
 )
 
@@ -55,7 +55,7 @@ class _SpyProvider:
     def __init__(self) -> None:
         self.specs: list[InstanceSpec] = []
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, reqs: Placement) -> list[Offer]:
         return [
             Offer(
                 id="NVIDIA RTX A5000",

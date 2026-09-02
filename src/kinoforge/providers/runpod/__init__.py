@@ -51,10 +51,10 @@ from kinoforge.core.interfaces import (
     ComputeProvider,
     CredentialProvider,
     FieldSupport,
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Offer,
+    Placement,
     combine_steps,
     render_launch,
 )
@@ -533,7 +533,7 @@ class RunPodProvider(ComputeProvider):
     # ComputeProvider interface
     # ------------------------------------------------------------------
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, placement: Placement) -> list[Offer]:
         """Return RunPod GPU offers that satisfy ``reqs``.
 
         Calls the RunPod GraphQL API once to fetch available GPU types, converts
@@ -541,7 +541,7 @@ class RunPodProvider(ComputeProvider):
         filtering and sorting to :func:`~kinoforge.core.offers.filter_offers`.
 
         Args:
-            reqs: Hardware requirements to filter against.
+            placement: The portable resource block to filter against.
 
         Returns:
             Filtered and sorted list of :class:`~kinoforge.core.interfaces.Offer`
@@ -578,7 +578,7 @@ class RunPodProvider(ComputeProvider):
                     mode="pod",
                 )
             )
-        return filter_offers(raw_offers, reqs)
+        return filter_offers(raw_offers, placement)
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
         """Create a RunPod pod or serverless endpoint from ``spec``.

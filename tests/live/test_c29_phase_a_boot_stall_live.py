@@ -67,8 +67,8 @@ def test_c29_phase_a_boot_stall_reap_fires_during_provision() -> None:
     from kinoforge.core.errors import Cancelled
     from kinoforge.core.heartbeat_loop import HeartbeatLoop
     from kinoforge.core.interfaces import (
-        HardwareRequirements,
         InstanceSpec,
+        Placement,
     )
     from kinoforge.providers.runpod import RunPodProvider
     from kinoforge.providers.runpod.util import RunPodGraphQLUtilEndpoint
@@ -78,9 +78,7 @@ def test_c29_phase_a_boot_stall_reap_fires_during_provision() -> None:
     assert api_key, "RUNPOD_API_KEY must be set"
 
     provider = RunPodProvider(creds=creds)
-    reqs = HardwareRequirements(
-        min_vram_gb=0, min_cuda="0.0", max_usd_per_hr=10.0, disk_gb=0
-    )
+    reqs = Placement(min_vram_gb=0, min_cuda="0.0", max_usd_per_hr=10.0, disk_gb=0)
     offers = provider.find_offers(reqs)
     assert offers, "no RunPod offers available"
     cheapest = min(offers, key=lambda o: o.cost_rate_usd_per_hr)

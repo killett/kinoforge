@@ -79,7 +79,6 @@ def test_min_cuda_is_portable_and_lives_on_placement():
         {"provider": "skypilot", "image": "i", "placement": {"min_cuda": "12.0"}}
     )
     assert cfg.placement().min_cuda == "12.0"
-    assert cfg.hardware_requirements().min_cuda == "12.0"
 
 
 def test_min_cuda_in_the_runpod_namespace_is_refused():
@@ -111,28 +110,21 @@ def test_legacy_gpu_preference_key_under_placement_is_refused():
     assert "compute.placement.accelerators" in str(exc.value)
 
 
-def test_hardware_requirements_shim_sources_gpu_preference_from_accelerators():
-    # The shim keeps find_offers working until S4 deletes it.
+def test_accelerators_reach_the_block_offer_ranking_reads():
+    # S4 deleted Config.hardware_requirements(); filter_offers now ranks by
+    # placement.accelerators directly. Bug caught: the YAML key stops reaching
+    # the block the ranking reads, so an operator's ordered preference becomes
+    # input order and capacity picks the SKU instead.
     cfg = _load(
         {"provider": "runpod", "image": "i", "placement": {"accelerators": ["H100"]}}
     )
-    assert cfg.hardware_requirements().gpu_preference == ("H100",)
+    assert cfg.placement().accelerators == ("H100",)
 
 
-def test_hardware_requirements_shim_sources_min_cuda_from_placement():
-    # Bug caught: the shim keeps returning the "12.8" default, so a config that
-    # pinned a lower CUDA floor to admit older SKUs silently loses every offer —
-    # SkyPilot's catalog reports a flat cuda=12.0, so a 12.8 floor empties it.
-    cfg = _load(
-        {"provider": "skypilot", "image": "i", "placement": {"min_cuda": "12.0"}}
-    )
-    assert cfg.hardware_requirements().min_cuda == "12.0"
-
-
-def test_hardware_requirements_min_cuda_default_needs_no_provider_branch():
+def test_min_cuda_default_needs_no_provider_branch():
     for provider in ("runpod", "skypilot", "modal"):
         cfg = _load({"provider": provider, "image": "i"})
-        assert cfg.hardware_requirements().min_cuda == "12.8", provider
+        assert cfg.placement().min_cuda == "12.8", provider
 
 
 def test_instance_spec_no_longer_carries_spot():

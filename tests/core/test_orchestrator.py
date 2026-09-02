@@ -40,7 +40,6 @@ from kinoforge.core.interfaces import (
     ConditioningAsset,
     GenerationJob,
     GenerationRequest,
-    HardwareRequirements,
     ImageProfile,
     ImageProfileProvider,
     Instance,
@@ -48,6 +47,7 @@ from kinoforge.core.interfaces import (
     ModelProfile,
     ModelProfileProvider,
     Offer,
+    Placement,
     Segment,
 )
 from kinoforge.core.orchestrator import DeployResult, deploy, deploy_session, generate
@@ -127,7 +127,7 @@ def _hosted_cfg() -> Config:
 class _RaisingProviderSpy(LocalProvider):
     """Raises AssertionError the moment any method is called."""
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, reqs: Placement) -> list[Offer]:
         raise AssertionError("find_offers called on hosted engine path")
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
@@ -1286,7 +1286,7 @@ class _OfferRetryProvider(LocalProvider):
         # Track CapacityError exceptions so identity-check can verify __cause__
         self.last_capacity_excs: list[CapacityError] = []
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, reqs: Placement) -> list[Offer]:
         return list(self._scripted_offers)
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
@@ -1676,7 +1676,7 @@ class _InstanceSupplyProvider(LocalProvider):
         self.destroy_calls: list[str] = []
         self.find_offers_calls: int = 0
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, reqs: Placement) -> list[Offer]:
         self.find_offers_calls += 1
         return super().find_offers(reqs)
 

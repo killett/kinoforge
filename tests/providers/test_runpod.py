@@ -26,11 +26,11 @@ from kinoforge.core.errors import CapacityError, TeardownError
 from kinoforge.core.heartbeat_endpoints import HeartbeatEndpoint
 from kinoforge.core.interfaces import (
     CredentialProvider,
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Lifecycle,
     Offer,
+    Placement,
 )
 from kinoforge.providers.runpod import RunPodProvider
 from kinoforge.providers.runpod.selfterm import RENDER
@@ -179,7 +179,7 @@ def test_find_offers_fetches_gpu_list_and_filters() -> None:
     http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
     provider = RunPodProvider(http_post=http_post)
 
-    reqs = HardwareRequirements(min_vram_gb=48, max_usd_per_hr=2.20)
+    reqs = Placement(min_vram_gb=48, max_usd_per_hr=2.20)
     offers = provider.find_offers(reqs)
 
     assert len(http_post.calls) == 1, "expected exactly one POST call"
@@ -195,7 +195,7 @@ def test_find_offers_returns_all_when_no_filter_needed() -> None:
     http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
     provider = RunPodProvider(http_post=http_post)
 
-    reqs = HardwareRequirements(min_vram_gb=1, max_usd_per_hr=10.0)
+    reqs = Placement(min_vram_gb=1, max_usd_per_hr=10.0)
     offers = provider.find_offers(reqs)
 
     # Real fixture: 25 of 46 GPU types have a non-null uninterruptablePrice ≤ $10/hr
@@ -244,7 +244,7 @@ def test_find_offers_skips_null_priced_entries() -> None:
     )
     provider = RunPodProvider(http_post=http_post)
 
-    offers = provider.find_offers(HardwareRequirements(min_vram_gb=1))
+    offers = provider.find_offers(Placement(min_vram_gb=1))
 
     by_id = {o.gpu_type: o for o in offers}
     assert "NVIDIA H100 PCIe" not in by_id, "null-price offer leaked through"
@@ -261,7 +261,7 @@ def test_find_offers_post_body_contains_query() -> None:
     http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
     provider = RunPodProvider(http_post=http_post)
 
-    provider.find_offers(HardwareRequirements())
+    provider.find_offers(Placement())
 
     assert len(http_post.calls) == 1
     _url, body = http_post.calls[0]
@@ -306,7 +306,7 @@ def test_find_offers_returns_offer_objects() -> None:
     http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
     provider = RunPodProvider(http_post=http_post)
 
-    reqs = HardwareRequirements(min_vram_gb=1, max_usd_per_hr=10.0)
+    reqs = Placement(min_vram_gb=1, max_usd_per_hr=10.0)
     offers = provider.find_offers(reqs)
 
     for o in offers:
@@ -1816,12 +1816,12 @@ def test_find_offers_raises_graphql_error_not_attribute_error() -> None:
     deploy path — the operator sees a NoneType traceback instead of the
     RunPod message that explains why offers could not be fetched.
     """
-    from kinoforge.core.interfaces import HardwareRequirements
+    from kinoforge.core.interfaces import Placement
     from kinoforge.providers.runpod import RunPodGraphQLError, RunPodProvider
 
     provider = RunPodProvider(http_post=HttpPostSpy(response=_ERRORS_SHAPE))
     with pytest.raises(RunPodGraphQLError):
-        provider.find_offers(HardwareRequirements(min_vram_gb=24))
+        provider.find_offers(Placement(min_vram_gb=24))
 
 
 def test_stop_instance_raises_on_graphql_errors() -> None:

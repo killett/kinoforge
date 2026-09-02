@@ -75,10 +75,10 @@ from kinoforge.core.errors import KinoforgeError, ProvisionFailed
 from kinoforge.core.interfaces import (
     ComputeProvider,
     FieldSupport,
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Offer,
+    Placement,
     combine_steps,
     render_launch,
 )
@@ -780,10 +780,10 @@ class SkyPilotProvider(ComputeProvider):
     # ComputeProvider interface
     # ------------------------------------------------------------------
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, placement: Placement) -> list[Offer]:
         """Return SkyPilot offers matching ``reqs``.
 
-        For CPU-class workloads (``reqs.min_vram_gb == 0``) the returned
+        For CPU-class workloads (``placement.min_vram_gb == 0``) the returned
         offer is a synthetic ``sky-cpu-auto`` entry — SkyPilot picks the
         actual SKU from ``cpus``/``memory`` constraints set on the
         :class:`sky.Task` at launch time, not from a discrete catalog.
@@ -792,7 +792,7 @@ class SkyPilotProvider(ComputeProvider):
         would otherwise break ``find_offers`` for the CPU smoke and any
         downstream caller passing ``min_vram_gb=0``.
 
-        For GPU workloads (``reqs.min_vram_gb > 0``) calls
+        For GPU workloads (``placement.min_vram_gb > 0``) calls
         :func:`sky.list_accelerators` (the modern replacement for the
         removed ``sky.gpu_list``) to obtain available accelerators,
         converts each entry to an :class:`~kinoforge.core.interfaces.Offer`,
@@ -806,15 +806,15 @@ class SkyPilotProvider(ComputeProvider):
         mapping shape or a flat ``list`` of dict records — both are handled.
 
         Args:
-            reqs: Hardware requirements to filter against.
+            placement: The portable resource block to filter against.
 
         Returns:
             Filtered and sorted list of :class:`~kinoforge.core.interfaces.Offer`
-            objects. For ``reqs.min_vram_gb == 0`` the list always contains a
+            objects. For ``placement.min_vram_gb == 0`` the list always contains a
             single synthetic CPU offer.
         """
         sky = self._sky()
-        if reqs.min_vram_gb == 0:
+        if placement.min_vram_gb == 0:
             # CPU short-circuit: ``list_accelerators(gpus_only=True)`` returns
             # an empty dict for CPU smokes, so synthesise a single offer that
             # signals downstream ``create_instance`` to set CPU resource
@@ -868,7 +868,7 @@ class SkyPilotProvider(ComputeProvider):
                     mode="pod",
                 )
             )
-        return filter_offers(raw_offers, reqs)
+        return filter_offers(raw_offers, placement)
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
         """Launch a SkyPilot cluster from ``spec``.

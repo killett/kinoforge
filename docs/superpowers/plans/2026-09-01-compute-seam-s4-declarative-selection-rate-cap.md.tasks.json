@@ -152,7 +152,7 @@
       "id": "7",
       "planTask": 6,
       "subject": "Task 6: filter_offers takes a Placement; HardwareRequirements dies",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": ["6"],
       "metadata": {
         "files": [

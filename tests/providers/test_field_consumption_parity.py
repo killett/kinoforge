@@ -38,7 +38,6 @@ from kinoforge.core import registry
 from kinoforge.core.interfaces import (
     CredentialProvider,
     FieldSupport,
-    HardwareRequirements,
     InstanceSpec,
     Offer,
     Placement,
@@ -609,7 +608,7 @@ class _FakeSkyCatalog:
         return list(_SKY_ACCELERATORS)
 
 
-def _runpod_offers(reqs: HardwareRequirements) -> list[Offer]:
+def _runpod_offers(reqs: Placement) -> list[Offer]:
     """Return RunPod's own ``find_offers`` output over the fake GPU-type list."""
     provider = RunPodProvider(
         _StubCreds(),
@@ -619,12 +618,12 @@ def _runpod_offers(reqs: HardwareRequirements) -> list[Offer]:
     return provider.find_offers(reqs)
 
 
-def _skypilot_offers(reqs: HardwareRequirements) -> list[Offer]:
+def _skypilot_offers(reqs: Placement) -> list[Offer]:
     """Return SkyPilot's own ``find_offers`` output over the fake catalog."""
     return SkyPilotProvider(_FakeSkyCatalog()).find_offers(reqs)
 
 
-_CATALOGS: dict[str, Callable[[HardwareRequirements], list[Offer]]] = {
+_CATALOGS: dict[str, Callable[[Placement], list[Offer]]] = {
     "local": lambda reqs: LocalProvider().find_offers(reqs),
     "modal": lambda reqs: ModalProvider().find_offers(reqs),
     "runpod": _runpod_offers,
@@ -634,29 +633,29 @@ _CATALOGS: dict[str, Callable[[HardwareRequirements], list[Offer]]] = {
 #: Deliberately permissive so every provider's catalog survives it and each
 #: probe below narrows exactly one axis. ``min_vram_gb`` is 1 rather than 0
 #: because 0 makes SkyPilot short-circuit to its synthetic CPU offer.
-_BASE_REQS = HardwareRequirements(
+_BASE_REQS = Placement(
     min_vram_gb=1,
     min_cuda="0.0",
     max_usd_per_hr=1_000_000.0,
-    gpu_preference=(),
+    accelerators=(),
     disk_gb=0,
 )
 
-_Narrow = Callable[[list[Offer]], HardwareRequirements]
+_Narrow = Callable[[list[Offer]], Placement]
 
 
-def _above_every_vram(base: list[Offer]) -> HardwareRequirements:
+def _above_every_vram(base: list[Offer]) -> Placement:
     """Return reqs whose VRAM floor is above every offer in ``base``."""
     return dataclasses.replace(_BASE_REQS, min_vram_gb=max(o.vram_gb for o in base) + 1)
 
 
-def _above_every_cuda(base: list[Offer]) -> HardwareRequirements:
+def _above_every_cuda(base: list[Offer]) -> Placement:
     """Return reqs whose CUDA floor no real catalog entry can meet."""
     del base
     return dataclasses.replace(_BASE_REQS, min_cuda="99.0")
 
 
-def _below_every_price(base: list[Offer]) -> HardwareRequirements:
+def _below_every_price(base: list[Offer]) -> Placement:
     """Return reqs whose price ceiling is below every offer in ``base``.
 
     A free catalog (LocalProvider bills nothing) needs a NEGATIVE ceiling to
@@ -701,7 +700,7 @@ def _orders_by_preference() -> _Proof:
                 "the offline catalog has fewer than two distinct accelerators, "
                 "so an ordering probe proves nothing"
             )
-        ranked = catalog(dataclasses.replace(_BASE_REQS, gpu_preference=(wanted,)))
+        ranked = catalog(dataclasses.replace(_BASE_REQS, accelerators=(wanted,)))
         if not ranked or ranked[0].gpu_type != wanted:
             return (
                 f"preferring {wanted!r} did not put it first; got "

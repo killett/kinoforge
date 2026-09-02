@@ -1,7 +1,7 @@
 """Behavior: ModalProvider registration, offers, and heartbeat semantics."""
 
 from kinoforge.core import registry
-from kinoforge.core.interfaces import HardwareRequirements, Launch, SetupStep
+from kinoforge.core.interfaces import Launch, Placement, SetupStep
 from kinoforge.providers.modal import ModalProvider
 
 
@@ -14,7 +14,7 @@ def test_registry_resolves_modal():
 
 
 def test_find_offers_returns_filtered_catalog():
-    offers = ModalProvider().find_offers(HardwareRequirements(min_vram_gb=80))
+    offers = ModalProvider().find_offers(Placement(min_vram_gb=80))
     assert {o.id for o in offers} == {"A100-80GB", "H100"}
 
 

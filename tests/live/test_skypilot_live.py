@@ -57,7 +57,6 @@ if _REASONS:
 # ``sky`` is already bound from the try-block above; ``noqa: E402`` covers
 # the kinoforge imports which must come after the module-level skip gate.
 from kinoforge.core.interfaces import (  # noqa: E402
-    HardwareRequirements,
     InstanceSpec,
     Launch,
     Lifecycle,
@@ -74,11 +73,11 @@ _READY_TIMEOUT_S: float = 600.0  # 10 min
 _DESTROY_TIMEOUT_S: float = 300.0  # 5 min
 
 # CPU smoke: zero VRAM requirement; min_cuda kept permissive.
-HW_REQS_CPU = HardwareRequirements(min_vram_gb=0, min_cuda="0.0")
+HW_REQS_CPU = Placement(min_vram_gb=0, min_cuda="0.0")
 
 # T4 smoke (Layer W+β): 16 GB VRAM, modern CUDA. min_vram_gb=8 is
 # safely below the T4's 16 GB and excludes accelerators smaller than T4.
-HW_REQS_T4 = HardwareRequirements(min_vram_gb=8, min_cuda="11.0")
+HW_REQS_T4 = Placement(min_vram_gb=8, min_cuda="11.0")
 
 _GPU_FIXTURE_DIR = FIXTURE_DIR / "gpu"
 _GPU_READY_TIMEOUT_S: float = 900.0  # 15 min — GPU provision slower than CPU

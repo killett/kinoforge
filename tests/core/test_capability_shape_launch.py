@@ -15,12 +15,12 @@ from kinoforge.core.capabilities import WorkloadShape
 from kinoforge.core.config import Config, load_config
 from kinoforge.core.errors import CapacityError, ValidationError
 from kinoforge.core.interfaces import (
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Launch,
     ModelProfile,
     Offer,
+    Placement,
 )
 from kinoforge.core.orchestrator import (
     _provision_instance_and_build_backend,
@@ -134,11 +134,11 @@ class _RecordingProvider(LocalProvider):
         self.create_calls: list[InstanceSpec] = []
         self.find_offers_calls = 0
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, reqs: Placement) -> list[Offer]:
         """Return one fixed offer regardless of ``reqs``, counting the call.
 
         Args:
-            reqs: Ignored; the caller's HardwareRequirements.
+            reqs: Ignored; the caller's Placement.
 
         Returns:
             A single-element offer list, enough to drive one retry iteration.
@@ -250,11 +250,11 @@ class _FlakyProvider(LocalProvider):
         super().__init__()
         self.create_calls: list[InstanceSpec] = []
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, reqs: Placement) -> list[Offer]:
         """Return two offers so the retry loop has somewhere to go.
 
         Args:
-            reqs: Ignored; the caller's HardwareRequirements.
+            reqs: Ignored; the caller's Placement.
 
         Returns:
             Two offers differing only in id.

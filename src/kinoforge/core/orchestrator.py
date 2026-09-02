@@ -970,7 +970,7 @@ def _provision_instance_and_build_backend(
             after the instance is already created — that instance is destroyed
             before the exception propagates.
     """
-    hw_reqs = cfg.hardware_requirements()
+    hw_reqs = cfg.placement()
     lifecycle = cfg.lifecycle()
     image = cfg.compute.image if cfg.compute is not None else ""
     # THE single resolution site for the capacity window. It sits beside the
@@ -1769,7 +1769,7 @@ def deploy(
     2. Resolve the engine (registry or injection).
     3. If ``engine.requires_compute == False`` (hosted): skip compute entirely,
        return a ``DeployResult`` with ``instance=None`` and the engine's endpoints.
-    4. Resolve the provider.  Call ``provider.find_offers(cfg.hardware_requirements())``;
+    4. Resolve the provider.  Call ``provider.find_offers(cfg.placement())``;
        raise ``CapacityError`` if the list is empty.
     5. **Dry-run:** print a vendor/engine-neutral plan and return a
        ``DeployResult(instance=None, plan_text=...)``.  ``create_instance`` is
@@ -1795,7 +1795,7 @@ def deploy(
         A ``DeployResult`` describing the outcome.
 
     Raises:
-        CapacityError: No compute offer satisfies ``cfg.hardware_requirements()``.
+        CapacityError: No compute offer satisfies ``cfg.placement()``.
     """
     key = cfg.capability_key()
     resolved_engine = _resolve_engine(cfg, engine)
@@ -1810,7 +1810,7 @@ def deploy(
 
     # Compute path: resolve provider and find offers.
     resolved_provider = _resolve_provider(cfg, provider)
-    hw_reqs = cfg.hardware_requirements()
+    hw_reqs = cfg.placement()
     offers = resolved_provider.find_offers(hw_reqs)
 
     if not offers:
@@ -2033,7 +2033,7 @@ def generate(
         CapabilityMismatch: The live backend's capabilities differ from the
             cached profile; instance has already been destroyed before this
             propagates.
-        CapacityError: No compute offer satisfies ``cfg.hardware_requirements()``.
+        CapacityError: No compute offer satisfies ``cfg.placement()``.
         UnknownAdapter: ``cfg.keyframe.engine`` is not registered in the image-engine
             registry.
         ValidationError: The ``request`` fails mode/role/kind validation, or a

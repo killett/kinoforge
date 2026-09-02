@@ -7,7 +7,7 @@ so :func:`filter_offers` does not apply the pod ``max_usd_per_hr`` cap.
 
 from __future__ import annotations
 
-from kinoforge.core.interfaces import HardwareRequirements, Offer
+from kinoforge.core.interfaces import Offer, Placement
 from kinoforge.core.offers import filter_offers
 
 #: Modal GPU catalog: (Modal gpu-string, VRAM GB, $/hr snapshot).
@@ -22,7 +22,7 @@ _MODAL_GPUS: tuple[tuple[str, int, float], ...] = (
 )
 
 #: Modal's GPU fleet runs recent NVIDIA drivers (CUDA 12.8+). Report 12.8 so the
-#: catalog survives the default ``HardwareRequirements.min_cuda`` ("12.8"); a
+#: catalog survives the default ``Placement.min_cuda`` ("12.8"); a
 #: lower "conservative" baseline would make ``filter_offers`` drop every offer.
 _MODAL_CUDA = "12.8"
 
@@ -39,13 +39,13 @@ MODAL_GPU_CATALOG: tuple[Offer, ...] = tuple(
 )
 
 
-def modal_offers(reqs: HardwareRequirements) -> list[Offer]:
+def modal_offers(placement: Placement) -> list[Offer]:
     """Return catalog offers filtered/ordered per ``reqs``.
 
     Args:
-        reqs: Hardware requirements from the resolved config.
+        placement: The portable resource block from the resolved config.
 
     Returns:
-        Offers meeting ``min_vram_gb``/``min_cuda``, ordered by ``gpu_preference``.
+        Offers meeting ``min_vram_gb``/``min_cuda``, ordered by ``accelerators``.
     """
-    return filter_offers(list(MODAL_GPU_CATALOG), reqs)
+    return filter_offers(list(MODAL_GPU_CATALOG), placement)

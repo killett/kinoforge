@@ -195,15 +195,17 @@ def test_lifecycle_heartbeat_interval_s_rejects_zero():
         )
 
 
-def test_hardware_requirements_defaults_applied():
+def test_placement_defaults_applied():
     cfg = load_config(WAN)
-    reqs = cfg.hardware_requirements()
+    reqs = cfg.placement()
     # Bug this catches: dropping defaults when user only set accelerators.
+    # S4 deleted Config.hardware_requirements(); placement() is now the single
+    # block, and every default it carries was that shim's default first.
     assert reqs.min_vram_gb == 48
     assert reqs.min_cuda == "12.8"
     assert reqs.max_usd_per_hr == 2.20
     assert reqs.disk_gb == 100
-    assert reqs.gpu_preference == ("RTX 4090",)
+    assert reqs.accelerators == ("RTX 4090",)
 
 
 def test_zero_base_models_rejected():

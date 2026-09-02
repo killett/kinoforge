@@ -55,9 +55,9 @@ def test_runpod_live_e2e_pod_lifecycle_smoke() -> None:
     """
     from kinoforge.core.credentials import EnvCredentialProvider
     from kinoforge.core.interfaces import (
-        HardwareRequirements,
         InstanceSpec,
         Lifecycle,
+        Placement,
     )
     from kinoforge.providers.runpod import (
         RunPodProvider,
@@ -94,7 +94,7 @@ def test_runpod_live_e2e_pod_lifecycle_smoke() -> None:
         # ------------------------------------------------------------------
         # 1. find_offers
         # ------------------------------------------------------------------
-        reqs = HardwareRequirements(
+        reqs = Placement(
             min_vram_gb=24,
             max_usd_per_hr=0.50,
         )

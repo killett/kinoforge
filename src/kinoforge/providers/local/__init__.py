@@ -18,10 +18,10 @@ from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.interfaces import (
     ComputeProvider,
     FieldSupport,
-    HardwareRequirements,
     Instance,
     InstanceSpec,
     Offer,
+    Placement,
 )
 from kinoforge.core.offers import filter_offers
 
@@ -206,19 +206,19 @@ class LocalProvider(ComputeProvider):
     # ComputeProvider interface
     # ------------------------------------------------------------------
 
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+    def find_offers(self, placement: Placement) -> list[Offer]:
         """Return synthetic local offers that satisfy ``reqs``.
 
         Delegates filtering to ``filter_offers`` so callers' hardware
         overrides are fully respected.
 
         Args:
-            reqs: Hardware requirements to filter against.
+            placement: The portable resource block to filter against.
 
         Returns:
             Filtered (and sorted) list of ``Offer`` objects.
         """
-        return filter_offers(_SYNTHETIC_OFFERS, reqs)
+        return filter_offers(_SYNTHETIC_OFFERS, placement)
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
         """Create and record a new in-process instance.

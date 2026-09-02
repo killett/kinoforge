@@ -286,8 +286,7 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     instance = None
     if provider is not None:
-        hw_reqs = cfg.hardware_requirements()
-        offers = provider.find_offers(hw_reqs)
+        offers = provider.find_offers(cfg.placement())
         if not offers:
             print("error: no compute offers available", file=sys.stderr)
             return 1
