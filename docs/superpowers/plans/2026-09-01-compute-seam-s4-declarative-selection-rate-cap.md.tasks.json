@@ -1,7 +1,7 @@
 {
   "plan": "docs/superpowers/plans/2026-09-01-compute-seam-s4-declarative-selection-rate-cap.md",
   "branch": "feat/compute-seam-s4-declarative-selection-rate-cap",
-  "lastUpdated": "2026-09-01T18:30:00-0700",
+  "lastUpdated": "2026-09-01T19:05:00-0700",
   "note": "Native task IDs 1-13 map to plan Tasks 0-12 (planTask = id - 1). Executed sequentially; each task blocked by its predecessor per the plan's 'ordering that matters'.",
   "tasks": [
     {
@@ -266,7 +266,7 @@
       "id": "11",
       "planTask": 10,
       "subject": "Task 10: Rework the golden harness, then regenerate",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         "10"
       ],
