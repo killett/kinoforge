@@ -4,6 +4,61 @@
 
 ## Breaking changes
 
+### Compute-seam S4 — selection moved into the providers; the rate cap is verified
+
+Three breaks, in the order an operator is likely to meet them.
+
+**1. A custom provider must declare a rate source, or its configs stop loading.**
+
+Every `ComputeProvider` now has to declare exactly one of `Capability.RATE_READBACK`
+or `Capability.RATE_DETERMINISTIC`. A provider declaring neither is a validation
+**ERROR** at load — not a warning — because `compute.placement.max_usd_per_hr`
+cannot be enforced against something that cannot say what it bills:
+
+```
+[ERROR] compute.placement.max_usd_per_hr: <name> declares neither RATE_READBACK
+  nor RATE_DETERMINISTIC, so kinoforge cannot know what a launched instance
+  bills and max_usd_per_hr cannot be enforced.
+```
+
+Which to declare: `RATE_READBACK` if your provider CHOOSES the SKU (an optimizer,
+a scheduler) — then implement `realized_rate(instance)` to read the rate off the
+launched instance. `RATE_DETERMINISTIC` if the SKU you were handed is the SKU
+that bills, so the catalog price IS the rate. Declaring both is refused: they are
+opposite claims about who chooses.
+
+**2. `find_offers` is off the `ComputeProvider` ABC, and `InstanceSpec.offer` is gone.**
+
+Selection is the provider's business now. A custom provider no longer implements
+`find_offers` unless it genuinely enumerates a catalog — in which case it also
+declares `Capability.CATALOG_ENUMERATION` and keeps the method public. What every
+provider DOES get is `spec.placement`, the portable resource block, and it selects
+from that inside `create_instance`.
+
+The offer-retry loop moved with it: the orchestrator no longer iterates a catalog
+on any provider's behalf. A provider that wants "try the next offer on
+CapacityError" implements that itself (RunPod does).
+
+**3. `HardwareRequirements` and `Config.hardware_requirements()` are deleted.**
+
+They described the same five numbers as `Placement` under different names.
+`filter_offers(offers, placement)` now takes the portable block directly, and
+`gpu_preference` is spelled `accelerators`. No YAML change: the config surface
+was already `compute.placement`, and this only removes the internal shim behind
+it.
+
+**What did NOT change, deliberately.** `max_usd_per_hr` is still a pre-book
+catalog filter wherever a catalog exists — `filter_offers` still excludes
+`mode == "pod"` offers above the ceiling before anything is booked. S4 ADDS a
+post-launch readback on top of that, because a filter cannot see a choice made by
+an optimizer that never consulted the catalog. Removing the filter would have
+made kinoforge pay for boots it currently never starts.
+
+**New failure mode worth knowing.** A launched instance that bills above the cap
+is now DESTROYED and the run raises `RateCapExceeded`, naming both numbers, the
+instance id and what was booked. Previously it ran to completion while every
+kinoforge surface reported the number you asked for.
+
 ### Compute-seam S3 — `RenderedProvision.script` is no longer what providers boot
 
 This one cannot break a YAML config. It breaks a **custom engine**.

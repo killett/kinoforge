@@ -252,10 +252,15 @@ def create_instance(self, spec: InstanceSpec) -> Instance:
    `provider.create_instance(spec)` instead of `create(find_offers())`. `capacity_wait_s` reaches
    it from the RunPod namespace; on a provider that does not declare it, the wrapper is a
    pass-through.
-3. **`kinoforge offers` (`cli/_commands.py:289`) becomes capability-gated.** A new
-   `Capability.CATALOG_ENUMERATION`, declared by RunPod, Modal and Local. On SkyPilot the command
-   reports that the provider does not enumerate and points at `sky show-gpus`. Keeping a fake
-   catalog for a provider that does not have one is how the current lie started.
+3. **`Capability.CATALOG_ENUMERATION` is declared by RunPod, Modal and Local**, and not by
+   SkyPilot. Keeping a fake catalog for a provider that does not have one is how the current lie
+   started. (**Corrected 2026-09-01**, during S4 Task 9: this originally said `kinoforge offers`
+   "becomes capability-gated" and cited `cli/_commands.py:289`. There is no `kinoforge offers`
+   command — the CLI's subcommands are batch, deploy, destroy, gc, generate, interpolate, list,
+   lora, pod, provision, status, stop, sweeper, upscale — and that line number was the enumeration
+   inside `provision`, which S4 simply deletes: the provider raises its own `CapacityError` with
+   its own message when nothing satisfies the placement. The capability is still declared and
+   still load-bearing; nothing gates a command that does not exist.)
 4. **`Offer` survives as a RunPod/Modal-internal type**, not a seam type. `core/offers.py`'s
    `filter_offers` keeps its `min_vram_gb` / `min_cuda` / `gpu_preference` / `max_usd_per_hr`
    logic and is called by the providers that enumerate.
@@ -273,8 +278,16 @@ def create_instance(self, spec: InstanceSpec) -> Instance:
    Modal exposes a CUDA constraint at selection time. True of those APIs, false of kinoforge —
    `core/offers.py::filter_offers` applies `min_cuda` to whatever catalog any enumerating provider
    returns, and SkyPilot's offers carry `cuda="12.0"`, so a `"12.8"` default outside their reach
-   empties the catalog. It dies with the catalog-filter path in S4.) `max_usd_per_hr` stops being
-   a catalog filter and becomes the verified cap of §6.
+   empties the catalog. It dies with the catalog-filter path in S4.) `max_usd_per_hr` becomes the
+   verified cap of §6 **in addition to**, not instead of, the catalog filter it already is.
+   (**Corrected 2026-09-01**, during S4 Task 6: this originally read "stops being a catalog filter
+   and becomes the verified cap of §6". Implementing that literally would have been a money
+   regression. `core/offers.py::filter_offers` excludes `mode == "pod"` offers above the ceiling
+   BEFORE anything is booked, so on RunPod the cap is enforced for free and nothing over-cap is
+   ever launched. Replacing that with a post-launch readback would make kinoforge pay for boots it
+   currently never starts. The readback is added on top, because it catches what a filter cannot:
+   SkyPilot's optimizer choosing a SKU nobody enumerated, and drift between a catalog price and
+   the billed price. §6's own "in two parts" framing is right; this item's wording was not.)
 7. **Modal's `create_instance` currently raises without `spec.offer` (`:122-123`).** It gains a
    `Placement`→`gpu=` mapping over its hardcoded catalog (`providers/modal/_catalog.py`), which
    is genuinely declarative already: you name a GPU class and Modal attaches exactly that.
@@ -291,6 +304,14 @@ rather than filters applied to a list the chooser never sees.
 **Part 1 — narrow what the optimizer may choose.** `accelerators`, `accelerator_count`, `region`,
 `spot`, and the `clouds` namespace key all travel into the launch request. This is necessary and
 insufficient: narrowing is not a price ceiling.
+
+(**Corrected 2026-09-01**, during S4 Task 6: this list left out `max_usd_per_hr`, which belongs in
+it wherever a catalog exists. `filter_offers` applies the ceiling to `mode == "pod"` offers BEFORE
+booking, so on RunPod nothing over-cap is ever launched — strictly better than the readback, which
+can only destroy an instance that is already running. Part 2 is added on top of that, not in place
+of it. Note the ceiling is structurally inert for Modal: every `MODAL_GPU_CATALOG` entry is
+`mode="serverless"`, so the filter skips it, and `realized_rate` is the only thing that enforces a
+cap there at all.)
 
 **Part 2 — read back the realized instance and verify.**
 
@@ -318,12 +339,20 @@ Two new capabilities capture that split:
 | `RATE_DETERMINISTIC` | runpod, modal | The requested SKU is the billed SKU; the catalog price is the rate. |
 
 The check runs after `create_instance` returns and **before `engine.provision`**, so a violation
-is torn down before the expensive part of a boot:
+is torn down before the expensive part of a boot — **on RunPod and Modal**.
+
+(**Qualified 2026-09-01**, during S4 Task 3: it is false on SkyPilot, and knowing so changes what
+the teardown costs. `sky.launch` runs `Task.setup` before it returns, so by the time a rate is
+readable the expensive part has already happened; the teardown discards several minutes of
+provisioning rather than preventing it. §14 half-acknowledges this. Closing it needs a pre-launch
+`sky.optimize()` cost estimate, which is new wire surface wanting its own live proof — recorded as
+an **S5 follow-up**, deliberately not in S4. The readback is what makes the cap true either way;
+what varies is only how much work is thrown away when it fires.)
 
 ```
 realized > cap                          -> destroy_instance + RateCapExceeded
 realized unreadable, RATE_READBACK      -> destroy_instance + RateCapExceeded(realized=<unreadable>)
-realized unreadable, RATE_DETERMINISTIC -> unreachable; the catalog is the rate
+realized unreadable, RATE_DETERMINISTIC -> WARN + proceed; the catalog already bounded it
 neither capability declared             -> config-validation ERROR before launch
 ```
 
@@ -469,7 +498,14 @@ Four things must be true, and each has a test that fails when it stops being tru
 4. **Rate-cap verification.** A fake returns an over-cap instance; assert `destroy_instance` was
    called and the raised error names both the realized rate and the cap. A second fake returns
    `None` from `realized_rate` while declaring `RATE_READBACK`; assert the same teardown. A third
-   declares `RATE_DETERMINISTIC` and is never asked.
+   declares `RATE_DETERMINISTIC` and returns `None`; assert it proceeds with a WARNING and is NOT
+   torn down. (**Corrected 2026-09-01**, during S4 Task 3: the third case originally read "and is
+   never asked". Every provider is asked — the read is one call and the answer is what
+   `Instance.cost_rate_usd_per_hr` is then sourced from. What differs is the response to silence:
+   unreadable is fatal only where the provider chose the SKU itself. A fourth case belongs beside
+   them and is implemented: over-cap on a `RATE_DETERMINISTIC` provider still tears down, because
+   the leniency is for an unreadable rate, not a rate that was read and is too high — which is the
+   only cap enforcement Modal has at all.)
 
 Per stage: a live smoke on the cheapest CPU SKU — same config, same behaviour before and after.
 `pixi run preflight` first, RED scaffold committed before any live spend, `--no-reuse`, and
@@ -503,10 +539,22 @@ configs pin `us-west-2` / `us-west1` per the standing Oregon rule.
 `_strip_trailing_exec` deleted, `image_build_script` / `runtime_provision_script` deleted. Golden
 diff limited to RunPod's now-provider-composed trailing `exec`.
 
-**S4 — declarative selection + rate-cap verification.** `find_offers` off the ABC; the offer
-retry loop moves inside RunPod; `Capability.CATALOG_ENUMERATION` gates `kinoforge offers`;
+**S4 — declarative selection + rate-cap verification. SHIPPED 2026-09-01.** `find_offers` off the
+ABC (SkyPilot has none at all; its selection is a private step of `create_instance`, and RunPod /
+Modal / Local keep theirs, which is what `Capability.CATALOG_ENUMERATION` declares); the offer
+retry loop moved inside RunPod; `InstanceSpec.offer` and `HardwareRequirements` deleted;
 `realized_rate` + `RATE_READBACK` / `RATE_DETERMINISTIC` + teardown-on-violation;
-`Instance.cost_rate_usd_per_hr` sources from the realized read.
+`Instance.cost_rate_usd_per_hr` sources from the realized read, which is where F4 dies.
+
+Both halves are live-proven on `c6i.large` in `us-west-2`: a cap of $0.01 against a realized
+$0.0850 destroyed the cluster and raised `RateCapExceeded` carrying the real number, and the
+inverted selection path still books `c6i.large` in `us-west-2a`. Evidence in
+`tests/live/_s4_rate_cap_evidence.json` and `tests/live/_s4_selection_evidence.json`.
+
+Two S5 follow-ups this stage recorded rather than closed: a pre-launch `sky.optimize()` estimate,
+so a SkyPilot violation is refused before `Task.setup` runs rather than after (§6); and enriching
+SkyPilot's `Instance.tags` so `RateCapExceeded.placement_summary` can name the SKU and cloud, not
+only the provider and the cluster name.
 
 **S5 — endpoint shape + ledger generalisation.** One port-keyed shape everywhere; SkyPilot's
 `endpoints()` becomes tunnel-ensuring; the pre-launch provisional row generalises to all

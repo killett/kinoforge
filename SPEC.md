@@ -216,22 +216,31 @@ separation strict.
 ```python
 # core/interfaces.py  — the only thing core code depends on
 
-class HardwareRequirements:
-    """Filter applied by ComputeProvider.find_offers — provider keeps only offers meeting these.
-       Defaults are baked in but every field is config-overridable."""
-    min_vram_gb: int = 48                  # default 48 GB; rejects undersized cards
+class Placement:
+    """What to get — the portable resource block every provider honours.
+       (compute-seam S4, 2026-09-01: replaced HardwareRequirements, which named the same
+       numbers as a CATALOG FILTER. Selection is now the provider's business, so the block
+       states the requirement instead of describing how to filter a list.)"""
+    accelerators: tuple[str, ...] = ()      # ordered preference (was gpu_preference)
+    accelerator_count: int = 1
+    min_vram_gb: int = 48                   # default 48 GB; rejects undersized cards
     min_cuda: str = "12.8"                  # minimum CUDA driver version (e.g. "12.8")
-    max_usd_per_hr: float = 2.20  # ceiling for POD-MODE offers only; ignored for serverless (per-second billing — use `budget` instead)
-    gpu_preference: list[str] = []          # ordered preference list (e.g. ["RTX 4090", "RTX 5090"]); when set, providers should try in order among the offers that already pass the filters above
     disk_gb: int = 100                      # minimum container/instance disk
+    region: str | None = None               # pin alongside the cloud; a region belongs to one cloud
+    spot: bool = False
+    max_usd_per_hr: float = 2.20  # pre-book ceiling for POD-MODE offers (serverless bills per second — use `budget`), AND the cap verified against the launched instance
 
 class ComputeProvider(ABC):
     """A place to run GPU workloads. RunPod (pod or serverless), Vast, Lambda, Local, ...
        Instances must be created with cost guardrails and a self-termination mechanism; see the
        Cost-safety section. `destroy_instance` must CONFIRM termination, never fire-and-forget."""
     name: str
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]: ...   # MUST exclude any offer failing min_vram_gb, min_cuda, or (for pod mode) max_usd_per_hr; preserve gpu_preference order in the returned list
-    def create_instance(self, spec: InstanceSpec) -> Instance: ...   # spec carries guardrails: idle_timeout, job_timeout, max_lifetime, budget; provider installs the in-pod dead-man's switch + local job_timeout enforcement + max_lifetime drain at startup
+    # NO find_offers: S4 took it off the ABC. A provider that genuinely enumerates a catalog
+    # (runpod, modal, local) keeps it as its own public method and declares
+    # Capability.CATALOG_ENUMERATION; one that hands constraints to an optimizer (skypilot)
+    # has none. Selection happens inside create_instance, from spec.placement.
+    def realized_rate(self, instance: Instance) -> float | None: ...   # what this instance ACTUALLY bills; read after launch, from the launched handle (RATE_READBACK) or the catalog price of the requested SKU (RATE_DETERMINISTIC). Returns None rather than raising. The orchestrator destroys an instance whose realized rate exceeds placement.max_usd_per_hr
+    def create_instance(self, spec: InstanceSpec) -> Instance: ...   # selects its own SKU from spec.placement; spec carries guardrails: idle_timeout, job_timeout, max_lifetime, budget; provider installs the in-pod dead-man's switch + local job_timeout enforcement + max_lifetime drain at startup
     def get_instance(self, instance_id: str) -> Instance: ...
     def list_instances(self) -> list[Instance]: ...   # must list ALL of this account's instances, so an external sweeper can find orphans
     def stop_instance(self, instance_id: str) -> None: ...
@@ -754,11 +763,11 @@ Treat each item below as a behavioral acceptance criterion — write it as a fai
 - **Fail-hard on contradiction**: a test where `verify(profile, backend)` finds the live model
   disagreeing with the cached profile asserts the run raises/aborts **and** the `ComputeProvider`
   teardown (destroy pod / stop serverless worker) is invoked — no silent continuation.
-- **`find_offers` filters correctly**: given a synthetic offer list (a fake provider in tests), it
-  excludes offers below `min_vram_gb` or below `min_cuda`; excludes pod-mode offers above
-  `max_usd_per_hr` but does NOT exclude serverless offers on that field; and preserves
-  `gpu_preference` order among the offers that survive. Defaults (`48 GB / "12.8" / 2.20`) take
-  effect when unspecified.
+- **`filter_offers` filters correctly**: given a synthetic offer list, it excludes offers below
+  `min_vram_gb` or below `min_cuda`; excludes pod-mode offers above `max_usd_per_hr` but does NOT
+  exclude serverless offers on that field; and preserves `accelerators` order among the offers
+  that survive. Defaults (`48 GB / "12.8" / 2.20`) take effect when unspecified. (S4: it takes a
+  `Placement` and is called by the providers that enumerate, not by the orchestrator.)
 - **Mode + role-authoritative input validation (#4/#5)**: a `GenerationRequest` carries an EXPLICIT
   `mode`; a mode not in the model's `supported_modes` is rejected. Validation reads the required-role
   set from the shared `MODE_ROLE_REQUIREMENTS` table (not per-model), not by count: flf2v requires

@@ -253,7 +253,7 @@ KINOFORGE_LIVE_TESTS=1 KINOFORGE_SAVE_FIXTURES=1 \
 pixi run pytest ../tests/live/test_runpod_live.py -v
 ```
 
-The smoke is intentionally minimal: it calls `find_offers`, creates a
+The smoke is intentionally minimal: it creates a
 real pod on the cheapest viable GPU, polls until ready, lists, then
 destroys. No engine, no model download, no generation. Cost per run
 is ≈$0.001 (single-digit pennies × seconds at ~$0.35/hr).

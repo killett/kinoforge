@@ -30,11 +30,16 @@ first unchecked task without redoing committed work.
   `image_build_script`, `runtime_provision_script` and `run_cmd` are deleted. Fixed two live
   SkyPilot bugs — the diffusers double-launch and comfyui's lost `cd` — and corrected design doc §7
   in two places. See the RESUME SNAPSHOT for which 21 goldens moved and why.
-  **S4 (realized-rate check + the `find_offers` inversion) is PLANNED, not started** — plan
-  `docs/superpowers/plans/2026-09-01-compute-seam-s4-declarative-selection-rate-cap.md`, 13 tasks
-  in two independently-shippable halves (Part A = the verified rate cap, Tasks 0–5, closes F4;
-  Part B = declarative selection, Tasks 6–12). **No `.tasks.json` was written** — bootstrap the
-  task list from the plan document's `## Task N:` headers (executing-plans Step 1b does this).
+  **S4 (realized-rate check + the `find_offers` inversion) SHIPPED 2026-09-01** — plan
+  `docs/superpowers/plans/2026-09-01-compute-seam-s4-declarative-selection-rate-cap.md`
+  (`.tasks.json` co-located, 13 tasks, all committed), branch
+  `feat/compute-seam-s4-declarative-selection-rate-cap`. **F4 is closed**: the hourly rate is read
+  off the launched instance, an over-cap instance is destroyed with `RateCapExceeded`, and
+  `Instance.cost_rate_usd_per_hr` carries the read-back number. Selection moved into the providers —
+  `find_offers` is off the ABC, `InstanceSpec.offer` and `HardwareRequirements` are deleted. Both
+  live smokes PROVEN for ~$0.016 total. See the RESUME SNAPSHOT for the four corrections the design
+  needed, which 4 goldens moved in the inversion (and why 13 more moved for an unrelated,
+  mechanical reason), and the two follow-ups handed to S5.
 - **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
 - **Modal plan (spec 1, done):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; `.tasks.json` co-located)
@@ -408,7 +413,119 @@ first unchecked task without redoing committed work.
   longer route anyone into it. GCP's `roles.txt` is still entirely unmeasured — honest and labelled
   as such, rather than green from a caller-evaluated `testIamPermissions`.
 
-## RESUME SNAPSHOT (updated 2026-08-31 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-01 — read this, then STOP; below is history)
+
+**Compute-seam S4 (declarative selection + a verified rate cap) — SHIPPED 2026-09-01.** Plan
+`docs/superpowers/plans/2026-09-01-compute-seam-s4-declarative-selection-rate-cap.md`
+(`.tasks.json` co-located), all 13 tasks committed on branch
+`feat/compute-seam-s4-declarative-selection-rate-cap`, commit range `c4ded0a7`..HEAD. BOTH live
+smokes **PROVEN**, ~$0.016 total.
+
+**F4 is closed.** The cap used to be a filter over a catalog SkyPilot's optimizer never consulted,
+so a cluster billing above it ran to completion while the ledger, `est_spend`, `kinoforge list` and
+every budget computation all reported the number kinoforge ASKED for. Now the orchestrator reads
+the rate off the LAUNCHED instance (`ComputeProvider.realized_rate`), destroys it and raises
+`RateCapExceeded` if it is over cap, and sources `Instance.cost_rate_usd_per_hr` from that read.
+
+**The two halves.**
+
+*Part A — the verified cap.* Three new capabilities: `RATE_READBACK` (skypilot — the provider
+chooses the SKU, so only a readback knows), `RATE_DETERMINISTIC` (runpod, modal, local — the
+requested SKU is the billed SKU), and `CATALOG_ENUMERATION` (runpod, modal, local; NOT skypilot).
+Declaring neither rate capability is a load-time validation ERROR. `_enforce_rate_cap` runs after
+`on_instance_created` and before `_wait_for_provider_ready`/`engine.provision`; over-cap destroys
+and raises, unreadable destroys on a READBACK provider and WARNs-and-proceeds on a DETERMINISTIC
+one, a teardown failure is folded into the same error rather than replacing it.
+
+*Part B — declarative selection.* `find_offers` left the ABC. SkyPilot has none at all (its
+selection is the private `_select_accelerator` / `_candidate_accelerators` pair); runpod, modal and
+local keep theirs, which is what `CATALOG_ENUMERATION` declares. `InstanceSpec.offer` and
+`HardwareRequirements` are deleted, `filter_offers` takes a `Placement`, and RunPod owns the
+offer-retry loop the orchestrator used to run on its behalf.
+
+**Where the plan or the design was wrong, and what was done instead** (all corrected inline in
+design doc §5, §6, §10, §11):
+
+1. **The cap had to stay a pre-book filter, not become a post-launch check.** §5 item 6 said it
+   "stops being a catalog filter". Implementing that literally would have made kinoforge pay for
+   boots it currently never starts: `filter_offers` excludes over-cap pod offers BEFORE booking, so
+   on RunPod the cap is enforced for free. The readback is added ON TOP. Modal is the exception
+   worth knowing — its catalog is all `mode="serverless"`, which the price filter skips, so
+   `realized_rate` is the only cap enforcement Modal has ever had.
+2. **`kinoforge offers` does not exist.** §5 item 3 said to capability-gate it and cited
+   `cli/_commands.py:289`. There is no such subcommand; that line was the enumeration inside
+   `provision`, which S4 deletes outright. The capability is still declared and still load-bearing.
+3. **"Torn down before the expensive part of a boot" is false on SkyPilot.** `sky.launch` runs
+   `Task.setup` before it returns, so a violation discards work already done rather than preventing
+   it. Recorded as an S5 follow-up (a pre-launch `sky.optimize()` estimate), not fixed here.
+4. **SkyPilot's enumeration could not simply be deleted.** Two shipped configs (`skypilot-gpu`,
+   `skypilot-lambda-comfyui`) name no accelerator and rely on the VRAM floor. It survives as a
+   private selection step; a floor nothing clears is now a `CapacityError` rather than a launch
+   with no accelerator at all.
+
+**Which goldens moved, and why.** 4 of 31 in Task 10 (plus 13 in Task 0 and 2 in Task 2 for a
+different reason — see below). Every RunPod `gpuTypeId` and Modal `gpu=` is UNCHANGED, which is the
+identity the inversion had to preserve:
+
+- `skypilot-gpu` A100→`T4:1`, `skypilot-lambda-comfyui` A100→`L4:1`. Both configs name no
+  accelerator; the old value was a HARNESS INVENTION (`_catalog_offer` fell back to a hardcoded
+  "NVIDIA A100 80GB PCIe"), so those goldens pinned a SKU no live launch would ever have produced.
+  They now pin the selection rule: cheapest accelerator clearing the VRAM floor.
+- `skypilot-lambda/vast-diffusers-flashvsr-upscale`: ONLY the watchdog budget deadline (8 decoded
+  lines each). Its rate input moved from the synthetic offer price to `placement.max_usd_per_hr`,
+  because there is no offer at create time. The cap is an upper bound on the billed rate, so
+  `budget/cap` is a lower bound on how long the budget lasts — the deadline lands early, the safe
+  direction. The vast one moving LATER is the old fixture's fault: its synthetic $1.64 exceeded the
+  $1.00 ceiling that config actually sets.
+- Tasks 0 and 2 moved 13 launch-payload goldens and `tests/engines/diffusers/_golden_provision.json`
+  for one mechanical reason: **the payload embeds `src/kinoforge/core/errors.py` verbatim** as a
+  gzip+base64 on-pod source blob, so adding `RateCapExceeded` moves every golden that ships it.
+  Decoded and verified: with every base64 run masked the payloads are byte-identical.
+
+**Live smokes — both PROVEN, both `c6i.large` in `us-west-2`:**
+
+| smoke | cluster | claim | result | spend |
+|---|---|---|---|---|
+| `_s4_rate_cap_evidence.json` | `kinoforge-s4-cap-b2bb8f06` | a cap BELOW the billed rate tears the instance down | realized **$0.0850** (real, 0.0% drift vs the published price, EC2 confirms `c6i.large`) vs cap **$0.01** → destroyed + `RateCapExceeded` | $0.0086 |
+| `_s4_selection_evidence.json` | `kinoforge-s4-sel-229e7c2f` | the inverted path still books the right box | no offer passed, no accelerator selected, EC2 reports **`c6i.large` in `us-west-2a`** — S2's and S3's SKU and AZ — realized $0.0850 under the $0.50 cap | $0.0071 |
+
+Both tore down through S1's imported `_teardown`, verified AFTER the process exited: `kinoforge
+list` both empty lines, `sky status` `No existing clusters.`, EC2 `terminated`.
+
+**Worth carrying forward:**
+- `RateCapExceeded.placement_summary` reads `provider=skypilot` and nothing more, because a
+  SkyPilotProvider `Instance` carries no sku/cloud/region tags and `_placement_summary` reports only
+  what an Instance really holds. The cluster name is in the message; the SKU is one `sky status`
+  away. Enriching those tags is an S5 follow-up.
+- `Ledger.record` APPENDS. The realized rate is corrected with the new `Ledger.set_cost_rate`,
+  which rewrites the one row in place — re-firing `on_instance_created` would have left two rows for
+  one instance and re-entered the claim.
+- The golden harness now runs THROUGH the real selection code rather than around it, on frozen
+  catalogs (`_FROZEN_RUNPOD_CATALOG`, `_FROZEN_SKY_CATALOG`). One fixture choice is load-bearing and
+  arbitrary: PCIe is listed before the bare "A100 80GB" alias so no-accelerator configs keep the SKU
+  S1–S3 measured.
+
+**S1/S2/S3 line items CLOSED by S4:** `max_usd_per_hr` is no longer declared-and-warned-and-wired-to-
+nothing on skypilot — it is verified against the launched instance. `Instance.cost_rate_usd_per_hr`
+no longer reports the asked-for rate.
+
+**S1/S2/S3 line items still OPEN, unchanged by S4:**
+- `region` is wired on skypilot only; RunPod (`dataCenterId`) and Modal (`region=`) stay
+  UNSUPPORTED-and-declared, each wanting its own live proof.
+- The 11 ungated `tests/live` modules.
+- `disk_gb` remains declared-and-warned, wired to nothing.
+- The golden ratchet's non-recursive glob still misses 7 configs under `grids/` and `extras/`.
+
+**SINGLE NEXT ACTION: write the S5 plan** — one endpoint shape everywhere, SkyPilot's `endpoints()`
+becoming tunnel-ensuring, and the pre-launch provisional ledger row generalised to all providers
+(design doc §9). Carry S4's two recorded follow-ups into it: the pre-launch `sky.optimize()` cost
+estimate, and SkyPilot instance tags rich enough for `placement_summary`. Merge
+`feat/compute-seam-s4-declarative-selection-rate-cap` to `main` first, mirroring how S1 landed at
+`40f0596c`, S2 at `e7e1df3d` and S3 at `2f062b75`.
+
+---
+
+### Previous snapshot (2026-08-31)
 
 **Compute-seam S3 (setup/run split, `_strip_trailing_exec` deleted) — SHIPPED 2026-08-31.** Plan
 `docs/superpowers/plans/2026-08-31-compute-seam-s3-setup-run-split.md` (`.tasks.json` co-located),
