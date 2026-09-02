@@ -12,6 +12,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import pytest
+
 from kinoforge.core.interfaces import Instance
 
 
@@ -55,6 +57,27 @@ class _CollapsingLedger:
 
     def read(self, instance_id: str) -> dict[str, Any] | None:
         return self._rows.get(instance_id)
+
+
+class _ScanningLedger(_CollapsingLedger):
+    """A ledger with ``entries()`` — the real :class:`Ledger`'s full surface.
+
+    ``read`` deliberately mirrors the real one: it returns the FIRST row for an
+    id, which on the same-key shape is the provisional one.
+    """
+
+    def __init__(self, all_rows: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self._all = all_rows
+
+    def entries(self) -> list[dict[str, Any]]:
+        return list(self._all)
+
+    def read(self, instance_id: str) -> dict[str, Any] | None:
+        for row in self._all:
+            if row.get("id") == instance_id:
+                return row
+        return None
 
 
 def _launching_row(*, age_s: float, now: float) -> dict:  # type: ignore[type-arg]
@@ -112,7 +135,7 @@ class _ProviderThatCannotList(_ProviderWithPod):
 
 
 def test_a_launching_row_is_adopted_onto_the_real_id() -> None:
-    """The pod exists under the run_id NAME → the row becomes usable.
+    """An ABANDONED launch's pod exists under the run_id NAME → row is usable.
 
     Bug caught: forgetting the row and leaving a live RunPod pod with no
     ledger entry — F12 reopened one layer down.
@@ -121,7 +144,7 @@ def test_a_launching_row_is_adopted_onto_the_real_id() -> None:
 
     now = 1_700_000_000.0
     ledger = _FakeLedger([])
-    entries = [_launching_row(age_s=30.0, now=now)]
+    entries = [_launching_row(age_s=7200.0, now=now)]
 
     _reconcile_dead_ledger_entries(
         ledger, entries, get_provider=lambda _n: _ProviderWithPod, now=now
@@ -148,6 +171,37 @@ def test_a_young_launching_row_with_no_pod_is_left_alone() -> None:
         now=now,
     )
     assert ledger.forgotten == []
+
+
+def test_a_young_launching_row_with_a_name_match_is_left_untouched() -> None:
+    """A LIVE launch's own row is not adopted out from under it.
+
+    The provisional row is written above the capacity-wait loop and collapsed
+    only after ``create_instance`` returns. On SkyPilot that call blocks
+    through all of ``sky.launch`` while ``sky.status()`` already lists the
+    cluster in INIT, so a concurrent ``kinoforge list`` CAN match the row.
+
+    Bug caught: adopting there records a listing-derived row and collapses
+    the provisional one; the orchestrator's own ``record`` then APPENDS a
+    second row under that id and its collapse finds nothing. Since the
+    reconciler's row landed first and ``Ledger.read`` returns the first
+    match, warm-attach and est_spend go on reading a mid-INIT row with empty
+    endpoints, no warm_attach_key and no lifecycle snapshot — and the
+    overview double-counts the spend.
+    """
+    from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
+
+    now = 1_700_000_000.0
+    ledger = _CollapsingLedger()
+    entries = [_launching_row(age_s=30.0, now=now)]
+
+    gone = _reconcile_dead_ledger_entries(
+        ledger, entries, get_provider=lambda _n: _ProviderWithPod, now=now
+    )
+
+    assert gone == []
+    assert ledger.calls == []
+    assert entries[0]["id"] == "kf-run-42"
 
 
 def test_an_aged_launching_row_with_no_pod_is_forgotten() -> None:
@@ -185,7 +239,7 @@ def test_adoption_records_the_real_row_before_the_phase_scoped_collapse() -> Non
 
     _reconcile_dead_ledger_entries(
         ledger,
-        [_launching_row(age_s=30.0, now=now)],
+        [_launching_row(age_s=7200.0, now=now)],
         get_provider=lambda _n: _ProviderWithPod,
         now=now,
     )
@@ -213,12 +267,126 @@ def test_adoption_does_not_re_record_a_real_row_that_already_exists() -> None:
 
     _reconcile_dead_ledger_entries(
         ledger,
-        [_launching_row(age_s=30.0, now=now)],
+        [_launching_row(age_s=7200.0, now=now)],
         get_provider=lambda _n: _ProviderWithPod,
         now=now,
     )
 
     assert ledger.calls == [("forget_provisional", "kf-run-42", "pod-real-1")]
+
+
+def test_the_duplicate_guard_scans_every_row_not_just_the_first() -> None:
+    """On the same-key shape the real row is BEHIND the provisional one.
+
+    Bug caught: asking ``read`` (which returns the FIRST row for an id)
+    answers "provisional" for a cluster that already has a real row, so the
+    guard reports "no real row", ``record`` appends a THIRD row, and the
+    per-id readers pick whichever they find first. ``entries()`` is the only
+    question with a correct answer on this shape.
+    """
+    from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
+
+    now = 1_700_000_000.0
+    provisional = _launching_row(age_s=7200.0, now=now)
+    real = {"id": "kf-run-42", "provider": "runpod", "tags": {"mode": "pod"}}
+    ledger = _ScanningLedger([provisional, real])
+
+    _reconcile_dead_ledger_entries(
+        ledger,
+        [provisional],
+        get_provider=lambda _n: _ProviderWithSameKeyCluster,
+        now=now,
+    )
+
+    assert ledger.calls == [("forget_provisional", "kf-run-42", "kf-run-42")]
+
+
+def test_a_failing_entries_scan_falls_back_to_the_per_id_read() -> None:
+    """The scan is preferred, not required.
+
+    Bug caught: an ``entries()`` that raises (a locked or half-written
+    ledger) short-circuiting the guard to "no real row", so the adoption
+    appends a duplicate for a pod the ledger already holds — the very
+    duplication the guard exists to prevent, reintroduced by its own error
+    path.
+    """
+    from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
+
+    class _ScanFailsLedger(_ScanningLedger):
+        def entries(self) -> list[dict[str, Any]]:
+            raise OSError("ledger locked")
+
+    now = 1_700_000_000.0
+    ledger = _ScanFailsLedger(
+        [{"id": "pod-real-1", "provider": "runpod", "tags": {"mode": "pod"}}]
+    )
+
+    _reconcile_dead_ledger_entries(
+        ledger,
+        [_launching_row(age_s=7200.0, now=now)],
+        get_provider=lambda _n: _ProviderWithPod,
+        now=now,
+    )
+
+    assert ledger.calls == [("forget_provisional", "kf-run-42", "pod-real-1")]
+
+
+def test_an_adopted_entry_is_rewritten_in_place_for_the_caller() -> None:
+    """The caller's snapshot must name the id the ledger now holds.
+
+    Bug caught: ``kinoforge list`` printing the run_id for a row the ledger
+    keys under the pod id, so ``kinoforge destroy --id <printed>`` fails
+    against a pod that is live and billing. The launch-phase tag has to go
+    too, or the row still reads as provisional to everything downstream.
+    """
+    from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
+
+    now = 1_700_000_000.0
+    entries = [_launching_row(age_s=7200.0, now=now)]
+
+    _reconcile_dead_ledger_entries(
+        _FakeLedger([]), entries, get_provider=lambda _n: _ProviderWithPod, now=now
+    )
+
+    assert entries[0]["id"] == "pod-real-1"
+    assert "kf_launch_phase" not in entries[0]["tags"]
+    assert entries[0]["tags"]["kf_run_id"] == "kf-run-42"
+
+
+def test_a_refused_collapse_is_logged_and_the_entry_is_not_rewritten(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A refusal leaves the row provisional — say so, and do not claim it.
+
+    Bug caught: discarding ``forget_provisional``'s return value, so a
+    permanently stale ``launching`` row on a live instance reaches production
+    with nothing to grep for, while the caller's snapshot has already been
+    rewritten to an id whose row was never collapsed.
+    """
+    from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
+
+    class _RefusingLedger(_CollapsingLedger):
+        def forget_provisional(
+            self, provisional_id: str, *, real_id: str | None = None
+        ) -> bool:
+            super().forget_provisional(provisional_id, real_id=real_id)
+            return False
+
+    now = 1_700_000_000.0
+    entries = [_launching_row(age_s=7200.0, now=now)]
+
+    with caplog.at_level("WARNING", logger="kinoforge.cli._reconcile"):
+        gone = _reconcile_dead_ledger_entries(
+            _RefusingLedger(),
+            entries,
+            get_provider=lambda _n: _ProviderWithPod,
+            now=now,
+        )
+
+    assert gone == []
+    assert entries[0]["id"] == "kf-run-42"
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("kf-run-42" in m and "pod-real-1" in m for m in warnings), warnings
 
 
 def test_a_same_key_row_is_collapsed_onto_its_own_id() -> None:
@@ -236,7 +404,7 @@ def test_a_same_key_row_is_collapsed_onto_its_own_id() -> None:
 
     _reconcile_dead_ledger_entries(
         ledger,
-        [_launching_row(age_s=30.0, now=now)],
+        [_launching_row(age_s=7200.0, now=now)],
         get_provider=lambda _n: _ProviderWithSameKeyCluster,
         now=now,
     )
@@ -262,7 +430,7 @@ def test_a_same_key_row_is_never_dropped_by_a_forget_only_ledger() -> None:
 
     _reconcile_dead_ledger_entries(
         ledger,
-        [_launching_row(age_s=30.0, now=now)],
+        [_launching_row(age_s=7200.0, now=now)],
         get_provider=lambda _n: _ProviderWithSameKeyCluster,
         now=now,
     )
@@ -308,7 +476,7 @@ def test_only_the_aged_out_row_is_reported_gone_never_the_adopted_one() -> None:
 
     adopted = _reconcile_dead_ledger_entries(
         _FakeLedger([]),
-        [_launching_row(age_s=30.0, now=now)],
+        [_launching_row(age_s=7200.0, now=now)],
         get_provider=lambda _n: _ProviderWithPod,
         now=now,
     )
@@ -345,7 +513,7 @@ def test_a_ledger_that_cannot_record_keeps_its_launching_row() -> None:
 
     gone = _reconcile_dead_ledger_entries(
         ledger,
-        [_launching_row(age_s=30.0, now=now)],
+        [_launching_row(age_s=7200.0, now=now)],
         get_provider=lambda _n: _ProviderWithPod,
         now=now,
     )
@@ -372,7 +540,7 @@ def test_a_failing_record_aborts_the_adoption_without_deleting() -> None:
 
     gone = _reconcile_dead_ledger_entries(
         ledger,
-        [_launching_row(age_s=30.0, now=now)],
+        [_launching_row(age_s=7200.0, now=now)],
         get_provider=lambda _n: _ProviderWithPod,
         now=now,
     )
@@ -400,7 +568,7 @@ def test_an_unreadable_ledger_still_adopts() -> None:
 
     _reconcile_dead_ledger_entries(
         ledger,
-        [_launching_row(age_s=30.0, now=now)],
+        [_launching_row(age_s=7200.0, now=now)],
         get_provider=lambda _n: _ProviderWithPod,
         now=now,
     )
@@ -514,20 +682,27 @@ def test_a_launching_row_on_a_non_reconcilable_provider_is_untouched() -> None:
 
     Bug caught: the new branch jumping the ``_RECONCILABLE_PROVIDERS`` gate
     and ageing out a ``local`` row whose instance table is in-process, so a
-    fresh CLI can never see it.
+    fresh CLI can never see it. The row is AGED and matches nothing, so
+    bypassing the gate forgets it — ``ledger.forgotten`` is what fails then.
+    Raising from the resolver would NOT fail: the reconciler swallows every
+    resolver exception by design.
     """
     from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
 
-    def _explode(name: str) -> Any:  # noqa: ANN401
-        raise AssertionError(f"provider {name!r} must not be resolved")
+    resolved: list[str] = []
+
+    def _resolve(name: str) -> Any:  # noqa: ANN401
+        resolved.append(name)
+        return _ProviderWithNothing
 
     now = 1_700_000_000.0
     ledger = _FakeLedger([])
     row = _launching_row(age_s=7200.0, now=now)
     row["provider"] = "local"
 
-    gone = _reconcile_dead_ledger_entries(ledger, [row], get_provider=_explode, now=now)
+    gone = _reconcile_dead_ledger_entries(ledger, [row], get_provider=_resolve, now=now)
 
+    assert resolved == []
     assert gone == []
     assert ledger.forgotten == []
 
@@ -542,7 +717,7 @@ def test_a_launching_row_without_a_run_id_tag_matches_on_its_own_id() -> None:
 
     now = 1_700_000_000.0
     ledger = _FakeLedger([])
-    row = _launching_row(age_s=30.0, now=now)
+    row = _launching_row(age_s=7200.0, now=now)
     row["tags"] = {"kf_launch_phase": "launching"}
 
     _reconcile_dead_ledger_entries(
@@ -556,23 +731,36 @@ def test_a_launching_row_without_a_run_id_tag_matches_on_its_own_id() -> None:
 def test_now_defaults_to_the_wall_clock() -> None:
     """Callers that pass no clock still get the young/aged split.
 
-    Bug caught: a ``now=None`` default falling through as ``0.0``, which
-    makes every row's age hugely negative (or hugely positive) and either
-    freezes reconciliation or reaps every launching row on sight.
+    Bug caught: a ``now=None`` default falling through as ``0.0``. BOTH
+    halves are needed to catch it — under a zero clock every row's age is
+    hugely negative, so the young half alone passes while nothing is ever
+    aged out again. The aged half is the one that fails.
     """
     from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
 
-    ledger = _FakeLedger([])
     fresh = {
         "id": "kf-run-99",
         "provider": "runpod",
         "created_at": time.time(),
         "tags": {"kf_launch_phase": "launching", "kf_run_id": "kf-run-99"},
     }
+    abandoned = {
+        "id": "kf-run-98",
+        "provider": "runpod",
+        "created_at": time.time() - 7200.0,
+        "tags": {"kf_launch_phase": "launching", "kf_run_id": "kf-run-98"},
+    }
+    young_ledger = _FakeLedger([])
+    aged_ledger = _FakeLedger([])
 
-    gone = _reconcile_dead_ledger_entries(
-        ledger, [fresh], get_provider=lambda _n: _ProviderWithNothing
+    young = _reconcile_dead_ledger_entries(
+        young_ledger, [fresh], get_provider=lambda _n: _ProviderWithNothing
+    )
+    aged = _reconcile_dead_ledger_entries(
+        aged_ledger, [abandoned], get_provider=lambda _n: _ProviderWithNothing
     )
 
-    assert gone == []
-    assert ledger.forgotten == []
+    assert young == []
+    assert young_ledger.forgotten == []
+    assert aged == ["kf-run-98"]
+    assert aged_ledger.forgotten == ["kf-run-98"]

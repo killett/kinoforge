@@ -46,8 +46,10 @@ class _ReconcileLedger(Protocol):
     * ``forget_provisional(provisional_id, *, real_id=None) -> bool`` — the
       phase-scoped delete. Strongly preferred over ``forget`` for adoption; see
       :func:`_adopt_launching_row`.
-    * ``read(instance_id) -> dict | None`` — used only to avoid appending a
-      second row for an instance the ledger already holds.
+    * ``entries() -> list[dict]``, or ``read(instance_id) -> dict | None`` as a
+      fallback — used only to avoid appending a second row for an instance the
+      ledger already holds. See :func:`_has_real_row` for why the scan is
+      preferred over the per-id read.
     """
 
     def forget(self, instance_id: str) -> None:  # noqa: D102
@@ -196,16 +198,38 @@ def _adopt_or_age_out(
     only durable handle on a billing resource — the precise failure F12 exists
     to prevent.
 
-    So the row is resolved against the FULL listing instead, matching on either
-    the instance id or ``tags["name"]``. Three outcomes:
+    **The age gate comes first, and it gates the adoption too.** A row younger
+    than *boot_timeout_s* is LEFT ALONE unconditionally — matched or not:
 
-    * a match → adopt (see :func:`_adopt_launching_row`);
-    * no match, row younger than *boot_timeout_s* → LEAVE IT. A create is
-      multi-minute on every cloud, and a concurrent ``kinoforge list`` (which
-      this project's own live-smoke polling rule actively encourages) must not
-      reconcile away the row protecting a boot that is still in progress;
-    * no match, row older than *boot_timeout_s* → forget it, or the launch that
-      never produced anything haunts ``list`` forever.
+    * unmatched, it is a create still in flight, and a concurrent
+      ``kinoforge list`` (which this project's own live-smoke polling rule
+      actively encourages) must not reconcile away the row protecting that boot;
+    * matched, its own orchestrator is still running and will collapse the row
+      itself when ``create_instance`` returns. Adopting under it would be
+      actively harmful: on SkyPilot ``create_instance`` blocks through all of
+      ``sky.launch`` while ``sky.status()`` already lists the cluster in INIT, so
+      this function would record a listing-derived row and collapse the
+      provisional one; the orchestrator's own ``ledger.record`` then APPENDS a
+      SECOND row under that id and its collapse finds nothing to remove. Because
+      the reconciler's row landed first and :meth:`Ledger.read` returns the first
+      match, warm-attach resolution and ``est_spend`` would then read a mid-INIT
+      row with empty ``endpoints``, no ``warm_attach_key`` and no lifecycle
+      snapshot, and the overview would double-count the spend.
+
+    Only past the gate is the row resolved against the FULL listing, matching on
+    the instance id or ``tags["name"]``: a match is adopted (see
+    :func:`_adopt_launching_row`), and no match means the launch produced nothing
+    and the row is forgotten before it haunts ``list`` forever. Adoption is
+    therefore confined to genuinely ABANDONED launches, which is what it is for.
+
+    Known non-matching shape: under
+    :class:`~kinoforge.core.ephemeral.EphemeralSession` with
+    ``pod_name_includes_alias=False`` the RunPod pod is named
+    ``kinoforge-<hex>`` rather than the ``run_id`` (see
+    ``providers/runpod/__init__.py``), so an ephemeral launching row can never be
+    matched and is aged out instead. That is the correct outcome for a session
+    whose pod is destroyed at exit anyway, but it means "aged out" does not imply
+    "no pod existed" on that path.
 
     Anything uncertain — an unreadable provider, a malformed ``created_at``, a
     failing ``forget`` — leaves the row exactly where it is.
@@ -214,7 +238,8 @@ def _adopt_or_age_out(
         ledger: Ledger exposing ``forget``, and ideally the adoption methods
             described on :class:`_ReconcileLedger`.
         provider: The resolved provider.
-        entry: The launching row.
+        entry: The launching row. MUTATED IN PLACE on adoption, see
+            :func:`_rewrite_adopted_entry`.
         now: Current epoch seconds.
         boot_timeout_s: How long a launch may plausibly still be in flight.
 
@@ -230,22 +255,24 @@ def _adopt_or_age_out(
         else row_id
     )
     try:
-        live = provider.list_instances()
-    except Exception as exc:  # noqa: BLE001 — uncertain → keep the row
-        logger.debug("reconcile: launching row %s uncertain: %s", row_id, exc)
-        return None
-    for inst in live:
-        if inst.id == run_id or dict(inst.tags).get("name") == run_id:
-            _adopt_launching_row(ledger, row_id=row_id, instance=inst)
-            return None
-    try:
         age = now - float(entry.get("created_at") or now)
     except (TypeError, ValueError) as exc:
         # A row whose age cannot be read is not evidence of anything.
         logger.debug("reconcile: launching row %s has no usable age: %s", row_id, exc)
         return None
     if age <= boot_timeout_s:
+        # Young: safe either way, and cheap — no listing call is made at all.
         return None
+    try:
+        live = provider.list_instances()
+    except Exception as exc:  # noqa: BLE001 — uncertain → keep the row
+        logger.debug("reconcile: launching row %s uncertain: %s", row_id, exc)
+        return None
+    for inst in live:
+        if inst.id == run_id or dict(inst.tags).get("name") == run_id:
+            if _adopt_launching_row(ledger, row_id=row_id, instance=inst):
+                _rewrite_adopted_entry(entry, instance=inst)
+            return None
     try:
         ledger.forget(row_id)
     except Exception as exc:  # noqa: BLE001 — forget best-effort
@@ -264,7 +291,7 @@ def _adopt_launching_row(
     *,
     row_id: str,
     instance: Any,  # noqa: ANN401 — kinoforge.core.interfaces.Instance, duck-typed
-) -> None:
+) -> bool:
     """Rewrite a provisional row onto the id the provider actually assigned.
 
     Two orderings are possible and only one is safe. ``record`` lands FIRST, so
@@ -291,13 +318,18 @@ def _adopt_launching_row(
         ledger: The ledger to rewrite.
         row_id: The provisional row's id (the client-side ``run_id``).
         instance: The live instance the row resolved to.
+
+    Returns:
+        True when the provisional row was actually removed. False means the
+        ledger still holds it — a missing capability, a refused collapse, or a
+        failed write — so the caller must NOT present the row as adopted.
     """
     record = getattr(ledger, "record", None)
     if not callable(record):
         logger.debug(
             "reconcile: ledger cannot record; leaving launching row %s alone", row_id
         )
-        return
+        return False
     collapse = getattr(ledger, "forget_provisional", None)
     if not callable(collapse) and instance.id == row_id:
         # Decided BEFORE the record, not after: recording first and only then
@@ -308,22 +340,66 @@ def _adopt_launching_row(
             "shares that id",
             row_id,
         )
-        return
+        return False
     try:
         if not _has_real_row(ledger, instance.id):
             record(instance)
         if callable(collapse):
-            collapse(row_id, real_id=instance.id)
+            collapsed = collapse(row_id, real_id=instance.id)
+            if not collapsed:
+                # The designed refusal: no non-provisional row under real_id.
+                # Keeping the row is right, but silence here is how a
+                # permanently stale 'launching' row on a live instance reaches
+                # production with nothing to grep for — the same reasoning as
+                # orchestrator._collapse_provisional_row's warning.
+                logger.warning(
+                    "reconcile: collapse refused for launching row %s onto %s; "
+                    "the row stays provisional and this instance may show up "
+                    "twice (or as launching) in kinoforge list",
+                    row_id,
+                    instance.id,
+                )
+                return False
         else:
             ledger.forget(row_id)
     except Exception as exc:  # noqa: BLE001 — adoption is best-effort
         logger.debug("reconcile: adopting launching row %s failed: %s", row_id, exc)
-        return
+        return False
     logger.info(
         "reconcile: adopted launching row %s onto live instance %s",
         row_id,
         instance.id,
     )
+    return True
+
+
+def _rewrite_adopted_entry(
+    entry: dict[str, Any],
+    *,
+    instance: Any,  # noqa: ANN401 — kinoforge.core.interfaces.Instance, duck-typed
+) -> None:
+    """Point the CALLER's copy of an adopted row at the real id.
+
+    The reconciler's callers hold the entry dicts they read before it ran and
+    print them afterwards. Leaving an adopted row keyed by the ``run_id`` would
+    make ``kinoforge list`` display an id the ledger no longer holds, and
+    ``kinoforge destroy --id <that id>`` — copied from what was printed — would
+    fail against a pod that is live and billing.
+
+    Deliberately narrow: the id and the launch-phase tag, nothing else. The row's
+    ``created_at`` stays the LAUNCH time rather than the listing's (RunPod's
+    listing reports ``0.0``, which would render an astronomical ``est_spend``),
+    and the ledger's own row is the authority for everything else from the next
+    invocation on.
+
+    Args:
+        entry: The caller's row dict, mutated in place.
+        instance: The live instance the row was adopted onto.
+    """
+    entry["id"] = instance.id
+    tags = entry.get("tags")
+    if isinstance(tags, dict):
+        entry["tags"] = {k: v for k, v in tags.items() if k != _LAUNCH_PHASE_TAG}
 
 
 def _has_real_row(ledger: _ReconcileLedger, instance_id: str) -> bool:
@@ -335,8 +411,16 @@ def _has_real_row(ledger: _ReconcileLedger, instance_id: str) -> bool:
     orchestrator's own collapse failed (it is best-effort too), which is
     precisely when the reconciler is expected to clean up.
 
+    Prefers ``entries()`` over ``read()`` because ``read`` returns the FIRST row
+    for an id and the same-key shape (SkyPilot) can hold TWO — the provisional
+    one, written first, in front of the real one. Asking ``read`` there answers
+    "provisional", i.e. "no real row", and the caller appends a third. Scanning
+    every row is the only question that has a correct answer on that shape;
+    ``read`` remains the fallback for ledgers without ``entries``.
+
     Args:
-        ledger: The ledger to interrogate; ``read`` is optional.
+        ledger: The ledger to interrogate; ``entries`` and ``read`` are both
+            optional.
         instance_id: The provider-assigned id.
 
     Returns:
@@ -344,6 +428,19 @@ def _has_real_row(ledger: _ReconcileLedger, instance_id: str) -> bool:
         ``launching`` row. False on any doubt, including an unreadable ledger —
         a spurious duplicate row is recoverable, a missing row is not.
     """
+    all_rows = getattr(ledger, "entries", None)
+    if callable(all_rows):
+        try:
+            rows = all_rows()
+        except Exception as exc:  # noqa: BLE001 — unreadable ledger → try read
+            logger.debug("reconcile: ledger entries() failed: %s", exc)
+        else:
+            return any(
+                isinstance(row, dict)
+                and row.get("id") == instance_id
+                and not _is_launching(row)
+                for row in rows
+            )
     read = getattr(ledger, "read", None)
     if not callable(read):
         return False
