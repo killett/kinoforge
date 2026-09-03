@@ -40,6 +40,22 @@ first unchecked task without redoing committed work.
   live smokes PROVEN for ~$0.016 total. See the RESUME SNAPSHOT for the four corrections the design
   needed, which 4 goldens moved in the inversion (and why 13 more moved for an unrelated,
   mechanical reason), and the two follow-ups handed to S5.
+  **S5 (one endpoint shape + the ledger row generalised) SHIPPED 2026-09-02 — branch NOT yet merged**
+  — plan `docs/superpowers/plans/2026-09-01-compute-seam-s5-endpoint-shape-ledger-generalisation.md`
+  (`.tasks.json` co-located, 11 tasks, all committed), branch
+  `feat/compute-seam-s5-endpoint-shape-ledger`, held for a final whole-branch review before merge.
+  **F11 and F12 are closed**: warm attach asks the provider for a LIVE endpoint instead of replaying
+  a dead `127.0.0.1:<port>` or handing `ssh://` to an HTTP client, and every provider now gets an
+  orchestrator-written `kf_launch_phase=launching` row before `create_instance`. One port-keyed
+  endpoint shape everywhere (`_VIDEO_SERVER_PORT` and `{"ssh": …}` deleted); SkyPilot forwards every
+  port in `tags["ports"]` and rebuilds dead ones. Both S4 follow-ups closed — SkyPilot instance tags
+  name the sku/cloud/region, and an over-cap plan is refused BEFORE `sky.launch`. All three live
+  claims PROVEN for **$0.0091 total** (two of them book nothing at all); **NO golden moved**, which
+  is the point — none of S5 is visible in a launch payload. See the RESUME SNAPSHOT for the four
+  design corrections (notably: `endpoints()` split into read + `ensure_endpoints` rather than
+  becoming tunnel-ensuring, and the pre-launch bound is priced from the catalog because
+  `sky.optimize()` always returns None at this pin), and for the util-poller blindness found on the
+  live run.
 - **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
 - **Modal plan (spec 1, done):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; `.tasks.json` co-located)
@@ -413,7 +429,144 @@ first unchecked task without redoing committed work.
   longer route anyone into it. GCP's `roles.txt` is still entirely unmeasured — honest and labelled
   as such, rather than green from a caller-evaluated `testIamPermissions`.
 
-## RESUME SNAPSHOT (updated 2026-09-01 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-02 — read this, then STOP; below is history)
+
+**Compute-seam S5 (one endpoint shape + the ledger row generalised) — SHIPPED 2026-09-02.** Plan
+`docs/superpowers/plans/2026-09-01-compute-seam-s5-endpoint-shape-ledger-generalisation.md`
+(`.tasks.json` co-located), all 11 tasks committed on branch
+`feat/compute-seam-s5-endpoint-shape-ledger`, commit range `876ea373`..HEAD. All three live claims
+**PROVEN**, **$0.0091 total** — two of them book nothing at all. **NOT yet merged to `main`:** the
+branch is held for a final whole-branch review.
+
+**F11 and F12 are closed.** F11: warm attach used to replay a dead `127.0.0.1:<port>` from the
+ledger, or fall back to handing an `ssh://` URL to an HTTP client. Now the caller asks the provider
+for a LIVE endpoint. F12: no durable record existed before `sky.launch`, so a kill during the
+multi-minute launch left a billing cluster no kinoforge command could see. Now every provider gets
+an orchestrator-written `kf_launch_phase=launching` row before `create_instance`.
+
+**The two halves.**
+
+*Part A — one endpoint shape.* Every provider returns a port-keyed map of absolute URLs keyed by
+`spec.ports`; `_VIDEO_SERVER_PORT` and the `{"ssh": …}` shape are deleted, and `kinoforge status`
+prints the cluster name instead of overwriting a live tunnel endpoint with an ssh string. SkyPilot
+forwards EVERY declared port rather than a hardcoded 8000, holding
+`dict[cluster, dict[remote_port, _Tunnel]]`, and rebuilds any forward that died from
+`tags["ports"]` — which is the only source a warm-attached instance has, since its `endpoints` died
+with another process.
+
+*Part B — the ledger row, generalised.* `_record_provisional_row` / `_collapse_provisional_row` live
+in the orchestrator and cover all providers; SkyPilot's private launch-ledger seam is deleted;
+`Ledger.forget_provisional` removes only the `launching` row; and `cli/_reconcile._adopt_or_age_out`
+adopts a `launching` row by NAME against the full listing before it is ever allowed to forget one.
+Plus both S4 follow-ups: SkyPilot `Instance.tags` now carry sku / cloud / region / accelerators (so
+`RateCapExceeded.placement_summary` can name the box), and an over-cap plan is refused BEFORE
+`sky.launch` runs `Task.setup`.
+
+**Where the design was wrong, and what was done instead** (all corrected inline in design doc §6,
+§9, §11):
+
+1. **`endpoints()` did NOT become tunnel-ensuring — it split in two.** §9 said to make the read
+   itself re-establish the tunnel. Three of its five callers are observational (`kinoforge status`,
+   `kinoforge list`, the reaper), and a read that spawns an `ssh -L` subprocess per invocation is a
+   leak — worst of all in the polling loops this project's own live-smoke rule mandates. The ABC
+   now has a pure `endpoints(instance)` plus a side-effecting `ensure_endpoints(instance)` whose
+   default just delegates. Only warm attach and the serving path call the latter. SkyPilot is the
+   only provider that overrides it.
+2. **The generalised row is keyed by a CLIENT-side id that equals the provider's id only on
+   SkyPilot.** On RunPod it is the pod name, on Modal the app run id, so `get_instance(run_id)`
+   raises `KeyError` for a resource that EXISTS — and the reconciler's "KeyError means gone" rule
+   would then delete the only durable handle on a billing pod, which is F12 exactly. `_reconcile`
+   had to learn adopt-by-name (match on instance id or `tags["name"]` against the full listing) and
+   an age gate that leaves any row younger than the boot timeout alone, matched or not — otherwise a
+   concurrent `kinoforge list` reconciles away the row protecting a live launch, or races the
+   orchestrator's own `ledger.record`.
+3. **The same-key collapse nearly deleted the real row.** `Ledger.forget` deletes EVERY row under an
+   id and `Ledger.record` APPENDS. On SkyPilot both rows share a key, so "record the real row, then
+   forget the provisional one" would have removed both and left a live billing cluster with zero
+   rows — worse than the double-count it was fixing. Hence `Ledger.forget_provisional`, which only
+   removes the row still tagged `kf_launch_phase=launching`; and the real row is written FIRST, so
+   no window exists in which a kill loses both.
+4. **§6's recorded S5 follow-up is NOT what shipped.** A pre-launch `sky.optimize()` estimate cannot
+   produce a number at this pin: `/optimize` is scheduled `ignore_return_value=True`, so it always
+   resolves to `None`. Built on it, the refusal is a no-op — and a smoke asserting only "no cluster
+   was created" would have called that GREEN, because a code path that does nothing creates nothing
+   either. The bound is priced from the local `sky.list_accelerators` catalog instead, bounded by a
+   20 s worker-thread timeout. It is **inert by design** for CPU-only placements (no CPU SKUs in the
+   accelerator catalog; a zero would read as "free" and vouch for any cap) and for spot placements
+   (the parse reads the on-demand column, which would bound in the wrong direction) — both fall back
+   to S4's post-launch readback, with a WARNING. The live run exercised that inert path too: the
+   CPU-only claim-3 launch logged "pre-launch cost estimate unreadable … relying on the post-launch
+   rate readback", as intended.
+
+**WHICH GOLDENS MOVED: NONE.** Stated as a claim, not an assumption — `git diff --stat main..HEAD --
+tests/providers/golden/ tests/engines/` is empty across all 21 commits. That is the right answer and
+it is the point: none of S5 is visible in a launch payload. An engine declaring two ports produces a
+byte-identical payload whether the provider opens one tunnel or two, whether `ensure_endpoints` can
+rebuild them or hands back a dead local port, and whether one ledger row survives a launch or two
+do. Only a live cluster with a real listener on each port can tell those apart, which is why S5's
+proof is three live claims rather than a ratchet diff.
+
+**Live evidence — all three claims PROVEN:**
+
+| claim | cluster | what it proves | result | spend |
+|---|---|---|---|---|
+| 1 (offline, free) | `kinoforge-s5-offline-c22a008a` | `ensure_endpoints` forwards every port in `tags["ports"]`, and REBUILDS both onto fresh local ports once both are dead | `8000/8001` → `:40001/:40002`, killed, → `:40003/:40004`; 4 spawns for 4 expected forwards | $0 |
+| 2 (pre-launch refusal) | `kinoforge-s5-refuse-da3e9822` / `-allow-90bda044` | the estimate is a REAL catalog number; a cap below it refuses before `sky.launch`; a cap above it does not | `T4` = **$0.526/hr**, **0.0% drift** vs published `g4dn.xlarge` us-west-2; $0.01 → `PreLaunchRateCapExceeded` ("nothing was launched", no "destroyed" in `str` OR `repr`) with `sky status` None, EC2 `[]`, ledger `[]`; $5.00 → reached the fenced `sky.launch` | $0 — nothing booked |
+| 3 (live tunnel repair) | `kinoforge-s5-tunnel-6880f7ef` | two declared ports serve, both forwards die, both come back on DIFFERENT ports and serve again; exactly one ledger row survives | EC2 + `tags["sku"]` both `c6i.large`; `:38265/:43149` → **200/200**; killed; → `:35913/:49331` → **200/200**, no local port reused; ledger **1 row**, the real one (no `kf_launch_phase`) | **$0.0091** |
+
+Claim 3's numbers: `create_instance` returned at **t+290.1 s** (not S2's 1474 s — this claim drops
+the engine's `setup_steps`, which is most of that boot), 384.8 s billable at $0.085/hr, and
+**2409.9 s of watchdog headroom left** when the assertions began. Instance tags read
+`sku=c6i.large, cloud=AWS, region=us-west-2, accelerators=''` — the truthful empty read, not an
+omitted key.
+
+**Teardown verified AFTER the process exited**, all three oracles: `kinoforge list` printed BOTH
+`[instance overview] No running instances.` and `No instances recorded in ledger.`; `sky status`
+printed `No existing clusters.`; EC2 reported `i-03196fdd7fe68d9d4  terminated`. No survivor, nothing
+destroyed by hand.
+
+**Worth carrying forward — the util poller was BLIND on this run.** The 75 s cadence ran and all
+three samples are in the evidence, but every one reads `reachable: false` with
+`ssh: Could not resolve hostname kinoforge-s5-tunnel-6880f7ef`, so **no numeric gpu/cpu/mem value was
+ever observed**. `_probe_util` shells out to a bare `ssh <cluster-name>`, which depends on sky's
+generated ssh config being resolvable from this container; the provider's own forwards work because
+they go through that config explicitly. All three probes landed at t+75/150/225 s, i.e. entirely
+inside provisioning, and the t+300 s tick would have been the first post-UP one but the poller was
+stopped at ~t+298 s. No false alarm resulted — `_is_stalled` treats an unreachable sample as NOT
+stalled by design, absence of evidence not being evidence — but the stall detector had nothing to
+detect with. Fixing `_probe_util`'s ssh invocation (or sourcing it from the provider's tunnel path)
+is the obvious follow-up before a smoke long enough to actually need it.
+
+**S1–S4 line items CLOSED by S5:** F11 (warm attach replaying a dead port / handing `ssh://` to an
+HTTP client) and F12 (no durable record before `sky.launch`). Both S4-recorded follow-ups —
+`RateCapExceeded.placement_summary` reading `provider=skypilot` and nothing else, and the
+"torn down before the expensive part of a boot is false on SkyPilot" gap.
+
+**Still OPEN, and NOT closed by S5 — re-listed rather than quietly dropped:**
+- `region` is wired on skypilot only; RunPod (`dataCenterId`) and Modal (`region=`) stay
+  UNSUPPORTED-and-declared, each wanting its own live proof.
+- The ungated `tests/live` modules.
+- `disk_gb` remains declared-and-warned, wired to nothing (the live run logged it again:
+  `disk_gb=50` asked, sky defaulted to 30 GB).
+- The golden ratchet's non-recursive glob still misses 7 configs under `grids/` and `extras/`.
+- The **F3 env-routing gap**: `sky` lives only in the `live-skypilot` feature env, so a default-env
+  `reap` / `sweeper` marks every skypilot row `UNROUTABLE` and never destroys it.
+- **Modal `launching` rows are neither adopted nor aged out.** `_adopt_or_age_out` covers the
+  providers whose listing exposes a matchable name; Modal's does not, so a Modal row written before
+  a create that dies is still stranded.
+- `RateCapExceeded` wants a `destroyed` FLAG rather than the provider-side subclass S5 added for the
+  pre-launch case. Blocked on a reviewed regeneration of the 13 goldens that embed
+  `src/kinoforge/core/errors.py` verbatim as a gzip+base64 on-pod source blob — any change to that
+  file moves all 13, so it must not ride along with unrelated work.
+- The pre-existing hang in `tests/engines/test_diffusers_set_lora_stack.py`.
+
+**SINGLE NEXT ACTION: whole-branch review of `feat/compute-seam-s5-endpoint-shape-ledger`, then
+merge to `main`** the way S1 (`40f0596c`), S2 (`e7e1df3d`), S3 (`2f062b75`) and S4 (`9e80470c`)
+landed. Do NOT merge before that review — the operator is holding the branch finish deliberately.
+
+---
+
+### Previous snapshot (2026-09-01)
 
 **Compute-seam S4 (declarative selection + a verified rate cap) — SHIPPED 2026-09-01.** Plan
 `docs/superpowers/plans/2026-09-01-compute-seam-s4-declarative-selection-rate-cap.md`
