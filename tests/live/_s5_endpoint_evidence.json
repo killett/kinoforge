@@ -1,8 +1,269 @@
 {
-  "smoke": "compute-seam S5 — endpoint shape and ledger shape",
-  "task": "task-9 committed this placeholder RED, before any spend",
-  "outcome": "NOT-RUN",
-  "note": "Placeholder. tests/live/test_compute_seam_s5_smoke.py overwrites this file with claim 1 (offline ensure_endpoints) and claim 3 (live tunnel repair) when it runs under `pixi run -e live-skypilot` with KINOFORGE_LIVE_TESTS=1. Committed ahead of the run so a mid-spend crash cannot lose the scaffold. Claim 1 was executed standalone during the task-9 review fix (`-k claim1`, PASSED, no cloud) and its output is quoted in the task-9 report; the placeholder is restored here so the committed artifact is unambiguous about what task 10 still has to prove.",
-  "claim_1_offline": {"status": "not-run"},
-  "claim_3_live": {"status": "not-run"}
+  "smoke": "compute-seam S5 \u2014 endpoint shape and ledger shape",
+  "task": "task-10 (S5 live proof); scaffold committed RED by task-9",
+  "config": "examples/configs/skypilot-cpu.yaml",
+  "declared_ports": [
+    "8000",
+    "8001"
+  ],
+  "claim_1_offline": {
+    "status": "PROVEN",
+    "cluster_name": "kinoforge-s5-offline-c22a008a",
+    "declared_ports": [
+      "8000",
+      "8001"
+    ],
+    "endpoints_before_kill": {
+      "8000": "http://127.0.0.1:40001",
+      "8001": "http://127.0.0.1:40002"
+    },
+    "endpoints_after_repair": {
+      "8000": "http://127.0.0.1:40003",
+      "8001": "http://127.0.0.1:40004"
+    },
+    "local_ports_before": {
+      "8000": 40001,
+      "8001": 40002
+    },
+    "local_ports_after": {
+      "8000": 40003,
+      "8001": 40004
+    },
+    "ssh_forwards_spawned": [
+      {
+        "cluster": "kinoforge-s5-offline-c22a008a",
+        "local_port": 40001,
+        "remote_port": 8000
+      },
+      {
+        "cluster": "kinoforge-s5-offline-c22a008a",
+        "local_port": 40002,
+        "remote_port": 8001
+      },
+      {
+        "cluster": "kinoforge-s5-offline-c22a008a",
+        "local_port": 40003,
+        "remote_port": 8000
+      },
+      {
+        "cluster": "kinoforge-s5-offline-c22a008a",
+        "local_port": 40004,
+        "remote_port": 8001
+      }
+    ],
+    "at": "2026-09-02T23:41:58.196307-07:00"
+  },
+  "claim_3_live": {
+    "status": "PROVEN",
+    "cluster_name": "kinoforge-s5-tunnel-6880f7ef",
+    "expected_sku": "c6i.large",
+    "launched_image": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+    "image_source": "engine render (build_instance_spec takes `rendered.image or image`), NOT compute.image \u2014 see the module docstring",
+    "watchdog_max_lifetime_s": 2700.0,
+    "create_timeout_s": 1500.0,
+    "preflight": {
+      "exit_code": 0,
+      "log": "Pixi task (preflight in default): python tools/preflight.py\npreflight: pre-live-spend gate\n  OK   env: ['RUNPOD_API_KEY', 'RUNPOD_TERMINATE_KEY', 'HF_TOKEN'] all set\n  OK   pods: 0 active\n  OK   git: working tree clean\n  OK   sky: 0 active clusters (or skypilot not installed)\npreflight: PASS \u2014 safe to spend"
+    },
+    "run_command": "PY=\"$(command -v python3 || command -v python)\"; test -n \"$PY\" || PY=\"$HOME/miniconda3/bin/python3\"; echo \"kinoforge-s5 serving with $PY\"; \"$PY\" -m http.server 8000 --directory /tmp & \"$PY\" -m http.server 8001 --directory /tmp & wait",
+    "utilisation_samples": [
+      {
+        "reachable": false,
+        "cpu_idle_pct": null,
+        "mem_used_mb": null,
+        "mem_total_mb": null,
+        "raw": null,
+        "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s5-tunnel-6880f7ef: Name or service not known",
+        "at": "2026-09-02T23:44:47.218338-07:00",
+        "elapsed_s": 75.1,
+        "gpu_util_percent": null,
+        "cpu_percent": null,
+        "memory_percent": null,
+        "health_signal": "cpu_percent (CPU SKU \u2014 no GPU on this box)"
+      },
+      {
+        "reachable": false,
+        "cpu_idle_pct": null,
+        "mem_used_mb": null,
+        "mem_total_mb": null,
+        "raw": null,
+        "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s5-tunnel-6880f7ef: Name or service not known",
+        "at": "2026-09-02T23:46:02.278139-07:00",
+        "elapsed_s": 150.1,
+        "gpu_util_percent": null,
+        "cpu_percent": null,
+        "memory_percent": null,
+        "health_signal": "cpu_percent (CPU SKU \u2014 no GPU on this box)"
+      },
+      {
+        "reachable": false,
+        "cpu_idle_pct": null,
+        "mem_used_mb": null,
+        "mem_total_mb": null,
+        "raw": null,
+        "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s5-tunnel-6880f7ef: Name or service not known",
+        "at": "2026-09-02T23:47:17.308262-07:00",
+        "elapsed_s": 225.2,
+        "gpu_util_percent": null,
+        "cpu_percent": null,
+        "memory_percent": null,
+        "health_signal": "cpu_percent (CPU SKU \u2014 no GPU on this box)"
+      }
+    ],
+    "endpoints_at_create": {
+      "8000": "http://127.0.0.1:38265",
+      "8001": "http://127.0.0.1:43149"
+    },
+    "http_before": [
+      {
+        "port": "8000",
+        "url": "http://127.0.0.1:38265",
+        "status": 200,
+        "error": null,
+        "attempts": 1,
+        "waited_s": 0.2
+      },
+      {
+        "port": "8001",
+        "url": "http://127.0.0.1:43149",
+        "status": 200,
+        "error": null,
+        "attempts": 1,
+        "waited_s": 0.2
+      }
+    ],
+    "endpoints_after_repair": {
+      "8000": "http://127.0.0.1:35913",
+      "8001": "http://127.0.0.1:49331"
+    },
+    "http_after": [
+      {
+        "port": "8000",
+        "url": "http://127.0.0.1:35913",
+        "status": 200,
+        "error": null,
+        "attempts": 2,
+        "waited_s": 3.2
+      },
+      {
+        "port": "8001",
+        "url": "http://127.0.0.1:49331",
+        "status": 200,
+        "error": null,
+        "attempts": 1,
+        "waited_s": 0.2
+      }
+    ],
+    "ledger": {
+      "status": "one-real-row",
+      "row_count": 1,
+      "rows": [
+        {
+          "id": "kinoforge-s5-tunnel-6880f7ef",
+          "provider": "skypilot",
+          "tags": {
+            "kinoforge_engine": "comfyui",
+            "kinoforge_key": "golden-key",
+            "mode": "pod",
+            "ports": "8000,8001",
+            "sku": "c6i.large",
+            "cloud": "AWS",
+            "region": "us-west-2",
+            "accelerators": ""
+          },
+          "endpoints": {
+            "8000": "http://127.0.0.1:38265",
+            "8001": "http://127.0.0.1:43149"
+          },
+          "created_at": 1788418098.9907372,
+          "cost_rate_usd_per_hr": 0.0,
+          "max_age_s": 2700
+        }
+      ],
+      "at": "2026-09-02T23:48:26.700861-07:00"
+    },
+    "started_at": "2026-09-02T23:43:32.139604-07:00",
+    "provisional_row_id": "kinoforge-s5-tunnel-6880f7ef",
+    "launched_at": "2026-09-02T23:43:32.144183-07:00",
+    "create_returned_after_s": 290.1,
+    "deadline_remaining_s": 2409.9,
+    "sku_launched": [
+      "c6i.large"
+    ],
+    "sku_tag": "c6i.large",
+    "tags_ports": "8000,8001",
+    "tunnels_killed": {
+      "8000": {
+        "returncode": 0
+      },
+      "8001": {
+        "returncode": 0
+      }
+    },
+    "local_ports_before": {
+      "8000": 38265,
+      "8001": 43149
+    },
+    "local_ports_after": {
+      "8000": 35913,
+      "8001": 49331
+    },
+    "teardown": {
+      "started_at": "2026-09-02T23:48:31.128758-07:00",
+      "passes": [
+        {
+          "at": "2026-09-02T23:48:31.128801-07:00",
+          "forced_instance_ids": [
+            "i-03196fdd7fe68d9d4"
+          ],
+          "sky_status": "ready",
+          "destroy_instance": "ok",
+          "ec2_states": [
+            "shutting-down"
+          ],
+          "ec2_readable": true,
+          "launch_thread_alive": false
+        },
+        {
+          "at": "2026-09-02T23:49:08.244617-07:00",
+          "forced_instance_ids": [
+            "i-03196fdd7fe68d9d4"
+          ],
+          "sky_status": null,
+          "ec2_states": [
+            "terminated"
+          ],
+          "ec2_readable": true,
+          "launch_thread_alive": false
+        },
+        {
+          "at": "2026-09-02T23:49:40.698527-07:00",
+          "forced_instance_ids": [
+            "i-03196fdd7fe68d9d4"
+          ],
+          "sky_status": null,
+          "ec2_states": [
+            "terminated"
+          ],
+          "ec2_readable": true,
+          "launch_thread_alive": false
+        }
+      ],
+      "final_ec2_states": [
+        "terminated"
+      ],
+      "final_ec2_readable": true,
+      "final_sky_status": null,
+      "clean_streak": 2,
+      "finished_at": "2026-09-02T23:49:56.921825-07:00",
+      "ledger_forget": "ok"
+    },
+    "finished_at": "2026-09-02T23:49:56.929464-07:00",
+    "billable_wall_clock_s": 384.8,
+    "estimated_spend_usd": 0.0091,
+    "spend_basis": "list price 0.085 USD/hr for c6i.large in us-west-2 (the SKU asserted against the EC2 oracle above), times billable wall clock \u2014 an estimate, not a reading of the invoice. Ceiling is 0.064 USD, set by the instance-side watchdog at 2700s"
+  },
+  "started_at": "2026-09-02T23:41:58.182151-07:00",
+  "captured_at": "2026-09-02T23:49:56.930901-07:00",
+  "outcome": "PROVEN"
 }
