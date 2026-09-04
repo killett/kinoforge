@@ -13,10 +13,13 @@ overwrites with a fresh record.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 _REQUIRED_KEYS = ("instance_id", "capability_key", "engine", "timestamp")
 
@@ -41,6 +44,15 @@ def read_marker(path: Path) -> dict[str, Any] | None:
     required keys) so the caller can treat it as "not provisioned" and
     re-run provision.
 
+    An ABSENT marker is the normal first-generate path and is silent. A
+    marker that is *present but unusable* — unreadable (a transient
+    ``EIO``/``EMFILE`` under load), corrupt, or missing required keys — is
+    an anomaly, and returning a bare ``None`` for it makes the resulting
+    re-provision indistinguishable in a log from an ordinary cold start.
+    Those three cases therefore warn. The self-healing return value is
+    deliberately unchanged: the next provision pass overwrites the marker,
+    and a re-provision is always safe, merely expensive.
+
     Args:
         path: Marker path (see :func:`marker_path`).
 
@@ -52,11 +64,20 @@ def read_marker(path: Path) -> dict[str, Any] | None:
     try:
         with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as exc:
+        _log.warning(
+            "provision marker %s exists but could not be read (%s) — treating "
+            "the instance as unprovisioned and re-running provision",
+            path,
+            exc,
+        )
         return None
-    if not isinstance(data, dict):
-        return None
-    if not all(k in data for k in _REQUIRED_KEYS):
+    if not isinstance(data, dict) or not all(k in data for k in _REQUIRED_KEYS):
+        _log.warning(
+            "provision marker %s is malformed — treating the instance as "
+            "unprovisioned and re-running provision",
+            path,
+        )
         return None
     return data
 
