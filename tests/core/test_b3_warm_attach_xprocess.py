@@ -20,9 +20,19 @@ import textwrap
 import time
 from pathlib import Path
 
+#: Wall-clock ceilings, not timing mechanism. Each is a "something is
+#: genuinely wrong" bound set far above what a loaded machine needs — see
+#: the module docstring of test_orchestrator_session_claim_xprocess.py for
+#: why a ceiling must never double as the mechanism.
+_FLAG_TIMEOUT_S = 120.0
+_SUBPROCESS_TIMEOUT_S = 120.0
+#: Cap inside a lock-holding subprocess so an abandoned child (test crashed
+#: before writing the release flag) cannot wedge a CI run forever.
+_HOLD_CAP_S = 300.0
+
 
 def _run_python(
-    script: str, *, timeout: float = 30.0
+    script: str, *, timeout: float = _SUBPROCESS_TIMEOUT_S
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-c", script],
@@ -30,6 +40,68 @@ def _run_python(
         text=True,
         timeout=timeout,
     )
+
+
+def _hold_until_released(release: Path, *, indent: int = 12) -> str:
+    """Return the inline-Python snippet that blocks until *release* exists.
+
+    Replaces a bare ``time.sleep(N)`` inside a lock-holding subprocess. The
+    sleep form required the probing process to cold-start an interpreter,
+    import kinoforge and finish its work inside N seconds; under CPU
+    contention that startup alone overruns N, the lock is released early,
+    and the probe reports "no holder" — indistinguishable from the
+    production bug the test exists to catch.
+
+    Args:
+        release: Flag path the test creates once the probe is done.
+        indent: Column the snippet is interpolated at. The first line is
+            left bare (the template supplies its indent); every later line
+            carries *indent* spaces, so ``textwrap.dedent`` on the enclosing
+            template still sees the template's own lines as the common
+            prefix and does not flatten the block into a syntax error.
+
+    Returns:
+        Python source ready to interpolate inside a ``with`` block.
+    """
+    pad = " " * indent
+    lines = [
+        f"release = Path({str(release)!r})",
+        f"cap = time.monotonic() + {_HOLD_CAP_S!r}",
+        "while not release.exists() and time.monotonic() < cap:",
+        "    time.sleep(0.02)",
+    ]
+    return f"\n{pad}".join(lines)
+
+
+def _wait_for_flag(
+    flag: Path, proc: subprocess.Popen[str], *, what: str, timeout_s: float
+) -> None:
+    """Block until *flag* appears, failing fast if *proc* dies first.
+
+    Args:
+        flag: Path the helper process creates once it reaches the state
+            under test.
+        proc: The helper process, polled each iteration so an early exit
+            surfaces its stderr instead of timing out blind.
+        what: Description used in the failure message.
+        timeout_s: Ceiling before giving up.
+
+    Raises:
+        AssertionError: If *proc* exits before creating *flag*, or the flag
+            does not appear within *timeout_s*.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if flag.exists():
+            return
+        if proc.poll() is not None:
+            out, err = proc.communicate()
+            raise AssertionError(
+                f"{what}: helper process exited early with rc={proc.returncode}; "
+                f"stdout={out!r} stderr={err!r}"
+            )
+        time.sleep(0.02)
+    raise AssertionError(f"{what}: {flag} did not appear within {timeout_s}s")
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +116,7 @@ def test_probe_lock_held_observes_cross_process_hold(tmp_path: Path) -> None:
     store_root.mkdir()
     flag = tmp_path / "a_entered.flag"
     done = tmp_path / "a_done.flag"
+    release = tmp_path / "a_may_release.flag"
 
     a_script = textwrap.dedent(f"""
         from pathlib import Path
@@ -52,7 +125,7 @@ def test_probe_lock_held_observes_cross_process_hold(tmp_path: Path) -> None:
         store = LocalArtifactStore(Path({str(store_root)!r}))
         with store.acquire_lock("reaper/pod-1", ttl_s=30.0):
             Path({str(flag)!r}).write_text("entered")
-            time.sleep(2.0)
+            {_hold_until_released(release)}
         Path({str(done)!r}).write_text("done")
     """)
 
@@ -63,11 +136,12 @@ def test_probe_lock_held_observes_cross_process_hold(tmp_path: Path) -> None:
         text=True,
     )
     try:
-        # Wait for A to grab the lock.
-        deadline = time.monotonic() + 10.0
-        while time.monotonic() < deadline and not flag.exists():
-            time.sleep(0.05)
-        assert flag.exists(), "A never grabbed the reaper lock"
+        _wait_for_flag(
+            flag,
+            p_a,
+            what="A never grabbed the reaper lock",
+            timeout_s=_FLAG_TIMEOUT_S,
+        )
 
         b_script = textwrap.dedent(f"""
             from pathlib import Path
@@ -81,7 +155,8 @@ def test_probe_lock_held_observes_cross_process_hold(tmp_path: Path) -> None:
             f"probe did not see A's hold; B stdout={r_b.stdout!r} stderr={r_b.stderr!r}"
         )
     finally:
-        p_a.wait(timeout=10)
+        release.write_text("release")
+        p_a.wait(timeout=_SUBPROCESS_TIMEOUT_S)
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +322,7 @@ def test_scan_records_reaper_held_skip_for_cross_process_lock(
     store_root = tmp_path / "store"
     store_root.mkdir()
     flag = tmp_path / "a_entered.flag"
+    release = tmp_path / "a_may_release.flag"
 
     # Seed entry with matching provider + cap_key + fresh tick (so it passes
     # coarse + classify gates) before A grabs the reaper lock.
@@ -276,7 +352,7 @@ def test_scan_records_reaper_held_skip_for_cross_process_lock(
         store = LocalArtifactStore(Path({str(store_root)!r}))
         with store.acquire_lock("reaper/pod-1", ttl_s=30.0):
             Path({str(flag)!r}).write_text("entered")
-            time.sleep(2.0)
+            {_hold_until_released(release)}
     """)
     p_a = subprocess.Popen(
         [sys.executable, "-c", a_script],
@@ -285,10 +361,12 @@ def test_scan_records_reaper_held_skip_for_cross_process_lock(
         text=True,
     )
     try:
-        deadline = time.monotonic() + 10.0
-        while time.monotonic() < deadline and not flag.exists():
-            time.sleep(0.05)
-        assert flag.exists(), "A never grabbed the reaper lock"
+        _wait_for_flag(
+            flag,
+            p_a,
+            what="A never grabbed the reaper lock",
+            timeout_s=_FLAG_TIMEOUT_S,
+        )
 
         b_script = textwrap.dedent(f"""
             from pathlib import Path
@@ -336,4 +414,5 @@ def test_scan_records_reaper_held_skip_for_cross_process_lock(
             f"stderr={r_b.stderr!r}"
         )
     finally:
-        p_a.wait(timeout=10)
+        release.write_text("release")
+        p_a.wait(timeout=_SUBPROCESS_TIMEOUT_S)
