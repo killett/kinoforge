@@ -131,9 +131,11 @@ statement; the renderer drops it by default (see step 1 below).
 > `<S3_BUCKET_PREFIX>` placeholders and cannot be pasted into the console or
 > passed to `create-policy` as-is — AWS rejects a malformed ARN. Render it
 > first with `tools/render_aws_policy.py`; never attach
-> `.aws/policies/skypilot-minimal.template.json` directly. Full
-> UNVALIDATED-against-a-real-launch warning:
-> `.aws/policies/README.md`.
+> `.aws/policies/skypilot-minimal.template.json` directly. What the policy
+> has and has not been proven to carry — it launched a real EC2 instance on
+> 2026-09-04, with a named list of what that run did *not* exercise — is in
+> `.aws/policies/README.md`, along with what to run when a launch fails on
+> permissions.
 
 > **Attach it as a MANAGED policy, never an inline one.** IAM caps a user's
 > inline policies at **2048 characters in aggregate**; this policy renders

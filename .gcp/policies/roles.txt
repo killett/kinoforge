@@ -41,6 +41,20 @@
 # And in every case this remains UNVALIDATED against a real SkyPilot launch:
 # simulation and permission-testing prove logic, never that a launch's actual
 # call sequence succeeds. See the firewall caveat below.
+#
+# WHAT CHANGED 2026-09-04. The AWS counterpart is no longer unvalidated -- a
+# throwaway principal holding only the scoped policy launched a real CPU
+# instance, with no denial at any point, and .aws/policies/README.md now
+# carries the inventory of every call that principal made plus a named list
+# of what the run did NOT exercise.
+# The same was attempted here and could not be started: the credential is
+# still dead, exactly as described above. So this file took the other half of
+# that brief instead -- see "WHEN A LAUNCH FAILS ON PERMISSIONS" at the
+# bottom. The banner stays; what changes is that hitting a denial is now a
+# fifteen-minute lookup instead of a dead end.
+#
+# Note what that does NOT do: the compute.securityAdmin firewall hypothesis
+# below is still a hypothesis. Nobody has confirmed or refuted it.
 
 roles/compute.instanceAdmin.v1
 roles/iam.serviceAccountUser
@@ -108,3 +122,72 @@ roles/storage.admin
 #     --flatten="bindings[].members" \
 #     --filter="bindings.members:$SA" \
 #     --format="value(bindings.role)"
+#
+# --- WHEN A LAUNCH FAILS ON PERMISSIONS -------------------------------------
+#
+# A launch under these roles WILL eventually be denied something, because
+# nothing above has been measured. The failure looks like an opaque GCP error
+# in the middle of `sky launch`, and the tempting fix is roles/owner. Don't.
+# Two commands turn that dead end into a named permission.
+#
+# Neither has been run against this project -- the credential here has been
+# dead since before 2026-08-23 -- so treat the flag spellings as checked
+# (against `gcloud` 570.0.0 in this workspace's live-skypilot env) and the
+# OUTPUT as unseen. The AWS counterpart of the first command WAS run for real;
+# see .aws/policies/README.md.
+#
+#   PID=$(gcloud config get-value project)
+#   SA=kinoforge-runner@${PID}.iam.gserviceaccount.com
+#
+# 1. WHAT WAS ACTUALLY DENIED -- the audit log. Retrospective: it reports the
+#    calls that really happened. Admin Activity audit logs are on by default
+#    and are not billed, so this works with no prior setup. status.code 7 is
+#    PERMISSION_DENIED in google.rpc.Code -- that literal 7 is the filter.
+#
+#      gcloud logging read \
+#        "protoPayload.authenticationInfo.principalEmail=\"$SA\"
+#         AND protoPayload.status.code=7" \
+#        --project="$PID" --freshness=2h --limit=20 \
+#        --format="value(timestamp,
+#                        protoPayload.methodName,
+#                        protoPayload.authorizationInfo.permission,
+#                        protoPayload.status.message)"
+#
+#    THE FIELD TO READ is protoPayload.authorizationInfo[].permission. It is
+#    the exact permission string to add -- e.g. `compute.firewalls.create`,
+#    not a role name and not the method name beside it. methodName is context;
+#    permission is the answer.
+#
+#    Two things that make this print nothing, neither of which means "no
+#    denial happened": the caller needs roles/logging.viewer on the project,
+#    and a client-side refusal (sky declining to try) never reaches the API,
+#    so it is never logged. If the log is empty, re-read sky's own stderr
+#    before concluding anything.
+#
+# 2. WHY IT WAS DENIED -- the Policy Troubleshooter. Predictive: ask it about
+#    one permission and it explains which binding would have granted it.
+#
+#      gcloud policy-troubleshoot iam \
+#        //cloudresourcemanager.googleapis.com/projects/$PID \
+#        --principal-email="$SA" \
+#        --permission=compute.firewalls.create
+#
+#    THE FIELD TO READ is `access:` -- GRANTED / NOT_GRANTED / UNKNOWN_INFO --
+#    and then explainedPolicies[].bindingExplanations[], which names the role
+#    that did or did not supply it. Use this AFTER the audit log has told you
+#    which permission to ask about; it takes one permission at a time.
+#
+# CHECK THE FIREWALL HYPOTHESIS FIRST. The caveat above predicts that
+# compute.instanceAdmin.v1 does not grant firewall mutation and that SkyPilot
+# needs it. If command 1 comes back with a `compute.firewalls.*` permission,
+# that is confirmed: add roles/compute.securityAdmin (firewall rules only),
+# NOT roles/compute.admin. If it comes back with something else entirely, the
+# hypothesis is refuted -- say so here, in this file, because the next person
+# will otherwise keep chasing it.
+#
+# ROLES/OWNER AND COMPUTE.ADMIN ARE THE FALLBACK OF LAST RESORT. If you widen
+# to one of them to get unblocked, that is a legitimate thing to do under time
+# pressure -- but RECORD IT, here, with the date and the denial that forced
+# it. A temporary widening that nobody writes down is how the permanent state
+# gets decided by accident, and a scoped-policy file that silently describes
+# something nobody is running is worse than no file at all.

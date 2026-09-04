@@ -5,7 +5,19 @@ these bytes are a credential — they are permission scoping, safe to commit.
 
 ## `skypilot-minimal.template.json`
 
-**UNVALIDATED against a real SkyPilot launch.** Simulate-validated
+**LAUNCH-VALIDATED 2026-09-04.** A throwaway IAM user holding this policy —
+and nothing else — launched a real EC2 instance in `us-west-2` via SkyPilot,
+ran a job on it and tore it down. `rc=0`, no denial anywhere in the log, and
+CloudTrail records `errorCode` NONE on all 37 API calls that principal made.
+See **"What the live launch proved"** below for exactly what that covers, and
+the shorter list of what it still does not. Reproduce with
+`tests/live/test_scoped_policy_aws_live.py`; evidence in
+`tests/live/_scoped_policy_aws_live_evidence.json`.
+
+The simulate-validation below stands, and is what made the live run pass on
+the first attempt:
+
+Simulate-validated
 2026-08-23 against real IAM (`tools/validate_scoped_policy.py`,
 `iam:SimulatePrincipalPolicy` under this workspace's own AWS account):
 **all 15 required actions returned `allowed`** — `denied: []`, `ungranted: []`,
@@ -39,9 +51,169 @@ to `allowed` against the listed resources, and to `implicitDeny` outside
 them — **not** that a real `sky launch` succeeds end-to-end against it. A
 live launch can still fail on an action the simulation didn't cover, a
 service interaction IAM's simulator doesn't model, or a quota/capacity
-limit that has nothing to do with permissions. This policy has still never
-been attached to a real principal that then launched anything, so treat it
-as **simulate-clean, launch-unvalidated**.
+limit that has nothing to do with permissions. That gap is what the live
+run below closes.
+
+## What the live launch proved
+
+2026-09-04, `tests/live/test_scoped_policy_aws_live.py`, ~$0.02 of EC2.
+
+The setup, because the result is only worth what the isolation is worth:
+
+- A throwaway IAM user (`kinoforge-scope-live-<8 hex>`) created for the run
+  and deleted after it. Its grants were asserted, not assumed: **exactly one**
+  attached policy — this one, rendered — with no inline policies and no group
+  memberships.
+- The launch ran in a subprocess whose environment was built from an
+  **allow-list**, not inherited. pixi's `[activation.env]` exports
+  `AWS_SHARED_CREDENTIALS_FILE` pointing at the real `kinoforge-ci`
+  credential; inheriting it would have run the whole thing as an admin and
+  reported a triumphant false pass. `sts:GetCallerIdentity`, executed inside
+  that environment, was asserted to return the throwaway user.
+- SkyPilot's API server was stopped first and its absence confirmed from the
+  process table. That server is a separate, long-lived process holding
+  whatever environment it was born with — this workspace had one running
+  continuously since 2026-08-27, and it would have served the launch under
+  the ambient credential.
+- The instance was confirmed by EC2 under a *different* principal. An empty
+  answer fails the test rather than passing vacuously.
+
+**Result: green on the first attempt.** The brief that commissioned this work
+budgeted an afternoon for an iteration loop of one-denial-at-a-time; there
+were no denials to iterate on. The simulate-derived action list was already
+sufficient for this path.
+
+### The call inventory — what the policy is load-bearing for
+
+More useful than a denial log, and the same information: this is every AWS
+call the scoped principal actually made, read from CloudTrail after the fact
+(`Username = kinoforge-scope-live-61de6b66`). `errorCode` was NONE on every
+one.
+
+| region | calls |
+|---|---|
+| `us-west-2` (32) | `DescribeInstances` ×9, `DescribeVpcs` ×5, `DescribeSecurityGroups` ×4, `DescribeRouteTables` ×2, `DescribeAvailabilityZones` ×2, `GetCallerIdentity` ×2, `RunInstances`, `TerminateInstances`, `CreateSecurityGroup`, `AuthorizeSecurityGroupIngress`, `CreateTags`, `DescribeSubnets`, `DescribeImages`, `ListBuckets` |
+| `us-east-1` (5) | `DescribeRegions` ×2, `DescribeAvailabilityZones` ×2, `GetInstanceProfile` |
+
+Two things that inventory says which the policy document does not:
+
+- **`ListBuckets` is not optional.** `s3:ListAllMyBuckets` has its own
+  statement (`S3ListAll`) and looks like a leftover; it is not. SkyPilot calls
+  it during cloud-enablement checks, and the negative control below died on
+  exactly that call.
+- **`DescribeRegions` is the first thing that fails.** With no policy at all,
+  sky aborts before provisioning with `Failed to retrieve AWS regions. Please
+  ensure that the ec2:DescribeRegions action is enabled for your AWS account
+  in IAM.` It is covered here by `ec2:Describe*`.
+
+### What the live run did NOT exercise
+
+Stated plainly, because a green run invites over-reading:
+
+- **The IAM write path.** `GetInstanceProfile` succeeded because
+  `skypilot-v1` already existed in this account (created 2026-08-16). So
+  `iam:CreateRole`, `iam:CreateInstanceProfile`, `iam:AddRoleToInstanceProfile`
+  and `iam:PutRolePolicy` were never called. On a **fresh account the first
+  launch runs all of them**, and only simulation covers them today. If you are
+  the first launch in a new account and it fails on IAM, that is the untested
+  seam — the actions are granted here, scoped to `skypilot-*` / `sky-*`.
+- **The key-pair actions.** `us-west-2` holds no EC2 key pairs at all and no
+  `CreateKeyPair` / `ImportKeyPair` / `DescribeKeyPairs` call appears in the
+  trail: sky 0.12.3 provisioned SSH without one. `ec2:CreateKeyPair`,
+  `ec2:ImportKeyPair` and `ec2:DeleteKeyPair` are therefore unexercised. They
+  have NOT been removed — an older sky, a different backend, or a config that
+  pins a key would use them, and dropping a granted-but-unused action to
+  "tidy up" is how the next launch breaks.
+- **KMS, and most of S3.** The rendered document under test carried
+  `KMSLayerW` (a real key ARN from `.aws/kms-test-key.arn`), but a plain
+  CPU launch touches neither it nor the `<S3_BUCKET_PREFIX>-*` object
+  actions. Those remain simulate-only.
+- **GPU capacity, quotas, and anything about cost.** A permission test says
+  nothing about whether the SKU you want is available to you.
+
+### The negative control
+
+Worth as much as the green run, and it is what stops this whole exercise
+being decorative: the *same* launch under a principal holding **no policy at
+all** fails in 17 seconds, books no EC2 instance, and names the missing
+permission. Without that, a green result could just mean the account grants
+everything to everyone and this file is scenery.
+
+## When a launch fails on permissions
+
+The live run above covers one path. Yours may be a different one — a fresh
+account hitting the IAM write path, a GPU SKU in another region, an S3 or KMS
+operation nothing here exercised. When that happens you get an opaque failure
+mid-launch, and the fastest-looking way out is `AdministratorAccess`. It is
+also the one that permanently un-scopes this account. Two commands instead.
+
+**1. What was actually denied — CloudTrail.** Verified 2026-09-04; the output
+below is real, from the negative-control principal of that run.
+
+```bash
+PROBE=kinoforge-ci   # or whichever principal ran the failing launch
+
+aws cloudtrail lookup-events \
+  --region us-west-2 \
+  --lookup-attributes AttributeKey=Username,AttributeValue="$PROBE" \
+  --max-results 50 \
+  --query 'Events[].CloudTrailEvent' --output text \
+| tr '\t' '\n' \
+| python -c 'import sys, json
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    e = json.loads(line)
+    if e.get("errorCode"):
+        print(e["eventTime"], e["eventName"], e["errorCode"],
+              (e.get("errorMessage") or "")[:160])'
+```
+
+Real output from that run:
+
+```
+2026-09-04T21:54:29Z ListBuckets AccessDenied User: arn:aws:iam::…:user/kinoforge-scope-ctl-… is not authorized to perform: s3:ListAllMyBuckets
+```
+
+**THE FIELD TO READ** is the action name inside `errorMessage`, after
+`is not authorized to perform:` — `s3:ListAllMyBuckets` above. That is what
+goes in the policy. `eventName` beside it is the *API* name (`ListBuckets`),
+which is often spelled differently from the IAM action and is not what you
+add.
+
+Four things that will waste your time if you don't know them:
+
+- **`cloudtrail:LookupEvents` is not granted by this policy, and
+  `kinoforge-ci` does not hold it by default.** Both are deliberate: you run
+  the lookup as the operator investigating, not as the principal under test.
+  It was attached to `kinoforge-ci` on 2026-09-04 purely to verify the command
+  above works, then detached the same session. To grant it again:
+  `aws iam attach-user-policy --user-name kinoforge-ci --policy-arn
+  arn:aws:iam::aws:policy/AWSCloudTrail_ReadOnlyAccess` — and detach it when
+  you are done.
+- **CloudTrail lags.** Events took ~15-25 minutes to appear during this
+  validation. An empty result right after a failure means "not yet", not "no
+  denial".
+- **IAM, STS and other global services log to `us-east-1`,** not to the region
+  you launched in. Run the query twice.
+- **A client-side refusal never reaches AWS,** so it is never in the trail.
+  SkyPilot's `Failed to retrieve AWS regions … ec2:DescribeRegions` is sky's
+  own wording for a denial it caught; read its stderr as well as the trail.
+
+**2. Whether the policy grants it — simulate before you re-launch.** Once you
+have an action name, `tools/validate_scoped_policy.py` and the
+`simulate-custom-policy` form documented further down answer "would this
+policy allow it, against this exact ARN" for free, in seconds, with no
+instance involved. That loop is much faster than re-launching to find out.
+
+**`AdministratorAccess` / `AmazonEC2FullAccess` are the fallback of last
+resort.** Widening to one of them to get unblocked under time pressure is a
+legitimate call. **Record it here when you do** — the date, the denial that
+forced it, and whether it is still attached. A temporary widening that nobody
+writes down is how the permanent state gets decided by accident, and a scoped
+policy file that quietly describes something nobody is running is worse than
+no file at all. `.aws/README.md` → "Detaching the fallback" has the reverse
+command.
 
 ### Size: attach this as a MANAGED policy, never inline
 
@@ -91,9 +263,9 @@ structure and rejects.
 Not exercised: the 5-version cap. That figure is AWS's documented limit,
 cited rather than measured — only one extra version was ever created here.
 
-This proves the **attach mechanism**, nothing more. It says nothing about
-whether a SkyPilot launch succeeds under the policy; that caveat is
-unchanged and still open.
+This proves the **attach mechanism**, nothing more — whether a launch
+succeeds under the policy is a separate question, answered by the live run
+documented above rather than by anything in this section.
 
 **If you are adding a statement to this template, mind the 6,144 ceiling.**
 At 3,422 there is room, but it is finite — 2,722 characters of headroom, and

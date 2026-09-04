@@ -7,8 +7,14 @@ instance, no GCE instance, no compute spend.
 What this proves: the policy's own logic grants the actions kinoforge asks
 for. What it does NOT prove: that a real SkyPilot launch succeeds. Simulation
 cannot see an undocumented API call sky makes at launch time — see the
-firewall caveat in `.gcp/policies/roles.txt`. Both artifacts stay marked
-UNVALIDATED for that reason.
+firewall caveat in `.gcp/policies/roles.txt`.
+
+That gap is closed on AWS and open on GCP. `tests/live/test_scoped_policy_aws_live.py`
+attached the rendered AWS policy to a throwaway principal holding nothing else
+and launched a real instance under it (2026-09-04, no denials); the GCP role
+list has still never gated a launch, because this workspace has no working GCP
+credential. Read a clean run here as "the logic holds", not as "it will
+launch" — the live test is what says the second thing.
 
 The AWS simulation passes are grouped by the `Resource` array of whichever
 policy statement actually grants each action, read straight out of the
