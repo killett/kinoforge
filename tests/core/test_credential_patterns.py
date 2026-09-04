@@ -14,6 +14,13 @@ AWS_KEY = "AKIA" + "QWERTYUIOPASDFGH"  # 4 + 16, canonical AWS shape
 HF_KEY = "hf_" + "a" * 34
 RPA_KEY = "rpa_" + "B" * 30
 
+# Google API key: `AIza` + a url-safe body. Split at the prefix so this file
+# carries no matchable literal of its own.
+GOOGLE_KEY = "AIza" + "SyD9mQpVzXnRtYuIoPaSdFgHjKlZxCvBnM"
+
+# GCP service-account JSON: `private_key_id` is 40 lowercase hex chars.
+SA_KEY_ID = "a3f9c1d2e4b6a8c0" + "d2e4f6a8b0c2d4e6f8a0b2c4"
+
 
 def test_strict_is_the_strict_subset_in_declaration_order() -> None:
     """STRICT_PATTERNS must be derived from CREDENTIAL_PATTERNS, not hand-maintained.
@@ -308,6 +315,156 @@ def test_jwt_pattern_ignores_base64_json_bodies() -> None:
     assert not list(cp.iter_findings(base64_json_body))
 
 
+def test_google_api_key_is_a_finding() -> None:
+    """G1: `AIza...` is a well-known fixed shape gcloud and SkyPilot can surface.
+
+    Fails if the pattern is absent — a browser-key paste from a GCP console
+    or a SkyPilot GCP error body commits clean today.
+    """
+    names = {f.pattern_name for f in cp.iter_findings(GOOGLE_KEY)}
+    assert "google_api_key" in names
+
+
+def test_google_api_key_length_band_rejects_short_and_long_bodies() -> None:
+    """The `AIza` prefix is the discriminator; the band rejects non-key shapes.
+
+    Fails if the body quantifier is left open-ended (`{30,}` with no upper
+    bound, or no trailing anchor): a 64-char base64 blob that happens to
+    start with `AIza` would then block every commit that touches it. Also
+    fails if the lower bound is dropped, which would match the bare word
+    `AIzaSy` in prose.
+    """
+    assert not list(cp.iter_findings("AIza" + "Sy0123456789abcdef"))  # 18-char body
+    assert not list(cp.iter_findings("AIza" + "Q1" * 32))  # 64-char body
+
+
+def test_google_api_key_ignores_the_prefix_inside_a_longer_token() -> None:
+    """A `AIza` run *inside* another token is not a key.
+
+    Fails if the leading lookbehind is dropped: `pixi.lock` is full of long
+    base64 digests, and one containing `AIza` mid-string would then be
+    reported forever with no way to fix it but an allowlist.
+    """
+    embedded = "sha256-Zm9vYmFy" + GOOGLE_KEY
+    assert not list(cp.iter_findings(embedded))
+
+
+def test_google_api_key_placeholder_forms_do_not_fire() -> None:
+    """Docs and templates must be able to show the shape without blocking.
+
+    Fails if the new pattern is wired somewhere that bypasses
+    `looks_like_placeholder` — a `<PLACEHOLDER>` or `xxxx` body in
+    .env.example would then block every commit.
+    """
+    assert not list(cp.iter_findings("AIza" + "X" * 20 + "xxxx" + "Y" * 10))
+    assert not list(cp.iter_findings("AIza" + "SyEXAMPLE" + "b" * 25))
+
+
+def test_partial_service_account_json_without_the_pem_body_is_a_finding() -> None:
+    """G3, the one that matters here: `.gcp/kinoforge-sa.json` IS the credential.
+
+    The full SA JSON only blocks today via `pem_private_key`. A truncated
+    terminal capture — the metadata rows, no key body — is exactly what a
+    scrolled-off `cat` produces, and it commits clean. Fails if the
+    `private_key_id` field is not covered.
+    """
+    # No project_id / client_email row: both are cloud IDENTIFIERS, and
+    # tests/test_cloud_identifier_scrub.py scans this file for them. The
+    # private_key_id row is the whole point of the fixture anyway.
+    partial = (
+        '{"type": "service_account", '
+        f'"private_key_id": "{SA_KEY_ID}"}}'  # kinoforge: allow-secret
+    )
+    (finding,) = [
+        f for f in cp.iter_findings(partial) if f.pattern_name == "gcp_private_key_id"
+    ]
+    assert SA_KEY_ID not in finding.redacted_excerpt
+    assert "<REDACTED:gcp_private_key_id>" in finding.redacted_excerpt
+
+
+def test_private_key_id_requires_its_field_name() -> None:
+    """A bare 40-hex run is a digest, not a credential.
+
+    Fails if the pattern is widened to bare hex — `pixi.lock` carries
+    thousands of 40+ hex digests, and the guard would be unusable. The
+    field name is what makes the value identifiable, exactly as the
+    identifier scanner's documented narrowings describe.
+    """
+    assert not list(cp.iter_findings(SA_KEY_ID))
+    assert not list(cp.iter_findings(f'"sha1": "{SA_KEY_ID}"'))
+
+
+def test_private_key_id_placeholder_forms_do_not_fire() -> None:
+    """A redacted SA JSON in a design doc must not block a commit."""
+    marked = '"private_key_id": "' + "0" * 40 + '"  # placeholder, not a real key'
+    assert not list(cp.iter_findings(marked))
+    assert not list(cp.iter_findings('"private_key_id": "' + "deadbeef" * 5 + '"'))
+
+
+def test_url_embedded_password_is_a_finding() -> None:
+    """G2: `scheme://user:pass@host` hides a credential with no prefix of its own.
+
+    Fails if the pattern is absent — a connection string pasted into a
+    config or a test fixture carries a live password past every other
+    pattern, because nothing about the value itself looks credential-shaped.
+    """
+    url = "postgres://admin:" + "Str0ngP4ssw0rdHere" + "@db.internal:5432/kino"
+    names = {f.pattern_name for f in cp.iter_findings(url)}
+    assert "url_credentials_strict" in names
+
+
+def test_short_url_password_redacts_but_does_not_block() -> None:
+    """The tier split for G2, on the brief's own second example.
+
+    `https://user:token@host/path` is the shape docs use; blocking on it
+    teaches --no-verify. It must still be scrubbed from the transcript.
+    Fails if the strict floor is removed (docs example blocks) or if the
+    loose companion is missing (the password reaches the transcript).
+    """
+    url = "https://user:" + "token" + "@host/path"
+    assert not list(cp.iter_findings(url))
+    assert "<REDACTED:url_credentials>" in cp.redact_string(url)
+
+
+def test_wordy_doc_password_redacts_but_does_not_block() -> None:
+    """The digit requirement, pinned on the canonical Postgres docs string.
+
+    `mysecretpassword` is 16 chars — past any length floor — and carries no
+    placeholder marker, so length alone cannot tell it from a real secret.
+    Fails if the digit requirement is dropped, which would make the most
+    widely copy-pasted connection string in existence block every commit.
+    """
+    url = "postgres://user:" + "mysecretpassword" + "@localhost:5432/db"
+    assert not list(cp.iter_findings(url))
+    assert "<REDACTED:url_credentials>" in cp.redact_string(url)
+
+
+def test_url_password_that_is_a_shell_variable_reference_does_not_block() -> None:
+    """Same boundary `credential_assignment` already draws for `VAR=$OTHER`.
+
+    `https://oauth2:$GH_TOKEN@github.com/...` is this repo's documented way
+    of showing "pass your own token here". Fails if the `$VAR` exclusion is
+    missing from the strict variant.
+    """
+    url = "https://oauth2:" + "$GH_TOKEN" + "@github.com/emmy/kinoforge.git"
+    assert not list(cp.iter_findings(url))
+
+
+def test_url_with_a_port_but_no_userinfo_is_untouched() -> None:
+    """`host:port` is not `user:password`.
+
+    Fails if the `@` terminator is dropped or the userinfo class is allowed
+    to cross `/`: every ordinary URL in every log line would then be
+    redacted, which is the over-scrub that corrupts `Read` output.
+    """
+    for url in (
+        "https://db.internal:5432/kino",
+        "postgres://db.internal/kino",
+        "https://abcd1234-8001.proxy.runpod.net/bootstrap.log",
+    ):
+        assert cp.redact_string(url) == url
+
+
 def test_redact_string_is_idempotent() -> None:
     """redact_string(redact_string(s)) must equal redact_string(s).
 
@@ -319,7 +476,11 @@ def test_redact_string_is_idempotent() -> None:
     marker name. A single pass already redacts every credential shape, so
     running redact_string again on its own output must be a no-op.
     """
-    text = f"HF_TOKEN={HF_KEY} key={AWS_KEY} Authorization: Bearer {RPA_KEY}"  # kinoforge: allow-secret
+    url = "postgres://admin:" + "Str0ngP4ssw0rdHere" + "@db.internal:5432/kino"
+    text = (
+        f"HF_TOKEN={HF_KEY} key={AWS_KEY} Authorization: Bearer {RPA_KEY} "  # kinoforge: allow-secret
+        f'{url} {GOOGLE_KEY} "private_key_id": "{SA_KEY_ID}"'
+    )
     once = cp.redact_string(text)
     twice = cp.redact_string(once)
     assert twice == once

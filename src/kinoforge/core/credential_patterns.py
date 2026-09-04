@@ -16,13 +16,14 @@ Two tiers, because the two consumers have opposite cost asymmetries:
   after which the scanner protects nothing.
 
 Naming rule where a loose and a strict pattern cover the same secret
-family (currently ``rpa_`` and ``hf_``): the **plain name belongs to
-the loose pattern** — ``rpa_token``, ``hf_token`` — because that is the
-name the redactors have always emitted in their ``<REDACTED:{name}>``
-markers, and tool-stderr output carrying that marker is a human-visible
-contract external callers grep for. The **strict variant takes the
-``_strict`` suffix** — ``rpa_token_strict``, ``hf_token_strict``. Do
-not swap this: a strict-tier addition must never silently rename what
+family (currently ``rpa_``, ``hf_`` and URL userinfo): the **plain name
+belongs to the loose pattern** — ``rpa_token``, ``hf_token``,
+``url_credentials`` — because that is the name the redactors have always
+emitted in their ``<REDACTED:{name}>`` markers, and tool-stderr output
+carrying that marker is a human-visible contract external callers grep
+for. The **strict variant takes the ``_strict`` suffix** —
+``rpa_token_strict``, ``hf_token_strict``, ``url_credentials_strict``.
+Do not swap this: a strict-tier addition must never silently rename what
 the loose tier has always been called.
 
 Declaration order matters: ``bearer_auth`` is first so a
@@ -153,6 +154,17 @@ CREDENTIAL_PATTERNS: list[CredentialPattern] = [
     ),
     CredentialPattern("rpa_token", re.compile(r"\brpa_[A-Za-z0-9_\-]{8,}\b"), False),
     CredentialPattern("hf_token", re.compile(r"\bhf_[A-Za-z0-9_\-]{8,}\b"), False),
+    # G2, loose half. `scheme://user:pass@host` hides a credential that has no
+    # recognisable prefix of its own, so nothing else in this list can see it.
+    # Redaction wants every one of them, including the 5-char `token` in a docs
+    # URL — a transcript leak costs the same whatever the password's length.
+    # The blocking half is `url_credentials_strict` below; see its comment for
+    # why the two cannot be one pattern.
+    CredentialPattern(
+        "url_credentials",
+        re.compile(r"\b[a-z][a-z0-9+.\-]*://[^\s/:@]+:[^\s/@'\"]{3,}@"),
+        False,
+    ),
     # ---- strict tier: may block a commit -----------------------------------
     CredentialPattern(
         "rpa_token_strict", re.compile(r"\brpa_[A-Za-z0-9]{24,}\b"), True
@@ -256,6 +268,89 @@ CREDENTIAL_PATTERNS: list[CredentialPattern] = [
     ),
     CredentialPattern(
         "gcp_access_token", re.compile(r"\bya29\.[A-Za-z0-9._\-]{20,}\b"), True
+    ),
+    # G1 (2026-09-04). Not a kinoforge .env credential, which is why it was
+    # skipped originally — but `gcloud` and SkyPilot's GCP path can both put
+    # one in an error body, and it is a well-known fixed shape.
+    #
+    # The `AIza` prefix is the discriminator, not the length: the documented
+    # body is 35 url-safe chars, but hand-typed and terminal-truncated pastes
+    # land a char or two short, and a pattern that only matches the exact 39
+    # would miss exactly the paste it exists to catch. The band is what keeps
+    # it honest at the top end — a 64-char base64 digest that happens to begin
+    # `AIza` does NOT match, because every length the band allows is followed
+    # by another url-safe char and the trailing lookahead rejects it. The
+    # leading lookbehind is the same anchor `sk_token` uses: an `AIza` run
+    # *inside* a longer token (a pixi.lock digest) is not a key.
+    # Tests: test_google_api_key_is_a_finding,
+    # test_google_api_key_length_band_rejects_short_and_long_bodies,
+    # test_google_api_key_ignores_the_prefix_inside_a_longer_token.
+    CredentialPattern(
+        "google_api_key",
+        re.compile(r"(?<![A-Za-z0-9_\-])AIza[0-9A-Za-z_\-]{30,45}(?![A-Za-z0-9_\-])"),
+        True,
+    ),
+    # G3 (2026-09-04), the one that matters most for kinoforge:
+    # `.gcp/kinoforge-sa.json` IS the GCP credential. The full SA JSON already
+    # blocks, but only via `pem_private_key` — so a PARTIAL paste (the
+    # metadata rows without the key body, which is exactly what a scrolled-off
+    # terminal capture produces) committed clean. The identifier scanner
+    # catches the SA email and the project id from the same JSON but not this
+    # field.
+    #
+    # Anchored on the field name, deliberately: the value is 40 lowercase hex
+    # chars, and a bare hex pattern of that length would match thousands of
+    # digests in pixi.lock. This is the same trade the identifier scanner
+    # documents for `kms_key_uuid` — the surrounding key is what makes the
+    # value identifiable. `[ \t]*` (not `\s*`) for the same reason as
+    # `_ASSIGNMENT_RE`: keep the match on one line. Quotes optional on the
+    # field name so a Python dict repr of the loaded JSON is covered too.
+    # Tests: test_partial_service_account_json_without_the_pem_body_is_a_finding,
+    # test_private_key_id_requires_its_field_name.
+    CredentialPattern(
+        "gcp_private_key_id",
+        re.compile(
+            r"[\"']?private_key_id[\"']?[ \t]*:[ \t]*[\"'][0-9A-Fa-f]{32,}[\"']"
+        ),
+        True,
+    ),
+    # G2, strict half — the tiering call, recorded because it is the judgement
+    # here. `scheme://user:pass@host` is a documentation shape as much as a
+    # credential shape, and a strict pattern that fires on a docs example
+    # teaches `--no-verify`, after which the scanner protects nothing. So the
+    # blocking variant carries two narrowings the loose one does not:
+    #
+    #  1. The password is >= 12 chars. Kills `user:token@`, `user:pass@`,
+    #     `admin:secret@` — the placeholder forms docs actually use.
+    #  2. The password contains a digit. Length alone is not enough:
+    #     `postgres://user:mysecretpassword@localhost:5432/db` is the most
+    #     copy-pasted connection string in existence, is 16 chars, and carries
+    #     no placeholder marker. Generated credentials — base64, hex, random
+    #     alnum — essentially always carry a digit; wordy human placeholders
+    #     essentially never do. This is the one cheap signal that separates
+    #     them.
+    #
+    # Plus `(?!\$[A-Z_])`, the same exclusion `_ASSIGNMENT_RE` carries: a
+    # password of `$GH_TOKEN` is a shell variable reference, and this repo's
+    # docs use exactly that shape.
+    #
+    # Accepted gap, stated plainly: a real password that is long, lowercase
+    # and digit-free passes the strict tier. It is still redacted by
+    # `url_credentials` and still reported by `scan_secrets.py --tier all`.
+    # A probe of every tracked file at both floors found zero matches, so
+    # neither half is fighting an existing corpus.
+    # Tests: test_url_embedded_password_is_a_finding,
+    # test_short_url_password_redacts_but_does_not_block,
+    # test_wordy_doc_password_redacts_but_does_not_block,
+    # test_url_password_that_is_a_shell_variable_reference_does_not_block,
+    # test_url_with_a_port_but_no_userinfo_is_untouched.
+    CredentialPattern(
+        "url_credentials_strict",
+        re.compile(
+            r"\b[a-z][a-z0-9+.\-]*://[^\s/:@]+:"
+            r"(?!\$[A-Z_])(?=[^\s/@'\"]*[0-9])[^\s/@'\"]{12,}@"
+        ),
+        True,
     ),
     CredentialPattern("credential_assignment", _ASSIGNMENT_RE, True),
 ]

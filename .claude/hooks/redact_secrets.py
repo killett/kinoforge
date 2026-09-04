@@ -75,6 +75,13 @@ CREDENTIAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("bearer_auth", re.compile(r"Bearer\s+[A-Za-z0-9._\-]{8,}")),
     ("rpa_token", re.compile(r"\brpa_[A-Za-z0-9_\-]{8,}\b")),
     ("hf_token", re.compile(r"\bhf_[A-Za-z0-9_\-]{8,}\b")),
+    # `scheme://user:pass@host` — a credential with no prefix of its own, so
+    # nothing else in this list can see it. Loose half: redaction wants every
+    # one, whatever the password's length.
+    (
+        "url_credentials",
+        re.compile(r"\b[a-z][a-z0-9+.\-]*://[^\s/:@]+:[^\s/@'\"]{3,}@"),
+    ),
     # ---- strict tier: may block a commit -----------------------------------
     ("rpa_token_strict", re.compile(r"\brpa_[A-Za-z0-9]{24,}\b")),
     ("hf_token_strict", re.compile(r"\bhf_[A-Za-z0-9]{32,}\b")),
@@ -118,6 +125,31 @@ CREDENTIAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("modal_token", re.compile(r"\b(?:ak|as)-[A-Za-z0-9]{20,}\b")),
     ("lambda_key", re.compile(r"\bsecret_[A-Za-z0-9]+_[0-9a-f]{32,}\b")),
     ("gcp_access_token", re.compile(r"\bya29\.[A-Za-z0-9._\-]{20,}\b")),
+    # Google API key. The `AIza` prefix is the discriminator; the length band
+    # plus both anchors keep an `AIza` run inside a longer base64 digest out.
+    (
+        "google_api_key",
+        re.compile(r"(?<![A-Za-z0-9_\-])AIza[0-9A-Za-z_\-]{30,45}(?![A-Za-z0-9_\-])"),
+    ),
+    # GCP service-account JSON `private_key_id`. Anchored on the field name
+    # because a bare 40-hex run is a digest, not a credential — see the shared
+    # module for the full rationale.
+    (
+        "gcp_private_key_id",
+        re.compile(
+            r"[\"']?private_key_id[\"']?[ \t]*:[ \t]*[\"'][0-9A-Fa-f]{32,}[\"']"
+        ),
+    ),
+    # Strict half of url_credentials: >= 12-char password that contains a
+    # digit and is not a `$VAR` reference. See the shared module for why
+    # length alone is not enough (`mysecretpassword`).
+    (
+        "url_credentials_strict",
+        re.compile(
+            r"\b[a-z][a-z0-9+.\-]*://[^\s/:@]+:"
+            r"(?!\$[A-Z_])(?=[^\s/@'\"]*[0-9])[^\s/@'\"]{12,}@"
+        ),
+    ),
     (
         "credential_assignment",
         re.compile(
