@@ -43,7 +43,9 @@ first unchecked task without redoing committed work.
   **S5 (one endpoint shape + the ledger row generalised) SHIPPED 2026-09-02 — branch NOT yet merged**
   — plan `docs/superpowers/plans/2026-09-01-compute-seam-s5-endpoint-shape-ledger-generalisation.md`
   (`.tasks.json` co-located, 11 tasks, all committed), branch
-  `feat/compute-seam-s5-endpoint-shape-ledger`, held for a final whole-branch review before merge.
+  `feat/compute-seam-s5-endpoint-shape-ledger`. Whole-branch review DONE 2026-09-03; its one
+  blocker (**ruling C1** — a create that raises now KEEPS its provisional row, and the reconciler's
+  provider-agnostic age-out is what clears it) and every rider are fixed. Ready to merge.
   **F11 and F12 are closed**: warm attach asks the provider for a LIVE endpoint instead of replaying
   a dead `127.0.0.1:<port>` or handing `ssh://` to an HTTP client, and every provider now gets an
   orchestrator-written `kf_launch_phase=launching` row before `create_instance`. One port-keyed
@@ -51,11 +53,11 @@ first unchecked task without redoing committed work.
   port in `tags["ports"]` and rebuilds dead ones. Both S4 follow-ups closed — SkyPilot instance tags
   name the sku/cloud/region, and an over-cap plan is refused BEFORE `sky.launch`. All three live
   claims PROVEN for **$0.0091 total** (two of them book nothing at all); **NO golden moved**, which
-  is the point — none of S5 is visible in a launch payload. See the RESUME SNAPSHOT for the four
-  design corrections (notably: `endpoints()` split into read + `ensure_endpoints` rather than
-  becoming tunnel-ensuring, and the pre-launch bound is priced from the catalog because
-  `sky.optimize()` always returns None at this pin), and for the util-poller blindness found on the
-  live run.
+  is the point — none of S5 is visible in a launch payload. See the RESUME SNAPSHOT for the design
+  corrections — now FOUR (notably: `endpoints()` split into read + `ensure_endpoints` rather than
+  becoming tunnel-ensuring; the pre-launch bound is priced from the catalog because
+  `sky.optimize()` always returns None at this pin; and ruling C1's "removed if create raises" is
+  wrong) — and for the util-poller blindness found on the live run.
 - **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
 - **Modal plan (spec 1, done):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; `.tasks.json` co-located)
@@ -429,7 +431,69 @@ first unchecked task without redoing committed work.
   longer route anyone into it. GCP's `roles.txt` is still entirely unmeasured — honest and labelled
   as such, rather than green from a caller-evaluated `testIamPermissions`.
 
-## RESUME SNAPSHOT (updated 2026-09-02 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-03 — read this, then STOP; below is history)
+
+**WHOLE-BRANCH REVIEW APPLIED 2026-09-03 (one blocker + riders, one commit).** The review of
+`feat/compute-seam-s5-endpoint-shape-ledger` found ONE blocker, ruled by the operator, plus a set
+of riders. All are fixed; the branch is ready to merge.
+
+**Blocker C1 — a create that raises now KEEPS its provisional row.** This OVERRIDES the S5 plan's
+Task 4 text (and the code Task 5 deleted was right to refuse the trade). A raise out of
+`create_instance` is NOT proof the provider booked nothing, and three shipped shapes say so:
+`sky.launch` raising on a failed setup script leaves an **UP** cluster with no handler anywhere in
+the provider; the tunnel branch's best-effort `sky.down` swallows its own exception, so "we tore it
+down" is a hope, not a fact; and a Ctrl-C is caught by `except BaseException` while SkyPilot's API
+server goes on creating the cluster. The unconditional forget therefore produced exactly the F12
+state the row exists to prevent — a live, billing resource with **zero** ledger rows — reached
+through its own cleanup path.
+
+The row is now deleted only for errors that PROVE nothing exists. `kinoforge.core` may not import
+`kinoforge.providers` at module scope, so the marker is portable: a new
+`ComputeProvider.nothing_booked_errors()` classmethod (default `()`, i.e. the safe answer) that the
+orchestrator unions with core's own `CapacityError` in `_nothing_booked_error_types`. SkyPilot
+declares `(PreLaunchRateCapExceeded,)` — raised before `sky.launch` is called at all; runpod, modal
+and local declare nothing, each with a docstring saying why. `tests/core/test_provider_abc.py`
+fails for any registered provider that inherits the default instead of declaring, and the
+orchestrator's reader is defensive: a MagicMock's answer is not a tuple of exception types, so a
+test double degrades to "declares nothing" rather than silently restoring the unconditional forget.
+
+**What clears the rest is the reconciler, not the orchestrator.** `cli/_reconcile` adopts a
+`launching` row after the grace window when the resource turns out to exist, and ages it out when
+it does not. That age-out had to become **provider-agnostic**: `modal` is not in
+`_RECONCILABLE_PROVIDERS` and never can be (its listing exposes no name matchable against a
+`run_id`), so with C1 in place a dead Modal launch would otherwise leave a permanent row no branch
+could clear. An aged `launching` row on an unadoptable provider is now forgotten — never adopted,
+no provider constructed, and NOTHING about non-`launching` rows changed on any provider.
+
+**Riders fixed in the same pass:**
+- **The adopted ledger row is no longer the listing verbatim.** Both listing converters hard-code
+  `created_at=0.0` (and skypilot returns `tags={}`), so an adopted row was born ~56 years old: the
+  reaper destroyed every adopted instance unconditionally, RunPod's overview rendered six-figure
+  `est≤$`, and skypilot lost `tags["ports"]` so `ensure_endpoints` could never rebuild its tunnels.
+  The row's own `created_at`, `max_age_s` and tags are merged back in (row tags UNDER the
+  provider's live reading, minus the phase tag). Nothing had pinned this, which is why it shipped.
+- SkyPilot's `_ensure_tunnel` now reports whether it SPAWNED, and only fresh forwards are torn down
+  on a failure — a second `create_instance` under one `run_id` failing on port 2 used to kill port
+  1's tunnel from the earlier successful call and `sky.down` a cluster still in use.
+- The `ports` tag is written only alongside a `launch`; a server-less cluster no longer advertises
+  ports for `ensure_endpoints` to forward to nothing.
+- RunPod's `name` tag is OMITTED when the read is empty, so it cannot shadow a recorded name
+  through the warm-attach merge (`{**ledger_tags, **instance.tags}`).
+- `deploy()` strips reserved tags like the provision path does; the reconciler's age-out uses the
+  phase-scoped delete; `boot_timeout_s` → `launching_grace_s` (it defaulted to 1800 s while
+  `Lifecycle.boot_timeout_s` is 900 s).
+- Test-strength fixes: the `_AngryLedger` fakes called a method production does not
+  (`forget`/`forget_provisional` drift, so the best-effort forget path was never exercised); both
+  skypilot `_FakeSky` classes lacked `list_accelerators`, so 24 tests silently ran the
+  "estimate unreadable" branch — including the rate-cap test, which reached its post-launch
+  readback only because the pre-launch arm was dead.
+
+**Verified:** all 31 launch-payload goldens byte-identical (`git diff --stat -- tests/providers/golden/`
+empty), `core/errors.py` untouched, `pixi run lint` / `typecheck` clean, and 2687 tests green across
+`tests/core` + `tests/cli` + `tests/providers`.
+
+---
+
 
 **Compute-seam S5 (one endpoint shape + the ledger row generalised) — SHIPPED 2026-09-02.** Plan
 `docs/superpowers/plans/2026-09-01-compute-seam-s5-endpoint-shape-ledger-generalisation.md`
@@ -545,24 +609,29 @@ HTTP client) and F12 (no durable record before `sky.launch`). Both S4-recorded f
 **Still OPEN, and NOT closed by S5 — re-listed rather than quietly dropped:**
 - `region` is wired on skypilot only; RunPod (`dataCenterId`) and Modal (`region=`) stay
   UNSUPPORTED-and-declared, each wanting its own live proof.
-- The ungated `tests/live` modules.
+- The ungated `tests/live` modules — **11 at the S4 audit; NOT re-audited for S5**, which added live
+  modules of its own, so treat 11 as a floor rather than a count.
 - `disk_gb` remains declared-and-warned, wired to nothing (the live run logged it again:
   `disk_gb=50` asked, sky defaulted to 30 GB).
 - The golden ratchet's non-recursive glob still misses 7 configs under `grids/` and `extras/`.
 - The **F3 env-routing gap**: `sky` lives only in the `live-skypilot` feature env, so a default-env
   `reap` / `sweeper` marks every skypilot row `UNROUTABLE` and never destroys it.
-- **Modal `launching` rows are neither adopted nor aged out.** `_adopt_or_age_out` covers the
-  providers whose listing exposes a matchable name; Modal's does not, so a Modal row written before
-  a create that dies is still stranded.
+- **Modal `launching` rows are aged out but never ADOPTED** (narrowed 2026-09-03 by the C1
+  companion fix). `_adopt_or_age_out` can only adopt where the listing exposes a name matchable
+  against the `run_id`, and Modal's does not — so a Modal row whose create died is now forgotten
+  after the grace window rather than stranded forever, but a Modal app that IS live behind such a
+  row still cannot be adopted onto its real id. Closing that needs a matchable identifier in
+  `ModalProvider.list_instances`, not more reconciler logic.
 - `RateCapExceeded` wants a `destroyed` FLAG rather than the provider-side subclass S5 added for the
   pre-launch case. Blocked on a reviewed regeneration of the 13 goldens that embed
   `src/kinoforge/core/errors.py` verbatim as a gzip+base64 on-pod source blob — any change to that
   file moves all 13, so it must not ride along with unrelated work.
 - The pre-existing hang in `tests/engines/test_diffusers_set_lora_stack.py`.
 
-**SINGLE NEXT ACTION: whole-branch review of `feat/compute-seam-s5-endpoint-shape-ledger`, then
-merge to `main`** the way S1 (`40f0596c`), S2 (`e7e1df3d`), S3 (`2f062b75`) and S4 (`9e80470c`)
-landed. Do NOT merge before that review — the operator is holding the branch finish deliberately.
+**SINGLE NEXT ACTION: merge `feat/compute-seam-s5-endpoint-shape-ledger` to `main`** the way S1
+(`40f0596c`), S2 (`e7e1df3d`), S3 (`2f062b75`) and S4 (`9e80470c`) landed. The whole-branch review
+is DONE and its one blocker (C1) plus every rider are fixed — see the C1 block at the top of this
+snapshot.
 
 ---
 

@@ -493,8 +493,9 @@ rather than by replaying a recorded one. Ledger `endpoints` remain recorded (Mod
 non-rebuildable `.modal.run` URL still needs them, per `1cb4299`), but they are now a hint that a
 provider may override, not a value the engine trusts blind.
 
-> **Corrected 2026-09-02**, during S5. Two things in the paragraphs above are wrong, and both were
-> found by implementing them.
+> **Corrected 2026-09-02**, during S5, and extended 2026-09-03 by the whole-branch review. FOUR
+> things in the paragraphs above are wrong; the first three were found by implementing them and the
+> fourth by reviewing what the implementation then made possible.
 >
 > 1. **`endpoints()` did NOT become tunnel-ensuring. It split in two.** The ABC now carries a pure
 >    read, `endpoints(instance)`, and a side-effecting sibling, `ensure_endpoints(instance)`, with a
@@ -530,13 +531,34 @@ provider may override, not a value the engine trusts blind.
 >    `kf_launch_phase=launching`. Ordering is load-bearing too: the real row is written *first*, so
 >    no window exists in which a kill loses both. Live-verified — one launch, exactly one surviving
 >    row, and it is the real one.
+> 4. **"removed if create raises" is wrong, and was the one blocker of the S5 whole-branch review.**
+>    Ruled 2026-09-03. A raise does **not** prove the provider booked nothing, and three shipped
+>    shapes say so: `sky.launch` raising out of a failed setup script leaves an **UP** cluster with
+>    no handler anywhere in the provider; the tunnel branch's best-effort `sky.down` swallows its
+>    own exception, so "we tore it down" is a hope rather than a fact; and a Ctrl-C during the
+>    launch is caught by `except BaseException` while SkyPilot's API server goes on creating the
+>    cluster. Forgetting the row in any of those leaves a live, billing resource with **zero**
+>    ledger rows — the F12 hole, reintroduced by its own cleanup. So a create that raises now
+>    **KEEPS** its provisional row. The row is deleted only for errors that prove nothing exists:
+>    `CapacityError` (core-owned — the capacity window expiring with nothing bookable) plus
+>    whatever the provider declares through the new
+>    `ComputeProvider.nothing_booked_errors()` classmethod, which is how SkyPilot's
+>    `PreLaunchRateCapExceeded` reaches a decision made in `kinoforge.core`, where
+>    `kinoforge.providers` may not be imported. Default `()` — a provider that declares nothing
+>    keeps every row, the safe direction. **What clears the rest is the reconciler**, not the
+>    orchestrator: `cli/_reconcile` adopts a `launching` row after the grace window when the
+>    resource turns out to exist, and ages it out when it does not. That age-out also had to become
+>    provider-agnostic, because `modal` is not in `_RECONCILABLE_PROVIDERS` and never can be (its
+>    listing exposes no name matchable against a `run_id`), so a dead Modal launch would otherwise
+>    leave a permanent row no branch could clear.
 
 **Ledger before create.** Brief 1's pre-launch provisional row generalises from the SkyPilot
 provider into one orchestrator-level writer covering all providers: before `create_instance`, a
 row keyed by a client-side id carrying `kf_launch_phase=launching`, reconciled to the real
-instance id when create returns and removed if create raises. A process death during the
-multi-minute launch then leaves a row the reaper can act on, on every provider, instead of a
-billing resource no kinoforge command can see.
+instance id when create returns and — see correction 4 above — removed on failure only when the
+error proves nothing was booked, otherwise left for the reconciler to adopt or age out. A process
+death during the multi-minute launch then leaves a row the reaper can act on, on every provider,
+instead of a billing resource no kinoforge command can see.
 
 ---
 
