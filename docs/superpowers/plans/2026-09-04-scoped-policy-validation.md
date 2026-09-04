@@ -11,7 +11,7 @@ measured rather than assumed:
 | cloud | probe | result |
 |---|---|---|
 | AWS | `aws sts get-caller-identity` | `arn:aws:iam::<AWS_ACCOUNT>:user/kinoforge-ci` — live, and holds `IAMFullAccess`, so it can mint the throwaway principal option (i) needs |
-| GCP | `gcloud projects list` | fails to mint a token; both `kinoforge-runner@<GCP_PROJECT>` and the operator user are dead, exactly as `.gcp/policies/roles.txt` already records |
+| GCP | `gcloud projects list` | fails to mint a token; both the runner service account and the operator user are dead, exactly as `.gcp/policies/roles.txt` already records |
 
 Option (i) on GCP needs an interactive `gcloud auth login` or a fresh service-account key, which
 only the operator can supply. Rather than block the AWS half on that, AWS gets the live validation
@@ -24,13 +24,42 @@ first thing the recovery section tells you to check.
 
 ## Tasks
 
-- [ ] **T1** — persist the brief; record this decision. *(this file)*
-- [ ] **T2** — RED live scaffold, committed **before** any spend (CLAUDE.md durability rule):
-      `tests/live/test_scoped_policy_aws_live.py`.
-- [ ] **T3** — run it. Iterate on denials; log each one.
-- [ ] **T4** — `.aws/policies/README.md`: new banner, denial log, CloudTrail recovery section.
-- [ ] **T5** — `.gcp/policies/roles.txt`: option-(ii) recovery section, banner updated.
-- [ ] **T6** — `PROGRESS.md`, pre-commit, live-resource verification, commit.
+- [x] **T1** — persist the brief; record this decision. *(this file — `352323ad`)*
+- [x] **T2** — RED live scaffold, committed **before** any spend (CLAUDE.md durability rule):
+      `tests/live/test_scoped_policy_aws_live.py` (`41c38654`).
+- [x] **T3** — run it (`d097c320`). **Green on the first attempt; there were no denials to
+      iterate on.**
+- [x] **T4** — `.aws/policies/README.md`: new banner, call inventory, CloudTrail recovery section
+      (`c4225787`).
+- [x] **T5** — `.gcp/policies/roles.txt`: option-(ii) recovery section, banner updated (`c4225787`).
+- [x] **T6** — `PROGRESS.md`, pre-commit, live-resource verification, commit.
+
+## Outcome
+
+**AWS — validated.** `m6i.large` in `us-west-2`, `rc=0`, zero denials, `i-06610e91b03c0cc75`
+observed running by a second principal, teardown and account clean. ~$0.02, 119 s of launch.
+CloudTrail: 37 calls, `errorCode` NONE.
+
+The brief expected an iteration loop and budgeted an afternoon for it. There was nothing to
+iterate on — which is a result about the 2026-08-23 simulation work, not luck: the action list it
+produced was already sufficient for this path. What the run adds over simulation is the **call
+inventory** (what the policy is load-bearing for) and, more usefully, the **not-exercised list**:
+the IAM write path (`skypilot-v1` pre-existed, so only `GetInstanceProfile` ran) and the three
+key-pair actions (sky 0.12.3 used none). A fresh account's first launch will exercise the former.
+
+Nothing had to be widened, so the brief's "if you must widen beyond least-privilege, stop and
+record it" clause was never reached.
+
+**One test change the live run forced, recorded because it looks like a weakened assertion and is
+not.** The negative control asserted on AWS's verbatim denial strings; sky catches that denial and
+re-raises it in its own words (`Failed to retrieve AWS regions … ec2:DescribeRegions`). The fix
+widens the control to accept either spelling — via a SEPARATE pattern the positive test does not
+use, so sky-worded permission trouble there still fails — and *strengthens* it at the same time
+with an EC2 oracle proving the bare principal booked nothing.
+
+**GCP — recovery path, not validation.** Still no credential; the `roles/compute.securityAdmin`
+firewall hypothesis is still open. The next session that gets a GCP credential should run
+`tools/validate_scoped_policy.py --cloud gcp` first, then the equivalent of the AWS live test.
 
 ## T2 — what the scaffold must actually do
 

@@ -127,6 +127,15 @@ _DEAD_STATES = {"shutting-down", "terminated"}
 #: Bounds the captured log that reaches the committed evidence file.
 _LOG_MAX_CHARS = 20000
 
+#: The evidence file is TRACKED, and `tests/test_cloud_identifier_scrub.py`
+#: refuses a concrete AWS account id in any tracked file. Every ARN this test
+#: records — the probe user, the probe policy, `sts:GetCallerIdentity` — embeds
+#: one, so the account id is substituted out on the way to disk. Caught by that
+#: guard on the first run, which is the guard working: redacting credentials
+#: was never the whole job.
+_ACCOUNT_SENTINEL = "<AWS_ACCOUNT>"
+_ACCOUNT_ID_RE = re.compile(r"\b\d{12}\b")
+
 #: Three spellings of the same event. AWS is not consistent about which one a
 #: given service emits, and matching only one would let the others through.
 _DENIAL_RE = re.compile(
@@ -250,7 +259,13 @@ def _evidence_writer() -> Iterator[None]:
             "last_finished_at": _now_local(),
             "region": _REGION,
         }
-        _EVIDENCE_PATH.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n")
+        serialized = json.dumps(merged, indent=2, sort_keys=True)
+        # Substituted on the serialized text rather than field by field: the
+        # account id turns up inside ARNs, inside `sts:GetCallerIdentity`'s
+        # bare `Account`, and inside log tails, and a per-field scrubber would
+        # have to be kept in step with every one of those.
+        serialized = _ACCOUNT_ID_RE.sub(_ACCOUNT_SENTINEL, serialized)
+        _EVIDENCE_PATH.write_text(serialized + "\n")
         _log.info("evidence written to %s", _EVIDENCE_PATH)
 
 

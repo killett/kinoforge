@@ -443,6 +443,57 @@ first unchecked task without redoing committed work.
 
 ## RESUME SNAPSHOT (updated 2026-09-04 — read this, then STOP; below is history)
 
+**The scoped-policy UNVALIDATED banner is retired on AWS and replaced on GCP (2026-09-04, commits
+`352323ad`, `41c38654`, `d097c320`, `c4225787`).** Brief:
+`docs/superpowers/briefs/2026-09-04-scoped-policy-validation.md`; decision + plan:
+`docs/superpowers/plans/2026-09-04-scoped-policy-validation.md`.
+
+The brief wanted one choice across both clouds — (i) validate live, or (ii) document the recovery
+path. A credential probe made that impossible, so the recorded decision is **hybrid: (i) on AWS,
+(ii) on GCP**. AWS answers as `kinoforge-ci` and holds `IAMFullAccess`, so it can mint the
+throwaway principal (i) needs. GCP cannot mint a token at all — both `kinoforge-runner@…` and the
+operator user fail token refresh, exactly as `.gcp/policies/roles.txt` already recorded — and only
+the operator can fix that with an interactive `gcloud auth login`.
+
+**AWS: PROVEN LIVE, green on the first attempt, ~$0.02.** A throwaway IAM user holding the rendered
+`skypilot-minimal` policy and *nothing else* launched an `m6i.large` in `us-west-2`, ran its job,
+and tore down. `rc=0`, no denial in the log, `i-06610e91b03c0cc75` observed running by a *different*
+principal, teardown and account clean afterwards. The iteration loop the brief budgeted an afternoon
+for never happened: the simulate-derived action list was already sufficient. CloudTrail confirms it
+independently — **37 calls across `us-west-2` and `us-east-1`, `errorCode` NONE on every one.**
+
+Three things about that run that are worth more than the verdict:
+
+- **What it did NOT exercise**, now a named list in `.aws/policies/README.md`. `GetInstanceProfile`
+  succeeded only because `skypilot-v1` already existed in this account (2026-08-16), so
+  `iam:CreateRole` / `CreateInstanceProfile` / `AddRoleToInstanceProfile` / `PutRolePolicy` — the
+  path a **fresh account hits on its first launch** — are still simulate-only. And sky 0.12.3
+  provisioned SSH with no EC2 key pair at all (the region holds none), leaving the three key-pair
+  actions unexercised. Neither set was removed: dropping a granted-but-unused action to tidy up is
+  how the next launch breaks.
+- **The negative control is what stops this being decorative.** The same launch under a principal
+  holding no policy fails in 17 s, books nothing, and names the missing permission. Without it, a
+  green run could just mean the account grants everything to everyone.
+- **Three isolation traps, all of which would have produced a false green**, and all now asserted in
+  `tests/live/test_scoped_policy_aws_live.py`: the subprocess environment is built from an
+  ALLOW-LIST (pixi's activation exports `AWS_SHARED_CREDENTIALS_FILE` at the real `kinoforge-ci`
+  credential, and a subtractive list stops protecting the moment pixi adds another variable); the
+  SkyPilot API server is stopped and its absence confirmed **from the process table** (it is a
+  separate long-lived process holding the environment it was born with — this workspace had one up
+  since 2026-08-27); and an empty EC2 answer FAILS rather than passing vacuously.
+
+**GCP: option (ii).** `.gcp/policies/roles.txt` keeps its banner and gains a "when a launch fails on
+permissions" section — the audit-log filter (`protoPayload.status.code=7`, read
+`authorizationInfo[].permission`) and the Policy Troubleshooter, with the flag spellings checked
+against `gcloud` 570.0.0 and the **output explicitly marked unseen**. `roles/compute.securityAdmin`
+remains **neither confirmed nor refuted** as the firewall gap; that is stated twice in the file so
+the next person does not read the new section as progress on it.
+
+Both policy files now say plainly that FullAccess is the fallback of last resort and that reverting
+to it must be recorded. `cloudtrail:LookupEvents` is granted to nobody by default — it was attached
+to `kinoforge-ci` for one session to verify the documented command against real output, then
+detached; the attach/detach pair is in the README.
+
 **Scanner coverage + a suite-fragility pass (2026-09-04, commits `39d915fd`, `a4e86d97`,
 `1d19ce6d`).** Three credential shapes that passed `tools/scan_secrets.py` in BOTH tiers are now
 covered: `google_api_key` (strict; `AIza` + a 30–45 url-safe band, because the documented 39-char
