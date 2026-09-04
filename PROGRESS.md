@@ -59,7 +59,16 @@ first unchecked task without redoing committed work.
   becoming tunnel-ensuring; the pre-launch bound is priced from the catalog because
   `sky.optimize()` always returns None at this pin; and ruling C1's "removed if create raises" is
   wrong) — and for the util-poller blindness found on the live run.
-- **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`
+- **Modal provider roadmap brief — DELIVERED IN FULL 2026-07-12, nothing queued from it:**
+  `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`. All four milestones are live-green
+  and logged: 1. Wan 2.1 T2V-1.3B (§22, A10), 2. Wan 2.2 T2V-A14B (§23, A100-80GB), 3. FlashVSR 4x
+  upscale (§24), 4. RIFE v4.26 interpolate (§25) — plus M5 warm-reuse + HF Volume cache (§26), the
+  Modal util probe, FlashVSR 1080p height-target (§27), and the ephemeral-parity workstream
+  (EM1–EM3, CLOSED). The brief's central design question resolved to **option (a)**: the existing
+  `wan_t2v_server` runs inside a Modal App as a web endpoint over the same
+  `provision_script; exec run_cmd` bundle as RunPod — no rewrite, no tunnel.
+  **This line read "NEXT (autonomous)" until 2026-09-04**, ~8 weeks after the roadmap finished; it
+  was the same rot as the S5 "ready to merge" line. Corrected together with it.
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
 - **Modal plan (spec 1, done):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; `.tasks.json` co-located)
 - **Modal M2 spec+plan (done + live-green):** `docs/superpowers/specs/2026-07-08-modal-milestone2-wan22-a14b-design.md` + `docs/superpowers/plans/2026-07-08-modal-milestone2-wan22-a14b.md` (3 tasks 0-2, all committed)
@@ -698,12 +707,22 @@ on `origin`. This line previously read "merge the S5 branch" and was stale for t
 later session hunting for a branch that no longer exists. **Verify merge state with
 `git log --oneline -1 24363578` and `git branch -a`, not with this file.**
 
-**SINGLE NEXT ACTION (updated 2026-09-04): none pending — operator picks the next brief.** The
-compute-seam stages S1–S5 are all shipped and merged, F4/F5/F6/F11/F12 are closed, and nothing in
-this snapshot is blocked. The forward pointer at the top of the file is the Modal provider roadmap
-brief; confirm with the operator that it is still the intended next line of work before starting it.
+**SINGLE NEXT ACTION (updated 2026-09-04): none — the queue is genuinely empty; the operator picks
+the next brief.** Verified, not assumed: the compute-seam stages S1–S5 are all shipped AND merged
+(F4/F5/F6/F11/F12 closed), and the Modal provider roadmap brief — the only other forward pointer in
+this file — was delivered in full on 2026-07-12, all four milestones live-green and logged (§22–§25,
+plus §26/§27 and the closed ephemeral-parity workstream). Nothing in this snapshot is blocked and
+nothing is waiting on the operator except the choice of what to do next.
+
 Carried, not blocking: the one unreproduced `test_second_generate_same_key_skips_provision` failure
 described at the top of this snapshot.
+
+**A standing warning, earned twice on 2026-09-04.** Both forward pointers in this file were stale —
+"merge the S5 branch" for a branch that had been merged and deleted two days earlier, and "NEXT
+(autonomous) — Modal roadmap" for a roadmap that finished ~8 weeks earlier. A future session that
+trusts a "NEXT"/"ready to" line here without checking will go hunting for work that does not exist.
+**Confirm any claimed-pending item against the artefact itself** — `git log`/`git branch -a` for a
+merge, `successful-generations.md` for a milestone — before starting on it.
 
 ---
 
