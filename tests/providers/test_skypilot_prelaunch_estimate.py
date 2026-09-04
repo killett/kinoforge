@@ -371,11 +371,20 @@ def test_a_spot_launch_is_not_priced_off_the_on_demand_column() -> None:
 
     Bug caught: refusing a spot launch the operator can afford, because the
     on-demand price used as the bound exceeds a cap set for spot rates.
+
+    The launch happening is necessary but not sufficient — it would also happen
+    if the catalog were read and the comparison merely skipped, or if the read
+    failed for an unrelated reason and degraded to "unreadable". The claim is
+    that the on-demand column is never CONSULTED for a spot launch, so the
+    catalog call log is what pins it.
     """
     sky = _PricingSky(_catalog("A100", 1.99))
     provider = SkyPilotProvider(sky)
     provider.create_instance(_spec_with_cap(1.09, spot=True))
     assert sky.launches == [_CLUSTER]
+    assert sky.catalog_calls == [], (
+        "a spot launch was priced off the on-demand catalog column"
+    )
 
 
 def test_the_estimate_is_bounded_by_a_deadline(
@@ -423,9 +432,11 @@ def test_the_provisional_ledger_row_is_forgotten_when_the_estimate_refuses(
     """A pre-launch refusal leaves no ghost row behind.
 
     The provisional row is written by the orchestrator BEFORE create_instance
-    (Task 4/5) and removed by its ``except BaseException`` branch. This proves
-    ``RateCapExceeded`` — raised out of the real provider, before any launch —
-    goes through that branch rather than needing cleanup of its own.
+    (Task 4/5). Since ruling C1 (2026-09-03) the failure path removes it only
+    for errors the provider DECLARES as proving nothing was booked, and
+    ``PreLaunchRateCapExceeded`` is the one SkyPilot declares — it is raised
+    before ``sky.launch`` is called at all, so no cluster was ever requested.
+    This proves the declaration reaches the orchestrator's failure branch.
 
     Bug caught: a permanent ``launching`` row whose est_spend inflates forever
     for a cluster that was never created (the "$210 phantom pod" failure mode).
@@ -443,6 +454,11 @@ def test_the_provisional_ledger_row_is_forgotten_when_the_estimate_refuses(
         return real_provider.create_instance(_spec_with_cap(1.09))
 
     fake_provider.create_instance.side_effect = _create
+    # The stand-in must carry the REAL provider's declaration too, not just
+    # its create behaviour: the orchestrator asks the provider it called which
+    # of its errors prove nothing was booked, and a MagicMock that answers with
+    # a Mock is correctly treated as declaring nothing (C1's safe default).
+    fake_provider.nothing_booked_errors = SkyPilotProvider.nothing_booked_errors
     creds = MagicMock()
     creds.get = MagicMock(return_value="hf_REAL")
     key = MagicMock()

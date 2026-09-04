@@ -393,6 +393,22 @@ class RunPodProvider(ComputeProvider):
         )
 
     @classmethod
+    def nothing_booked_errors(cls) -> tuple[type[BaseException], ...]:
+        """Declare nothing beyond the portable ``CapacityError`` (S5, C1).
+
+        ``podFindAndDeployOnDemand`` is a single mutation, but a transport
+        failure reading its RESPONSE is indistinguishable from a failure
+        sending the request — the 2026-07-05 raw-HTTP-500 incident is exactly
+        that shape, and a pod may well exist behind one. Nothing here proves
+        the absence of a pod, so every failure keeps the provisional row and
+        ``cli/_reconcile`` resolves it by name against ``list_instances``.
+
+        Returns:
+            The empty tuple.
+        """
+        return ()
+
+    @classmethod
     def consumes(cls) -> Mapping[str, FieldSupport]:
         """Declare what the create-pod mutation and the catalog filter read.
 
@@ -1606,8 +1622,13 @@ def _pod_to_instance(pod: dict[str, Any]) -> Instance:
     only field on a listed pod that can be matched against the client-side
     ``run_id`` a pre-launch provisional ledger row is keyed by, so
     ``cli/_reconcile`` uses it to adopt such a row instead of forgetting it.
-    Absent (a partial selection set, an early-boot response) it is ``""``, which
-    matches no run_id — never a KeyError, and never a spurious match.
+
+    When the read is EMPTY (a partial selection set, an early-boot response)
+    the key is OMITTED rather than set to ``""``. Both answers match no run_id,
+    but only omission survives the warm-attach merge in
+    ``cli/_commands``, which does ``{**ledger_tags, **instance.tags}`` —
+    provider tags win, so an empty string here would shadow the real name the
+    ledger recorded at create time and erase it from the attached instance.
 
     Args:
         pod: A dict with ``id``, ``desiredStatus``, ``imageName`` and
@@ -1620,12 +1641,16 @@ def _pod_to_instance(pod: dict[str, Any]) -> Instance:
     desired_status: str = str(pod.get("desiredStatus", ""))
     raw_cost = pod.get("costPerHr")
     cost_rate: float = float(raw_cost) if raw_cost is not None else 0.0
+    tags: dict[str, str] = {"mode": "pod"}
+    pod_name = str(pod.get("name") or "")
+    if pod_name:
+        tags["name"] = pod_name
     return Instance(
         id=pod_id,
         provider="runpod",
         status=_runpod_status_to_kinoforge(desired_status),
         created_at=0.0,  # RunPod list API does not return creation time
-        tags={"mode": "pod", "name": str(pod.get("name") or "")},
+        tags=tags,
         cost_rate_usd_per_hr=cost_rate,
     )
 

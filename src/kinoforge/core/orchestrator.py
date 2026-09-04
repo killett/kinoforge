@@ -657,10 +657,16 @@ def _forget_provisional_row(
     row_id: str | None,
     logger: logging.Logger = _log,
 ) -> None:
-    """Remove the provisional row after a FAILED create, best-effort.
+    """Remove the provisional row after a create that PROVABLY booked nothing.
 
     A create that never produced a resource must not leave a row whose
     ``est_spend`` inflates forever (``cli/_reconcile``'s "$210 phantom pod").
+
+    Ruling C1 narrowed who reaches this. The caller no longer calls it for any
+    raise — only for the exception types
+    :func:`_nothing_booked_error_types` returns, because a raise on its own is
+    not evidence that the provider created nothing, and deleting the row when
+    it did is the F12 hole in reverse.
 
     Uses the phase-scoped delete rather than ``Ledger.forget``, which matches on
     id alone. On the same-key shape (SkyPilot: the cluster name IS the
@@ -693,6 +699,69 @@ def _forget_provisional_row(
             row_id,
             exc_info=True,
         )
+
+
+def _nothing_booked_error_types(
+    provider: Any,  # noqa: ANN401 — duck-typed ComputeProvider
+    logger: logging.Logger = _log,
+) -> tuple[type[BaseException], ...]:
+    """Return the create errors that PROVE *provider* booked nothing.
+
+    compute-seam S5, ruling C1. The failure path may delete the pre-launch
+    provisional row ONLY for these; every other exception leaves the row for
+    ``cli/_reconcile`` to resolve. See
+    :meth:`~kinoforge.core.interfaces.ComputeProvider.nothing_booked_errors`
+    for why the default is the conservative one.
+
+    Two sources, unioned:
+
+    * :class:`~kinoforge.core.errors.CapacityError`, which core owns. It is
+      what ``_create_with_capacity_wait`` re-raises once the window expires
+      with nothing bookable, and "no capacity" is by construction "nothing was
+      created". Naming it here rather than making every provider declare it
+      keeps the portable guarantee portable.
+    * Whatever the provider declares. This is the seam that lets SkyPilot's
+      ``PreLaunchRateCapExceeded`` — raised before ``sky.launch`` runs, and
+      living in ``kinoforge.providers.skypilot`` where ``kinoforge.core`` may
+      not import it at module scope — reach this decision without an import.
+
+    Defensive by design, because ``provider`` is typed ``Any``: a missing
+    method, a raising one, or a declaration that is not a tuple of exception
+    types all degrade to the portable pair. That direction is safe — an
+    undeclared error keeps the row, and a kept row is reconcilable while a
+    deleted one is not.
+
+    Args:
+        provider: The resolved compute provider whose ``create_instance`` is
+            about to be called.
+        logger: Injected for testability.
+
+    Returns:
+        The exception types the failure path may forget the row for.
+    """
+    portable: tuple[type[BaseException], ...] = (CapacityError,)
+    declare = getattr(provider, "nothing_booked_errors", None)
+    if not callable(declare):
+        return portable
+    try:
+        declared = declare()
+    except Exception:  # noqa: BLE001 — a broken declaration must not fail a launch
+        logger.debug(
+            "provider %r could not declare its nothing-booked errors; assuming none",
+            getattr(provider, "name", provider),
+            exc_info=True,
+        )
+        return portable
+    if not isinstance(declared, tuple | list):
+        # Includes the MagicMock case: a stand-in that answers every attribute
+        # returns a Mock here, and treating that as "declares everything" would
+        # silently restore the unconditional forget this ruling removed.
+        return portable
+    return portable + tuple(
+        exc
+        for exc in declared
+        if isinstance(exc, type) and issubclass(exc, BaseException)
+    )
 
 
 def _collapse_provisional_row(
@@ -1088,7 +1157,8 @@ def _provision_instance_and_build_backend(
             distinguish the cold-start failure from a steady-state one.
         tags: Optional caller-supplied tags merged onto the orchestrator's
             built-in ``{kinoforge_engine, kinoforge_key}``. Caller wins on
-            key collision.
+            key collision, EXCEPT for kinoforge-reserved keys, which are
+            dropped with a warning (see :func:`_strip_reserved_tags`).
         on_instance_created: Optional callback fired exactly once,
             immediately after ``create_instance`` returns, with the
             freshly-created ``Instance``. B7 uses this seam to enter
@@ -1132,7 +1202,10 @@ def _provision_instance_and_build_backend(
             ``run_id`` BEFORE ``create_instance`` is called, so a kill inside
             the multi-minute create still leaves a handle on whatever the
             provider may already have booked. The row is collapsed onto the
-            real row on success, and forgotten immediately on failure.
+            real row on success, and forgotten on failure ONLY for the errors
+            that prove nothing was booked (ruling C1 — see
+            :func:`_nothing_booked_error_types`); any other exception leaves
+            the row for ``cli/_reconcile`` to adopt or age out.
             ``None`` (the default) disables the row entirely.
 
             Duck-typed (hence ``Any``): ``kinoforge.core`` must not import a
@@ -1285,15 +1358,37 @@ def _provision_instance_and_build_backend(
         if provisional_ledger is not None
         else None
     )
+    # Ruling C1 (2026-09-03), which OVERRIDES the S5 plan's Task 4 text. Read
+    # before the create so a fault in the declaration cannot land inside the
+    # failure path itself.
+    nothing_was_booked = _nothing_booked_error_types(resolved_provider)
     try:
         instance = _create_with_capacity_wait(
             create=lambda: resolved_provider.create_instance(_build_spec()),
             capacity_wait_s=capacity_wait_s,
         )
-    except BaseException:
+    except nothing_was_booked:
+        # These, and ONLY these, prove no resource exists: the capacity window
+        # expiring with nothing bookable, plus whatever the provider declares
+        # (SkyPilot's pre-launch cap refusal, raised before sky.launch runs).
         # A create that never produced a resource must not leave a row whose
         # est_spend inflates forever (cli/_reconcile's "$210 phantom pod").
         _forget_provisional_row(provisional_ledger, provisional_id)
+        raise
+    except BaseException:
+        # A raise does not prove the provider booked nothing. Leave the row;
+        # cli/_reconcile._adopt_or_age_out resolves it after the grace window
+        # — adopting if the resource exists, ageing it out if it does not.
+        #
+        # Three shapes make this the only safe default, all of them live:
+        # ``sky.launch`` raising out of a failed setup script leaves an UP
+        # cluster (providers/skypilot/__init__.py has no handler for it); the
+        # tunnel branch's best-effort ``sky.down`` swallows its own exception,
+        # so "we tore it down" is a hope rather than a fact; and a Ctrl-C
+        # lands here as a BaseException while SkyPilot's API server goes on
+        # creating the cluster. Forgetting the row in any of those leaves a
+        # live, billing resource with ZERO ledger rows — the exact F12 hole
+        # this branch exists to close.
         raise
     # B7 — acquire the cooperative session-claim lock now that instance.id is
     # known, BEFORE engine.provision runs. The callback enters the outer
@@ -2048,7 +2143,8 @@ def deploy(
         creds: Optional credential provider.  Defaults to ``EnvCredentialProvider()``.
         tags: Optional caller-supplied tags merged onto the orchestrator's
             built-in ``{kinoforge_engine, kinoforge_key}``. Caller wins on
-            key collision.
+            key collision, EXCEPT for kinoforge-reserved keys, which are
+            dropped with a warning (see :func:`_strip_reserved_tags`).
 
     Returns:
         A ``DeployResult`` describing the outcome.
@@ -2097,6 +2193,13 @@ def deploy(
 
     # Live run: create the instance.
     image = cfg.compute.image if cfg.compute is not None else ""
+    # compute-seam S5 — the same strip ``_provision_instance_and_build_backend``
+    # applies. ``deploy`` is a second, independent route from caller tags to
+    # ``spec.tags`` and from there onto a real ``Instance.tags`` (SkyPilot
+    # spreads them verbatim), so without this a config setting
+    # ``kf_launch_phase`` produces a REAL row that reads as provisional and
+    # every later collapse silently refuses.
+    tags = _strip_reserved_tags(dict(tags or {}))
 
     def _build_spec() -> InstanceSpec:
         return build_instance_spec(

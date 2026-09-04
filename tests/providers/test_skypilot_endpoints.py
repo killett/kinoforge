@@ -35,7 +35,7 @@ class _FakeProc:
 
 
 class _FakeSky:
-    """Minimal sky stand-in: records launches, answers status/down."""
+    """Minimal sky stand-in: records launches + catalog reads, answers status/down."""
 
     class Task:
         @staticmethod
@@ -44,9 +44,37 @@ class _FakeSky:
 
     def __init__(self) -> None:
         self.downed: list[str] = []
+        self.catalog_calls: list[dict[str, Any]] = []
 
     def launch(self, task: Any, **kwargs: Any) -> None:
         return None
+
+    def list_accelerators(self, **kwargs: Any) -> dict[str, list[dict[str, Any]]]:
+        """Answer the S5 pre-launch cost estimate with a PRICED catalog.
+
+        Not scenery. ``create_instance`` reads this whenever
+        ``placement.max_usd_per_hr > 0``, which is every spec here (Placement
+        defaults to $2.20). A fake without it makes the estimate unreadable, so
+        all 24 tests in this file silently run the degraded
+        "launch anyway and rely on the post-launch readback" branch and the
+        Task-8 seam is never exercised at all.
+
+        $1.20 is deliberately UNDER the default cap: these tests are about
+        tunnels and endpoint shape, so the estimate must pass and let the
+        launch proceed. The refusal direction is
+        ``tests/providers/test_skypilot_prelaunch_estimate.py``'s subject.
+        """
+        self.catalog_calls.append(dict(kwargs))
+        return {
+            "A100": [
+                {
+                    "accelerator_name": "A100",
+                    "vram_gb": 80,
+                    "cuda": "12.8",
+                    "price": 1.20,
+                }
+            ]
+        }
 
     def status(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
         return []
@@ -62,10 +90,11 @@ def _spec(*, ports: tuple[str, ...], launch: Launch | None) -> InstanceSpec:
         run_id="kf-endpoints-probe",
         launch=launch,
         # Name the accelerator so _select_accelerator takes the "operator
-        # named it" path with zero catalog read — Placement's default
-        # min_vram_gb=48 would otherwise force a sky.list_accelerators()
-        # call the minimal _FakeSky above does not implement, which is
-        # incidental to what this file tests (tunnel/endpoint shape).
+        # named it" path — Placement's default min_vram_gb=48 would otherwise
+        # route selection through the catalog, which is incidental to what
+        # this file tests (tunnel/endpoint shape). The catalog is still read
+        # once per create, by the S5 pre-launch cost estimate; _FakeSky
+        # answers that with a priced record under the default cap.
         placement=Placement(accelerators=("A100",)),
     )
 
@@ -122,16 +151,100 @@ def test_ports_land_on_the_instance_tags() -> None:
 
 
 def test_no_launch_means_no_tunnel() -> None:
-    """A spec with no launch opens nothing — the CPU smoke path.
+    """A spec with no launch opens nothing, and says so in its tags.
 
     Bug caught: tunnelling a cluster with no server makes every CPU-only
     launch depend on ssh reachability it never needed.
+
+    The ``ports`` tag is gated on exactly the same condition as the tunnel
+    loop, and that is what the second assertion pins. ``_ports_for`` reads
+    that tag to decide which forwards ``ensure_endpoints`` should rebuild, so
+    writing it unconditionally means a later warm attach to a server-less
+    cluster spawns ssh forwards to remote ports nothing is listening on and
+    reports them as working endpoints.
     """
     spawns: list[tuple[str, int, int]] = []
     provider = _provider(_FakeSky(), spawns)
     inst = provider.create_instance(_spec(ports=("8000",), launch=None))
     assert inst.endpoints == {}
     assert spawns == []
+    assert "ports" not in inst.tags
+    # And the consequence, end to end: nothing to rebuild, nothing spawned.
+    assert provider.ensure_endpoints(inst) == {}
+    assert spawns == []
+
+
+def test_create_prices_the_launch_before_it_launches() -> None:
+    """The S5 pre-launch estimate arm is LIVE in this file's fakes.
+
+    Bug caught: a ``_FakeSky`` without ``list_accelerators``. ``create_instance``
+    reads the catalog whenever ``placement.max_usd_per_hr > 0``, and an
+    ``AttributeError`` there is swallowed into "estimate unreadable" — so every
+    other test in this file would go on passing while quietly exercising the
+    degraded branch instead of the real one. This is the tripwire for that.
+    """
+    sky = _FakeSky()
+    provider = _provider(sky, [])
+    provider.create_instance(
+        _spec(ports=("8000",), launch=Launch(("python", "-m", "srv")))
+    )
+    assert sky.catalog_calls, "the pre-launch cost estimate never read a catalog"
+    # Narrowed to what is actually being booked: the whole-INSTANCE price of a
+    # 1-accelerator record is the only number comparable to the cap.
+    assert sky.catalog_calls[0]["name_filter"] == "A100"
+    assert sky.catalog_calls[0]["quantity_filter"] == 1
+
+
+def test_a_reused_tunnel_survives_a_later_calls_spawn_failure() -> None:
+    """A REUSED forward belongs to the call that opened it, not to this one.
+
+    ``cluster_name`` is stable across calls, so a second ``create_instance``
+    for one cluster meets the live forwards a first, already-succeeded call
+    opened. ``_ensure_tunnel`` reuses them rather than respawning.
+
+    Bug caught: recording reused ports alongside freshly spawned ones in the
+    failure-cleanup list. The second call's failure on port 8001 then kills
+    port 8000's tunnel — which the first call's caller is happily using — and,
+    the cluster now holding no tunnel at all, best-effort ``sky.down``s
+    compute that is still in use. The sibling test above covers DISJOINT port
+    sets; only an overlapping one reaches the reuse path.
+    """
+    sky = _FakeSky()
+    made: dict[int, _FakeProc] = {}
+
+    def _spawn(cluster: str, local_port: int, remote_port: int) -> _FakeProc:
+        if remote_port == 8001:
+            raise OSError("ssh: connect failed")
+        proc = _FakeProc()
+        made[remote_port] = proc
+        return proc
+
+    ports = iter([50001, 50002, 50003])
+    provider = SkyPilotProvider(
+        sky,
+        ssh_spawn=_spawn,
+        port_allocator=lambda: next(ports),
+        sleep=lambda _s: None,
+    )
+
+    first = provider.create_instance(
+        _spec(ports=("8000",), launch=Launch(("python", "-m", "srv")))
+    )
+    assert first.endpoints == {"8000": "http://127.0.0.1:50001"}
+
+    from kinoforge.core.errors import ProvisionFailed
+
+    # Same run id, and port 8000 again — so 8000 is REUSED, not spawned.
+    with pytest.raises(ProvisionFailed, match="8001"):
+        provider.create_instance(
+            _spec(ports=("8000", "8001"), launch=Launch(("python", "-m", "srv")))
+        )
+
+    assert made[8000].terminated is False, (
+        "a reused tunnel from an earlier successful call was torn down"
+    )
+    assert provider._tunnels[first.id]["8000"].proc is made[8000]  # noqa: SLF001
+    assert sky.downed == [], "a cluster still serving a live tunnel was downed"
 
 
 def test_second_spawn_failure_kills_the_first_tunnel_and_the_cluster() -> None:
@@ -251,8 +364,16 @@ def test_endpoints_is_pure_and_reports_only_live_local_state() -> None:
     Bug caught: returning ``{"ssh": "ssh://<cluster>"}`` — an HTTP client
     handed that string fails with an unusable error (finding F11), and a
     status read that spawns ssh leaks a process per invocation.
+
+    The spawn recorder is NAMED and asserted. Passing an anonymous ``[]`` (as
+    this did) throws away the only evidence of the purity half of the claim,
+    so an ``endpoints()`` that quietly ensured a tunnel — the exact regression
+    ``ensure_endpoints`` was split out to prevent — would pass: it would
+    return a map for a stranger and only the ``== {}`` line would catch it,
+    and only by accident.
     """
-    provider = _provider(_FakeSky(), [])
+    spawns: list[tuple[str, int, int]] = []
+    provider = _provider(_FakeSky(), spawns)
     stranger = Instance(
         id="kf-not-ours",
         provider="skypilot",
@@ -263,6 +384,7 @@ def test_endpoints_is_pure_and_reports_only_live_local_state() -> None:
         cost_rate_usd_per_hr=0.0,
     )
     assert provider.endpoints(stranger) == {}
+    assert spawns == [], "the pure read spawned an ssh tunnel"
 
 
 def test_ensure_endpoints_respawns_a_dead_tunnel_on_a_fresh_port() -> None:

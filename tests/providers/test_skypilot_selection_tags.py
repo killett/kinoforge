@@ -73,14 +73,23 @@ class _ResourcesMissingRegion:
 
 
 class _FakeSky:
-    """Minimal injectable sky client: only ``status`` and ``launch`` are
-    exercised, since ``_make_spec`` below sets no ``launch`` (no ssh tunnel
-    is opened, so no other sky surface is touched).
+    """Minimal injectable sky client: ``status``, ``launch``, ``down`` and the
+    accelerator catalog. ``_make_spec`` below sets no ``launch``, so no ssh
+    tunnel is opened and no other sky surface is touched.
+
+    The catalog is NOT optional scenery. ``create_instance`` reads it whenever
+    ``placement.max_usd_per_hr > 0`` — which is every spec here, since
+    Placement defaults to $2.20 — and an ``AttributeError`` there is swallowed
+    into "estimate unreadable". Without it every test in this file runs the
+    degraded pre-launch branch, including
+    ``test_the_rate_cap_message_names_the_sku``, which would then reach its
+    post-launch readback only because the pre-launch arm is dead.
     """
 
     def __init__(self, status_result: list[dict[str, Any]]) -> None:
         self._status_result = status_result
         self.down_calls: list[str] = []
+        self.catalog_calls: list[dict[str, Any]] = []
 
         class _TaskNamespace:
             @staticmethod
@@ -99,6 +108,26 @@ class _FakeSky:
 
     def launch(self, task: Any, **kwargs: Any) -> Any:
         return (None, None)
+
+    def list_accelerators(self, **kwargs: Any) -> dict[str, list[dict[str, Any]]]:
+        """Price A100 at $1.20 — under the $2.20 Placement default cap.
+
+        Under the PRE-launch cap on purpose: this file's subject is the
+        POST-launch readback (``_enforce_rate_cap`` against a $5.00 booking),
+        and a pre-launch refusal would preempt it. What must not happen is the
+        pre-launch arm being dead.
+        """
+        self.catalog_calls.append(dict(kwargs))
+        return {
+            "A100": [
+                {
+                    "accelerator_name": "A100",
+                    "vram_gb": 80,
+                    "cuda": "12.8",
+                    "price": 1.20,
+                }
+            ]
+        }
 
     def down(self, cluster_id: str) -> None:
         self.down_calls.append(cluster_id)
@@ -146,9 +175,12 @@ def test_launch_records_the_chosen_sku_cloud_and_region() -> None:
     assert instance.tags["cloud"] == "AWS"
     assert instance.tags["region"] == "us-west-2"
     assert instance.tags["accelerators"] == ""
-    # The pre-existing ports merge (Task 0/1) must survive alongside the new
-    # selection tags — this is not a replacement, it is an addition.
-    assert instance.tags["ports"] == ""
+    # ``_make_spec`` declares no ``launch``, so no tunnel was opened and the
+    # ``ports`` tag is correctly ABSENT — ``_ports_for`` reads it to decide
+    # what ``ensure_endpoints`` should re-forward, and a server-less cluster
+    # has nothing listening. The selection tags are an ADDITION to whatever the
+    # merge produced, not a replacement, which is what this line pins.
+    assert "ports" not in instance.tags
 
 
 def test_an_unreadable_handle_writes_no_empty_tags() -> None:
@@ -176,8 +208,11 @@ def test_an_unreadable_handle_writes_no_empty_tags() -> None:
         assert key not in instance.tags, (
             f"an unreadable handle must OMIT {key!r}, not write it as an empty string"
         )
-    # The rest of the merge (spec tags + ports) must still be intact.
-    assert instance.tags["ports"] == ""
+    # The rest of the merge must still be intact. ``ports`` is absent because
+    # this spec declares no ``launch`` (see the sibling test above), so what is
+    # asserted is that the unreadable handle did not corrupt the tag map.
+    assert "ports" not in instance.tags
+    assert instance.tags == {}
 
 
 def test_the_rate_cap_message_names_the_sku() -> None:
@@ -205,6 +240,12 @@ def test_the_rate_cap_message_names_the_sku() -> None:
     )
     provider = SkyPilotProvider(sky_client=fake, sleep=lambda _s: None)
     instance = provider.create_instance(_make_spec())
+
+    # The pre-launch arm RAN and let this through on a $1.20 catalog floor
+    # under the $2.20 default cap. Without this the test would still pass with
+    # the estimate permanently unreadable, i.e. reaching the post-launch
+    # readback only because the cheaper guard is dead.
+    assert fake.catalog_calls, "the pre-launch cost estimate never read a catalog"
 
     with pytest.raises(RateCapExceeded) as exc_info:
         _enforce_rate_cap(provider=provider, instance=instance, cap=1.09)

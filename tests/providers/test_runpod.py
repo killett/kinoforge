@@ -1204,7 +1204,12 @@ def test_list_instances_tags_an_empty_name_when_the_pod_has_none() -> None:
     }
     provider = RunPodProvider(http_post=HttpPostSpy(response=list_response))
 
-    assert provider.list_instances()[0].tags["name"] == ""
+    # OMITTED, not empty-string. Both match no run_id, but the warm-attach
+    # merge in cli/_commands does ``{**ledger_tags, **instance.tags}`` — the
+    # provider's tags win — so an empty string here would shadow the real name
+    # the ledger recorded at create time and erase it from the attached
+    # instance. Only omission lets the recorded value survive.
+    assert "name" not in provider.list_instances()[0].tags
 
 
 def test_list_instances_populates_cost_rate_from_cost_per_hr() -> None:

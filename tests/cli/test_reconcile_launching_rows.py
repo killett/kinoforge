@@ -18,16 +18,43 @@ from kinoforge.core.interfaces import Instance
 
 
 class _FakeLedger:
+    """A ledger with BOTH delete doors, so which one is used is observable.
+
+    ``forget_provisional`` is not optional scenery: the production age-out
+    prefers it over ``forget`` (a plain ``forget`` matches on id alone and, on
+    the same-key SkyPilot shape, would take a live cluster's real row with the
+    ghost). A fake carrying only ``forget`` would make a regression to the
+    blunt door invisible — the reconciler probes for the scoped one with
+    ``getattr`` and silently falls back.
+
+    Attributes:
+        forgotten: Ids deleted through EITHER door, in call order.
+        scoped_forgets: Ids deleted through the phase-scoped door only.
+        recorded: Instances written.
+        record_kwargs: The keyword arguments each ``record`` was given.
+    """
+
     def __init__(self, entries: list[dict]) -> None:  # type: ignore[type-arg]
         self.entries_ = entries
         self.forgotten: list[str] = []
+        self.scoped_forgets: list[str] = []
         self.recorded: list[Instance] = []
+        self.record_kwargs: list[dict[str, object]] = []
 
     def forget(self, instance_id: str) -> None:
         self.forgotten.append(instance_id)
 
+    def forget_provisional(
+        self, provisional_id: str, *, real_id: str | None = None
+    ) -> bool:
+        del real_id
+        self.scoped_forgets.append(provisional_id)
+        self.forgotten.append(provisional_id)
+        return True
+
     def record(self, instance: Instance, **kwargs: object) -> None:
         self.recorded.append(instance)
+        self.record_kwargs.append(dict(kwargs))
 
 
 class _CollapsingLedger:
@@ -220,6 +247,82 @@ def test_an_aged_launching_row_with_no_pod_is_forgotten() -> None:
         now=now,
     )
     assert ledger.forgotten == ["kf-run-42"]
+
+
+def test_the_adopted_row_keeps_the_launch_time_not_the_listings_zero() -> None:
+    """A durable adopted row must not be born 56 years old.
+
+    Both listing converters hard-code ``created_at=0.0`` — RunPod's list API
+    returns no creation time (``providers/runpod/__init__.py``) and SkyPilot's
+    record does the same. Recording that verbatim gives the adopted row an age
+    of ~56 years, so ``Lifecycle`` max-age reaping destroys EVERY adopted
+    instance unconditionally (``core/lifecycle.py``) and the overview renders a
+    six-figure ``est≤$`` for RunPod, whose listing DOES carry a real
+    ``costPerHr``.
+
+    Bug caught: ``record(instance)`` straight off ``list_instances()``. The
+    caller-side ``_rewrite_adopted_entry`` fixes only the in-memory copy, so
+    nothing about the durable row's age was pinned and this shipped silently.
+    """
+    from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
+
+    now = 1_700_000_000.0
+    ledger = _FakeLedger([])
+    row = _launching_row(age_s=7200.0, now=now)
+    row["max_age_s"] = 14400
+
+    _reconcile_dead_ledger_entries(
+        ledger, [row], get_provider=lambda _n: _ProviderWithPod, now=now
+    )
+
+    assert [i.id for i in ledger.recorded] == ["pod-real-1"]
+    adopted = ledger.recorded[0]
+    assert adopted.created_at == now - 7200.0, (
+        "the adopted row took the listing's fabricated 0.0 and is now ~56y old"
+    )
+    # The lifecycle ceiling the launch was configured with rides along, so the
+    # reaper ages the adopted instance out on its own config's terms.
+    assert ledger.record_kwargs == [{"max_age_s": 14400}]
+
+
+def test_the_adopted_row_keeps_row_tags_the_listing_cannot_reproduce() -> None:
+    """``tags["ports"]`` must survive adoption, or warm attach can never reach it.
+
+    SkyPilot's listing converter returns ``tags={}``. ``ensure_endpoints``
+    rebuilds its ssh forwards from ``tags["ports"]`` and from nothing else
+    (``providers/skypilot/__init__.py::_ports_for``), so an adopted cluster
+    recorded off the listing is permanently unreachable by warm attach.
+
+    Bug caught: recording the listing's tags verbatim. Also pins the merge
+    DIRECTION — a key the provider actually read wins over the row's copy,
+    because the provider's is the live reading — and that the launch-phase tag
+    is dropped, since a real row still carrying it makes every later collapse
+    refuse.
+    """
+    from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
+
+    now = 1_700_000_000.0
+    ledger = _FakeLedger([])
+    row = _launching_row(age_s=7200.0, now=now)
+    row["tags"] = {
+        "kf_launch_phase": "launching",
+        "kf_run_id": "kf-run-42",
+        "ports": "8000,8001",
+        "mode": "stale-guess",
+    }
+
+    _reconcile_dead_ledger_entries(
+        ledger, [row], get_provider=lambda _n: _ProviderWithPod, now=now
+    )
+
+    adopted = ledger.recorded[0]
+    assert adopted.tags["ports"] == "8000,8001", (
+        "the row's ports tag was lost, so ensure_endpoints can never rebuild"
+    )
+    assert adopted.tags["mode"] == "pod", (
+        "the row's stale guess beat the provider's live reading"
+    )
+    assert "kf_launch_phase" not in adopted.tags
 
 
 def test_adoption_records_the_real_row_before_the_phase_scoped_collapse() -> None:
@@ -425,8 +528,18 @@ def test_a_same_key_row_is_never_dropped_by_a_forget_only_ledger() -> None:
     """
     from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
 
+    class _ForgetOnlyLedger(_FakeLedger):
+        """No phase-scoped delete at all — the shape the fallback is for.
+
+        ``_FakeLedger`` deliberately HAS ``forget_provisional`` (so a
+        regression to the blunt door is visible elsewhere), so this test has to
+        take it away again to be about the forget-only case at all.
+        """
+
+        forget_provisional = None  # type: ignore[assignment]
+
     now = 1_700_000_000.0
-    ledger = _FakeLedger([])
+    ledger = _ForgetOnlyLedger([])
 
     _reconcile_dead_ledger_entries(
         ledger,
@@ -606,11 +719,11 @@ def test_a_provider_returning_a_non_listing_is_survivable() -> None:
     assert ledger.forgotten == []
 
 
-def test_a_row_exactly_at_the_boot_timeout_is_kept() -> None:
+def test_a_row_exactly_at_the_grace_window_is_kept() -> None:
     """The boundary itself is not yet "too old".
 
     Bug caught: a ``>=`` comparison reaping a launch on the exact tick its
-    boot budget runs out, one poll before the pod would have registered.
+    grace window runs out, one poll before the pod would have registered.
     """
     from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
 
@@ -622,7 +735,7 @@ def test_a_row_exactly_at_the_boot_timeout_is_kept() -> None:
         [_launching_row(age_s=600.0, now=now)],
         get_provider=lambda _n: _ProviderWithNothing,
         now=now,
-        boot_timeout_s=600.0,
+        launching_grace_s=600.0,
     )
 
     assert gone == []
@@ -661,7 +774,15 @@ def test_a_failing_forget_is_swallowed_and_not_reported() -> None:
     from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
 
     class _BrokenLedger(_FakeLedger):
+        # BOTH doors must refuse. Overriding only ``forget`` would leave the
+        # phase-scoped one working, the row would be deleted happily, and this
+        # test would pass while proving nothing about the failure path.
         def forget(self, instance_id: str) -> None:
+            raise OSError("ledger locked")
+
+        def forget_provisional(
+            self, provisional_id: str, *, real_id: str | None = None
+        ) -> bool:
             raise OSError("ledger locked")
 
     now = 1_700_000_000.0
@@ -677,15 +798,89 @@ def test_a_failing_forget_is_swallowed_and_not_reported() -> None:
     assert gone == []
 
 
-def test_a_launching_row_on_a_non_reconcilable_provider_is_untouched() -> None:
-    """``local`` is excluded from reconciliation, launching row or not.
+@pytest.mark.parametrize("provider_name", ["modal", "local", "not-a-provider"])
+def test_an_aged_launching_row_is_forgotten_even_when_it_cannot_be_adopted(
+    provider_name: str,
+) -> None:
+    """The provider-agnostic age-out, added with ruling C1 (2026-09-03).
 
-    Bug caught: the new branch jumping the ``_RECONCILABLE_PROVIDERS`` gate
-    and ageing out a ``local`` row whose instance table is in-process, so a
-    fresh CLI can never see it. The row is AGED and matches nothing, so
-    bypassing the gate forgets it — ``ledger.forgotten`` is what fails then.
-    Raising from the resolver would NOT fail: the reconciler swallows every
-    resolver exception by design.
+    Since C1 the orchestrator KEEPS the provisional row when ``create_instance``
+    raises, because a raise is not proof the provider booked nothing. On a
+    provider outside ``_RECONCILABLE_PROVIDERS`` — Modal's listing exposes no
+    name matchable against a ``run_id``, ``local``'s table is in-process, an
+    unregistered name resolves to nothing at all — the adoption branch can
+    never run, so without this fallback that row is PERMANENT: it shows in
+    every ``kinoforge list`` forever and no branch anywhere can clear it.
+
+    Bug caught: leaving these rows alone (the pre-C1 shape), which turns every
+    dead Modal launch into an immortal ghost row.
+
+    Args:
+        provider_name: A provider the reconciler cannot adopt against.
+    """
+    from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
+
+    resolved: list[str] = []
+
+    def _resolve(name: str) -> Any:  # noqa: ANN401
+        resolved.append(name)
+        return _ProviderWithNothing
+
+    now = 1_700_000_000.0
+    ledger = _FakeLedger([])
+    row = _launching_row(age_s=7200.0, now=now)
+    row["provider"] = provider_name
+
+    gone = _reconcile_dead_ledger_entries(ledger, [row], get_provider=_resolve, now=now)
+
+    assert gone == ["kf-run-42"]
+    # Forgotten through the PHASE-SCOPED door: a plain forget matches on id
+    # alone and would take a real row sharing that id with it.
+    assert ledger.scoped_forgets == ["kf-run-42"]
+    # ...and never ADOPTED. No provider is constructed and nothing is recorded,
+    # which is the half of the old gate that must survive.
+    assert resolved == []
+    assert ledger.recorded == []
+
+
+@pytest.mark.parametrize("provider_name", ["modal", "local", "not-a-provider"])
+def test_a_young_launching_row_is_kept_on_an_unadoptable_provider(
+    provider_name: str,
+) -> None:
+    """The age gate applies to the fallback too — a launch may be in flight.
+
+    Bug caught: an age-out that fires on provider name alone. A Modal deploy
+    takes minutes, and reaping the row protecting it from a concurrent
+    ``kinoforge list`` (which this project's own live-smoke polling rule
+    actively encourages) is the F12 orphan hole reopened.
+
+    Args:
+        provider_name: A provider the reconciler cannot adopt against.
+    """
+    from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
+
+    now = 1_700_000_000.0
+    ledger = _FakeLedger([])
+    row = _launching_row(age_s=60.0, now=now)
+    row["provider"] = provider_name
+
+    gone = _reconcile_dead_ledger_entries(
+        ledger, [row], get_provider=lambda _n: _ProviderWithNothing, now=now
+    )
+
+    assert gone == []
+    assert ledger.forgotten == []
+
+
+def test_a_plain_row_on_a_non_reconcilable_provider_is_still_untouched() -> None:
+    """The C1 fallback is scoped to ``launching`` rows and nothing else.
+
+    ``local`` is excluded from reconciliation because its instance table is
+    in-process, so a fresh CLI invocation KeyErrors on a perfectly valid pod.
+
+    Bug caught: widening the age-out fallback past the ``launching`` phase tag
+    — an ordinary ``local`` row would then be probed and forgotten, deleting
+    the handle on a live local instance.
     """
     from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
 
@@ -699,6 +894,7 @@ def test_a_launching_row_on_a_non_reconcilable_provider_is_untouched() -> None:
     ledger = _FakeLedger([])
     row = _launching_row(age_s=7200.0, now=now)
     row["provider"] = "local"
+    row["tags"] = {"mode": "pod"}  # no kf_launch_phase
 
     gone = _reconcile_dead_ledger_entries(ledger, [row], get_provider=_resolve, now=now)
 

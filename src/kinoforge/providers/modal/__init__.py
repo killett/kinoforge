@@ -96,6 +96,22 @@ class ModalProvider(ComputeProvider):
         )
 
     @classmethod
+    def nothing_booked_errors(cls) -> tuple[type[BaseException], ...]:
+        """Declare nothing beyond the portable ``CapacityError`` (S5, C1).
+
+        ``create_instance`` shells out to ``modal deploy``, and a non-zero exit
+        (or a timeout, or a Ctrl-C) does NOT prove the app was not created —
+        Modal's control plane may have accepted the deploy and be scheduling
+        containers while the CLI reports failure. Every failure here therefore
+        keeps the provisional row, and ``cli/_reconcile``'s provider-agnostic
+        age-out clears it once the launching grace window has passed.
+
+        Returns:
+            The empty tuple.
+        """
+        return ()
+
+    @classmethod
     def consumes(cls) -> Mapping[str, FieldSupport]:
         """Declare what :class:`ModalAppRequest` and the catalog filter read.
 

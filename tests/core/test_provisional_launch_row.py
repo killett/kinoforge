@@ -192,13 +192,22 @@ def test_a_ledger_fault_never_fails_the_launch(
 def test_forget_is_best_effort(caplog: pytest.LogCaptureFixture) -> None:
     """A failing forget logs and returns.
 
-    Bug caught: the success path raising AFTER the instance is live, so the
-    caller never reaches the orchestrator's post-create record — the exact
-    hazard documented at providers/skypilot/__init__.py:1100-1112.
+    Bug caught: a store 5xx or lock-lease timeout from the failure-path cleanup
+    replacing the exception that explains why the launch failed.
+
+    The fake declares ``forget_provisional``, NOT ``forget``: production calls
+    the phase-scoped door, so a fake built around ``forget`` would have this
+    test asserting on a warning raised by an incidental ``AttributeError`` and
+    passing for ANY method name the orchestrator happened to call. ``real_id``
+    is keyword-optional here because the failure path passes it not at all —
+    a fake that declared it required would ``TypeError`` instead, which is the
+    same accident wearing a different hat.
     """
 
     class _AngryLedger:
-        def forget(self, instance_id: str) -> None:
+        def forget_provisional(
+            self, provisional_id: str, *, real_id: str | None = None
+        ) -> bool:
             raise RuntimeError("store unavailable")
 
     with caplog.at_level("WARNING"):
@@ -207,6 +216,9 @@ def test_forget_is_best_effort(caplog: pytest.LogCaptureFixture) -> None:
     record = caplog.records[-1]
     assert record.levelno == logging.WARNING
     assert record.exc_info is not None
+    # The RuntimeError the fake raised is the one reported — not an
+    # AttributeError from a method that was never called.
+    assert record.exc_info[0] is RuntimeError
 
 
 def test_success_records_the_real_row_before_forgetting_the_provisional(
@@ -273,13 +285,21 @@ def test_create_failure_removes_the_provisional_row(
     fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
     fake_provider: MagicMock,  # noqa: F811 — imported fixture
 ) -> None:
-    """A failed launch leaves no ghost.
+    """A launch that PROVABLY booked nothing leaves no ghost.
 
     Bug caught: a permanent row whose est_spend (age×rate) inflates forever —
     the "$210 phantom pod" failure mode cli/_reconcile.py documents.
+
+    ``CapacityError`` is the portable "nothing was booked" error (ruling C1,
+    2026-09-03): it is what ``_create_with_capacity_wait`` re-raises once the
+    window expires with nothing bookable, so by construction no resource
+    exists. It is deliberately NOT a plain ``RuntimeError`` — since C1 an
+    unclassified raise KEEPS the row, because a raise is not proof the provider
+    created nothing (see
+    ``test_a_create_that_raises_after_the_resource_might_exist_keeps_the_row``).
     """
     ledger = Ledger(store=LocalArtifactStore(tmp_path / "ledger-root"))
-    boom = RuntimeError("provider create exploded")
+    boom = CapacityError("nothing bookable in the window")
     seen_mid_create: list[list[str]] = []
 
     def _create(spec: InstanceSpec) -> Instance:
@@ -290,7 +310,7 @@ def test_create_failure_removes_the_provisional_row(
     fake_provider.create_instance.side_effect = _create
     created_rows: list[Instance] = []
 
-    with pytest.raises(RuntimeError) as excinfo:
+    with pytest.raises(CapacityError) as excinfo:
         _provision_instance_and_build_backend(
             **_provision_kwargs(
                 engine=fake_engine,
@@ -626,10 +646,12 @@ def test_a_create_failure_spares_a_real_row_under_the_same_id(
     ledger = Ledger(store=LocalArtifactStore(tmp_path / "ledger-root"))
     # A previous launch under this same run id is already up and billing.
     ledger.record(_same_key_instance("kf-run-reused"))
-    boom = RuntimeError("second create exploded")
+    # A "nothing was booked" error, so the failure path's forget actually runs
+    # (ruling C1) and the phase-scoping this test is about is exercised.
+    boom = CapacityError("no capacity for the second create")
     fake_provider.create_instance.side_effect = boom
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(CapacityError):
         _provision_instance_and_build_backend(
             **_provision_kwargs(
                 engine=fake_engine,
@@ -685,7 +707,12 @@ def test_a_refused_collapse_is_logged(caplog: pytest.LogCaptureFixture) -> None:
     """
 
     class _RefusingLedger:
-        def forget_provisional(self, provisional_id: str, *, real_id: str) -> bool:
+        # ``real_id`` is optional, matching the real Ledger: the FAILURE path
+        # calls this with no real_id at all, and a fake that made it required
+        # would TypeError there rather than exercise the branch.
+        def forget_provisional(
+            self, provisional_id: str, *, real_id: str | None = None
+        ) -> bool:
             del provisional_id, real_id
             return False
 
@@ -753,6 +780,49 @@ def test_a_config_supplied_launch_phase_tag_cannot_reach_a_real_row(
     assert _ledger_ids(ledger) == ["kf-run-reserved"]
 
 
+def test_deploy_also_refuses_a_config_supplied_launch_phase_tag(
+    tmp_path: Path,
+) -> None:
+    """``deploy()`` is the SECOND route from caller tags onto a real instance.
+
+    ``deploy`` builds its own ``InstanceSpec`` and calls ``create_instance``
+    directly — it does not go through
+    ``_provision_instance_and_build_backend``, so the strip there does not
+    cover it. Caller tags reach ``spec.tags`` and from there
+    ``Instance.tags`` (SkyPilot spreads them verbatim), so a config setting
+    ``kf_launch_phase: launching`` produces a REAL row that reads as
+    provisional, and every later ``forget_provisional`` refuses forever with
+    nothing raising.
+
+    Bug caught: stripping on one route and not the other, which the sibling
+    test above cannot see.
+
+    Args:
+        tmp_path: Unused beyond keeping the local provider's state per-test.
+    """
+    del tmp_path
+    from kinoforge.core.orchestrator import deploy
+
+    seen: list[InstanceSpec] = []
+
+    class _SpecCapturingProvider(LocalProvider):
+        def create_instance(self, spec: InstanceSpec) -> Instance:
+            seen.append(spec)
+            return super().create_instance(spec)
+
+    deploy(
+        _compute_cfg(),
+        provider=_SpecCapturingProvider(),
+        engine=_make_engine(),
+        tags={"kf_launch_phase": "launching", "cost_center": "keep-me"},
+    )
+
+    assert "kf_launch_phase" not in seen[0].tags, (
+        "the reserved tag reached the spec, so it will reach the real row"
+    )
+    assert seen[0].tags["cost_center"] == "keep-me"
+
+
 def test_a_collapse_fault_never_fails_the_launch(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -765,7 +835,10 @@ def test_a_collapse_fault_never_fails_the_launch(
     """
 
     class _AngryLedger:
-        def forget_provisional(self, provisional_id: str, *, real_id: str) -> bool:
+        # ``real_id`` optional, for the same reason as _RefusingLedger above.
+        def forget_provisional(
+            self, provisional_id: str, *, real_id: str | None = None
+        ) -> bool:
             raise RuntimeError("store unavailable")
 
     with caplog.at_level("WARNING"):
@@ -868,36 +941,64 @@ def test_the_row_carries_enough_to_find_and_destroy_the_resource(
     assert float(entry["tags"]["kf_launched_at"]) == 1_700_000_000.0
 
 
-def test_a_create_that_raises_after_the_resource_exists_keeps_nothing(
+@pytest.mark.parametrize(
+    ("boom", "shape"),
+    [
+        (
+            ProvisionFailed("failed to open ssh tunnel to 'kf-run-t' for port 8000"),
+            "tunnel-failure-after-the-cluster-is-up",
+        ),
+        (
+            RuntimeError("sky.launch: setup command exited 1"),
+            "sky.launch-raising-on-a-failed-setup-script",
+        ),
+        (KeyboardInterrupt(), "ctrl-c-mid-launch"),
+    ],
+    ids=["provision-failed", "sky-launch-raised", "keyboard-interrupt"],
+)
+def test_a_create_that_raises_after_the_resource_might_exist_keeps_the_row(
     tmp_path: Path,
     fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
     fake_provider: MagicMock,  # noqa: F811 — imported fixture
+    boom: BaseException,
+    shape: str,
 ) -> None:
-    """A create that raises leaves no row — and that is now safe.
+    """A raise is NOT proof the provider booked nothing (ruling C1, 2026-09-03).
 
-    The SkyPilot version of this test (test_tunnel_failure_keeps_the_
-    provisional_row) asserted the OPPOSITE, because the provider raised
-    ProvisionFailed *after* the cluster was up and only the provisional row
-    could surface it. That is still true, so the provider's failure path must
-    tear the cluster down itself before raising — asserted in
-    tests/providers/test_skypilot_endpoints.py::
-    test_second_spawn_failure_kills_the_first_tunnel_and_the_cluster.
+    This asserted the OPPOSITE until C1, and the SkyPilot test it replaced
+    (``test_tunnel_failure_keeps_the_provisional_row``) had it right all along.
+    Three live shapes make "the create raised, so nothing exists" false:
 
-    Bug caught: dropping BOTH the row and the teardown, which would restore
-    the invisible-billing-cluster hole in a new place.
+    * ``ProvisionFailed`` out of SkyPilot's tunnel branch — ``sky.launch`` has
+      already returned an UP cluster, and that branch's best-effort
+      ``sky.down`` swallows its own exception, so "we tore it down" is a hope.
+    * ``sky.launch`` itself raising on a failed setup script leaves the cluster
+      UP with no handler anywhere in the provider.
+    * A Ctrl-C is caught by ``except BaseException`` while SkyPilot's API
+      server goes on creating the cluster.
+
+    Forgetting the row in any of these leaves a live, billing resource with
+    ZERO ledger rows — the exact F12 hole this row exists to close. Keeping it
+    costs one reconcile pass: ``cli/_reconcile`` adopts the row if the resource
+    turns out to exist and ages it out after the grace window if it does not.
+
+    Bug caught: an unconditional ``_forget_provisional_row`` on the failure
+    path, which every other test in this file is happy with.
+
+    Args:
+        boom: The exception the create raises.
+        shape: The production shape it stands in for, named in the id.
     """
+    del shape
     ledger = Ledger(store=LocalArtifactStore(tmp_path / "ledger-root"))
-    boom = ProvisionFailed("failed to open ssh tunnel to 'kf-run-t' for port 8000")
 
     def _create(spec: InstanceSpec) -> Instance:
         del spec
-        # Same shape as SkyPilot's tunnel failure: the cluster IS up by now and
-        # create_instance has already best-effort torn it down.
         raise boom
 
     fake_provider.create_instance.side_effect = _create
 
-    with pytest.raises(ProvisionFailed) as excinfo:
+    with pytest.raises(type(boom)) as excinfo:
         _provision_instance_and_build_backend(
             **_provision_kwargs(
                 engine=fake_engine,
@@ -910,21 +1011,187 @@ def test_a_create_that_raises_after_the_resource_exists_keeps_nothing(
         )
 
     assert excinfo.value is boom
+    assert _ledger_ids(ledger) == ["kf-run-t"], (
+        "the row protecting a resource that may exist was deleted"
+    )
+    entry = ledger.read("kf-run-t")
+    assert entry is not None
+    # Still LAUNCHING, which is what makes the reconciler willing to act on it
+    # rather than treating it as a real instance.
+    assert entry["tags"]["kf_launch_phase"] == "launching"
+
+
+def test_a_provider_declared_nothing_booked_error_still_forgets_the_row(
+    tmp_path: Path,
+    fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
+    fake_provider: MagicMock,  # noqa: F811 — imported fixture
+) -> None:
+    """The provider's own declaration reaches the failure path.
+
+    ``kinoforge.core`` may not import ``kinoforge.providers`` at module scope,
+    so an error like SkyPilot's ``PreLaunchRateCapExceeded`` — raised before
+    ``sky.launch`` runs, when nothing has been requested — cannot be named in
+    core. The provider declares it via
+    :meth:`ComputeProvider.nothing_booked_errors` and the orchestrator unions
+    that with the portable ``CapacityError``.
+
+    Bug caught: ignoring the declaration, which would keep a row for a launch
+    that provably booked nothing and hand every pre-launch refusal a permanent
+    ghost row until the reconciler's grace window expires.
+    """
+
+    class _RefusedBeforeLaunch(RuntimeError):
+        """Stands in for a provider error raised before anything is booked."""
+
+    ledger = Ledger(store=LocalArtifactStore(tmp_path / "ledger-root"))
+    fake_provider.nothing_booked_errors = lambda: (_RefusedBeforeLaunch,)
+    fake_provider.create_instance.side_effect = _RefusedBeforeLaunch("over cap")
+
+    with pytest.raises(_RefusedBeforeLaunch):
+        _provision_instance_and_build_backend(
+            **_provision_kwargs(
+                engine=fake_engine,
+                provider=fake_provider,
+                run_id="kf-run-declared",
+                ledger=ledger,
+                on_instance_created=None,
+                tmp_path=tmp_path,
+            )
+        )
+
     assert ledger.entries() == []
+
+
+def test_an_undeclaring_provider_keeps_the_row(
+    tmp_path: Path,
+    fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
+    fake_provider: MagicMock,  # noqa: F811 — imported fixture
+) -> None:
+    """A provider that answers nothing usable degrades to the SAFE direction.
+
+    ``resolved_provider`` is typed ``Any``, so the declaration may be missing,
+    may raise, or — the shape that actually bites, because every fake provider
+    in this suite is one — may be a ``MagicMock`` whose attribute access
+    returns another Mock. Treating a Mock's answer as "declares everything"
+    would silently restore the unconditional forget C1 removed, and would do it
+    ONLY under test doubles, where nothing would ever notice.
+
+    Bug caught: ``except tuple(provider.nothing_booked_errors()):`` without a
+    type check on what came back.
+    """
+    ledger = Ledger(store=LocalArtifactStore(tmp_path / "ledger-root"))
+    # Untouched MagicMock: nothing_booked_errors() returns a Mock, not a tuple.
+    fake_provider.create_instance.side_effect = RuntimeError("who knows")
+
+    with pytest.raises(RuntimeError):
+        _provision_instance_and_build_backend(
+            **_provision_kwargs(
+                engine=fake_engine,
+                provider=fake_provider,
+                run_id="kf-run-mock",
+                ledger=ledger,
+                on_instance_created=None,
+                tmp_path=tmp_path,
+            )
+        )
+
+    assert _ledger_ids(ledger) == ["kf-run-mock"]
+
+
+#: Ways a duck-typed provider's declaration can be unusable. Each entry is
+#: ``(attribute_value_or_ABSENT, shape)``; ``_ABSENT`` means the attribute is
+#: not set at all.
+_ABSENT = object()
+_UNUSABLE_DECLARATIONS: list[tuple[Any, str]] = [
+    (_ABSENT, "no such method"),
+    ("not-callable", "attribute that is not callable"),
+    (lambda: object(), "a return value that is not even iterable"),
+    (lambda: ["not-an-exception", 7], "an iterable of things that are not exceptions"),
+    (MagicMock(), "a MagicMock, i.e. every test double in this suite"),
+]
+
+
+@pytest.mark.parametrize(
+    ("declaration", "shape"),
+    _UNUSABLE_DECLARATIONS,
+    ids=["absent", "not-callable", "not-iterable", "junk-entries", "magicmock"],
+)
+def test_an_unusable_declaration_degrades_to_the_portable_pair(
+    declaration: Any, shape: str
+) -> None:
+    """A broken declaration must not raise, and must not widen the forget.
+
+    ``resolved_provider`` is typed ``Any`` and this reader runs on the hot path
+    just before ``create_instance``, so anything it raises fails a launch that
+    would otherwise have succeeded — for a bookkeeping reason.
+
+    Bug caught: ``tuple(provider.nothing_booked_errors())`` with no shape check.
+    A non-iterable return raises ``TypeError`` straight out of the launch; an
+    iterable of junk puts a non-exception into an ``except`` clause, which
+    raises ``TypeError`` at the moment the create fails and so REPLACES the
+    exception that explains why the launch failed.
+
+    Args:
+        declaration: What the provider's declaration attribute holds.
+        shape: The malformation it stands for, named in the id.
+    """
+    del shape
+
+    class _Provider:
+        name = "brokenprovider"
+
+    provider = _Provider()
+    if declaration is not _ABSENT:
+        provider.nothing_booked_errors = declaration  # type: ignore[attr-defined]
+
+    types_ = orchestrator._nothing_booked_error_types(provider)
+
+    assert types_ == (CapacityError,), (
+        "an unusable declaration must contribute nothing at all"
+    )
+    # And the result is usable as an except clause, which a junk entry is not.
+    with pytest.raises(CapacityError):
+        try:
+            raise CapacityError("probe")
+        except types_:
+            raise
+
+
+def test_a_declaration_that_raises_degrades_to_the_portable_pair() -> None:
+    """A provider whose declaration itself explodes still launches.
+
+    Bug caught: letting a broken ``nothing_booked_errors`` propagate. It is
+    read immediately before ``create_instance``, so a raise there fails a
+    launch that had nothing wrong with it.
+    """
+
+    class _Provider:
+        name = "angryprovider"
+
+        @classmethod
+        def nothing_booked_errors(cls) -> tuple[type[BaseException], ...]:
+            raise RuntimeError("declaration exploded")
+
+    assert orchestrator._nothing_booked_error_types(_Provider()) == (CapacityError,)
 
 
 def test_no_ledger_is_a_no_op(
     tmp_path: Path,
     fake_engine: MagicMock,  # noqa: F811 — imported fixture, not a redefinition
     fake_provider: MagicMock,  # noqa: F811 — imported fixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """``provisional_ledger=None`` provisions exactly as before.
+    """``provisional_ledger=None`` provisions exactly as before, SILENTLY.
 
     Moved from ``test_no_ledger_installed_is_a_no_op``. ``None`` is the state
     every hosted engine and every direct caller of this helper is in.
 
-    Bug caught: an unconditional ledger call — ``None.record(...)`` would
-    AttributeError and break every launch that does not supply a ledger.
+    Bug caught: deleting the ``if provisional_ledger is not None`` guard. The
+    launch still succeeds if you do — ``None.record(...)`` raises
+    AttributeError inside ``_record_provisional_row``, whose whole contract is
+    to swallow ledger faults — so the returned instance proves nothing. The
+    WARNING it emits is the only observable difference, which is why this
+    asserts on the log rather than only on the result.
     """
     kwargs = _provision_kwargs(
         engine=fake_engine,
@@ -937,9 +1204,13 @@ def test_no_ledger_is_a_no_op(
     kwargs["provisional_ledger"] = None
     fake_provider.create_instance.return_value = _same_key_instance("kf-no-ledger")
 
-    result = _provision_instance_and_build_backend(**kwargs)
+    with caplog.at_level("WARNING"):
+        result = _provision_instance_and_build_backend(**kwargs)
 
     assert result.instance.id == "kf-no-ledger"
+    assert not [r for r in caplog.records if "F12" in r.getMessage()], (
+        "a ledger call was attempted against None — the guard is gone"
+    )
 
 
 def test_the_real_ledger_satisfies_the_duck_typed_surface(

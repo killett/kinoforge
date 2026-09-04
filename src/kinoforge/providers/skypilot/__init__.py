@@ -698,6 +698,28 @@ class SkyPilotProvider(ComputeProvider):
         return frozenset(caps)
 
     @classmethod
+    def nothing_booked_errors(cls) -> tuple[type[BaseException], ...]:
+        """Declare the one create error that PROVES no cluster exists (S5, C1).
+
+        :class:`PreLaunchRateCapExceeded` is raised by :meth:`create_instance`
+        BEFORE ``sky.launch`` is called at all, so at that point no cluster has
+        been requested, none is booting, and none is billing. It is therefore
+        the only SkyPilot failure the orchestrator may act on by deleting the
+        pre-launch provisional ledger row.
+
+        Everything else is deliberately absent, including
+        :class:`~kinoforge.core.errors.ProvisionFailed` from the tunnel path:
+        ``sky.launch`` has already returned an UP cluster by then, the
+        best-effort ``sky.down`` in that branch swallows its own exception, and
+        a raise there with the row deleted is precisely the invisible-billing-
+        cluster state F12 exists to prevent.
+
+        Returns:
+            ``(PreLaunchRateCapExceeded,)``.
+        """
+        return (PreLaunchRateCapExceeded,)
+
+    @classmethod
     def consumes(cls) -> Mapping[str, FieldSupport]:
         """Declare what the Task config and the catalog filter read.
 
@@ -1212,23 +1234,30 @@ class SkyPilotProvider(ComputeProvider):
         # the project's own live-smoke rule fetches bootstrap.log from.
         if spec.launch is not None:
             port = ""
-            # Ports THIS call actually opened (reused-or-fresh, tracked as
-            # each iteration of the loop below completes without raising).
-            # cluster_name is stable across calls (derived from spec.run_id),
-            # so a second create_instance reusing the same run_id must only
-            # ever tear down tunnels *this* call opened on failure — never a
-            # prior, already-succeeded call's live tunnels for the same
-            # cluster (finding: task-1 review, 2026-09-01).
-            opened_ports: list[str] = []
+            # Ports THIS call actually SPAWNED a forward for. cluster_name is
+            # stable across calls (derived from spec.run_id), so a second
+            # create_instance reusing the same run_id must only ever tear down
+            # tunnels *this* call opened on failure — never a prior,
+            # already-succeeded call's live tunnels for the same cluster
+            # (finding: task-1 review, 2026-09-01).
+            #
+            # Reused forwards are excluded, which is the whole point of
+            # ``_ensure_tunnel`` reporting whether it spawned: recording them
+            # here would make a second call's failure on port 2 kill port 1's
+            # tunnel from the first call, and — the cluster then holding no
+            # tunnel at all — ``sky.down`` a cluster that is still in use,
+            # contradicting the comment three lines below.
+            spawned_ports: list[str] = []
             try:
                 for port in spec.ports:
-                    self._ensure_tunnel(cluster_name, port)
-                    opened_ports.append(port)
+                    _local_port, spawned = self._ensure_tunnel(cluster_name, port)
+                    if spawned:
+                        spawned_ports.append(port)
             except Exception as exc:  # noqa: BLE001 — any spawn fault → clean fail
                 held = self._tunnels.get(cluster_name)
                 cluster_now_empty = True
                 if held is not None:
-                    for opened_port in opened_ports:
+                    for opened_port in spawned_ports:
                         tunnel = held.pop(opened_port, None)
                         if tunnel is not None:
                             self._kill_tunnel(tunnel.proc)
@@ -1255,12 +1284,19 @@ class SkyPilotProvider(ComputeProvider):
                 port: f"http://127.0.0.1:{tunnel.local_port}"
                 for port, tunnel in self._tunnels.get(cluster_name, {}).items()
             }
-        tags: dict[str, str] = {
-            **dict(spec.tags),
+        tags: dict[str, str] = dict(spec.tags)
+        if spec.launch is not None:
             # S5 — same key RunPod uses (_pod_to_instance / endpoints), so
             # ensure_endpoints and warm-attach have one reader for both.
-            "ports": ",".join(spec.ports),
-        }
+            #
+            # Written ONLY alongside a launch, and gated on exactly the
+            # condition the tunnel loop above is gated on. ``tags["ports"]`` is
+            # what ``_ports_for`` reads to decide which forwards to rebuild, so
+            # writing it for a server-less deploy (the CPU smoke path, which
+            # opens no tunnel at all) would make a later ``ensure_endpoints``
+            # spawn ssh forwards to remote ports nothing is listening on and
+            # report them as endpoints.
+            tags["ports"] = ",".join(spec.ports)
         # S4 follow-up: what the optimizer actually booked, merged on top of
         # the caller's own tags. Unconditional overwrite is correct here:
         # `_selection_tags` already did the work of separating "could not
@@ -1711,7 +1747,7 @@ class SkyPilotProvider(ComputeProvider):
             )
             return {}
         return {
-            port: f"http://127.0.0.1:{self._ensure_tunnel(instance.id, port)}"
+            port: f"http://127.0.0.1:{self._ensure_tunnel(instance.id, port)[0]}"
             for port in ports
         }
 
@@ -1743,23 +1779,34 @@ class SkyPilotProvider(ComputeProvider):
             return tagged
         return tuple(k for k in instance.endpoints if k.isdigit())
 
-    def _ensure_tunnel(self, cluster_name: str, port: str) -> int:
-        """Return a live local port forwarding to ``port`` on the cluster.
+    def _ensure_tunnel(self, cluster_name: str, port: str) -> tuple[int, bool]:
+        """Return a live local port forwarding to ``port``, and whether it is new.
 
         Reuses an existing forward when its subprocess is still running;
         otherwise reaps the dead one and spawns a replacement.
+
+        The second element of the pair is what makes
+        :meth:`create_instance`'s failure cleanup correct. ``cluster_name`` is
+        stable across calls (it is ``spec.run_id``), so a second
+        ``create_instance`` for one cluster meets tunnels a previous, already-
+        succeeded call opened. Killing those on a later call's spawn failure
+        breaks a caller that is happily using them — and, because the cluster
+        then looks tunnel-free, takes the compute down with them. Only a
+        forward THIS call spawned may be torn down by this call.
 
         Args:
             cluster_name: The cluster to forward to.
             port: The remote port.
 
         Returns:
-            The local port.
+            ``(local_port, spawned)`` — the local port, and True only when a
+            new subprocess was started by this call (a reused live forward
+            reports False).
         """
         held = self._tunnels.setdefault(cluster_name, {})
         existing = held.get(port)
         if existing is not None and self._tunnel_alive(existing):
-            return existing.local_port
+            return existing.local_port, False
         if existing is not None:
             self._kill_tunnel(existing.proc)
         local_port = self._alloc_port()
@@ -1767,7 +1814,7 @@ class SkyPilotProvider(ComputeProvider):
             proc=self._ssh_spawn(cluster_name, local_port, int(port)),
             local_port=local_port,
         )
-        return local_port
+        return local_port, True
 
 
 # ---------------------------------------------------------------------------

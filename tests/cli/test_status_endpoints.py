@@ -49,7 +49,12 @@ def test_status_uses_the_pure_read_and_names_the_cluster() -> None:
     )
     rendered = _render_endpoints_for_status(provider, inst)
     assert provider.calls == ["endpoints"]
-    assert "kf-cluster-7" in rendered
+    # The exact form, as its sibling below asserts the exact "unknown" form: a
+    # substring check passes for ``unknown (kf-cluster-7)`` or for a JSON blob
+    # that merely happens to contain the id, neither of which is the
+    # ``cluster=<id>`` string an operator is meant to paste into
+    # ``kinoforge destroy --id`` or ``sky status``.
+    assert rendered == "cluster=kf-cluster-7"
 
 
 def test_status_renders_a_real_endpoint_map_when_there_is_one() -> None:

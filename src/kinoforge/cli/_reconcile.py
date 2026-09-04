@@ -7,6 +7,7 @@ callers — a dead pod's ``est_spend`` (age×rate) must not inflate forever.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from collections.abc import Callable
@@ -27,6 +28,11 @@ _LAUNCH_PHASE_LAUNCHING: str = "launching"
 # 900 s ``Lifecycle.boot_timeout_s`` default — because the cost of being wrong
 # is asymmetric: reaping too early deletes the handle on a pod that is booting
 # and billing, while reaping too late only prolongs a $0.00 ghost row.
+#
+# This is NOT a boot timeout and the parameter it defaults is not named after
+# one: at 1800 s it is twice ``Lifecycle.boot_timeout_s``, and a caller reading
+# "boot_timeout_s" off the signature would reasonably pass the 900 s lifecycle
+# value and halve a grace window that is deliberately generous.
 _LAUNCHING_GRACE_S: float = 1800.0
 
 
@@ -79,7 +85,7 @@ def _reconcile_dead_ledger_entries(
     *,
     get_provider: Callable[[str], Callable[[], Any]] | None = None,
     now: float | None = None,
-    boot_timeout_s: float = _LAUNCHING_GRACE_S,
+    launching_grace_s: float = _LAUNCHING_GRACE_S,
 ) -> list[str]:
     """Forget ledger entries whose pod the provider confirms is gone.
 
@@ -101,7 +107,20 @@ def _reconcile_dead_ledger_entries(
     KeyError rule would delete the one durable handle on a pod that may be
     mid-boot and billing: exactly the orphan finding F12 exists to prevent, and
     reachable from a plain concurrent ``kinoforge list``. Such rows go to
-    :func:`_adopt_or_age_out` instead.
+    :func:`_resolve_launching_row` instead.
+
+    A ``launching`` row is dispatched BEFORE the ``_RECONCILABLE_PROVIDERS``
+    gate, and that ordering is the fix for the hole ruling C1 would otherwise
+    open. Since C1, a create that raises KEEPS its provisional row — a raise is
+    not proof the provider booked nothing. On a provider this module cannot
+    reconcile (``modal`` is not in the set, and never can be: its listing
+    exposes no name matchable against a ``run_id``) that row would then be
+    permanent, visible in every ``kinoforge list`` forever, with no branch
+    anywhere able to clear it. The age-out fallback in
+    :func:`_resolve_launching_row` is what closes that: after the grace window,
+    an unadoptable ``launching`` row is forgotten. NOTHING ELSE about a
+    non-reconcilable provider changes — a non-launching ``local`` row is still
+    never probed and never forgotten.
 
     Args:
         ledger: Object exposing ``forget(instance_id)`` (see
@@ -111,8 +130,9 @@ def _reconcile_dead_ledger_entries(
             to :func:`kinoforge.core.registry.get_provider`.
         now: Current epoch seconds (test seam); defaults to ``time.time()``.
             Only the ``launching`` branch reads it.
-        boot_timeout_s: How long a ``launching`` row with no matching instance
-            is presumed to be a launch still in flight rather than debris.
+        launching_grace_s: How long a ``launching`` row with no matching
+            instance is presumed to be a launch still in flight rather than
+            debris. NOT a boot timeout — see :data:`_LAUNCHING_GRACE_S`.
 
     Returns:
         The ids that were confirmed gone and forgotten. An ADOPTED row is
@@ -129,27 +149,32 @@ def _reconcile_dead_ledger_entries(
     for entry in entries:
         pid = str(entry.get("id") or "")
         pname = str(entry.get("provider") or "")
-        if not pid or pname not in _RECONCILABLE_PROVIDERS:
-            continue
-        try:
-            provider = resolve(pname)()
-        except Exception as exc:  # noqa: BLE001 — unknown/unresolvable provider
-            logger.debug("reconcile: skip %s (provider %s: %s)", pid, pname, exc)
+        if not pid:
             continue
         if _is_launching(entry):
+            # Above the reconcilable gate on purpose — see the note in this
+            # function's docstring about the permanent-row hole C1 opens.
             try:
-                aged_out = _adopt_or_age_out(
+                aged_out = _resolve_launching_row(
                     ledger,
-                    provider,
                     entry,
+                    provider_name=pname,
+                    resolve=resolve,
                     now=now_s,
-                    boot_timeout_s=boot_timeout_s,
+                    launching_grace_s=launching_grace_s,
                 )
             except Exception as exc:  # noqa: BLE001 — never fatal, never a delete
                 logger.debug("reconcile: launching row %s skipped: %s", pid, exc)
                 continue
             if aged_out is not None:
                 forgotten.append(aged_out)
+            continue
+        if pname not in _RECONCILABLE_PROVIDERS:
+            continue
+        try:
+            provider = resolve(pname)()
+        except Exception as exc:  # noqa: BLE001 — unknown/unresolvable provider
+            logger.debug("reconcile: skip %s (provider %s: %s)", pid, pname, exc)
             continue
         try:
             provider.get_instance(pid)
@@ -181,13 +206,177 @@ def _is_launching(entry: dict[str, Any]) -> bool:
     return bool(tags.get(_LAUNCH_PHASE_TAG) == _LAUNCH_PHASE_LAUNCHING)
 
 
+def _resolve_launching_row(
+    ledger: _ReconcileLedger,
+    entry: dict[str, Any],
+    *,
+    provider_name: str,
+    resolve: Callable[[str], Callable[[], Any]],
+    now: float,
+    launching_grace_s: float,
+) -> str | None:
+    """Route a ``launching`` row to adoption, or to the provider-agnostic age-out.
+
+    Two paths, split on whether adoption is even expressible for this provider:
+
+    * **Reconcilable** (:data:`_RECONCILABLE_PROVIDERS`). The provider is
+      constructed and :func:`_adopt_or_age_out` gets to match the row against
+      the live listing, adopting it when the resource turns out to exist. A
+      provider that will not construct (missing creds, a transport fault) is
+      left ALONE, not aged out: that is transient uncertainty, and the next
+      invocation with working creds can still adopt.
+    * **Everything else** — ``modal``, ``local``, an unregistered or absent
+      provider name. Adoption cannot be expressed here at all: Modal's listing
+      carries no name matchable against a ``run_id``, and ``local``'s instance
+      table is in-process so a fresh CLI can never see it. The row is aged out
+      once the grace window has passed, and NEVER adopted.
+
+    That second path exists because of ruling C1. With the orchestrator no
+    longer forgetting the row on every raise, a Modal launch that dies would
+    otherwise leave a row that no branch in this module could ever clear.
+
+    Args:
+        ledger: The ledger holding the row.
+        entry: The launching row. MUTATED IN PLACE on adoption.
+        provider_name: The row's ``provider`` field.
+        resolve: Provider-factory resolver.
+        now: Current epoch seconds.
+        launching_grace_s: How long a launch may plausibly still be in flight.
+
+    Returns:
+        The row id when it was aged out, else None.
+    """
+    if provider_name in _RECONCILABLE_PROVIDERS:
+        try:
+            provider = resolve(provider_name)()
+        except Exception as exc:  # noqa: BLE001 — unresolvable → uncertain, keep
+            logger.debug(
+                "reconcile: launching row %s left alone (provider %s: %s)",
+                entry.get("id"),
+                provider_name,
+                exc,
+            )
+            return None
+        return _adopt_or_age_out(
+            ledger,
+            provider,
+            entry,
+            now=now,
+            launching_grace_s=launching_grace_s,
+        )
+    return _age_out_unadoptable_row(
+        ledger, entry, provider_name=provider_name, now=now, grace_s=launching_grace_s
+    )
+
+
+def _age_out_unadoptable_row(
+    ledger: _ReconcileLedger,
+    entry: dict[str, Any],
+    *,
+    provider_name: str,
+    now: float,
+    grace_s: float,
+) -> str | None:
+    """Forget a ``launching`` row this module can never adopt, once it is old.
+
+    The provider-agnostic half of :func:`_resolve_launching_row`. No listing is
+    read and no provider is constructed — for these providers there is nothing
+    useful to ask — so the ONLY gate is age, and it is the same generous window
+    the adoption path uses.
+
+    Deliberately narrow: it fires for ``launching`` rows and nothing else. A
+    plain ``local`` row is still never touched, which is what
+    ``_RECONCILABLE_PROVIDERS`` has always meant.
+
+    Args:
+        ledger: The ledger holding the row.
+        entry: The launching row.
+        provider_name: The row's ``provider`` field, for the log line.
+        now: Current epoch seconds.
+        grace_s: How long a launch may plausibly still be in flight.
+
+    Returns:
+        The row id when it was forgotten, else None (young, unreadable age, or
+        a ledger that refused the delete).
+    """
+    row_id = str(entry.get("id") or "")
+    age = _row_age(entry, now=now, row_id=row_id)
+    if age is None or age <= grace_s:
+        return None
+    try:
+        if not _forget_launching_row(ledger, row_id):
+            return None
+    except Exception as exc:  # noqa: BLE001 — forget best-effort
+        logger.debug("reconcile: forget launching row %s failed: %s", row_id, exc)
+        return None
+    logger.info(
+        "reconcile: forgot launching row %s (%.0fs old, provider %s exposes no "
+        "adoptable listing)",
+        row_id,
+        age,
+        provider_name,
+    )
+    return row_id
+
+
+def _row_age(entry: dict[str, Any], *, now: float, row_id: str) -> float | None:
+    """Return a row's age in seconds, or None when it cannot be read.
+
+    Args:
+        entry: The ledger row.
+        now: Current epoch seconds.
+        row_id: The row id, for the log line.
+
+    Returns:
+        Age in seconds, or None. A row whose age cannot be read is not
+        evidence of anything, so callers must leave it alone.
+    """
+    try:
+        return now - float(entry.get("created_at") or now)
+    except (TypeError, ValueError) as exc:
+        logger.debug("reconcile: launching row %s has no usable age: %s", row_id, exc)
+        return None
+
+
+def _forget_launching_row(ledger: _ReconcileLedger, row_id: str) -> bool:
+    """Delete a ``launching`` row through the PHASE-SCOPED door where possible.
+
+    ``Ledger.forget`` matches on id alone, and on the same-key shape (SkyPilot:
+    the cluster name IS the ``run_id``) a real row can share that id — an
+    earlier successful launch that reused the run id. Forgetting by id there
+    takes the live cluster's only durable handle with the ghost.
+    ``forget_provisional(row_id)`` is scoped by id AND by
+    ``kf_launch_phase == "launching"``, so it can only ever remove the row this
+    function was asked about.
+
+    Falls back to ``forget`` for ledgers that do not offer the scoped delete —
+    the same concession :func:`_adopt_launching_row` makes, and for the same
+    reason: this module is handed forget-only ledgers, and refusing to age out
+    on those would restore the permanent ghost row this whole path exists to
+    clear.
+
+    Args:
+        ledger: The ledger holding the row.
+        row_id: The provisional row's id.
+
+    Returns:
+        True when the row was removed. False when a scoped delete declined,
+        which must NOT be reported to the caller as "gone".
+    """
+    collapse = getattr(ledger, "forget_provisional", None)
+    if callable(collapse):
+        return bool(collapse(row_id))
+    ledger.forget(row_id)
+    return True
+
+
 def _adopt_or_age_out(
     ledger: _ReconcileLedger,
     provider: Any,  # noqa: ANN401 — duck-typed provider; core must stay import-free
     entry: dict[str, Any],
     *,
     now: float,
-    boot_timeout_s: float,
+    launching_grace_s: float,
 ) -> str | None:
     """Resolve a pre-launch provisional row by NAME, or age it out.
 
@@ -199,7 +388,7 @@ def _adopt_or_age_out(
     to prevent.
 
     **The age gate comes first, and it gates the adoption too.** A row younger
-    than *boot_timeout_s* is LEFT ALONE unconditionally — matched or not:
+    than *launching_grace_s* is LEFT ALONE unconditionally — matched or not:
 
     * unmatched, it is a create still in flight, and a concurrent
       ``kinoforge list`` (which this project's own live-smoke polling rule
@@ -241,7 +430,7 @@ def _adopt_or_age_out(
         entry: The launching row. MUTATED IN PLACE on adoption, see
             :func:`_rewrite_adopted_entry`.
         now: Current epoch seconds.
-        boot_timeout_s: How long a launch may plausibly still be in flight.
+        launching_grace_s: How long a launch may plausibly still be in flight.
 
     Returns:
         The row id when it was aged out, else None. Adoption returns None: the
@@ -254,13 +443,11 @@ def _adopt_or_age_out(
         if isinstance(tags, dict)
         else row_id
     )
-    try:
-        age = now - float(entry.get("created_at") or now)
-    except (TypeError, ValueError) as exc:
+    age = _row_age(entry, now=now, row_id=row_id)
+    if age is None:
         # A row whose age cannot be read is not evidence of anything.
-        logger.debug("reconcile: launching row %s has no usable age: %s", row_id, exc)
         return None
-    if age <= boot_timeout_s:
+    if age <= launching_grace_s:
         # Young: safe either way, and cheap — no listing call is made at all.
         return None
     try:
@@ -270,11 +457,12 @@ def _adopt_or_age_out(
         return None
     for inst in live:
         if inst.id == run_id or dict(inst.tags).get("name") == run_id:
-            if _adopt_launching_row(ledger, row_id=row_id, instance=inst):
+            if _adopt_launching_row(ledger, row_id=row_id, instance=inst, entry=entry):
                 _rewrite_adopted_entry(entry, instance=inst)
             return None
     try:
-        ledger.forget(row_id)
+        if not _forget_launching_row(ledger, row_id):
+            return None
     except Exception as exc:  # noqa: BLE001 — forget best-effort
         logger.debug("reconcile: forget launching row %s failed: %s", row_id, exc)
         return None
@@ -291,6 +479,7 @@ def _adopt_launching_row(
     *,
     row_id: str,
     instance: Any,  # noqa: ANN401 — kinoforge.core.interfaces.Instance, duck-typed
+    entry: dict[str, Any],
 ) -> bool:
     """Rewrite a provisional row onto the id the provider actually assigned.
 
@@ -314,10 +503,35 @@ def _adopt_launching_row(
     same-key shape such a ledger simply keeps its ``launching`` row: a stale tag
     is a cosmetic defect, and deleting a live resource's only handle is not.
 
+    **What gets recorded is NOT the listing verbatim.** Both listing converters
+    hard-code ``created_at=0.0`` (``providers/skypilot/__init__.py``,
+    ``providers/runpod/__init__.py``) because neither list API returns a
+    creation time, and SkyPilot's additionally returns ``tags={}``. Recording
+    that as the durable row is not a cosmetic loss:
+
+    * ``created_at=0.0`` gives the adopted row an age of ~56 years, so
+      ``Lifecycle`` max-age reaping destroys EVERY adopted instance
+      unconditionally, and the overview renders a six-figure ``est≤$`` for
+      RunPod, whose listing does carry a real ``costPerHr``.
+    * SkyPilot losing ``tags`` loses ``tags["ports"]``, which is the only thing
+      ``ensure_endpoints`` can rebuild its tunnels from — a warm attach to an
+      adopted cluster could then never reach it.
+
+    So the ledger row's own fields are merged back in: its ``created_at`` (the
+    launch time, which is what the row was written with), its ``max_age_s``
+    lifecycle snapshot, and its tags UNDER the listing's — the provider's
+    reading of a key it does share wins, the launch-phase tag is dropped, and
+    everything the listing never knew about survives.
+    :func:`_rewrite_adopted_entry` does the same for the caller's in-memory
+    copy; this is the durable half, and without it that copy is the only place
+    the truth exists.
+
     Args:
         ledger: The ledger to rewrite.
         row_id: The provisional row's id (the client-side ``run_id``).
         instance: The live instance the row resolved to.
+        entry: The provisional row itself, read for the create-time fields the
+            provider's listing cannot reproduce.
 
     Returns:
         True when the provisional row was actually removed. False means the
@@ -343,7 +557,10 @@ def _adopt_launching_row(
         return False
     try:
         if not _has_real_row(ledger, instance.id):
-            record(instance)
+            record(
+                _merge_row_into_instance(entry, instance),
+                max_age_s=_row_max_age_s(entry),
+            )
         if callable(collapse):
             collapsed = collapse(row_id, real_id=instance.id)
             if not collapsed:
@@ -373,6 +590,72 @@ def _adopt_launching_row(
     return True
 
 
+def _merge_row_into_instance(
+    entry: dict[str, Any],
+    instance: Any,  # noqa: ANN401 — kinoforge.core.interfaces.Instance, duck-typed
+) -> Any:  # noqa: ANN401
+    """Return *instance* with the create-time fields its listing cannot know.
+
+    See :func:`_adopt_launching_row` for why recording the listing verbatim is
+    wrong. Two fields, and only two, because these are the two the converters
+    provably fabricate:
+
+    * ``created_at`` — the row's launch time. The listings hard-code ``0.0``,
+      which reads as 1970 and makes the reaper destroy every adopted instance.
+      The instance's own value is preferred when the row has none.
+    * ``tags`` — the row's tags UNDER the listing's, minus the launch-phase
+      tag. Under, not over: a key the provider actually read (RunPod's
+      ``mode``/``name``) is truth, while the row's tags carry what the
+      provider never saw — SkyPilot's whole tag map, ``tags["ports"]``
+      included.
+
+    Never raises: a malformed ``created_at`` or a non-dict ``tags`` falls back
+    to the instance's own value, because failing here would abandon an
+    adoption that is otherwise perfectly safe.
+
+    Args:
+        entry: The provisional ledger row.
+        instance: The live instance the row resolved to.
+
+    Returns:
+        A new Instance carrying the merged fields.
+    """
+    try:
+        created_at = float(entry.get("created_at") or instance.created_at)
+    except (TypeError, ValueError):
+        created_at = instance.created_at
+    row_tags = entry.get("tags")
+    merged: dict[str, str] = {}
+    if isinstance(row_tags, dict):
+        merged.update(
+            {str(k): str(v) for k, v in row_tags.items() if k != _LAUNCH_PHASE_TAG}
+        )
+    merged.update(dict(instance.tags))
+    return dataclasses.replace(instance, created_at=created_at, tags=merged)
+
+
+def _row_max_age_s(entry: dict[str, Any]) -> int | None:
+    """Return the row's recorded ``max_age_s``, or None when unusable.
+
+    The lifecycle snapshot the orchestrator wrote before the launch. Carrying
+    it onto the adopted row is what lets the reaper age the instance out on the
+    ceiling its own config asked for rather than on the ledger default.
+
+    Args:
+        entry: The provisional ledger row.
+
+    Returns:
+        The ceiling in seconds, or None when absent or unparseable.
+    """
+    raw = entry.get("max_age_s")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _rewrite_adopted_entry(
     entry: dict[str, Any],
     *,
@@ -390,7 +673,9 @@ def _rewrite_adopted_entry(
     ``created_at`` stays the LAUNCH time rather than the listing's (RunPod's
     listing reports ``0.0``, which would render an astronomical ``est_spend``),
     and the ledger's own row is the authority for everything else from the next
-    invocation on.
+    invocation on. That durable row is not the listing either — see
+    :func:`_merge_row_into_instance`, which keeps the same ``created_at`` for
+    exactly the same reason.
 
     Args:
         entry: The caller's row dict, mutated in place.
