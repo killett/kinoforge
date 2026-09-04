@@ -140,6 +140,23 @@ _DENIED_ACTION_RE = re.compile(
     r"not authorized to perform[:\s]+([A-Za-z0-9]+:[A-Za-z0-9_*]+)"
 )
 
+#: A permission failure that never reaches AWS in a form `_DENIAL_RE` can see.
+#: SkyPilot catches some denials and re-raises them in its own words: the
+#: 2026-09-04 negative control died on ``RuntimeError: Failed to retrieve AWS
+#: regions. Please ensure that the `ec2:DescribeRegions` action is enabled for
+#: your AWS account in IAM.`` — which names the exact missing permission while
+#: containing none of AWS's three denial spellings.
+#:
+#: Kept SEPARATE from `_DENIAL_RE` rather than merged into it, and used only
+#: by the negative control. The positive test must keep asserting on the
+#: narrow AWS strings: a sky-worded permission complaint there would be a
+#: finding, and folding this pattern in would let one through.
+_SKY_PERMISSION_FAILURE_RE = re.compile(
+    r"(action is enabled for your AWS account in IAM|"
+    r"Failed to retrieve AWS regions|"
+    r"credentials are not set up|Cloud access is not set up)",
+)
+
 
 class Ec2QueryFailed(RuntimeError):
     """An EC2 read could not be completed — state UNKNOWN, never 'clean'."""
@@ -198,16 +215,42 @@ _EVIDENCE: dict[str, Any] = {
 def _evidence_writer() -> Iterator[None]:
     """Write the evidence file after the module's tests finish, always.
 
+    MERGES into whatever is already on disk rather than replacing it. The two
+    tests here cost different amounts — the positive one books an EC2
+    instance, the control books nothing — so re-running the cheap one alone
+    is the normal way to iterate. A plain overwrite would silently delete the
+    expensive claim's record every time that happens.
+
+    Each claim carries the run id that produced it, so a merged file never
+    implies that two claims came from the same run when they did not.
+
     Yields:
         None. The write happens on the way out, on success or failure.
     """
     try:
         yield
     finally:
-        _EVIDENCE["finished_at"] = _now_local()
-        _EVIDENCE_PATH.write_text(
-            json.dumps(_EVIDENCE, indent=2, sort_keys=True) + "\n"
-        )
+        merged: dict[str, Any] = {}
+        if _EVIDENCE_PATH.exists():
+            try:
+                merged = json.loads(_EVIDENCE_PATH.read_text())
+            except json.JSONDecodeError:
+                _log.warning("existing evidence file did not parse — replacing it")
+                merged = {}
+        claims = dict(merged.get("claims", {}))
+        for name, claim in _EVIDENCE["claims"].items():
+            claims[name] = {**claim, "run_id": _RUN_ID, "recorded_at": _now_local()}
+        # Rebuilt rather than updated in place: a per-file "run_id" left over
+        # from an earlier write would name the wrong run for whichever claims
+        # this pass did not touch.
+        merged = {
+            "claims": claims,
+            "last_run_id": _RUN_ID,
+            "last_started_at": _EVIDENCE["started_at"],
+            "last_finished_at": _now_local(),
+            "region": _REGION,
+        }
+        _EVIDENCE_PATH.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n")
         _log.info("evidence written to %s", _EVIDENCE_PATH)
 
 
@@ -566,6 +609,7 @@ def _launch(
     redacted = redact_string(output)
     denials = sorted(set(_DENIAL_RE.findall(redacted)))
     actions = sorted(set(_DENIED_ACTION_RE.findall(redacted)))
+    sky_permission_failures = sorted(set(_SKY_PERMISSION_FAILURE_RE.findall(redacted)))
     return {
         "cluster": cluster,
         "returncode": rc,
@@ -573,6 +617,7 @@ def _launch(
         "elapsed_s": round(time.time() - started, 1),
         "denials": denials,
         "denied_actions": actions,
+        "sky_permission_failures": sky_permission_failures,
         "log_tail": redacted[-_LOG_MAX_CHARS:],
     }
 
@@ -819,6 +864,15 @@ def test_negative_control_bare_principal_is_denied() -> None:
             record["launch"] = _launch(
                 principal, home, _CONTROL_CLUSTER, timeout_s=_CONTROL_TIMEOUT_S
             )
+            try:
+                record["observed_instances"] = _ec2_query(
+                    _CONTROL_CLUSTER, "Reservations[].Instances[].InstanceId"
+                )
+                record["observed_readable"] = True
+            except Ec2QueryFailed as exc:
+                record["observed_instances"] = None
+                record["observed_readable"] = False
+                record["observed_error"] = str(exc)
         finally:
             record["teardown"] = _teardown(principal, home, _CONTROL_CLUSTER)
             shutil.rmtree(home, ignore_errors=True)
@@ -830,10 +884,26 @@ def test_negative_control_bare_principal_is_denied() -> None:
         "policy is not what is gating these launches, and this whole "
         f"validation proves nothing. rc={launch['returncode']}"
     )
-    assert launch["denials"], (
-        "the bare principal failed, but with no recognisable AWS denial in "
-        "the log. That is a different failure from the one this control is "
-        f"meant to observe. tail:\n{launch['log_tail'][-2000:]}"
+    # Independent of anything sky printed: EC2, read under the AMBIENT
+    # identity, must show the bare principal booked nothing. A non-zero exit
+    # from a process that had already created an instance is a very
+    # different — and much more expensive — result than the one claimed here.
+    assert record["observed_readable"], (
+        f"EC2 unreadable, so the control is unconfirmed: {record.get('observed_error')!r}"
+    )
+    assert record["observed_instances"] == [], (
+        "the bare principal exited non-zero but left EC2 instances behind: "
+        f"{record['observed_instances']!r}"
+    )
+    # And the failure has to be ABOUT permissions. A network blip also exits
+    # non-zero and would satisfy both assertions above while proving nothing.
+    # sky does not always relay AWS's own wording — the 2026-09-04 run died on
+    # sky's own "Failed to retrieve AWS regions … ec2:DescribeRegions" — so
+    # either spelling counts, but one of them must be there.
+    assert launch["denials"] or launch["sky_permission_failures"], (
+        "the bare principal failed, but for no permission-shaped reason. "
+        "That is a different failure from the one this control observes.\n"
+        f"tail:\n{launch['log_tail'][-2000:]}"
     )
 
 

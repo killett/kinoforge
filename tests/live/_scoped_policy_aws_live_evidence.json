@@ -1,0 +1,152 @@
+{
+  "claims": {
+    "negative_control": {
+      "identity_wait": {
+        "identity": {
+          "Account": "<AWS_ACCOUNT>",
+          "Arn": "arn:aws:iam::<AWS_ACCOUNT>:user/kinoforge-scope-ctl-f22e58f3",
+          "UserId": "AIDAQETVUKTCVXLRN2HP3"
+        },
+        "matched": true,
+        "waited_s": 13.6
+      },
+      "launch": {
+        "cluster": "kf-scope-ctl-f22e58f3",
+        "denials": [],
+        "denied_actions": [],
+        "elapsed_s": 14.3,
+        "log_tail": "YAML to run: /tmp/kf-scope-ctl-bs5s2t61/probe-task.yaml\n\u001b[2mFailed to connect to SkyPilot API server at http://127.0.0.1:46580. Starting a local server.\u001b[0m\n\u001b[0m\u001b[32m\u2713 SkyPilot API server started. \u001b[0m\u001b[0m\n\nRuntimeError: Failed to retrieve AWS regions. Please ensure that the `ec2:DescribeRegions` action is enabled for your AWS account in IAM. Ref: https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeRegions.html\n",
+        "returncode": 1,
+        "sky_permission_failures": [
+          "Failed to retrieve AWS regions",
+          "action is enabled for your AWS account in IAM"
+        ],
+        "timed_out": false
+      },
+      "observed_instances": [],
+      "observed_readable": true,
+      "recorded_at": "2026-09-04T15:01:26-07:00",
+      "run_id": "f22e58f3",
+      "sky_server": {
+        "pids_after": [],
+        "pids_before": [
+          810501
+        ],
+        "stopped": true
+      },
+      "teardown": {
+        "final_readable": true,
+        "final_states": [],
+        "finished_at": "2026-09-04T15:01:25-07:00",
+        "passes": [
+          {
+            "at": "2026-09-04T15:00:57-07:00",
+            "forced": [],
+            "readable": true,
+            "states": []
+          },
+          {
+            "at": "2026-09-04T15:01:20-07:00",
+            "forced": [],
+            "readable": true,
+            "states": []
+          }
+        ],
+        "started_at": "2026-09-04T15:00:50-07:00"
+      }
+    },
+    "scoped_launch": {
+      "account_clean": {
+        "clean": true,
+        "policies_present": [],
+        "users_present": []
+      },
+      "expected_policy_arn": "arn:aws:iam::<AWS_ACCOUNT>:policy/KinoforgeSkyPilotMinimalLive61de6b66",
+      "grants": {
+        "attached": [
+          "arn:aws:iam::<AWS_ACCOUNT>:policy/KinoforgeSkyPilotMinimalLive61de6b66"
+        ],
+        "groups": [],
+        "inline": []
+      },
+      "identity_wait": {
+        "identity": {
+          "Account": "<AWS_ACCOUNT>",
+          "Arn": "arn:aws:iam::<AWS_ACCOUNT>:user/kinoforge-scope-live-61de6b66",
+          "UserId": "AIDAQETVUKTC5NJIWWHWR"
+        },
+        "matched": true,
+        "waited_s": 7.6
+      },
+      "launch": {
+        "cluster": "kf-scope-61de6b66",
+        "denials": [],
+        "denied_actions": [],
+        "elapsed_s": 119.0,
+        "log_tail": "YAML to run: /tmp/kf-scope-home-ygoi1ugr/probe-task.yaml\n\u001b[2mFailed to connect to SkyPilot API server at http://127.0.0.1:46580. Starting a local server.\u001b[0m\n\u001b[0m\u001b[32m\u2713 SkyPilot API server started. \u001b[0m\u001b[0m\nRunning on cluster: kf-scope-61de6b66\n\u001b[2mThe cluster will be torn down after 1 minutes of idleness (after all jobs finish).\u001b[0m\nConsidered resources (1 node):\n----------------------------------------------------------------------------\n INFRA             INSTANCE    vCPUs   Mem(GB)   GPUS   COST ($)   CHOSEN   \n----------------------------------------------------------------------------\n AWS (us-west-2)   m6i.large   2       8         -      0.10       \u001b[32m   \u2714\u001b[0m     \n----------------------------------------------------------------------------\n\u001b[0m\u2699\ufe0e Launching on AWS us-west-2\u001b[0m (us-west-2a,us-west-2b,us-west-2c,us-west-2d).\n\u001b[2m\u2514\u2500\u2500 \u001b[0m\u001b[2mInstance is up.\u001b[0m\n\u001b[0m\u001b[32m\u2713 Cluster launched: kf-scope-61de6b66.\u001b[0m\u001b[0m  \u001b[2mView logs: \u001b[1msky logs --provision kf-scope-61de6b66\u001b[0m\u001b[0m\n\u001b[0m\u2699\ufe0e Syncing files.\n\u001b[0m\u2699\ufe0e Job submitted, ID: 1\n\u001b[2m\u251c\u2500\u2500 \u001b[0m\u001b[2mWaiting for task resources on 1 node.\u001b[0m\n\u001b[2m\u2514\u2500\u2500 \u001b[0mJob started. Streaming logs... \u001b[2m(Ctrl-C to exit log streaming; job will not be killed)\u001b[0m\n\u001b[36m(task, pid=2045)\u001b[0m kinoforge-scope-probe-ok\n\u001b[0m\u001b[32m\u2713 Job finished (status: SUCCEEDED).\u001b[0m\u001b[0m\n\n\ud83d\udccb Useful Commands\nJob ID: 1\n\u251c\u2500\u2500 To cancel the job:\t\tsky cancel kf-scope-61de6b66 1\n\u251c\u2500\u2500 To stream job logs:\t\tsky logs kf-scope-61de6b66 1\n\u2514\u2500\u2500 To view job queue:\t\tsky queue kf-scope-61de6b66\nCluster name: kf-scope-61de6b66\n\u251c\u2500\u2500 To log into the head VM:\tssh kf-scope-61de6b66\n\u251c\u2500\u2500 To submit a job:\t\tsky exec kf-scope-61de6b66 yaml_file\n\u251c\u2500\u2500 To stop the cluster:\tsky stop kf-scope-61de6b66\n\u2514\u2500\u2500 To teardown the cluster:\tsky down kf-scope-61de6b66\n\n",
+        "returncode": 0,
+        "timed_out": false
+      },
+      "observed_instances": [
+        [
+          "i-06610e91b03c0cc75",
+          "m6i.large",
+          "running"
+        ]
+      ],
+      "observed_readable": true,
+      "policy_compact_chars": 3422,
+      "policy_sids": [
+        "EC2LifecycleRead",
+        "EC2LifecycleWrite",
+        "IAMForSkyPilotRoles",
+        "IAMReadCallerIdentity",
+        "ServiceQuotas",
+        "S3KinoforgeBuckets",
+        "KMSLayerW",
+        "S3ListAll"
+      ],
+      "sky_server": {
+        "pids_after": [],
+        "pids_before": [
+          808517
+        ],
+        "stopped": true
+      },
+      "teardown": {
+        "final_readable": true,
+        "final_states": [
+          "terminated"
+        ],
+        "finished_at": "2026-09-04T14:58:07-07:00",
+        "passes": [
+          {
+            "at": "2026-09-04T14:57:33-07:00",
+            "forced": [
+              "i-06610e91b03c0cc75"
+            ],
+            "readable": true,
+            "states": [
+              "shutting-down"
+            ]
+          },
+          {
+            "at": "2026-09-04T14:57:59-07:00",
+            "forced": [
+              "i-06610e91b03c0cc75"
+            ],
+            "readable": true,
+            "states": [
+              "terminated"
+            ]
+          }
+        ],
+        "started_at": "2026-09-04T14:57:19-07:00"
+      }
+    }
+  },
+  "last_finished_at": "2026-09-04T15:01:26-07:00",
+  "last_run_id": "f22e58f3",
+  "last_started_at": "2026-09-04T15:00:15-07:00",
+  "region": "us-west-2"
+}
