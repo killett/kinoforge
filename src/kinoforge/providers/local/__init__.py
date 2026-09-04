@@ -126,6 +126,23 @@ class LocalProvider(ComputeProvider):
         )
 
     @classmethod
+    def nothing_booked_errors(cls) -> tuple[type[BaseException], ...]:
+        """Declare nothing beyond the portable ``CapacityError`` (S5, C1).
+
+        ``create_instance`` builds an in-process record and cannot half-create
+        anything, so in principle every failure here proves nothing exists. It
+        is still declared EMPTY: the in-process table is not the only thing a
+        local launch touches, nothing bills for a local instance either way, and
+        keeping the row is the direction that cannot lose a resource. A future
+        local provider that acquired a real side effect would inherit the safe
+        answer rather than a stale permissive one.
+
+        Returns:
+            The empty tuple.
+        """
+        return ()
+
+    @classmethod
     def consumes(cls) -> Mapping[str, FieldSupport]:
         """Declare the near-total non-consumption this provider is honest about.
 

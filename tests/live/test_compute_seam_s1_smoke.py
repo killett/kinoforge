@@ -138,6 +138,7 @@ if _REASONS:
 from kinoforge.core.config import load_config  # noqa: E402
 from kinoforge.core.credential_patterns import redact_string  # noqa: E402
 from kinoforge.core.lifecycle import Ledger  # noqa: E402
+from kinoforge.core.orchestrator import _record_provisional_row  # noqa: E402
 from kinoforge.providers.skypilot import SkyPilotProvider  # noqa: E402
 from kinoforge.stores.local import LocalArtifactStore  # noqa: E402
 from tools.snapshot_launch_payloads import build_spec, golden_path_for  # noqa: E402
@@ -801,10 +802,12 @@ def _teardown(
     survivors = [s for s in final_states if s not in _DEAD_STATES]
     teardown_clean = final_readable and not survivors and final_sky is None
 
-    # The provider writes a provisional "launching" ledger row before
-    # sky.launch and only forgets it on the SUCCESS path (F12). A launch that
-    # raises therefore leaves a row that `kinoforge list` reports as a live
-    # instance.
+    # A provisional "launching" ledger row is written before sky.launch (F12).
+    # compute-seam S5 moved that writer OUT of the provider and into the
+    # orchestrator, and these smokes call create_instance directly — so no
+    # deploy_session collapse ever runs and NOTHING but this teardown removes
+    # the row, on the success path or any other. `kinoforge list` would
+    # otherwise report it as a live instance forever.
     #
     # Dropping it is correct ONLY once the instance is confirmed dead. Doing it
     # unconditionally would erase the row in exactly the case it exists for:
@@ -904,7 +907,18 @@ def test_s1_migrated_cpu_config_matches_golden_and_boots_live() -> None:
 
     recording_sky = _InputRecordingSky(sky)
     provider = SkyPilotProvider(recording_sky, clouds=["aws"], region=_REGION)
-    provider.set_launch_ledger(Ledger(store=LocalArtifactStore(_STATE_DIR)))
+    # F12 — the durable pre-launch row. compute-seam S5 Task 5 deleted the
+    # provider-side writer, so a smoke that drives create_instance directly
+    # (bypassing deploy_session) writes it the same way the orchestrator does.
+    # Rooted at the CLI's default state dir so it is discoverable without flags.
+    _record_provisional_row(
+        ledger=Ledger(store=LocalArtifactStore(_STATE_DIR)),
+        run_id=spec.run_id,
+        provider_name=provider.name,
+        tags=dict(spec.tags),
+        max_age_s=int(spec.lifecycle.max_lifetime_s),
+        now=time.time(),
+    )
 
     evidence: dict[str, Any] = {
         "smoke": "compute-seam S1 — migrated config launches what it launched pre-S1",

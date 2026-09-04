@@ -870,8 +870,20 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             probe={"env": {"KF_PROBE": "sentinel"}},
             expected="sentinel",
         ),
-        # Observed on the pre-launch provisional row (F12), which is the only
-        # Instance SkyPilot builds before sky.launch.
+        # Observed on the pre-launch provisional row (F12), still the only
+        # Instance a skypilot capture can see — _StopLaunch aborts inside
+        # sky.launch, before create_instance returns.
+        #
+        # WEAKER THAN IT LOOKS, and deliberately kept anyway. S5 moved the row's
+        # writer from the provider to the orchestrator, so the HARNESS now
+        # builds it (snapshot_launch_payloads._capture_skypilot, tags=dict(
+        # spec.tags)). This therefore proves spec.tags survives the orchestrator
+        # writer, NOT that skypilot consumes them. The provider's real
+        # consumption is the `**dict(spec.tags)` spread on create_instance's
+        # returned Instance, which this capture cannot reach; it is pinned
+        # directly by tests/providers/test_skypilot.py::
+        # test_create_instance_carries_spec_tags_onto_the_returned_instance.
+        # Delete that test and nothing guards the spread.
         "tags": _tracks(_probe_tag, probe={"tags": _PROBE_TAGS}, expected="sentinel"),
         "run_id": _tracks(
             lambda ln: ln.payload["launch_kwargs"]["cluster_name"],

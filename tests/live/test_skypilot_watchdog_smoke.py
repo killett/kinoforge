@@ -95,6 +95,7 @@ from kinoforge.core.interfaces import (  # noqa: E402
     Placement,
 )
 from kinoforge.core.lifecycle import Ledger  # noqa: E402
+from kinoforge.core.orchestrator import _record_provisional_row  # noqa: E402
 from kinoforge.providers.skypilot import SkyPilotProvider  # noqa: E402
 from kinoforge.stores.local import LocalArtifactStore  # noqa: E402
 
@@ -353,6 +354,27 @@ def _teardown(cluster_name: str, tunnel: Any) -> None:
             f"— destroy it by hand in {_REGION}"
         )
 
+    # compute-seam S5 — the pre-launch provisional row (F12) is written by the
+    # orchestrator's writer above and NOTHING else removes it: this smoke calls
+    # create_instance directly, so no deploy_session collapse ever runs. Left
+    # alone, every successful run would leave a row keyed by the cluster name
+    # whose est_spend grows forever, and the project's mandated post-run
+    # `pixi run kinoforge list` would report a phantom instance indistinguishable
+    # from a real leak — inverting the money-safety signal that check exists for.
+    #
+    # Dropping it is correct ONLY once the instance is confirmed dead, which is
+    # what the survivor check above establishes: it RAISES before reaching here
+    # when anything is still alive or the EC2 oracle was unreadable. A failed
+    # teardown therefore keeps the row, so the ledger still names what needs
+    # killing. Same shape (and same reasoning) as the shared convergent teardown
+    # in tests/live/test_compute_seam_s1_smoke.py, which the S2/S3/S4 smokes
+    # import instead of reimplementing.
+    try:
+        Ledger(store=LocalArtifactStore(_STATE_DIR)).forget(cluster_name)
+        _log.info("ledger forget ok for %s", cluster_name)
+    except Exception as exc:  # noqa: BLE001 — best-effort bookkeeping
+        _log.warning("ledger forget failed for %s: %r", cluster_name, exc)
+
 
 def test_skypilot_cluster_dies_without_its_client() -> None:
     """A 15-minute deadline kills the instance with no client involvement.
@@ -370,12 +392,6 @@ def test_skypilot_cluster_dies_without_its_client() -> None:
     print(cluster_name, flush=True)
 
     provider = SkyPilotProvider(clouds=["aws"], region=_REGION)
-    # F12 — durable provisional row BEFORE the multi-minute sky.launch, so a
-    # process death during provisioning still leaves something `kinoforge
-    # list` / `kinoforge forget` can find and name. Rooted at the CLI's
-    # default state dir so it is discoverable without special flags.
-    provider.set_launch_ledger(Ledger(store=LocalArtifactStore(_STATE_DIR)))
-
     tunnel: Any = None
     try:
         # compute-seam S4: a CPU placement selects no accelerator, which is
@@ -400,6 +416,18 @@ def test_skypilot_cluster_dies_without_its_client() -> None:
             cluster_name,
             _REGION,
             _DEADLINE_S,
+        )
+        # F12 — the durable pre-launch row. compute-seam S5 Task 5 deleted the
+        # provider-side writer, so a smoke that drives create_instance directly
+        # (bypassing deploy_session) writes it the same way the orchestrator does.
+        # Rooted at the CLI's default state dir so it is discoverable without flags.
+        _record_provisional_row(
+            ledger=Ledger(store=LocalArtifactStore(_STATE_DIR)),
+            run_id=spec.run_id,
+            provider_name=provider.name,
+            tags=dict(spec.tags),
+            max_age_s=int(spec.lifecycle.max_lifetime_s),
+            now=time.time(),
         )
         launched_at = time.time()
 

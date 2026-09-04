@@ -1774,7 +1774,11 @@ def _resolve_attach_pod(
         merged_tags.update(live.tags or {})  # live values still win on collision
         live.tags = merged_tags
     try:
-        live.endpoints = provider.endpoints(live)
+        # compute-seam S5: this instance is about to be handed to an engine
+        # that will make HTTP requests against it, so use the door that
+        # repairs a dead tunnel (ensure_endpoints) rather than the pure
+        # read (endpoints) that status uses.
+        live.endpoints = provider.ensure_endpoints(live)
     except Exception as exc:  # noqa: BLE001
         print(
             f"pod {pod_id} endpoints query failed: {type(exc).__name__}: {exc}.",
@@ -2005,40 +2009,79 @@ def _resolve_warm_instance(
     # The local ledger is authoritative for create-time fields under the
     # same-host scope (see the B5b deferral spec). Merge ledger tags
     # under the provider's tags so e.g. ``"mode": "pod"`` from the live
-    # query takes precedence over any stale tag-side state, then ask
-    # the provider to build the endpoints dict — providers compute
-    # endpoints deterministically from instance fields (e.g. RunPod's
-    # ``{pod_id}-{port}.proxy.runpod.net`` pattern) so the call is
-    # cheap, network-free, and idempotent.
+    # query takes precedence over any stale tag-side state — this alone
+    # fixes RunPod's ``ports`` tag being dropped by the sparse
+    # ``get_instance`` query.
+    #
+    # Endpoints are a separate hazard (F11): the recorded ledger row can
+    # be a dead process's endpoint (a skypilot ssh tunnel that died with
+    # the CLI that opened it), so it is a HINT, not a trusted value.
+    # ``_resolve_warm_endpoints`` seeds it onto the instance and then asks
+    # ``provider.ensure_endpoints`` for something live; a provider that
+    # can reconstruct a fresh endpoint (skypilot re-establishing the
+    # tunnel, RunPod's deterministic ``{pod_id}-{port}.proxy.runpod.net``)
+    # wins, one that can only echo the seed (Modal, whose
+    # ``build-<hash>.modal.run`` URL cannot be rebuilt from tags) changes
+    # nothing.
     #
     # Empirically caught 2026-06-18 against Wan 1.3B on RunPod, pod
     # ``di506yuuczuhht``: warm-reuse classify cleared LIVE, attach
     # succeeded, generation aborted immediately on the empty endpoints
-    # field.
+    # field. Still real, and now handled by the tag merge above plus
+    # RunPod's deterministic ``endpoints``/``ensure_endpoints``.
     entry_tags = entry.get("tags", {}) or {}
     merged_tags: dict[str, str] = {**entry_tags, **instance.tags}
     instance = dataclasses.replace(instance, tags=merged_tags)
-    endpoints_dict: dict[str, str] = {}
-    # Prefer endpoints recorded at cold-create time (e.g. ephemeral-index
-    # row) over the provider-deterministic reconstruction: the recorded
-    # dict already names the engine's port (RunPod sparse tags do not).
-    entry_endpoints = entry.get("endpoints")
-    if isinstance(entry_endpoints, dict) and entry_endpoints:
-        endpoints_dict = {str(k): str(v) for k, v in entry_endpoints.items()}
-    elif hasattr(provider, "endpoints"):
-        try:
-            endpoints_dict = provider.endpoints(instance)
-        except Exception as exc:  # noqa: BLE001 — best-effort enrichment
-            print(
-                f"warning: warm-attach endpoint reconstruction failed for "
-                f"{instance_id}: {type(exc).__name__}: {exc}. Downstream "
-                f"engine may not be able to construct the ready URL.",
-                file=sys.stderr,
-            )
+    endpoints_dict = _resolve_warm_endpoints(provider, instance, entry=entry)
     if endpoints_dict:
         instance = dataclasses.replace(instance, endpoints=endpoints_dict)
 
     return (instance, None)
+
+
+def _resolve_warm_endpoints(
+    provider: object,
+    instance: Instance,
+    *,
+    entry: Mapping[str, Any],
+) -> dict[str, str]:
+    """Return the endpoints a warm attach should actually use.
+
+    compute-seam S5 inverts the old preference. The recorded row is SEEDED
+    onto the instance first — Modal's ``build-<hash>.modal.run`` URL cannot be
+    rebuilt from tags, and ``ModalProvider.endpoints`` reads it off the
+    instance — and then the provider is asked. A provider that can establish
+    something live wins; one that echoes the seed changes nothing.
+
+    Args:
+        provider: The resolved compute provider.
+        instance: The instance being attached to, tags already merged.
+        entry: The ledger row.
+
+    Returns:
+        A port-keyed endpoint map, possibly empty.
+    """
+    recorded_raw = entry.get("endpoints")
+    recorded: dict[str, str] = (
+        {str(k): str(v) for k, v in recorded_raw.items()}
+        if isinstance(recorded_raw, dict)
+        else {}
+    )
+    seeded = dataclasses.replace(instance, endpoints=recorded)
+    ensure = getattr(provider, "ensure_endpoints", None)
+    if ensure is None:
+        return recorded
+    try:
+        live = ensure(seeded)
+    except Exception as exc:  # noqa: BLE001 — a fault must not abort the attach
+        print(
+            f"warning: live endpoint resolution failed for {instance.id}: "
+            f"{type(exc).__name__}: {exc}. Falling back to the recorded "
+            f"endpoint map, which may be stale.",
+            file=sys.stderr,
+        )
+        return recorded
+    return live or recorded
 
 
 def _refuse_reason_for_verdict(
@@ -2072,6 +2115,45 @@ def _refuse_reason_for_verdict(
     if verdict == "HEARTBEAT_SUBSTRATE_MISSING":
         return "provider has no heartbeat wire substrate"
     return verdict
+
+
+def _render_endpoints_for_status(provider: object, instance: Instance) -> str:
+    """Render the status line's endpoint field without creating anything.
+
+    compute-seam S5: ``endpoints`` is the pure read. An empty map means
+    different things on different providers, so the fallback is scoped to
+    skypilot only:
+
+    - **skypilot**: the instance id IS the cluster name, and the natural
+      follow-up when this process holds no live tunnel is ``sky status`` or
+      ``kinoforge destroy --id`` — both keyed on that same id. So an empty
+      map renders as ``cluster=<id>``, which is honest and actionable.
+    - **every other provider** (RunPod, Modal, Local): an empty map means
+      something is wrong — e.g. ``RunPodProvider.endpoints`` reads the
+      ``ports`` tag off the instance, which ``_cmd_status``'s bare
+      ``provider.get_instance()`` call does not populate — and must keep
+      looking wrong rather than being repainted as a skypilot-shaped
+      cluster identity. Rehydrating those tags from the ledger so RunPod's
+      status line can render real endpoints is a separate, deferred piece
+      of work — out of scope here.
+
+    Args:
+        provider: The resolved compute provider.
+        instance: The instance being reported.
+
+    Returns:
+        A JSON endpoint map, ``cluster=<id>`` (skypilot only), or
+        ``unknown (<reason>)``.
+    """
+    try:
+        mapping = provider.endpoints(instance)  # type: ignore[attr-defined]
+    except Exception as exc:  # noqa: BLE001
+        return f"unknown ({exc.__class__.__name__})"
+    if mapping:
+        return json.dumps(mapping)
+    if getattr(provider, "name", "") == "skypilot":
+        return f"cluster={instance.id}"
+    return "unknown (no live endpoint)"
 
 
 def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
@@ -2176,14 +2258,15 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
             ledger_block = _build_ledger_block(entry, cfg=cfg, now=now)
 
     provider_block = {"provider_status": instance.status}
-    try:
-        # ComputeProvider.endpoints takes the Instance, not the id: every
-        # implementation dereferences instance.tags / instance.endpoints
-        # (audit B7 — passing args.id AttributeError'd into the except
-        # below, so every healthy pod rendered endpoints=unknown).
-        provider_block["endpoints"] = json.dumps(provider.endpoints(instance))
-    except Exception as exc:  # noqa: BLE001
-        provider_block["endpoints"] = f"unknown ({exc.__class__.__name__})"
+    # ComputeProvider.endpoints takes the Instance, not the id: every
+    # implementation dereferences instance.tags / instance.endpoints
+    # (audit B7 — passing args.id AttributeError'd into the except
+    # below, so every healthy pod rendered endpoints=unknown).
+    #
+    # compute-seam S5: status is an observational read, so it calls the
+    # pure ``endpoints()`` door — never ``ensure_endpoints()``, which would
+    # spawn an ssh tunnel per invocation on skypilot.
+    provider_block["endpoints"] = _render_endpoints_for_status(provider, instance)
 
     # Layer V — verdict line, same source of truth as `kinoforge reap`.
     # When list_instances raises, we cannot trust pod presence to
@@ -2329,7 +2412,9 @@ def _cmd_pod_lora_ls(args: argparse.Namespace, ctx: SessionContext) -> int:
         return 2
 
     try:
-        endpoints_map = provider.endpoints(instance)
+        # compute-seam S5: this endpoint is used to make an HTTP request
+        # immediately below, so use the repairing door.
+        endpoints_map = provider.ensure_endpoints(instance)
     except Exception as exc:  # noqa: BLE001
         print(
             f"pod lora ls: endpoint resolution failed "

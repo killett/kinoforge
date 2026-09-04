@@ -107,27 +107,45 @@ class _StopLaunch(Exception):
 
 
 class _RecordingLedger:
-    """Capture SkyPilot's pre-launch provisional row (finding F12).
+    """Capture the ORCHESTRATOR's pre-launch provisional row (finding F12).
 
     SkyPilot builds no Instance the capture can see — :class:`_StopLaunch`
     aborts inside ``sky.launch``, before ``create_instance`` returns. The
-    provisional row it records first is the only Instance it constructs, and
-    it is where ``spec.tags`` lands. Installing this ledger changes neither
-    ``task_config`` nor ``launch_kwargs``, so the goldens are untouched.
+    provisional row written just before the create is the only Instance the
+    capture can observe, and it is where ``spec.tags`` lands for the parity
+    guard.
+
+    compute-seam S5 moved that writer from the provider to the orchestrator, so
+    this fake is now driven by
+    :func:`kinoforge.core.orchestrator._record_provisional_row` rather than
+    installed on the provider. Nothing about it touches ``task_config`` or
+    ``launch_kwargs``, so the goldens are untouched either way.
+
+    Its signature deliberately mirrors
+    :meth:`kinoforge.core.lifecycle.Ledger.record` in full, so the fake cannot
+    silently diverge from the real class if the writer starts passing another
+    lifecycle keyword.
     """
 
     def __init__(self) -> None:
         """Start with nothing recorded."""
         self.recorded: list[Instance] = []
 
-    def record(self, instance: Instance, *, max_age_s: int | None = None) -> None:
+    def record(
+        self,
+        instance: Instance,
+        *,
+        idle_timeout_s: int | None = None,
+        max_age_s: int | None = None,
+    ) -> None:
         """Record *instance*.
 
         Args:
             instance: The provisional row.
-            max_age_s: Ignored; present to satisfy the provider's Protocol.
+            idle_timeout_s: Ignored; mirrors ``Ledger.record``.
+            max_age_s: Ignored; mirrors ``Ledger.record``.
         """
-        del max_age_s
+        del idle_timeout_s, max_age_s
         self.recorded.append(instance)
 
     def forget(self, instance_id: str) -> None:
@@ -137,6 +155,22 @@ class _RecordingLedger:
             instance_id: Ignored; the capture never reaches the success path.
         """
         del instance_id
+
+    def forget_provisional(
+        self, provisional_id: str, *, real_id: str | None = None
+    ) -> bool:
+        """Ignore the collapse call.
+
+        Args:
+            provisional_id: Ignored; the capture never reaches the success path.
+            real_id: Ignored, for the same reason. Optional, mirroring
+                ``Ledger.forget_provisional`` — the failure path omits it.
+
+        Returns:
+            Always False — nothing was removed.
+        """
+        del provisional_id, real_id
+        return False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -536,8 +570,27 @@ def _capture_skypilot(
 
         @staticmethod
         def list_accelerators(**kwargs: Any) -> dict[str, list[dict[str, Any]]]:  # noqa: ANN401
-            """Return the frozen offline catalog (never a network call)."""
-            del kwargs
+            """Answer the frozen offline catalog — never a network call.
+
+            Two callers, deliberately answered differently:
+
+            * SELECTION (``_catalog_offers()`` with no ``name_filter``) gets
+              the frozen catalog, so a capture still runs through the real
+              selection code and the golden pins WHICH SKU a config picks.
+            * PRICING (``_estimate_hourly_rate`` -> ``_catalog_floor_price``,
+              which always passes ``name_filter``) gets ``{}``. The frozen
+              prices are flat global stand-ins, not per-cloud ones — vast
+              A100 is ~$0.93/hr where this table says $2.10 — so pricing a
+              named accelerator off them would refuse
+              ``skypilot-vast-diffusers-flashvsr-upscale`` (cap $1.00) on a
+              number that is fiction. A capture must not be gated by a price
+              this harness cannot know, so the estimate reports UNREADABLE
+              and the capture takes the documented WARN-and-proceed path —
+              exactly what it did before the estimate existed, which is why
+              the goldens stay byte-identical.
+            """
+            if kwargs.get("name_filter") is not None:
+                return {}
             return {name: [dict(rec)] for name, rec in _FROZEN_SKY_CATALOG.items()}
 
         @staticmethod
@@ -556,7 +609,20 @@ def _capture_skypilot(
         retry_until_up=sky_opts.retry_until_up,
     )
     ledger = _RecordingLedger()
-    provider.set_launch_ledger(ledger)
+    from kinoforge.core.orchestrator import _record_provisional_row
+
+    # compute-seam S5: the provisional row moved to the orchestrator, so the
+    # capture writes it the same way deploy_session does. It is still the only
+    # Instance a skypilot capture can observe — _StopLaunch aborts inside
+    # sky.launch — and it is still where spec.tags lands for the parity guard.
+    _record_provisional_row(
+        ledger=ledger,
+        run_id=spec.run_id,
+        provider_name="skypilot",
+        tags=dict(spec.tags),
+        max_age_s=int(spec.lifecycle.max_lifetime_s),
+        now=FROZEN_EPOCH,
+    )
     try:
         provider.create_instance(spec)
     except _StopLaunch:

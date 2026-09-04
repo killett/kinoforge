@@ -349,6 +349,29 @@ provisioning rather than preventing it. §14 half-acknowledges this. Closing it 
 an **S5 follow-up**, deliberately not in S4. The readback is what makes the cap true either way;
 what varies is only how much work is thrown away when it fires.)
 
+> **Corrected 2026-09-02**, during S5 Task 8. The follow-up shipped, but **not as
+> `sky.optimize()`** — that call cannot produce a number at this pin. `/optimize` is scheduled
+> `ignore_return_value=True` in `skypilot-0.12.3.post1`, so it always resolves to `None`; an
+> implementation built on it is a refusal path that can never fire, and a smoke asserting only "no
+> cluster was created" would have reported GREEN on it, because a code path that does nothing
+> creates nothing either. The pre-launch bound is instead priced from the LOCAL
+> `sky.list_accelerators` catalog — the cheapest per-hour entry for the accelerator that would be
+> requested, on the clouds the config pins — and compared against `placement.max_usd_per_hr` before
+> `sky.launch` is called at all, raising `PreLaunchRateCapExceeded` ("nothing was launched", and the
+> word "destroyed" deliberately absent from both `str()` and `repr()`, since nothing was booked).
+>
+> **It is inert by design for two whole classes of config, and that is not a defect.**
+> `_estimate_hourly_rate` returns `None` — the documented WARN-and-proceed path, leaving the S4
+> readback as the sole enforcement — for a CPU-only placement (sky's accelerator catalog has nothing
+> to say about CPU SKUs, and a zero would read as "free" and vouch for any cap) and for a spot
+> placement (the parse reads the on-demand `price` column; pricing spot off it would bound in the
+> WRONG direction and refuse launches spot makes affordable). The read is also bounded by a 20 s
+> worker-thread timeout, so a slow or hung catalog never blocks a launch. Live-verified against the
+> real catalog: `T4` on `clouds=["aws"]` returned **$0.526/hr**, exactly the published AWS
+> on-demand price for `g4dn.xlarge` in `us-west-2` (0.0% drift); a $0.01 cap refused before
+> `sky.launch` with `sky status`, the EC2 oracle and the ledger all confirming nothing existed, and
+> a $5.00 cap did not refuse.
+
 ```
 realized > cap                          -> destroy_instance + RateCapExceeded
 realized unreadable, RATE_READBACK      -> destroy_instance + RateCapExceeded(realized=<unreadable>)
@@ -470,12 +493,72 @@ rather than by replaying a recorded one. Ledger `endpoints` remain recorded (Mod
 non-rebuildable `.modal.run` URL still needs them, per `1cb4299`), but they are now a hint that a
 provider may override, not a value the engine trusts blind.
 
+> **Corrected 2026-09-02**, during S5, and extended 2026-09-03 by the whole-branch review. FOUR
+> things in the paragraphs above are wrong; the first three were found by implementing them and the
+> fourth by reviewing what the implementation then made possible.
+>
+> 1. **`endpoints()` did NOT become tunnel-ensuring. It split in two.** The ABC now carries a pure
+>    read, `endpoints(instance)`, and a side-effecting sibling, `ensure_endpoints(instance)`, with a
+>    default implementation that just delegates to the read. Making the read itself ensure a tunnel
+>    is a leak: three of its five callers are *observational* — `kinoforge status`, `kinoforge list`
+>    and the reaper — and none of them wants an `ssh -L` subprocess spawned per invocation, least of
+>    all the polling loops this project's own live-smoke rule requires. Only the two callers that
+>    are about to speak HTTP to the box (warm attach and the serving path) call
+>    `ensure_endpoints`. SkyPilot is the only provider that overrides it; RunPod, Modal and Local
+>    inherit the delegating default, which is correct for them because their URLs are not
+>    process-scoped. The per-port tunnel map (`dict[cluster, dict[remote_port, _Tunnel]]`) and
+>    `tags["ports"]` as the source of the port list are what make the rebuild possible at all: a
+>    warm-attached instance has no `endpoints` to read, because the forwards belonged to a process
+>    that has exited.
+> 2. **The generalised provisional row is keyed by a CLIENT-side id, and that is a hazard the
+>    paragraph does not mention.** "A row keyed by a client-side id" equals the provider's id
+>    *only on SkyPilot*, where the cluster name is the run id. On RunPod it is the pod name and on
+>    Modal the app run id, so `get_instance(run_id)` raises `KeyError` for a resource that exists.
+>    The reconciler's pre-S5 rule — "`KeyError` means gone, so forget the row" — would therefore
+>    delete the only durable handle on a billing resource, which is precisely the F12 failure this
+>    row exists to prevent. `cli/_reconcile._adopt_or_age_out` had to learn to resolve a `launching`
+>    row against the FULL provider listing, matching on the instance id **or** `tags["name"]`, before
+>    it may forget anything — and to gate on age first: a row younger than the boot timeout is left
+>    alone unconditionally, matched or not, because a concurrent `kinoforge list` must not reconcile
+>    away the row protecting a launch that is still in flight, and because adopting under a live
+>    orchestrator would race its own `ledger.record`.
+> 3. **`Ledger.forget` was too blunt for SkyPilot's shape, so `forget_provisional` exists.**
+>    `Ledger.forget` deletes *every* row carrying an id and `Ledger.record` *appends*. On SkyPilot
+>    the provisional row and the real row share a key, so the success path — record the real row,
+>    then forget the provisional one — would have deleted both and left a live, billing cluster with
+>    zero ledger rows: worse than the double-count it was fixing. The collapse therefore goes through
+>    `Ledger.forget_provisional`, which removes only the row still carrying
+>    `kf_launch_phase=launching`. Ordering is load-bearing too: the real row is written *first*, so
+>    no window exists in which a kill loses both. Live-verified — one launch, exactly one surviving
+>    row, and it is the real one.
+> 4. **"removed if create raises" is wrong, and was the one blocker of the S5 whole-branch review.**
+>    Ruled 2026-09-03. A raise does **not** prove the provider booked nothing, and three shipped
+>    shapes say so: `sky.launch` raising out of a failed setup script leaves an **UP** cluster with
+>    no handler anywhere in the provider; the tunnel branch's best-effort `sky.down` swallows its
+>    own exception, so "we tore it down" is a hope rather than a fact; and a Ctrl-C during the
+>    launch is caught by `except BaseException` while SkyPilot's API server goes on creating the
+>    cluster. Forgetting the row in any of those leaves a live, billing resource with **zero**
+>    ledger rows — the F12 hole, reintroduced by its own cleanup. So a create that raises now
+>    **KEEPS** its provisional row. The row is deleted only for errors that prove nothing exists:
+>    `CapacityError` (core-owned — the capacity window expiring with nothing bookable) plus
+>    whatever the provider declares through the new
+>    `ComputeProvider.nothing_booked_errors()` classmethod, which is how SkyPilot's
+>    `PreLaunchRateCapExceeded` reaches a decision made in `kinoforge.core`, where
+>    `kinoforge.providers` may not be imported. Default `()` — a provider that declares nothing
+>    keeps every row, the safe direction. **What clears the rest is the reconciler**, not the
+>    orchestrator: `cli/_reconcile` adopts a `launching` row after the grace window when the
+>    resource turns out to exist, and ages it out when it does not. That age-out also had to become
+>    provider-agnostic, because `modal` is not in `_RECONCILABLE_PROVIDERS` and never can be (its
+>    listing exposes no name matchable against a `run_id`), so a dead Modal launch would otherwise
+>    leave a permanent row no branch could clear.
+
 **Ledger before create.** Brief 1's pre-launch provisional row generalises from the SkyPilot
 provider into one orchestrator-level writer covering all providers: before `create_instance`, a
 row keyed by a client-side id carrying `kf_launch_phase=launching`, reconciled to the real
-instance id when create returns and removed if create raises. A process death during the
-multi-minute launch then leaves a row the reaper can act on, on every provider, instead of a
-billing resource no kinoforge command can see.
+instance id when create returns and — see correction 4 above — removed on failure only when the
+error proves nothing was booked, otherwise left for the reconciler to adopt or age out. A process
+death during the multi-minute launch then leaves a row the reaper can act on, on every provider,
+instead of a billing resource no kinoforge command can see.
 
 ---
 
@@ -556,9 +639,25 @@ so a SkyPilot violation is refused before `Task.setup` runs rather than after (�
 SkyPilot's `Instance.tags` so `RateCapExceeded.placement_summary` can name the SKU and cloud, not
 only the provider and the cluster name.
 
-**S5 — endpoint shape + ledger generalisation.** One port-keyed shape everywhere; SkyPilot's
-`endpoints()` becomes tunnel-ensuring; the pre-launch provisional row generalises to all
-providers.
+**S5 — endpoint shape + ledger generalisation. SHIPPED 2026-09-02.** One port-keyed shape
+everywhere (`_VIDEO_SERVER_PORT` and the `{"ssh": …}` shape deleted; `kinoforge status` prints the
+cluster name); the read/ensure split described in §9's correction rather than a tunnel-ensuring
+`endpoints()`; SkyPilot forwards EVERY port in `tags["ports"]` and rebuilds any that died; the
+pre-launch provisional row generalised out of the SkyPilot provider into one orchestrator-level
+writer, with `Ledger.forget_provisional` and an adopt-by-name-then-age-out reconciler to make it
+safe on the shapes where the client-side id is not the provider's id. Both S4 follow-ups closed:
+SkyPilot `Instance.tags` now name the sku / cloud / region / accelerators, and an over-cap plan is
+refused BEFORE `sky.launch` from a catalog-priced estimate (§6's correction — not `sky.optimize`).
+
+All three claims live-PROVEN for **$0.0091 total**, well inside the ~$0.064 watchdog ceiling. The
+two paid-nothing claims booked nothing at all: the catalog estimate read $0.526/hr for `T4` on AWS
+(0.0% drift vs the published `g4dn.xlarge` price), a $0.01 cap refused pre-launch with `sky status`,
+EC2 and the ledger all empty, and a $5.00 cap did not refuse. The paid claim launched
+`c6i.large` in `us-west-2` as `kinoforge-s5-tunnel-6880f7ef`, served HTTP 200 on BOTH declared ports
+through the provider's forwards, had both forwards killed the way a dying CLI kills them, and got
+back two DIFFERENT local ports that both answered 200 again — with exactly ONE ledger row surviving
+the collapse, and it the real row, not the `launching` one. No launch-payload golden moved. Evidence
+in `tests/live/_s5_endpoint_evidence.json` and `tests/live/_s5_prelaunch_refusal_evidence.json`.
 
 ---
 

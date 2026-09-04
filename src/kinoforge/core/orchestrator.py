@@ -67,7 +67,12 @@ from kinoforge.core.interfaces import (
     RenderedProvision,
     Stage,
 )
-from kinoforge.core.lifecycle import Ledger, destroy_confirmed
+from kinoforge.core.lifecycle import (
+    LAUNCH_PHASE_LAUNCHING,
+    LAUNCH_PHASE_TAG,
+    Ledger,
+    destroy_confirmed,
+)
 from kinoforge.core.logging import get_logger
 from kinoforge.core.pool import ConcurrentPool
 from kinoforge.core.profiles import JsonImageProfileCache, JsonProfileCache
@@ -530,6 +535,296 @@ def _placement_summary(instance: Instance) -> str:
     return ", ".join(parts)
 
 
+def _strip_reserved_tags(
+    tags: dict[str, str],
+    logger: logging.Logger = _log,
+) -> dict[str, str]:
+    """Drop kinoforge-reserved keys from caller-supplied *tags*.
+
+    compute-seam S5. Only :data:`~kinoforge.core.lifecycle.LAUNCH_PHASE_TAG` is
+    reserved today, and it is reserved because the ledger's same-key collapse
+    reads it as ground truth: a real row carrying ``kf_launch_phase=launching``
+    is indistinguishable from a provisional one, and the collapse would refuse
+    forever. Caller tags reach the real row through ``spec.tags``, so a config
+    could otherwise set it.
+
+    Dropping rather than raising: an unknown tag is not worth failing a launch
+    over, and the WARNING names the key so it is diagnosable.
+
+    Args:
+        tags: Caller-supplied tags. Not mutated.
+        logger: Injected for testability.
+
+    Returns:
+        A new dict with every reserved key removed.
+    """
+    if LAUNCH_PHASE_TAG not in tags:
+        return dict(tags)
+    logger.warning(
+        "dropping reserved tag %r=%r from caller tags: kinoforge writes it on "
+        "the pre-launch provisional row and the ledger's collapse depends on "
+        "only that row carrying it",
+        LAUNCH_PHASE_TAG,
+        tags[LAUNCH_PHASE_TAG],
+    )
+    return {key: value for key, value in tags.items() if key != LAUNCH_PHASE_TAG}
+
+
+def _record_provisional_row(
+    *,
+    ledger: Any,  # noqa: ANN401 — Ledger, or any object exposing record/forget
+    run_id: str,
+    provider_name: str,
+    tags: dict[str, str],
+    max_age_s: int,
+    now: float,
+    logger: logging.Logger = _log,
+) -> str | None:
+    """Write the durable pre-launch row and return its id.
+
+    compute-seam S5 generalises Brief 1's SkyPilot-only fix (finding F12). A
+    ``create_instance`` call is multi-minute on every cloud provider, and until
+    it returns there is no durable record of the resource it may already have
+    created: a SIGKILL inside it leaves a billing pod, cluster or app that no
+    kinoforge command can see.
+
+    The row is keyed by the CLIENT-side id (``run_id``), which is not the
+    provider's id anywhere but SkyPilot — on RunPod it is the pod NAME, on
+    Modal the app run id. Task 6 teaches ``cli/_reconcile`` to adopt a
+    ``launching`` row by name before it is allowed to forget one; until then
+    the row is durable but the reconciler cannot yet act on it.
+
+    Never raises: bookkeeping must not be able to fail a launch that would
+    otherwise succeed. A fault forfeits F12 protection for this launch only,
+    and is logged rather than passed.
+
+    Args:
+        ledger: The ledger to write to.
+        run_id: The client-side id for this launch.
+        provider_name: The provider about to be called.
+        tags: Orchestrator tags to carry onto the row.
+        max_age_s: Lifecycle snapshot, so the reaper can age the row out.
+        now: Current epoch seconds (injected for testability).
+        logger: Injected for testability.
+
+    Returns:
+        The row id, or None when nothing was written.
+    """
+    if not run_id:
+        logger.warning(
+            "F12: no run_id for this launch; skipping the pre-launch "
+            "provisional row (a row with no id cannot be found or forgotten)"
+        )
+        return None
+    provisional = Instance(
+        id=run_id,
+        provider=provider_name,
+        status="starting",
+        created_at=now,
+        endpoints={},
+        tags={
+            # Stripped, not merely overridden: direct callers (the golden
+            # harness, the live smokes) reach this helper without going through
+            # _provision_instance_and_build_backend's strip, and the WARNING is
+            # the only signal a config is trying to set a reserved key.
+            **_strip_reserved_tags(tags, logger),
+            # Shared constants, not literals: this tag is the ONLY thing that
+            # distinguishes this row from the real one when the two share an id
+            # (SkyPilot), so a rename here that missed
+            # ``Ledger.forget_provisional`` would silently stop collapsing and
+            # ship two rows per cluster.
+            LAUNCH_PHASE_TAG: LAUNCH_PHASE_LAUNCHING,
+            "kf_run_id": run_id,
+            "kf_launched_at": repr(now),
+        },
+        cost_rate_usd_per_hr=0.0,
+    )
+    try:
+        ledger.record(provisional, max_age_s=max_age_s)
+    except Exception:  # noqa: BLE001 — ledger fault must not block a launch
+        logger.warning(
+            "F12 provisional ledger record failed for %r; this launch has no "
+            "pre-launch orphan protection until it completes",
+            run_id,
+            exc_info=True,
+        )
+        return None
+    return run_id
+
+
+def _forget_provisional_row(
+    ledger: Any,  # noqa: ANN401
+    row_id: str | None,
+    logger: logging.Logger = _log,
+) -> None:
+    """Remove the provisional row after a create that PROVABLY booked nothing.
+
+    A create that never produced a resource must not leave a row whose
+    ``est_spend`` inflates forever (``cli/_reconcile``'s "$210 phantom pod").
+
+    Ruling C1 narrowed who reaches this. The caller no longer calls it for any
+    raise — only for the exception types
+    :func:`_nothing_booked_error_types` returns, because a raise on its own is
+    not evidence that the provider created nothing, and deleting the row when
+    it did is the F12 hole in reverse.
+
+    Uses the phase-scoped delete rather than ``Ledger.forget``, which matches on
+    id alone. On the same-key shape (SkyPilot: the cluster name IS the
+    ``run_id``) a real row can already exist under this id from an EARLIER
+    successful launch that reused the run id — a re-run with an explicit
+    ``--run-id``, or a second ``create_instance`` against one cluster. Forgetting
+    by id there would delete a LIVE cluster's only durable handle: the same
+    zero-row hole the success path closes, in the mirror branch. Phase scoping
+    removes only the ``launching`` row this launch wrote.
+
+    No ``real_id`` precondition: the create raised, so requiring a real row
+    would strand the very ghost this call exists to clear.
+
+    Never raises — bookkeeping must not replace the exception that explains why
+    the launch failed.
+
+    Args:
+        ledger: The ledger holding the row.
+        row_id: The provisional row id, or None when none was written.
+        logger: Injected for testability.
+    """
+    if not row_id:
+        return
+    try:
+        ledger.forget_provisional(row_id)
+    except Exception:  # noqa: BLE001 — bookkeeping must never fail a launch
+        logger.warning(
+            "F12 provisional ledger forget failed for %r; a stale 'launching' "
+            "row may linger for a launch that never produced a resource",
+            row_id,
+            exc_info=True,
+        )
+
+
+def _nothing_booked_error_types(
+    provider: Any,  # noqa: ANN401 — duck-typed ComputeProvider
+    logger: logging.Logger = _log,
+) -> tuple[type[BaseException], ...]:
+    """Return the create errors that PROVE *provider* booked nothing.
+
+    compute-seam S5, ruling C1. The failure path may delete the pre-launch
+    provisional row ONLY for these; every other exception leaves the row for
+    ``cli/_reconcile`` to resolve. See
+    :meth:`~kinoforge.core.interfaces.ComputeProvider.nothing_booked_errors`
+    for why the default is the conservative one.
+
+    Two sources, unioned:
+
+    * :class:`~kinoforge.core.errors.CapacityError`, which core owns. It is
+      what ``_create_with_capacity_wait`` re-raises once the window expires
+      with nothing bookable, and "no capacity" is by construction "nothing was
+      created". Naming it here rather than making every provider declare it
+      keeps the portable guarantee portable.
+    * Whatever the provider declares. This is the seam that lets SkyPilot's
+      ``PreLaunchRateCapExceeded`` — raised before ``sky.launch`` runs, and
+      living in ``kinoforge.providers.skypilot`` where ``kinoforge.core`` may
+      not import it at module scope — reach this decision without an import.
+
+    Defensive by design, because ``provider`` is typed ``Any``: a missing
+    method, a raising one, or a declaration that is not a tuple of exception
+    types all degrade to the portable pair. That direction is safe — an
+    undeclared error keeps the row, and a kept row is reconcilable while a
+    deleted one is not.
+
+    Args:
+        provider: The resolved compute provider whose ``create_instance`` is
+            about to be called.
+        logger: Injected for testability.
+
+    Returns:
+        The exception types the failure path may forget the row for.
+    """
+    portable: tuple[type[BaseException], ...] = (CapacityError,)
+    declare = getattr(provider, "nothing_booked_errors", None)
+    if not callable(declare):
+        return portable
+    try:
+        declared = declare()
+    except Exception:  # noqa: BLE001 — a broken declaration must not fail a launch
+        logger.debug(
+            "provider %r could not declare its nothing-booked errors; assuming none",
+            getattr(provider, "name", provider),
+            exc_info=True,
+        )
+        return portable
+    if not isinstance(declared, tuple | list):
+        # Includes the MagicMock case: a stand-in that answers every attribute
+        # returns a Mock here, and treating that as "declares everything" would
+        # silently restore the unconditional forget this ruling removed.
+        return portable
+    return portable + tuple(
+        exc
+        for exc in declared
+        if isinstance(exc, type) and issubclass(exc, BaseException)
+    )
+
+
+def _collapse_provisional_row(
+    ledger: Any,  # noqa: ANN401
+    provisional_id: str | None,
+    instance_id: str,
+    logger: logging.Logger = _log,
+) -> None:
+    """Collapse the provisional row onto the real one, best-effort.
+
+    Called on the success path only, AFTER ``on_instance_created`` has had its
+    chance to write the real row. Delegates the decision to
+    :meth:`~kinoforge.core.lifecycle.Ledger.forget_provisional` rather than
+    probing and then forgetting here, because the two shapes this has to serve
+    make a two-step version unsafe:
+
+    * ``provisional_id != instance_id`` (RunPod, Modal — the provider assigns
+      the id): two distinct keys, and a plain ``forget`` is correct.
+    * ``provisional_id == instance_id`` (SkyPilot — the cluster name IS the
+      run id): one key holding two rows. ``Ledger.forget`` matches on id alone
+      and would delete BOTH, leaving a live billing cluster invisible.
+
+    ``forget_provisional`` handles both under a single lock: it removes the row
+    only when it is phase-tagged ``launching`` AND a real row already exists to
+    survive it, so there is never a window with zero rows for a resource that
+    has already been created.
+
+    Never raises: the instance is live and billing by the time this runs, so an
+    exception here would fail a launch that actually succeeded.
+
+    Args:
+        ledger: The ledger holding both rows.
+        provisional_id: The provisional row id, or None when none was written.
+        instance_id: The id the provider returned.
+        logger: Injected for testability.
+    """
+    if not provisional_id:
+        return
+    try:
+        collapsed = ledger.forget_provisional(provisional_id, real_id=instance_id)
+    except Exception:  # noqa: BLE001 — bookkeeping must never fail a launch
+        logger.warning(
+            "F12 provisional ledger collapse failed for %r; the provisional "
+            "'launching' row may linger alongside the real record",
+            provisional_id,
+            exc_info=True,
+        )
+        return
+    if not collapsed:
+        # A refusal is the DESIGNED outcome when the real row never landed, and
+        # keeping the row is right — but it is indistinguishable from a healthy
+        # launch unless it says so. Silence here is how a permanent duplicate
+        # (or a permanently stale 'launching' row on a live instance) reaches
+        # production with nothing to grep for.
+        logger.warning(
+            "F12: collapse refused for %r; no real row under %r — the "
+            "'launching' row remains, so this instance may show up as "
+            "provisional (or twice) in kinoforge list",
+            provisional_id,
+            instance_id,
+        )
+
+
 def _enforce_rate_cap(
     *,
     provider: ComputeProvider,
@@ -841,6 +1136,7 @@ def _provision_instance_and_build_backend(
     cancel_token: CancelToken | None = None,
     start_heartbeat: Callable[[Instance], HeartbeatLoopProtocol] | None = None,
     capacity_wait_s: float | None = None,
+    provisional_ledger: Any | None = None,  # noqa: ANN401 — Ledger, duck-typed
 ) -> ProvisionResult:
     """Provision a compute instance and build a backend for it.
 
@@ -861,7 +1157,8 @@ def _provision_instance_and_build_backend(
             distinguish the cold-start failure from a steady-state one.
         tags: Optional caller-supplied tags merged onto the orchestrator's
             built-in ``{kinoforge_engine, kinoforge_key}``. Caller wins on
-            key collision.
+            key collision, EXCEPT for kinoforge-reserved keys, which are
+            dropped with a warning (see :func:`_strip_reserved_tags`).
         on_instance_created: Optional callback fired exactly once,
             immediately after ``create_instance`` returns, with the
             freshly-created ``Instance``. B7 uses this seam to enter
@@ -900,6 +1197,51 @@ def _provision_instance_and_build_backend(
             first miss" and must be stated, never inherited from a
             forgotten keyword — a caller that silently got ``0.0`` would
             lose RunPod's capacity retry with no signal at all.
+        provisional_ledger: compute-seam S5 (finding F12) — the ledger that
+            receives a durable ``kf_launch_phase=launching`` row keyed by
+            ``run_id`` BEFORE ``create_instance`` is called, so a kill inside
+            the multi-minute create still leaves a handle on whatever the
+            provider may already have booked. The row is collapsed onto the
+            real row on success, and forgotten on failure ONLY for the errors
+            that prove nothing was booked (ruling C1 — see
+            :func:`_nothing_booked_error_types`); any other exception leaves
+            the row for ``cli/_reconcile`` to adopt or age out.
+            ``None`` (the default) disables the row entirely.
+
+            Duck-typed (hence ``Any``): ``kinoforge.core`` must not import a
+            concrete store, and every caller passes a
+            :class:`~kinoforge.core.lifecycle.Ledger`. TWO methods are used, and
+            ``forget`` is NOT one of them — a fake built around ``forget`` loses
+            BOTH cleanup paths, and does so silently, because every call below
+            is wrapped:
+
+            * ``record(instance, *, max_age_s=int)`` — the pre-launch write.
+            * ``forget_provisional(provisional_id) -> bool`` — the FAILURE path
+              (:func:`_forget_provisional_row`), with no ``real_id``: the create
+              raised, so requiring a real row would strand the very ghost the
+              call exists to clear. Still not ``forget``, because a real row can
+              exist under this id from an earlier launch that reused the run id.
+            * ``forget_provisional(provisional_id, *, real_id) -> bool`` — the
+              SUCCESS path (:func:`_collapse_provisional_row`). On SkyPilot the
+              provisional row and the real row share a key (the cluster name IS
+              the run id), so a plain forget would delete both.
+
+            Two further expectations that only bite a hand-rolled fake, since
+            :class:`~kinoforge.core.lifecycle.Ledger` satisfies them for free:
+
+            * The return value is READ, not discarded. ``False`` from the
+              success-path call means the collapse was refused and is logged as
+              a warning; a fake that returns ``None`` reports every healthy
+              launch as a refusal.
+            * The refusal check is a read over the rows the REAL row was written
+              into — by ``on_instance_created``, through a *different* ledger
+              object over the same store. A fake that keeps a private, unshared
+              list therefore never sees the real row and refuses every collapse,
+              leaving a permanently stale ``launching`` row on a live instance.
+
+            Every call is best-effort and its exception is swallowed and logged,
+            because bookkeeping must never fail a launch that would otherwise
+            succeed.
 
     Returns:
         :class:`ProvisionResult` ``(instance, backend, hb_loop)`` —
@@ -923,6 +1265,16 @@ def _provision_instance_and_build_backend(
             after the instance is already created — that instance is destroyed
             before the exception propagates.
     """
+    # compute-seam S5 — ``kf_launch_phase`` is RESERVED. It is the only thing
+    # distinguishing the provisional row from the real one when the two share an
+    # id, and caller tags flow into ``spec.tags`` and from there onto the real
+    # ``Instance.tags`` (SkyPilot spreads them verbatim). A config that set this
+    # key would make the REAL row read as provisional: the collapse precondition
+    # would never pass, leaving a permanent two-row state with nothing raising.
+    # Stripping it here — above BOTH the provisional write and ``_build_spec`` —
+    # is what makes the phase tag a fact about the launch rather than about the
+    # config.
+    tags = _strip_reserved_tags(dict(tags or {}))
     lifecycle = cfg.lifecycle()
     image = cfg.compute.image if cfg.compute is not None else ""
     # THE single resolution site for the capacity window. It sits beside the
@@ -990,16 +1342,73 @@ def _provision_instance_and_build_backend(
     # SkyPilot by handing constraints to its optimizer. The capacity-WAIT
     # window survives because capacity is fluid: a provider that raises
     # CapacityError now may succeed in 25 s.
-    instance = _create_with_capacity_wait(
-        create=lambda: resolved_provider.create_instance(_build_spec()),
-        capacity_wait_s=capacity_wait_s,
+    #
+    # F12 — the row goes in ABOVE the capacity-wait loop, not inside it:
+    # ``Ledger.record`` appends, so one write per attempt would leave N rows
+    # for one launch and every reader would pick whichever it found first.
+    provisional_id = (
+        _record_provisional_row(
+            ledger=provisional_ledger,
+            run_id=run_id,
+            provider_name=getattr(resolved_provider, "name", "unknown"),
+            tags=dict(tags or {}),
+            max_age_s=int(lifecycle.max_lifetime_s),
+            now=time.time(),
+        )
+        if provisional_ledger is not None
+        else None
     )
+    # Ruling C1 (2026-09-03), which OVERRIDES the S5 plan's Task 4 text. Read
+    # before the create so a fault in the declaration cannot land inside the
+    # failure path itself.
+    nothing_was_booked = _nothing_booked_error_types(resolved_provider)
+    try:
+        instance = _create_with_capacity_wait(
+            create=lambda: resolved_provider.create_instance(_build_spec()),
+            capacity_wait_s=capacity_wait_s,
+        )
+    except nothing_was_booked:
+        # These, and ONLY these, prove no resource exists: the capacity window
+        # expiring with nothing bookable, plus whatever the provider declares
+        # (SkyPilot's pre-launch cap refusal, raised before sky.launch runs).
+        # A create that never produced a resource must not leave a row whose
+        # est_spend inflates forever (cli/_reconcile's "$210 phantom pod").
+        _forget_provisional_row(provisional_ledger, provisional_id)
+        raise
+    except BaseException:
+        # A raise does not prove the provider booked nothing. Leave the row;
+        # cli/_reconcile._adopt_or_age_out resolves it after the grace window
+        # — adopting if the resource exists, ageing it out if it does not.
+        #
+        # Three shapes make this the only safe default, all of them live:
+        # ``sky.launch`` raising out of a failed setup script leaves an UP
+        # cluster (providers/skypilot/__init__.py has no handler for it); the
+        # tunnel branch's best-effort ``sky.down`` swallows its own exception,
+        # so "we tore it down" is a hope rather than a fact; and a Ctrl-C
+        # lands here as a BaseException while SkyPilot's API server goes on
+        # creating the cluster. Forgetting the row in any of those leaves a
+        # live, billing resource with ZERO ledger rows — the exact F12 hole
+        # this branch exists to close.
+        raise
     # B7 — acquire the cooperative session-claim lock now that instance.id is
     # known, BEFORE engine.provision runs. The callback enters the outer
     # hold_until_first_tick context; release happens on the _LazyClaim
     # holder's __exit__ in deploy_session.
     if on_instance_created is not None:
         on_instance_created(instance)
+    # Order is load-bearing: the REAL row is written first, so no window exists
+    # in which a kill loses both rows. The collapse is therefore CONDITIONAL on
+    # the real row actually being there — ``on_instance_created`` is optional,
+    # and deploy_session's ``_record_then_install`` swallows its own
+    # ``ledger.record`` failure and returns normally. Dropping the provisional
+    # row in either case would delete the only durable handle on an instance
+    # that is live and billing, which is precisely the state F12 exists to make
+    # impossible. That condition and the delete live together inside
+    # ``Ledger.forget_provisional``, under one lock — see
+    # ``_collapse_provisional_row`` for why the same-key (SkyPilot) shape makes
+    # a probe-then-forget version unsafe no matter how it is ordered here.
+    if provisional_ledger is not None:
+        _collapse_provisional_row(provisional_ledger, provisional_id, instance.id)
     # compute-seam S4: the cap is verified against what was LAUNCHED, not
     # filtered against a catalog the chooser may never have consulted. Runs
     # after on_instance_created (so a failed teardown still leaves a ledger row
@@ -1295,14 +1704,15 @@ def deploy_session(
     # ------------------------------------------------------------------
     resolved_engine = _resolve_engine(cfg, engine)
     resolved_provider: ComputeProvider | None = None
+    # compute-seam S5 (F12) — the ledger the ORCHESTRATOR writes the pre-launch
+    # provisional row into, for EVERY provider. None only on hosted engines,
+    # which have no create to protect. S5 Task 5 deleted SkyPilot's private
+    # provider-side writer and the gate that kept the two apart, so this is now
+    # the one and only writer of that row.
+    _provisional_ledger: Ledger | None = None
     if resolved_engine.requires_compute:
         resolved_provider = _resolve_provider(cfg, provider)
-        # F12 — hand the provider a ledger so it can write a durable row
-        # BEFORE its (multi-minute) create call. Duck-typed: core must not
-        # import provider modules, and ComputeProvider's ABC is out of scope.
-        _install_launch_ledger = getattr(resolved_provider, "set_launch_ledger", None)
-        if _install_launch_ledger is not None:
-            _install_launch_ledger(Ledger(store=store))
+        _provisional_ledger = Ledger(store=store)
 
     # ------------------------------------------------------------------
     # Step 2.5 — UX A hosted preflight (Layer I)
@@ -1506,6 +1916,7 @@ def deploy_session(
                             cancel_token=cancel_token,
                             start_heartbeat=_start_heartbeat,
                             capacity_wait_s=capacity_wait_s,
+                            provisional_ledger=_provisional_ledger,
                         )
                         instance, backend, hb_loop = _result
                 else:
@@ -1551,6 +1962,7 @@ def deploy_session(
                             cancel_token=cancel_token,
                             start_heartbeat=_start_heartbeat,
                             capacity_wait_s=capacity_wait_s,
+                            provisional_ledger=_provisional_ledger,
                         )
                         instance, backend, hb_loop = _result
                 else:
@@ -1731,7 +2143,8 @@ def deploy(
         creds: Optional credential provider.  Defaults to ``EnvCredentialProvider()``.
         tags: Optional caller-supplied tags merged onto the orchestrator's
             built-in ``{kinoforge_engine, kinoforge_key}``. Caller wins on
-            key collision.
+            key collision, EXCEPT for kinoforge-reserved keys, which are
+            dropped with a warning (see :func:`_strip_reserved_tags`).
 
     Returns:
         A ``DeployResult`` describing the outcome.
@@ -1780,6 +2193,13 @@ def deploy(
 
     # Live run: create the instance.
     image = cfg.compute.image if cfg.compute is not None else ""
+    # compute-seam S5 — the same strip ``_provision_instance_and_build_backend``
+    # applies. ``deploy`` is a second, independent route from caller tags to
+    # ``spec.tags`` and from there onto a real ``Instance.tags`` (SkyPilot
+    # spreads them verbatim), so without this a config setting
+    # ``kf_launch_phase`` produces a REAL row that reads as provisional and
+    # every later collapse silently refuses.
+    tags = _strip_reserved_tags(dict(tags or {}))
 
     def _build_spec() -> InstanceSpec:
         return build_instance_spec(
@@ -1819,7 +2239,10 @@ def deploy(
             boot_timeout_s=lifecycle.boot_timeout_s,
         )
 
-        endpoints = resolved_provider.endpoints(instance)
+        # compute-seam S5: deploy_session hands the instance to a caller
+        # that will immediately make HTTP requests against it, so use the
+        # door that repairs a dead tunnel rather than the pure read.
+        endpoints = resolved_provider.ensure_endpoints(instance)
         _log.info(
             "deployed instance %r via %r (status=%s)",
             instance.id,

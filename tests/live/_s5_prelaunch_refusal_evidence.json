@@ -1,0 +1,121 @@
+{
+  "smoke": "compute-seam S5 \u2014 an over-cap plan is refused before launch",
+  "task": "task-10 (S5 live proof); scaffold committed RED by task-9",
+  "config": "examples/configs/skypilot-cpu.yaml",
+  "priced_accelerator": "T4",
+  "clusters": {
+    "refused": "kinoforge-s5-refuse-da3e9822",
+    "allowed": "kinoforge-s5-allow-90bda044"
+  },
+  "claim": "the pre-launch estimate is a REAL number read from sky's catalog; a cap below it refuses before sky.launch and books nothing; a cap above it does not refuse",
+  "why_not_skypilot_gpu_yaml": "skypilot-gpu.yaml pins no cloud, so _select_accelerator's catalog read fans out to every registered cloud and raises ImportError on Kubernetes at the installed pin \u2014 no price, no claim. skypilot-cpu.yaml is CPU-only, for which _estimate_hourly_rate returns None BY DESIGN. This claim therefore uses skypilot-cpu.yaml's AWS/us-west-2 pins with a placement that NAMES an accelerator.",
+  "preflight": {
+    "exit_code": 0,
+    "log": "Pixi task (preflight in default): python tools/preflight.py\npreflight: pre-live-spend gate\n  OK   env: ['RUNPOD_API_KEY', 'RUNPOD_TERMINATE_KEY', 'HF_TOKEN'] all set\n  OK   pods: 0 active\n  OK   git: working tree clean\n  OK   sky: 0 active clusters (or skypilot not installed)\npreflight: PASS \u2014 safe to spend"
+  },
+  "started_at": "2026-09-02T23:41:58.242657-07:00",
+  "utilisation_samples": [],
+  "utilisation_note": "no cluster is created on this path; there is nothing to poll. The 75 s utilisation poller runs on claim 3, which has a live box.",
+  "estimate": {
+    "status": "positive-finite-and-agrees",
+    "accelerator": "T4",
+    "usd_per_hr": 0.526,
+    "published_usd_per_hr": 0.526,
+    "published_source": "AWS on-demand list price, g4dn.xlarge (1x T4), us-west-2",
+    "clouds": [
+      "aws"
+    ],
+    "at": "2026-09-02T23:42:03.428970-07:00",
+    "drift_vs_published": 0.0
+  },
+  "refusal": {
+    "status": "pre-launch-and-well-worded",
+    "type": "PreLaunchRateCapExceeded",
+    "cap_usd_per_hr": 0.01,
+    "str": "PRE-LAUNCH estimate $0.5260/hr exceeds cap $0.0100/hr\n  (provider=skypilot, accelerator=T4:1, source=sky.list_accelerators catalog floor, cluster=kinoforge-s5-refuse-da3e9822)\n  nothing was launched",
+    "repr": "PreLaunchRateCapExceeded('PRE-LAUNCH estimate $0.5260/hr exceeds cap $0.0100/hr\\n  (provider=skypilot, accelerator=T4:1, source=sky.list_accelerators catalog floor, cluster=kinoforge-s5-refuse-da3e9822)\\n  nothing was launched')",
+    "sky_launch_attempts": [],
+    "at": "2026-09-02T23:42:04.040667-07:00"
+  },
+  "nothing_booked": {
+    "status": "nothing-exists",
+    "sky_status": null,
+    "ec2_instance_ids": [],
+    "ec2_readable": true,
+    "ec2_query_error": null,
+    "ledger_rows": [],
+    "at": "2026-09-02T23:42:09.279743-07:00"
+  },
+  "in_cap_arm": {
+    "status": "not-refused",
+    "cap_usd_per_hr": 5.0,
+    "estimate_usd_per_hr": 0.526,
+    "sky_launch_attempts": [
+      "kinoforge-s5-allow-90bda044"
+    ],
+    "sky_status": null,
+    "note": "reaching the fenced sky.launch IS the assertion: the cap check let an in-budget plan through. Nothing was booked because the fence raises in place of the launch.",
+    "at": "2026-09-02T23:42:10.847889-07:00"
+  },
+  "teardown": {
+    "kinoforge-s5-refuse-da3e9822": {
+      "started_at": "2026-09-02T23:42:10.847992-07:00",
+      "passes": [
+        {
+          "at": "2026-09-02T23:42:10.848009-07:00",
+          "forced_instance_ids": [],
+          "sky_status": null,
+          "ec2_states": [],
+          "ec2_readable": true,
+          "launch_thread_alive": false
+        },
+        {
+          "at": "2026-09-02T23:42:37.967087-07:00",
+          "forced_instance_ids": [],
+          "sky_status": null,
+          "ec2_states": [],
+          "ec2_readable": true,
+          "launch_thread_alive": false
+        }
+      ],
+      "final_ec2_states": [],
+      "final_ec2_readable": true,
+      "final_sky_status": null,
+      "clean_streak": 2,
+      "finished_at": "2026-09-02T23:42:51.137758-07:00",
+      "ledger_forget": "ok"
+    },
+    "kinoforge-s5-allow-90bda044": {
+      "started_at": "2026-09-02T23:42:51.142743-07:00",
+      "passes": [
+        {
+          "at": "2026-09-02T23:42:51.142784-07:00",
+          "forced_instance_ids": [],
+          "sky_status": null,
+          "ec2_states": [],
+          "ec2_readable": true,
+          "launch_thread_alive": false
+        },
+        {
+          "at": "2026-09-02T23:43:19.003661-07:00",
+          "forced_instance_ids": [],
+          "sky_status": null,
+          "ec2_states": [],
+          "ec2_readable": true,
+          "launch_thread_alive": false
+        }
+      ],
+      "final_ec2_states": [],
+      "final_ec2_readable": true,
+      "final_sky_status": null,
+      "clean_streak": 2,
+      "finished_at": "2026-09-02T23:43:32.122093-07:00",
+      "ledger_forget": "ok"
+    }
+  },
+  "outcome": "PROVEN",
+  "finished_at": "2026-09-02T23:43:32.123287-07:00",
+  "captured_at": "2026-09-02T23:43:32.123287-07:00",
+  "estimated_spend_usd": 0.0,
+  "spend_basis": "no resource is created on this path: sky.launch is fenced on both arms and the refusal fires before it. Zero, not 'about zero'."
+}

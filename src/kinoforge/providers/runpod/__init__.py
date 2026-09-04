@@ -393,6 +393,22 @@ class RunPodProvider(ComputeProvider):
         )
 
     @classmethod
+    def nothing_booked_errors(cls) -> tuple[type[BaseException], ...]:
+        """Declare nothing beyond the portable ``CapacityError`` (S5, C1).
+
+        ``podFindAndDeployOnDemand`` is a single mutation, but a transport
+        failure reading its RESPONSE is indistinguishable from a failure
+        sending the request — the 2026-07-05 raw-HTTP-500 incident is exactly
+        that shape, and a pod may well exist behind one. Nothing here proves
+        the absence of a pod, so every failure keeps the provisional row and
+        ``cli/_reconcile`` resolves it by name against ``list_instances``.
+
+        Returns:
+            The empty tuple.
+        """
+        return ()
+
+    @classmethod
     def consumes(cls) -> Mapping[str, FieldSupport]:
         """Declare what the create-pod mutation and the catalog filter read.
 
@@ -749,7 +765,7 @@ class RunPodProvider(ComputeProvider):
            survive, since RunPod's pod schema does not expose tags on
            list/get responses.
         2. Remote :meth:`list_instances` — falls back here for tags that
-           ``_pod_to_instance`` actually populates (currently only ``mode``).
+           ``_pod_to_instance`` actually populates (``mode`` and ``name``).
            Cross-process warm-reuse via user tags is not supported on this
            path; selfterm and ``cli reap`` are the supported cleanup levers.
 
@@ -1428,7 +1444,15 @@ _GPU_TYPES_QUERY: str = (
     "{ minimumBidPrice uninterruptablePrice } } }"
 )
 
-_LIST_PODS_QUERY: str = "{ myself { pods { id desiredStatus imageName costPerHr } } }"
+# ``name`` is selected for compute-seam S5: the orchestrator's pre-launch
+# provisional ledger row is keyed by the client-side ``run_id``, which RunPod
+# only ever sees as the pod NAME. Without the name in this selection set,
+# ``cli/_reconcile`` cannot resolve such a row to the pod it created and would
+# age out the only durable handle on a live, billing pod. This is a READ query;
+# it does not participate in any launch payload.
+_LIST_PODS_QUERY: str = (
+    "{ myself { pods { id name desiredStatus imageName costPerHr } } }"
+)
 
 _CREATE_POD_MUTATION: str = (
     "mutation($input: PodFindAndDeployOnDemandInput!) "
@@ -1594,9 +1618,21 @@ def _pod_to_instance(pod: dict[str, Any]) -> Instance:
     selection sets) fall back to ``0.0`` rather than raising so the
     status surface stays observable while a pod is still spinning up.
 
+    ``tags["name"]`` carries the pod's RunPod name (compute-seam S5). It is the
+    only field on a listed pod that can be matched against the client-side
+    ``run_id`` a pre-launch provisional ledger row is keyed by, so
+    ``cli/_reconcile`` uses it to adopt such a row instead of forgetting it.
+
+    When the read is EMPTY (a partial selection set, an early-boot response)
+    the key is OMITTED rather than set to ``""``. Both answers match no run_id,
+    but only omission survives the warm-attach merge in
+    ``cli/_commands``, which does ``{**ledger_tags, **instance.tags}`` —
+    provider tags win, so an empty string here would shadow the real name the
+    ledger recorded at create time and erase it from the attached instance.
+
     Args:
         pod: A dict with ``id``, ``desiredStatus``, ``imageName`` and
-            (optionally) ``costPerHr`` keys.
+            (optionally) ``name`` / ``costPerHr`` keys.
 
     Returns:
         An :class:`~kinoforge.core.interfaces.Instance` representing the pod.
@@ -1605,12 +1641,16 @@ def _pod_to_instance(pod: dict[str, Any]) -> Instance:
     desired_status: str = str(pod.get("desiredStatus", ""))
     raw_cost = pod.get("costPerHr")
     cost_rate: float = float(raw_cost) if raw_cost is not None else 0.0
+    tags: dict[str, str] = {"mode": "pod"}
+    pod_name = str(pod.get("name") or "")
+    if pod_name:
+        tags["name"] = pod_name
     return Instance(
         id=pod_id,
         provider="runpod",
         status=_runpod_status_to_kinoforge(desired_status),
         created_at=0.0,  # RunPod list API does not return creation time
-        tags={"mode": "pod"},
+        tags=tags,
         cost_rate_usd_per_hr=cost_rate,
     )
 

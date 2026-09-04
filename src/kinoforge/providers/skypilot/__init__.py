@@ -60,9 +60,12 @@ Self-registers under ``"skypilot"`` when this module is imported.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
+import math
 import socket
 import subprocess
+import threading
 import time
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol, runtime_checkable
@@ -71,7 +74,12 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from kinoforge.core import registry
 from kinoforge.core.capabilities import Capability, WorkloadShape
-from kinoforge.core.errors import CapacityError, KinoforgeError, ProvisionFailed
+from kinoforge.core.errors import (
+    CapacityError,
+    KinoforgeError,
+    ProvisionFailed,
+    RateCapExceeded,
+)
 from kinoforge.core.interfaces import (
     ComputeProvider,
     FieldSupport,
@@ -87,6 +95,14 @@ from kinoforge.providers.skypilot import watchdog
 from kinoforge.providers.skypilot.vast_compat import apply_vast_sdk_compat
 
 logger = logging.getLogger(__name__)
+
+#: Deadline for the pre-launch catalog price read
+#: (:meth:`SkyPilotProvider._estimate_hourly_rate`). It runs before anything is
+#: booked and before the instance-side watchdog is armed. The read is LOCAL
+#: (``sky.list_accelerators`` is ``sky.catalog.list_accelerators``), but sky's
+#: catalog lazily downloads its pricing CSVs over HTTP, so a slow or wedged
+#: fetch must cost seconds, not a hung launch. Expiry reads as "unreadable".
+_ESTIMATE_TIMEOUT_S = 20.0
 
 # Bridge sky's vast adapter to vastai-sdk >= 0.2 as soon as the provider is
 # imported; no-op when vastai_sdk is absent (default env) or already correct.
@@ -214,6 +230,104 @@ def _resolve(sky_module: Any, result: Any) -> Any:  # noqa: ANN401
     return result
 
 
+class PreLaunchRateCapExceeded(RateCapExceeded):
+    """A cap violation caught BEFORE anything was created.
+
+    Same type as far as every ``except RateCapExceeded`` handler is concerned
+    — only the rendering differs. :class:`~kinoforge.core.errors.RateCapExceeded`
+    renders the S4 post-launch story ("realized ... instance destroyed"), and
+    on this path both halves of that are false: the number is a catalog-grade
+    estimate and no cluster was ever booked. An operator reading the S4
+    wording here would go hunting for a resource that does not exist.
+
+    Lives in the provider rather than in ``kinoforge.core.errors`` on purpose:
+    ``core/errors.py`` is one of the modules embedded (base64) into the
+    upscale/interpolate provision scripts, so editing it rewrites 13 frozen
+    launch-payload goldens. Moving this rendering there is a reviewed act
+    requiring a golden regeneration, not a refactor.
+    """
+
+    def __init__(
+        self,
+        *,
+        realized: float | None,
+        cap: float,
+        instance_id: str,
+        placement_summary: str,
+    ) -> None:
+        """Initialise, then normalise ``args`` onto the pre-launch rendering.
+
+        Overriding :meth:`__str__` alone is not enough: the base
+        ``__init__`` already passed the S4 post-launch message to
+        ``Exception.__init__``, and ``repr()`` and ``args[0]`` read from
+        there, not from ``__str__``. The S4 live smoke writes
+        ``repr(exc)[:600]`` into a durable evidence file, so leaving ``args``
+        alone would put "instance destroyed" into an artifact describing a
+        cluster that was never booked. Rewriting ``args`` makes ``str``,
+        ``repr`` and ``args[0]`` agree.
+
+        Args:
+            realized: The pre-launch estimate in USD/hr, or None.
+            cap: The configured ceiling in USD per hour.
+            instance_id: The cluster name that was refused.
+            placement_summary: Human-readable identity of what was priced.
+        """
+        super().__init__(
+            realized=realized,
+            cap=cap,
+            instance_id=instance_id,
+            placement_summary=placement_summary,
+        )
+        self.args = (self.__str__(),)
+
+    def __str__(self) -> str:
+        """Render the violation as a pre-launch estimate against no resource.
+
+        Returns:
+            A message naming the estimate, the cap, the cluster name that was
+            refused, and the fact that nothing was launched.
+        """
+        rate = (
+            f"${self.realized:.4f}/hr" if self.realized is not None else "<unreadable>"
+        )
+        return (
+            f"PRE-LAUNCH estimate {rate} exceeds cap ${self.cap:.4f}/hr\n"
+            f"  ({self.placement_summary}, cluster={self.instance_id})\n"
+            f"  nothing was launched"
+        )
+
+
+#: Sentinel distinguishing "attribute absent" from "attribute present but
+#: None/empty" when reading a ``launched_resources`` record in
+#: :meth:`SkyPilotProvider._selection_tags`. ``getattr(obj, name, "")`` cannot
+#: make that distinction — both cases would collapse to ``""``.
+_MISSING = object()
+
+
+def _format_accelerators(value: Any) -> str:  # noqa: ANN401
+    """Format a ``launched_resources.accelerators`` value as ``"NAME:COUNT"``.
+
+    The real SDK exposes this as a dict (e.g. ``{"A100": 1}``) or ``None``
+    for a CPU-only booking; test fakes may pass a plain string directly.
+    Mirrors the ``"A100:1"`` shape :meth:`SkyPilotProvider.create_instance`
+    already writes into the Task config's ``resources["accelerators"]``, so a
+    cap-violation summary and the launch payload describe an accelerator the
+    same way.
+
+    Args:
+        value: The raw ``accelerators`` field — a dict, a string, or falsy.
+
+    Returns:
+        ``""`` when falsy; a comma-joined ``"NAME:COUNT"`` list otherwise
+        (a single entry has no comma).
+    """
+    if not value:
+        return ""
+    if isinstance(value, dict):
+        return ",".join(f"{name}:{count}" for name, count in value.items())
+    return str(value)
+
+
 def _coerce_float_field(record: Any, field: str) -> float:  # noqa: ANN401
     """Read ``field`` from ``record`` and coerce to ``float`` (0.0 on failure).
 
@@ -325,16 +439,25 @@ def _collapse_status(raw: str) -> str:
 # Provider-internal SSH tunnel (HTTP-over-sky seam)
 # ---------------------------------------------------------------------------
 
-#: Port the diffusers/comfyui video server listens on inside the cluster
-#: (matches the RunPod path's 8000). The provider forwards a local port to this.
-_VIDEO_SERVER_PORT: int = 8000
-
 #: Max status polls in destroy_instance before returning even if the cluster is
 #: still listed. Bounds teardown so a cloud that is slow to deprovision (or a
 #: stale status listing) can never hang --no-reuse forever (observed as a ~7-min
 #: Lambda hang 2026-07-08). destroy_confirmed re-verifies via list_instances and
 #: retries, so returning unconfirmed here is safe, not a leak.
 _DESTROY_POLL_MAX_ITERS: int = 40  # 40 × 3s ≈ 120s upper bound
+
+
+@dataclasses.dataclass
+class _Tunnel:
+    """One live ssh port-forward.
+
+    Attributes:
+        proc: The ``ssh -N -T -L`` subprocess.
+        local_port: The localhost port the forward is bound to.
+    """
+
+    proc: Any
+    local_port: int
 
 
 def _alloc_free_port() -> int:
@@ -461,24 +584,6 @@ def _normalize_image_id(image: str) -> str:
     return f"docker:{image}"
 
 
-class _LaunchLedger(Protocol):
-    """The slice of :class:`~kinoforge.core.lifecycle.Ledger` used pre-launch.
-
-    Narrowed to the exact keyword the provider calls (``max_age_s``) rather
-    than a permissive ``**kwargs: Any`` — the latter type-checks against
-    anything and would never catch a signature drift on either side. See
-    ``tests/providers/test_skypilot.py::test_ledger_protocol_matches_the_real_ledger``
-    for the mypy-visible proof that :class:`~kinoforge.core.lifecycle.Ledger`
-    still satisfies this Protocol.
-    """
-
-    def record(self, instance: Instance, *, max_age_s: int | None = None) -> None:
-        """Append a row for *instance*."""
-
-    def forget(self, instance_id: str) -> None:
-        """Remove the row for *instance_id*."""
-
-
 # ---------------------------------------------------------------------------
 # SkyPilotProvider
 # ---------------------------------------------------------------------------
@@ -593,6 +698,28 @@ class SkyPilotProvider(ComputeProvider):
         return frozenset(caps)
 
     @classmethod
+    def nothing_booked_errors(cls) -> tuple[type[BaseException], ...]:
+        """Declare the one create error that PROVES no cluster exists (S5, C1).
+
+        :class:`PreLaunchRateCapExceeded` is raised by :meth:`create_instance`
+        BEFORE ``sky.launch`` is called at all, so at that point no cluster has
+        been requested, none is booting, and none is billing. It is therefore
+        the only SkyPilot failure the orchestrator may act on by deleting the
+        pre-launch provisional ledger row.
+
+        Everything else is deliberately absent, including
+        :class:`~kinoforge.core.errors.ProvisionFailed` from the tunnel path:
+        ``sky.launch`` has already returned an UP cluster by then, the
+        best-effort ``sky.down`` in that branch swallows its own exception, and
+        a raise there with the row deleted is precisely the invisible-billing-
+        cluster state F12 exists to prevent.
+
+        Returns:
+            ``(PreLaunchRateCapExceeded,)``.
+        """
+        return (PreLaunchRateCapExceeded,)
+
+    @classmethod
     def consumes(cls) -> Mapping[str, FieldSupport]:
         """Declare what the Task config and the catalog filter read.
 
@@ -666,7 +793,8 @@ class SkyPilotProvider(ComputeProvider):
             "volume_gb": u,  # no volume is attached
             "volume_mount": u,  # no volume is attached
             "env": c,  # task_config["envs"]
-            "tags": c,  # the F12 provisional row, then Instance.tags
+            "tags": c,  # Instance.tags on the returned instance (S5: the F12
+            #             provisional row is the orchestrator's, not ours)
             "run_id": c,  # task name + cluster_name
             "setup_steps": c,  # combined into Task.setup
             "launch": c,  # rendered into Task.run
@@ -740,25 +868,8 @@ class SkyPilotProvider(ComputeProvider):
         self._alloc_port: Callable[[], int] = (
             port_allocator if port_allocator is not None else _alloc_free_port
         )
-        #: cluster_name -> live tunnel subprocess handle (killed on destroy).
-        self._tunnels: dict[str, Any] = {}
-        #: Optional ledger for the pre-launch provisional row (F12). ``None``
-        #: until :meth:`set_launch_ledger` is called; every existing
-        #: construction of this provider leaves it unset, so behaviour is
-        #: unchanged without an explicit opt-in.
-        self._launch_ledger: _LaunchLedger | None = None
-
-    def set_launch_ledger(self, ledger: _LaunchLedger) -> None:
-        """Install the ledger used for the pre-launch provisional row.
-
-        Duck-typed rather than an ABC method: :class:`ComputeProvider` is out
-        of scope for this change, and ``kinoforge.core`` must not import
-        provider modules. The orchestrator calls this via ``getattr``.
-
-        Args:
-            ledger: A :class:`~kinoforge.core.lifecycle.Ledger`-shaped object.
-        """
-        self._launch_ledger = ledger
+        #: cluster_name -> remote_port -> live tunnel (killed on destroy).
+        self._tunnels: dict[str, dict[str, _Tunnel]] = {}
 
     # ------------------------------------------------------------------
     # Private helper — resolve sky seam
@@ -779,26 +890,46 @@ class SkyPilotProvider(ComputeProvider):
     # ComputeProvider interface
     # ------------------------------------------------------------------
 
-    def _candidate_accelerators(self, placement: Placement) -> list[Offer]:
-        """Return the accelerators sky lists that satisfy *placement*, ranked.
+    def _catalog_offers(
+        self,
+        *,
+        name_filter: str | None = None,
+        quantity_filter: int | None = None,
+    ) -> list[Offer]:
+        """Read sky's accelerator catalog and parse it into Offers, UNFILTERED.
 
-        The catalog read behind :meth:`_select_accelerator`, kept separate so
-        the filtering and the choosing can each be tested for what they do.
-        Not public: SkyPilot has no bookable catalog — ``sky.list_accelerators``
-        describes what the optimizer may consider, and the optimizer still
-        picks cloud, region and instance type for itself.
+        The catalog read and parse, split out of
+        :meth:`_candidate_accelerators` so :meth:`_estimate_hourly_rate` can
+        reuse it without also inheriting its filters. That split is
+        load-bearing, not cosmetic: :func:`~kinoforge.core.offers.filter_offers`
+        drops every offer priced ABOVE ``placement.max_usd_per_hr``
+        (``core/offers.py:49``), so pricing through it would silently discard
+        the very over-cap offer the pre-launch refusal exists to catch and
+        report "unreadable" instead of refusing.
 
         Args:
-            placement: The portable resource block to filter and rank by.
+            name_filter: Optional accelerator name passed through to
+                ``sky.list_accelerators`` so a price lookup for one already
+                chosen accelerator does not pull the whole catalog.
+            quantity_filter: Optional accelerator count passed through, so the
+                prices returned are for instance types offering exactly that
+                many accelerators. ``InstanceTypeInfo.price`` is the price of
+                the whole INSTANCE, not of one card, so this is what keeps a
+                per-hour number comparable to the cap.
 
         Returns:
-            Offers passing the VRAM/CUDA/price filters, ranked by
-            ``placement.accelerators``; empty when nothing clears them.
+            One Offer per catalog record, in catalog order. No VRAM, CUDA or
+            price filtering is applied.
         """
         sky = self._sky()
-        raw = sky.list_accelerators(
-            **({} if self._clouds is None else {"clouds": self._clouds})
-        )
+        kwargs: dict[str, Any] = {}
+        if self._clouds is not None:
+            kwargs["clouds"] = self._clouds
+        if name_filter is not None:
+            kwargs["name_filter"] = name_filter
+        if quantity_filter is not None:
+            kwargs["quantity_filter"] = quantity_filter
+        raw = sky.list_accelerators(**kwargs)
         resolved = _resolve(sky, raw)
 
         # Normalise to an iterable of records. Modern shape is a dict-of-list;
@@ -832,7 +963,25 @@ class SkyPilotProvider(ComputeProvider):
                     mode="pod",
                 )
             )
-        return filter_offers(candidates, placement)
+        return candidates
+
+    def _candidate_accelerators(self, placement: Placement) -> list[Offer]:
+        """Return the accelerators sky lists that satisfy *placement*, ranked.
+
+        The catalog read behind :meth:`_select_accelerator`, kept separate so
+        the filtering and the choosing can each be tested for what they do.
+        Not public: SkyPilot has no bookable catalog — ``sky.list_accelerators``
+        describes what the optimizer may consider, and the optimizer still
+        picks cloud, region and instance type for itself.
+
+        Args:
+            placement: The portable resource block to filter and rank by.
+
+        Returns:
+            Offers passing the VRAM/CUDA/price filters, ranked by
+            ``placement.accelerators``; empty when nothing clears them.
+        """
+        return filter_offers(self._catalog_offers(), placement)
 
     def _select_accelerator(self, placement: Placement) -> str | None:
         """Return the accelerator name to pin, or None for a CPU-only task.
@@ -1028,46 +1177,48 @@ class SkyPilotProvider(ComputeProvider):
         if self._retry_until_up:
             launch_kwargs["retry_until_up"] = True
 
-        # F12 — durable record BEFORE the launch. sky.launch is a multi-minute
-        # call; a SIGKILL inside it would otherwise leave a billing cluster
-        # that no kinoforge command can see. Forgotten on the success path so
-        # the orchestrator's post-create record is the only surviving row.
-        provisional = Instance(
-            id=cluster_name,
-            provider=self.name,
-            status="starting",
-            created_at=launch_epoch,
-            endpoints={},
-            tags={
-                **dict(spec.tags),
-                "kf_launch_phase": "launching",
-                "kf_cloud": ",".join(self._clouds) if self._clouds else "auto",
-                "kf_run_id": spec.run_id or cluster_name,
-                "kf_launched_at": repr(launch_epoch),
-                "kf_deadline_epoch": repr(deadline_epoch),
-            },
-            cost_rate_usd_per_hr=0.0,
-        )
-        if self._launch_ledger is not None:
-            # Bookkeeping must never be able to fail a launch that would
-            # otherwise have succeeded: a transient store 5xx, a lock-lease
-            # timeout, or an unwritable local path must not propagate out of
-            # create_instance. Unlike the ``forget`` failure below, a failed
-            # ``record`` here is not dangerous — it just silently forfeits
-            # F12 protection for *this* launch — but it is still logged
-            # loudly rather than passed, since a quiet failure here is
-            # indistinguishable from "the ledger is fine and simply chose
-            # not to write."
-            try:
-                self._launch_ledger.record(
-                    provisional, max_age_s=int(spec.lifecycle.max_lifetime_s)
-                )
-            except Exception:  # noqa: BLE001 — ledger fault must not block launch
+        # F12 — the durable pre-launch row is NOT written here. compute-seam S5
+        # Task 5 moved it to the orchestrator
+        # (``kinoforge.core.orchestrator._record_provisional_row``), which is
+        # the only place that knows a create is about to happen on ANY
+        # provider. Two writers on one cluster name meant two rows, and the
+        # collapse could not be expressed provider-side at all — the real row
+        # shares this cluster's key, so a provider-side ``forget`` would have
+        # taken it too. See ``tests/core/test_provisional_launch_row.py``.
+        #
+        # compute-seam S5 Task 8 — refuse an over-cap plan while refusing is
+        # still free. S4's post-launch ``realized_rate`` readback is what makes
+        # the cap TRUE and it stays exactly where it is; this only decides how
+        # much work a violation throws away. On SkyPilot ``sky.launch`` runs
+        # ``Task.setup`` before it returns, so a violation caught afterwards
+        # discards several minutes of provisioning that was already paid for.
+        cap = spec.placement.max_usd_per_hr
+        # ``cap <= 0`` means "no cap on this path", so the estimate is not
+        # merely unused — it is not TAKEN. Placement's default is 2.20, so a
+        # zero can only come from an operator explicitly clearing one, and
+        # spending a catalog round trip (plus its hang risk) to produce a
+        # number nothing will read, then WARNING that it was unreadable, is
+        # cost and noise for no decision.
+        if cap > 0:
+            estimate = self._estimate_hourly_rate(accelerator, spec.placement)
+            if estimate is None:
                 logger.warning(
-                    "F12 provisional ledger record failed for %r; this launch "
-                    "has no pre-launch orphan protection until it completes",
+                    "skypilot: pre-launch cost estimate unreadable for cluster "
+                    "%r; launching and relying on the post-launch rate readback",
                     cluster_name,
-                    exc_info=True,
+                )
+            elif estimate > cap:
+                # PreLaunchRateCapExceeded, not the base class: no resource
+                # exists, so the S4 "realized ... instance destroyed" wording
+                # would send the operator hunting for a cluster never booked.
+                raise PreLaunchRateCapExceeded(
+                    realized=estimate,
+                    cap=cap,
+                    instance_id=cluster_name,
+                    placement_summary=(
+                        f"provider=skypilot, accelerator={accelerator}:1, "
+                        f"source=sky.list_accelerators catalog floor"
+                    ),
                 )
         raw = sky.launch(task, **launch_kwargs)
         # Resolve a possible RequestId — the launch payload itself is not used
@@ -1076,58 +1227,98 @@ class SkyPilotProvider(ComputeProvider):
         # modern API.
         _resolve(sky, raw)
         endpoints: dict[str, str] = {}
-        # Only a server spec (one that declares a long-running launch) needs an
-        # HTTP tunnel; a server-less deploy (CPU smoke) gets no tunnel and empty
-        # endpoints. S3 moved the condition off ``run_cmd`` onto ``launch``:
-        # every engine sets the two together or neither, so this is the same
-        # question asked of the field that now answers it.
+        # Only a server spec (one that declares a long-running launch) needs
+        # HTTP tunnels; a server-less deploy (CPU smoke) gets none. S5: one
+        # tunnel per DECLARED port, because an engine declaring ["8000",
+        # "8001"] means both are load-bearing — 8001 is the /tmp file server
+        # the project's own live-smoke rule fetches bootstrap.log from.
         if spec.launch is not None:
-            local_port = self._alloc_port()
+            port = ""
+            # Ports THIS call actually SPAWNED a forward for. cluster_name is
+            # stable across calls (derived from spec.run_id), so a second
+            # create_instance reusing the same run_id must only ever tear down
+            # tunnels *this* call opened on failure — never a prior,
+            # already-succeeded call's live tunnels for the same cluster
+            # (finding: task-1 review, 2026-09-01).
+            #
+            # Reused forwards are excluded, which is the whole point of
+            # ``_ensure_tunnel`` reporting whether it spawned: recording them
+            # here would make a second call's failure on port 2 kill port 1's
+            # tunnel from the first call, and — the cluster then holding no
+            # tunnel at all — ``sky.down`` a cluster that is still in use,
+            # contradicting the comment three lines below.
+            spawned_ports: list[str] = []
             try:
-                tunnel = self._ssh_spawn(cluster_name, local_port, _VIDEO_SERVER_PORT)
+                for port in spec.ports:
+                    _local_port, spawned = self._ensure_tunnel(cluster_name, port)
+                    if spawned:
+                        spawned_ports.append(port)
             except Exception as exc:  # noqa: BLE001 — any spawn fault → clean fail
-                # Best-effort teardown so a live-but-unreachable cluster is not
-                # left billing while we raise.
-                try:
-                    _resolve(sky, sky.down(cluster_name))
-                except Exception:  # noqa: BLE001, S110
-                    pass
+                held = self._tunnels.get(cluster_name)
+                cluster_now_empty = True
+                if held is not None:
+                    for opened_port in spawned_ports:
+                        tunnel = held.pop(opened_port, None)
+                        if tunnel is not None:
+                            self._kill_tunnel(tunnel.proc)
+                    cluster_now_empty = not held
+                    if cluster_now_empty:
+                        self._tunnels.pop(cluster_name, None)
+                if cluster_now_empty:
+                    # Best-effort teardown so a live-but-unreachable cluster
+                    # is not left billing while we raise — but ONLY when no
+                    # tunnel this process still holds for the cluster
+                    # survives the failure. A live sibling tunnel from a
+                    # prior successful create_instance call means the
+                    # underlying compute is still in active use and must not
+                    # be torn down out from under it.
+                    try:
+                        _resolve(sky, sky.down(cluster_name))
+                    except Exception:  # noqa: BLE001, S110
+                        pass
                 raise ProvisionFailed(
-                    f"failed to open ssh tunnel to {cluster_name!r}: {exc}"
+                    f"failed to open ssh tunnel to {cluster_name!r} for port "
+                    f"{port}: {exc}"
                 ) from exc
-            self._tunnels[cluster_name] = tunnel
-            endpoints = {"8000": f"http://127.0.0.1:{local_port}"}
-        # Success: hand the record over to the orchestrator's post-create
-        # write. Deliberately NOT in a finally — the tunnel-failure path
-        # must keep its row, because a failed best-effort ``sky.down``
-        # leaves a live cluster that only this row can surface.
-        #
-        # This is the damaging failure direction: the cluster is already UP
-        # and its tunnel handle is already in ``self._tunnels``. A ``forget``
-        # exception must not propagate — that would fail a launch that
-        # actually succeeded, and the caller would never reach the
-        # orchestrator's post-create record, leaving a stale
-        # ``kf_launch_phase=launching`` row as the only (misleading) trace
-        # of a healthy cluster. Bookkeeping must never be able to fail the
-        # launch, so this is logged loudly rather than passed.
-        if self._launch_ledger is not None:
-            try:
-                self._launch_ledger.forget(cluster_name)
-            except Exception:  # noqa: BLE001 — ledger fault must not block launch
-                logger.warning(
-                    "F12 provisional ledger forget failed for %r; the "
-                    "provisional 'launching' row may linger alongside the "
-                    "real post-create record",
-                    cluster_name,
-                    exc_info=True,
-                )
+            endpoints = {
+                port: f"http://127.0.0.1:{tunnel.local_port}"
+                for port, tunnel in self._tunnels.get(cluster_name, {}).items()
+            }
+        tags: dict[str, str] = dict(spec.tags)
+        if spec.launch is not None:
+            # S5 — same key RunPod uses (_pod_to_instance / endpoints), so
+            # ensure_endpoints and warm-attach have one reader for both.
+            #
+            # Written ONLY alongside a launch, and gated on exactly the
+            # condition the tunnel loop above is gated on. ``tags["ports"]`` is
+            # what ``_ports_for`` reads to decide which forwards to rebuild, so
+            # writing it for a server-less deploy (the CPU smoke path, which
+            # opens no tunnel at all) would make a later ``ensure_endpoints``
+            # spawn ssh forwards to remote ports nothing is listening on and
+            # report them as endpoints.
+            tags["ports"] = ",".join(spec.ports)
+        # S4 follow-up: what the optimizer actually booked, merged on top of
+        # the caller's own tags. Unconditional overwrite is correct here:
+        # `_selection_tags` already did the work of separating "could not
+        # read" (key OMITTED) from "read as falsy" (key present, value "") —
+        # every key it returns was genuinely read off the launched handle, so
+        # a caller-set tag under one of these four names (nothing reserves
+        # them; `_strip_reserved_tags` only reserves `LAUNCH_PHASE_TAG`) is a
+        # stale guess next to a truthful reading, not a value worth
+        # protecting. Re-guarding on truthiness here would re-conflate what
+        # the sentinel in `_selection_tags` just separated — e.g. a caller
+        # tag `accelerators: some-note` would survive a real CPU booking
+        # (`_selection_tags` legitimately returning `accelerators=""`),
+        # which is the exact "summary shows something other than what was
+        # booked" failure this task exists to fix.
+        tags.update(self._selection_tags(cluster_name))
         return Instance(
             id=cluster_name,
             provider=self.name,
             status="starting",
             created_at=time.time(),
             endpoints=endpoints,
-            tags=dict(spec.tags),
+            tags=tags,
             # compute-seam S4: 0.0, not spec.offer's price. That assignment
             # WAS finding F4 — it reported the rate kinoforge asked for while
             # the optimizer booked whatever it liked (a $1.99 Lambda A100 under
@@ -1156,6 +1347,40 @@ class SkyPilotProvider(ComputeProvider):
                 return _cluster_record_to_instance(cluster)
         raise KeyError(f"no SkyPilot cluster found: {instance_id!r}")
 
+    def _launched_resources(self, cluster_name: str) -> Any | None:  # noqa: ANN401
+        """Return the launched-resources record for ``cluster_name``, or None.
+
+        Re-reads ``status()`` and pulls ``handle.launched_resources`` off the
+        matching cluster. Shared by :meth:`realized_rate` and
+        :meth:`_selection_tags` so sky's status/handle shape is parsed in
+        exactly one place — this method IS that parser; do not add a second
+        one. Never raises: any failure (unreachable API server, absent
+        handle, unknown cluster) collapses to ``None``, which both callers
+        already treat as "unreadable" rather than a crash.
+
+        Args:
+            cluster_name: The SkyPilot cluster to look up.
+
+        Returns:
+            The ``launched_resources`` object, or ``None`` when the cluster,
+            its handle, or its resources are unreadable.
+        """
+        sky = self._sky()
+        try:
+            clusters = _resolve(sky, sky.status())
+        except Exception:  # noqa: BLE001 — an unreadable read is not a crash
+            return None
+        for cluster in clusters or []:
+            if _record_field(cluster, "name") != cluster_name:
+                continue
+            handle = (
+                cluster.get("handle")
+                if isinstance(cluster, dict)
+                else getattr(cluster, "handle", None)
+            )
+            return getattr(handle, "launched_resources", None)
+        return None
+
     def realized_rate(self, instance: Instance) -> float | None:
         """Return the rate the optimizer's chosen resources will bill at.
 
@@ -1177,27 +1402,208 @@ class SkyPilotProvider(ComputeProvider):
             unreadable. Never raises — the caller tears the instance down on
             None rather than crashing mid-launch.
         """
-        sky = self._sky()
-        try:
-            clusters = _resolve(sky, sky.status())
-        except Exception:  # noqa: BLE001 — an unreadable rate is not a crash
+        launched = self._launched_resources(instance.id)
+        if launched is None:
             return None
-        for cluster in clusters or []:
-            if _record_field(cluster, "name") != instance.id:
-                continue
-            handle = (
-                cluster.get("handle")
-                if isinstance(cluster, dict)
-                else getattr(cluster, "handle", None)
-            )
-            launched = getattr(handle, "launched_resources", None)
-            if launched is None:
-                return None
+        try:
+            return float(launched.get_cost(3600))
+        except Exception:  # noqa: BLE001 — same reason
+            return None
+
+    def _catalog_floor_price(self, accelerator: str) -> float | None:
+        """Return the cheapest catalog price for ``accelerator``, or None.
+
+        The body of :meth:`_estimate_hourly_rate`, split out so the deadline
+        that bounds it is separable from the read it bounds.
+
+        Args:
+            accelerator: The accelerator name :meth:`create_instance` pinned.
+
+        Returns:
+            The lowest ``price`` sky's catalog reports for a single-accelerator
+            instance type of that name, or None when nothing priced matches.
+        """
+        # quantity_filter=1 because create_instance pins ``"<name>:1"``
+        # unconditionally, and InstanceTypeInfo.price is the price of the whole
+        # INSTANCE (sky/catalog/common.py) — an 8-GPU record would price a
+        # launch that is not the one being made.
+        offers = self._catalog_offers(name_filter=accelerator, quantity_filter=1)
+        wanted = accelerator.casefold()
+        prices = [
+            o.cost_rate_usd_per_hr
+            for o in offers
+            if o.gpu_type.casefold() == wanted and o.cost_rate_usd_per_hr > 0
+        ]
+        if not prices:
+            return None
+        # The MINIMUM, not the mean or the max: a lower bound can only ever
+        # produce a refusal that every possible booking would also violate, so
+        # it cannot refuse a launch that would have been in budget. A false
+        # refusal is the expensive mistake here — the post-launch readback
+        # still catches everything this bound lets through.
+        return min(prices)
+
+    def _estimate_hourly_rate(
+        self, accelerator: str | None, placement: Placement
+    ) -> float | None:
+        """Return a catalog-grade USD/hr lower bound for the launch, or None.
+
+        NOT an optimizer quote. ``sky.optimize`` cannot answer this at the
+        pinned skypilot-0.12.3.post1: ``/optimize`` is scheduled with
+        ``ignore_return_value=True`` (``sky/server/server.py:1422``), and the
+        executor then stores ``None`` instead of the optimized Dag
+        (``sky/server/requests/executor.py:568``), so
+        ``stream_and_get(<optimize request id>)`` returns ``None`` and no
+        price can ever be read back. Verified at the installed pin.
+
+        What this returns instead is the cheapest price sky's own catalog
+        reports for a single-accelerator instance of the pinned accelerator,
+        narrowed to the same clouds the launch is pinned to. The catalog read
+        is LOCAL, unlike ``sky.optimize``: ``sky.list_accelerators`` resolves
+        to ``sky.catalog.list_accelerators`` (``sky/catalog/config.py`` at the
+        installed pin), so no request is scheduled on the API server and there
+        is no return value for the server to discard. That is a LOWER BOUND on
+        what the launch can cost, not a quote: sky's optimizer still picks the
+        cloud, region and SKU for itself, and a booking can land above this
+        number. S4's post-launch :meth:`realized_rate` readback remains the
+        enforcement; this only decides how much work a violation throws away.
+
+        Deliberately SEPARATE from :meth:`realized_rate`: this one is a
+        pre-launch bound on a plan, that one is a post-launch reading off a
+        booked cluster. Only the second can make a cap true, and collapsing
+        them would let a cheap catalog number vouch for an expensive booking.
+
+        Bounded by an explicit deadline, and NOT because it crosses the API
+        server — it does not (see above). ``sky.catalog.list_accelerators``
+        runs in this process, but sky's catalog is lazily materialised: a cold
+        cache fetches the per-cloud pricing CSVs over HTTP on first read, so
+        the call can still block on the network for as long as that fetch
+        takes. This runs before anything is booked AND before the
+        instance-side watchdog is armed, so a hang here would stall a launch
+        with no guardrail running at all. Expiry counts as unreadable; the
+        worker is a daemon thread and is abandoned rather than joined.
+
+        Best-effort by contract: any failure — the catalog read raising, the
+        deadline expiring, no priced record for the accelerator, a shape this
+        code does not expect — returns None and the caller proceeds to launch.
+        It never raises.
+
+        Args:
+            accelerator: The accelerator name :meth:`create_instance` pinned
+                into ``resources["accelerators"]``, or None for a CPU-only
+                task.
+            placement: The resource block the launch was built from. Read for
+                ``spot``, which the catalog price does not model.
+
+        Returns:
+            USD per hour, or None when the estimate is unreadable.
+        """
+        if accelerator is None:
+            # CPU-only: sky's accelerator catalog has nothing to say about CPU
+            # SKUs, and there is no second catalog to consult. Unreadable, not
+            # zero — a zero would read as "free" and vouch for any cap.
+            return None
+        if placement.spot:
+            # The catalog carries a separate ``spot_price``; the parse this
+            # reuses reads only ``price`` (on-demand). Pricing a spot launch
+            # off the on-demand column would be a bound in the WRONG direction
+            # for a refusal — it would refuse launches that spot makes
+            # affordable. Report unreadable and let the readback do its job.
+            return None
+        result: list[float | None] = []
+
+        def _read() -> None:
             try:
-                return float(launched.get_cost(3600))
-            except Exception:  # noqa: BLE001 — same reason
-                return None
-        return None
+                result.append(self._catalog_floor_price(accelerator))
+            except Exception:  # noqa: BLE001 — never blocks a launch
+                logger.debug(
+                    "skypilot: pre-launch catalog price read failed", exc_info=True
+                )
+                result.append(None)
+
+        try:
+            worker = threading.Thread(
+                target=_read, name="kf-skypilot-estimate", daemon=True
+            )
+            worker.start()
+            worker.join(timeout=_ESTIMATE_TIMEOUT_S)
+        except Exception:  # noqa: BLE001 — even a thread-spawn fault is benign
+            logger.debug("skypilot: pre-launch estimate could not run", exc_info=True)
+            return None
+        if not result:
+            # Still running past the deadline (or died without appending).
+            return None
+        rate = result[0]
+        if rate is None:
+            return None
+        # A NaN comparison is False in both directions, so an unusable number
+        # must be reported as unreadable rather than silently waved through.
+        if not math.isfinite(rate) or rate < 0:
+            return None
+        return rate
+
+    def _selection_tags(self, cluster_name: str) -> dict[str, str]:
+        """Return sku / cloud / region / accelerators for a launched cluster.
+
+        S4 follow-up (finding: a SkyPilot ``RateCapExceeded`` read
+        ``provider=skypilot`` and nothing else). ``_placement_summary``
+        (``core/orchestrator.py``) reports only what an :class:`Instance`
+        holds, and a SkyPilot Instance held no selection identity — an
+        operator reading that violation could not tell "my cap is too low"
+        from "this went somewhere I did not intend". These are exactly the
+        four keys ``_placement_summary`` reads.
+
+        Keys the handle does not expose (attribute absent) are OMITTED, not
+        written as empty strings: ``_placement_summary`` already skips falsy
+        values, and a ``sku=`` with nothing after it reads as a broken tool
+        rather than as missing information. A key the handle DOES expose,
+        even with an empty/None value (e.g. ``accelerators`` on a CPU-only
+        booking), is still written — that is a real "no accelerator" fact,
+        not a read failure.
+
+        Trade-off: the read is wrapped in a single outer ``try/except``, so
+        one attribute raising on access (unusual, but not impossible for an
+        SDK object) discards every field read so far in the same call rather
+        than returning the three that succeeded. Accepted deliberately —
+        "never raises, never blocks a launch" is worth more than partial
+        credit here, and a per-field ``try/except`` would quadruple this
+        method's branch count for a fault mode that has never been observed.
+
+        Args:
+            cluster_name: The cluster to describe.
+
+        Returns:
+            A tag mapping, possibly empty. Never raises — any fault is logged
+            at debug level and swallowed so a status-read hiccup can never
+            block or fail an otherwise-successful launch.
+        """
+        try:
+            launched = self._launched_resources(cluster_name)
+            if launched is None:
+                return {}
+            tags: dict[str, str] = {}
+            for tag_key, attr_name in (
+                ("sku", "instance_type"),
+                ("cloud", "cloud"),
+                ("region", "region"),
+                ("accelerators", "accelerators"),
+            ):
+                value = getattr(launched, attr_name, _MISSING)
+                if value is _MISSING:
+                    continue
+                tags[tag_key] = (
+                    _format_accelerators(value)
+                    if tag_key == "accelerators"
+                    else ("" if value is None else str(value))
+                )
+        except Exception:  # noqa: BLE001 — a tag read must never block a launch
+            logger.debug(
+                "skypilot: could not read selection tags for cluster %r",
+                cluster_name,
+                exc_info=True,
+            )
+            return {}
+        return tags
 
     def list_instances(self) -> list[Instance]:
         """Return all active SkyPilot clusters.
@@ -1250,9 +1656,10 @@ class SkyPilotProvider(ComputeProvider):
             instance_id: The SkyPilot cluster name to destroy.
         """
         sky = self._sky()
-        # Pop the tunnel up front and kill it in a finally, so a failing
-        # sky.down (or status-poll) never leaks the ssh port-forward.
-        tunnel = self._tunnels.pop(instance_id, None)
+        # Pop the whole tunnel map up front and kill every one of them in a
+        # finally, so a failing sky.down (or status-poll) never leaks any of
+        # the ssh port-forwards — S5: there can be more than one per cluster.
+        tunnels = self._tunnels.pop(instance_id, None) or {}
         try:
             # Resolve the down RequestId so the call blocks until SkyPilot has
             # accepted (and committed to) the teardown — otherwise the provider
@@ -1270,8 +1677,8 @@ class SkyPilotProvider(ComputeProvider):
                     return  # confirmed gone
                 self._sleep(3.0)
         finally:
-            if tunnel is not None:
-                self._kill_tunnel(tunnel)
+            for tunnel in tunnels.values():
+                self._kill_tunnel(tunnel.proc)
 
     def heartbeat(self, instance_id: str) -> None:
         """No-op by design; ``HEARTBEAT_READ`` is not declared.
@@ -1296,15 +1703,118 @@ class SkyPilotProvider(ComputeProvider):
     # the ABC default) is summarized on ComputeProvider.last_heartbeat.
 
     def endpoints(self, instance: Instance) -> dict[str, str]:
-        """Return the SSH endpoint for ``instance``.
+        """Return the live local URLs for tunnels THIS process holds.
+
+        Pure by contract: no spawn, no network. A cluster launched by another
+        process (a warm attach) yields ``{}`` here — ``kinoforge status``
+        prints the cluster name for those, and a caller that needs to talk to
+        the cluster calls :meth:`ensure_endpoints` instead.
 
         Args:
-            instance: The cluster whose endpoint to return.
+            instance: The cluster whose endpoints to report.
 
         Returns:
-            ``{"ssh": "ssh://<instance.id>"}``
+            ``{"8000": "http://127.0.0.1:53411", ...}``, or ``{}``.
         """
-        return {"ssh": f"ssh://{instance.id}"}
+        return {
+            port: f"http://127.0.0.1:{tunnel.local_port}"
+            for port, tunnel in (self._tunnels.get(instance.id) or {}).items()
+            if self._tunnel_alive(tunnel)
+        }
+
+    def ensure_endpoints(self, instance: Instance) -> dict[str, str]:
+        """Re-establish any missing or dead forward, then report the map.
+
+        This is the actual fix for F11's warm-attach hazard: the ledger branch
+        replayed a dead local port and the fallback handed an ``ssh://`` URL to
+        an HTTP client. Both are cured by asking the provider for a live
+        endpoint rather than replaying a recorded one.
+
+        Args:
+            instance: The cluster to reach.
+
+        Returns:
+            A port-keyed map of absolute local URLs; ``{}`` when the port list
+            is unknown.
+        """
+        ports = self._ports_for(instance)
+        if not ports:
+            logger.warning(
+                "skypilot: no port list for cluster %r (tags['ports'] absent "
+                "and no numeric endpoint keys recorded); cannot establish a "
+                "tunnel",
+                instance.id,
+            )
+            return {}
+        return {
+            port: f"http://127.0.0.1:{self._ensure_tunnel(instance.id, port)[0]}"
+            for port in ports
+        }
+
+    @staticmethod
+    def _tunnel_alive(tunnel: _Tunnel) -> bool:
+        """True while the forward's subprocess is still running."""
+        try:
+            return tunnel.proc.poll() is None
+        except Exception:  # noqa: BLE001 — an unpollable handle is a dead one
+            return False
+
+    @staticmethod
+    def _ports_for(instance: Instance) -> tuple[str, ...]:
+        """Return the remote ports to forward for *instance*.
+
+        Prefers ``tags["ports"]`` (written at create time since S5); falls back
+        to the numeric keys of a recorded endpoint map, which is what a ledger
+        row written before S5 carries.
+
+        Args:
+            instance: The cluster in question.
+
+        Returns:
+            Declared ports in order, or an empty tuple.
+        """
+        raw = str(instance.tags.get("ports", ""))
+        tagged = tuple(p.strip() for p in raw.split(",") if p.strip())
+        if tagged:
+            return tagged
+        return tuple(k for k in instance.endpoints if k.isdigit())
+
+    def _ensure_tunnel(self, cluster_name: str, port: str) -> tuple[int, bool]:
+        """Return a live local port forwarding to ``port``, and whether it is new.
+
+        Reuses an existing forward when its subprocess is still running;
+        otherwise reaps the dead one and spawns a replacement.
+
+        The second element of the pair is what makes
+        :meth:`create_instance`'s failure cleanup correct. ``cluster_name`` is
+        stable across calls (it is ``spec.run_id``), so a second
+        ``create_instance`` for one cluster meets tunnels a previous, already-
+        succeeded call opened. Killing those on a later call's spawn failure
+        breaks a caller that is happily using them — and, because the cluster
+        then looks tunnel-free, takes the compute down with them. Only a
+        forward THIS call spawned may be torn down by this call.
+
+        Args:
+            cluster_name: The cluster to forward to.
+            port: The remote port.
+
+        Returns:
+            ``(local_port, spawned)`` — the local port, and True only when a
+            new subprocess was started by this call (a reused live forward
+            reports False).
+        """
+        held = self._tunnels.setdefault(cluster_name, {})
+        existing = held.get(port)
+        if existing is not None and self._tunnel_alive(existing):
+            return existing.local_port, False
+        if existing is not None:
+            self._kill_tunnel(existing.proc)
+        local_port = self._alloc_port()
+        held[port] = _Tunnel(
+            proc=self._ssh_spawn(cluster_name, local_port, int(port)),
+            local_port=local_port,
+        )
+        return local_port, True
 
 
 # ---------------------------------------------------------------------------

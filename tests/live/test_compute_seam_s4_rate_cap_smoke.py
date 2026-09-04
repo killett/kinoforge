@@ -23,6 +23,23 @@ Three claims, in cost order:
    a re-implementation of it) destroys the cluster and raises
    ``RateCapExceeded`` carrying that real number.
 
+This smoke covers the POST-LAUNCH arm on purpose. compute-seam S5 Task 8 added
+a PRE-launch refusal to ``SkyPilotProvider.create_instance``: it bounds the
+launch from sky's accelerator catalog and raises ``PreLaunchRateCapExceeded``
+before ``sky.launch`` when that bound already exceeds the cap. On THIS config
+that arm cannot fire at any cap, $0.01 included: ``skypilot-cpu.yaml`` is
+CPU-only, and ``_estimate_hourly_rate`` returns ``None`` for a CPU placement BY
+DESIGN — sky's accelerator catalog has nothing to say about CPU SKUs — which is
+the documented WARN-and-proceed path. The test forces the estimate unreadable
+anyway: the monkeypatch decouples this smoke from that fact about the config,
+so it keeps reaching the readback on the day the config grows an accelerator or
+the estimator learns to price CPU SKUs. The pre-launch arm has its own live
+smoke (``test_compute_seam_s5_smoke.py``, which prices a NAMED accelerator so
+the estimate is a real number); between
+them both arms are covered, and neither test is weakened to accommodate the
+other. Nothing about the readback, the enforcement or the teardown is stubbed
+here.
+
 Why the enforcement function is driven directly rather than through
 ``kinoforge generate``: the full path would additionally run ``engine.provision``
 against a comfyui setup that is known to fail on this CPU box (it fetches Wan
@@ -101,7 +118,10 @@ from kinoforge.core.config import load_config  # noqa: E402
 from kinoforge.core.errors import RateCapExceeded  # noqa: E402
 from kinoforge.core.interfaces import Instance  # noqa: E402
 from kinoforge.core.lifecycle import Ledger  # noqa: E402
-from kinoforge.core.orchestrator import _enforce_rate_cap  # noqa: E402
+from kinoforge.core.orchestrator import (  # noqa: E402
+    _enforce_rate_cap,
+    _record_provisional_row,
+)
 from kinoforge.providers.skypilot import SkyPilotProvider  # noqa: E402
 from kinoforge.stores.local import LocalArtifactStore  # noqa: E402
 
@@ -189,7 +209,9 @@ def _ec2_type_or_error(cluster_name: str) -> str:
     return types[0] if types else "<none>"
 
 
-def test_s4_a_violated_rate_cap_destroys_the_instance() -> None:
+def test_s4_a_violated_rate_cap_destroys_the_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A cap below the billed rate tears the cluster down and raises.
 
     Bug caught, and it is F4 itself: before S4 the cap was a filter over a
@@ -254,8 +276,38 @@ def test_s4_a_violated_rate_cap_destroys_the_instance() -> None:
         "at": _now_local(),
     }
 
+    # compute-seam S5 Task 8 added a PRE-launch refusal: create_instance now
+    # bounds the launch from sky's catalog and raises before sky.launch when
+    # the bound already exceeds the cap. On this CPU-only config the bound is
+    # unreadable regardless of the cap (_estimate_hourly_rate returns None for
+    # a CPU placement by design), so the $0.01 cap here cannot trip it today.
+    # Forcing it explicitly makes that independent of the config: if this cfg
+    # ever grows an accelerator, the refusal would otherwise end the smoke at
+    # create_instance and leave the POST-launch readback — the only thing this
+    # test exists to prove — unexercised. The forced value takes the documented
+    # WARN-and-proceed path, which is exactly the pre-Task-8 behaviour this
+    # smoke was written against. Nothing about the readback, the enforcement or
+    # the teardown is stubbed.
+    monkeypatch.setattr(
+        SkyPilotProvider,
+        "_estimate_hourly_rate",
+        lambda self, accelerator, placement: None,
+        raising=True,
+    )
+
     spec = dataclasses.replace(build_spec(cfg), run_id=cluster_name)
-    provider.set_launch_ledger(Ledger(store=LocalArtifactStore(_STATE_DIR)))
+    # F12 — the durable pre-launch row. compute-seam S5 Task 5 deleted the
+    # provider-side writer, so a smoke that drives create_instance directly
+    # (bypassing deploy_session) writes it the same way the orchestrator does.
+    # Rooted at the CLI's default state dir so it is discoverable without flags.
+    _record_provisional_row(
+        ledger=Ledger(store=LocalArtifactStore(_STATE_DIR)),
+        run_id=spec.run_id,
+        provider_name=provider.name,
+        tags=dict(spec.tags),
+        max_age_s=int(spec.lifecycle.max_lifetime_s),
+        now=time.time(),
+    )
 
     create_result: dict[str, Any] = {}
     create_exc: list[BaseException] = []

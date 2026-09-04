@@ -32,6 +32,14 @@ tags take precedence so e.g. ``"mode": "pod"`` survives), then call
 build the proxy URL dict), then ``dataclasses.replace`` the
 instance with the populated tags + endpoints fields.
 
+compute-seam S5 (``_resolve_warm_endpoints``) reworks the calling
+path: the recorded ``entry["endpoints"]`` is seeded onto the
+instance first, then ``provider.ensure_endpoints`` is asked for a
+live answer, so RunPod's tag-driven reconstruction below now runs
+through ``ensure_endpoints`` rather than a bare ``endpoints()`` call.
+The outcome this test asserts — a populated ``endpoints`` field —
+is unchanged.
+
 Cross-references:
   - Same root cause family as ``e33d564`` (orchestrator polling
     loop preserved created_at/tags/cost_rate; this is the
@@ -116,6 +124,12 @@ class _RunPodShapeProvider:
         ports = [p.strip() for p in ports_raw.split(",") if p.strip()]
         return {p: _PROXY_URL_PATTERN.format(pod_id=instance.id, port=p) for p in ports}
 
+    def ensure_endpoints(self, instance: Instance) -> dict[str, str]:
+        # Mirrors the ``ComputeProvider`` ABC default: a warm attach
+        # resolves endpoints through this door now (compute-seam S5), and
+        # RunPod's reconstruction is deterministic/network-free either way.
+        return self.endpoints(instance)
+
 
 _MODAL_POD_ID = "modal-test-warm-endpoints"
 _MODAL_URL = "https://x--kinoforge-run-build-27e651.modal.run"
@@ -150,10 +164,14 @@ class _ModalShapeProvider:
     """Provider that reproduces Modal's non-rebuildable endpoints.
 
     ``get_instance`` returns a sparse Instance (empty endpoints, ``{"mode":
-    "pod"}`` tags) like RunPod's, but crucially ``endpoints`` returns ``{}``
-    unconditionally — Modal cannot deterministically reconstruct its URL. So
-    the ONLY way ``_resolve_warm_instance`` can populate endpoints is by
-    replaying the persisted ``entry["endpoints"]``.
+    "pod"}`` tags) like RunPod's. ``endpoints``/``ensure_endpoints`` mirror
+    ``ModalProvider.endpoints`` (``providers/modal/__init__.py:354-358``):
+    with no in-process deployment record (always true in a fresh CLI
+    process) they echo whatever ``instance.endpoints`` already carries —
+    Modal cannot deterministically reconstruct its ``build-<hash>.modal.run``
+    URL from tags. So the ONLY way ``_resolve_warm_instance`` can populate
+    endpoints is by seeding the persisted ``entry["endpoints"]`` onto the
+    instance before asking the provider, exactly as compute-seam S5 requires.
     """
 
     def list_instances(self) -> list[Instance]:
@@ -170,8 +188,13 @@ class _ModalShapeProvider:
         )
 
     def endpoints(self, instance: Instance) -> dict[str, str]:
-        # Modal cannot rebuild its build-<hash> URL from ports.
-        return {}
+        # No in-process deployment record in a fresh process: echo whatever
+        # the instance already carries, same as ModalProvider.
+        return dict(instance.endpoints)
+
+    def ensure_endpoints(self, instance: Instance) -> dict[str, str]:
+        # Mirrors the ``ComputeProvider`` ABC default.
+        return self.endpoints(instance)
 
 
 class _Compute:

@@ -437,6 +437,46 @@ class ComputeProvider(ABC):
         """
         return {}
 
+    @classmethod
+    def nothing_booked_errors(cls) -> tuple[type[BaseException], ...]:
+        """Declare which of this provider's create errors PROVE nothing exists.
+
+        compute-seam S5 (ruling C1). The orchestrator writes a durable
+        ``kf_launch_phase=launching`` row before :meth:`create_instance` and
+        must decide, when that call raises, whether the row may be deleted. A
+        raise is NOT proof that nothing was booked — ``sky.launch`` raising on
+        a setup-script failure leaves an UP cluster, a best-effort ``sky.down``
+        can itself fail silently, and a Ctrl-C is caught while the provider's
+        API server goes on creating the resource. Deleting the row in those
+        cases leaves a live, billing resource with ZERO ledger rows, which is
+        the exact F12 hole the row exists to close. So the DEFAULT is to keep
+        the row and let ``cli/_reconcile`` age it out; only the errors named
+        here are trusted to mean "there is nothing to orphan".
+
+        This is the PORTABLE seam for that decision. ``kinoforge.core.*`` must
+        not import ``kinoforge.providers.*`` at module scope, so an error like
+        SkyPilot's ``PreLaunchRateCapExceeded`` — raised before ``sky.launch``
+        is even called — cannot be named in core. The provider names it
+        instead, and the orchestrator unions the result with the one error core
+        owns outright (:class:`~kinoforge.core.errors.CapacityError`, raised
+        when the capacity-wait window expires with nothing bookable).
+
+        Default empty on purpose, matching :meth:`consumes` and
+        :meth:`capabilities`: a provider that has not declared claims nothing,
+        so its failures are all treated as "might have booked something" — the
+        SAFE direction, because a surviving row costs a reconcile pass while a
+        deleted one can cost a whole invisible cluster. Declaring is part of
+        writing a provider, and
+        ``tests/core/test_provider_abc.py::test_every_provider_declares_its_nothing_booked_errors``
+        fails for any registered provider that skips it.
+
+        Returns:
+            The exception types whose being raised out of ``create_instance``
+            proves no resource was created. Every entry must be a
+            ``BaseException`` subclass; anything else is ignored by the caller.
+        """
+        return ()
+
     @abstractmethod
     def create_instance(self, spec: InstanceSpec) -> Instance: ...  # noqa: D102
 
@@ -562,6 +602,32 @@ class ComputeProvider(ABC):
 
     @abstractmethod
     def endpoints(self, instance: Instance) -> dict[str, str]: ...  # noqa: D102
+
+    def ensure_endpoints(self, instance: Instance) -> dict[str, str]:
+        """Return endpoints, repairing any provider-side plumbing first.
+
+        compute-seam S5. ``endpoints`` is a pure read: it reports what is
+        already reachable and never creates anything, because three of its
+        callers are observational (``kinoforge status``, the instance
+        overview, ``doctor``) and a read that spawns an ssh process per
+        invocation is a leak, not a feature.
+
+        ``ensure_endpoints`` is the door for callers that are about to make
+        requests. The default is the plain read — correct for every provider
+        whose URL is a pure function of the instance (RunPod's proxy hostname,
+        Modal's recorded ``.modal.run`` URL, local's scheme URL). SkyPilot
+        overrides it because its endpoint is a local port held open by a
+        subprocess that does not survive the process that launched it
+        (finding F11).
+
+        Args:
+            instance: The instance whose endpoints are needed.
+
+        Returns:
+            A port-keyed map of absolute URLs; ``{}`` when none can be
+            established.
+        """
+        return self.endpoints(instance)
 
 
 class ModelSource(ABC):

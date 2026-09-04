@@ -1999,66 +1999,67 @@ def test_deploy_session_tags_empty_dict_is_noop(tmp_path: Path) -> None:
     assert created_spec.tags["mode"] == "pod"
 
 
-class _LaunchLedgerSpyProvider(LocalProvider):
-    """LocalProvider spy recording every ledger installed via ``set_launch_ledger``.
+class _LedgerSnapshotProvider(LocalProvider):
+    """LocalProvider spy snapshotting the ledger from inside ``create_instance``.
 
-    F12's pre-launch ledger row (see ``tests/providers/test_skypilot.py``)
-    depends on ``deploy_session`` actually calling this duck-typed setter in
-    production — the SkyPilot unit tests only prove the provider's own
-    behavior *given* an installed ledger, never that the orchestrator wires
-    one in. This spy is provider-agnostic (any ``ComputeProvider`` exposing
-    the setter) so it exercises the orchestrator's wiring in isolation.
+    F12's pre-launch row depends on ``deploy_session`` binding the ledger it
+    builds to the SESSION store — a ledger over some other (or default) store
+    would write rows nothing can later read. compute-seam S5 Task 5 deleted the
+    duck-typed ``set_launch_ledger`` setter this spy used to observe, so the
+    binding is now proved where it is actually used: mid-create, through a
+    ledger the TEST constructs over the session store.
+
+    Attributes:
+        seen: Entries visible over the session store mid-create.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, ledger: Any) -> None:  # noqa: ANN401 — Ledger, duck-typed
         super().__init__()
-        self.installed_ledgers: list[Any] = []
+        self._probe_ledger = ledger
+        self.seen: list[dict[str, Any]] = []
 
-    def set_launch_ledger(self, ledger: Any) -> None:  # noqa: ANN401
-        self.installed_ledgers.append(ledger)
+    def create_instance(self, spec: InstanceSpec) -> Instance:
+        """Snapshot the ledger, then create as usual.
+
+        Args:
+            spec: The instance specification.
+
+        Returns:
+            The instance LocalProvider would have created anyway.
+        """
+        self.seen = list(self._probe_ledger.entries())
+        return super().create_instance(spec)
 
 
-def test_deploy_session_installs_launch_ledger_bound_to_session_store(
+def test_deploy_session_binds_the_provisional_ledger_to_the_session_store(
     tmp_path: Path,
 ) -> None:
-    """deploy_session wires a ledger into any provider exposing set_launch_ledger (F12).
+    """deploy_session's provisional ledger reads/writes the SESSION store (F12).
 
-    A bug this catches: a rename on either side of the
-    ``getattr(resolved_provider, "set_launch_ledger", None)`` duck-typed
-    lookup in ``deploy_session`` — or moving ``_resolve_provider`` out of
-    the ``requires_compute`` branch that lookup lives in — makes the
-    ``getattr`` silently return ``None`` and no-op. F12's pre-launch
-    protection would then be missing in production while every
-    SkyPilotProvider unit test (which calls ``set_launch_ledger`` directly,
-    bypassing the orchestrator) stays green.
+    A bug this catches: constructing the ledger over a default or otherwise
+    disconnected store — ``Ledger(store=some_other_store)``. Every row would be
+    written somewhere ``kinoforge list``, ``destroy`` and ``cli/_reconcile``
+    never look, so F12's pre-launch protection would be silently absent in
+    production while the helper-level tests in
+    ``tests/core/test_provisional_launch_row.py`` (which pass their own ledger
+    in) all stay green.
     """
     from kinoforge.core.lifecycle import Ledger
 
     cfg = _compute_cfg()
     store = LocalArtifactStore(tmp_path)
-    spy = _LaunchLedgerSpyProvider()
+    spy = _LedgerSnapshotProvider(Ledger(store=store))
     engine = _CountingFakeEngine()
 
-    with deploy_session(cfg, store=store, provider=spy, engine=engine, tags={}):
+    with deploy_session(
+        cfg, store=store, provider=spy, engine=engine, tags={}, run_id="f12-binding"
+    ):
         pass
 
-    assert len(spy.installed_ledgers) == 1
-    installed = spy.installed_ledgers[0]
-    assert isinstance(installed, Ledger)
-    # "Bound to the session store": a row written through the installed
-    # ledger must be visible through a fresh Ledger over the same store —
-    # proving it is not some disconnected/default-constructed store.
-    installed.record(
-        Instance(
-            id="f12-wiring-probe",
-            provider="probe",
-            status="starting",
-            created_at=0.0,
-        )
+    assert [entry["id"] for entry in spy.seen] == ["f12-binding"], (
+        "the provisional row was not visible over the session store mid-create"
     )
-    assert any(
-        entry["id"] == "f12-wiring-probe" for entry in Ledger(store=store).entries()
-    )
+    assert spy.seen[0]["tags"]["kf_launch_phase"] == "launching"
 
 
 def test_deploy_session_tags_ignored_when_instance_supplied(
