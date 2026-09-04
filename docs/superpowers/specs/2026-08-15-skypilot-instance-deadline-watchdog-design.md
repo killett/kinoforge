@@ -442,8 +442,18 @@ rather than remove the fallback.
 - A YAML surface for `autodown` / deadline overrides (Brief 5).
 - F11's broken warm-attach endpoint replay for skypilot — noted by the verification doc, untouched
   here.
-- **`deploy()`'s missing F12 protection (F4, final-review fix wave, 2026-08-15) — re-flagged, still
-  unwired.** The review confirmed the gap this doc already called out below: `deploy()`
+- **`deploy()`'s missing F12 protection (F4, final-review fix wave, 2026-08-15) — CLOSED 2026-09-04
+  by option (a).** The maintainer decision this note asked for was made: `deploy()` gained
+  `store: ArtifactStore | None = None` and `_cmd_deploy` passes `ctx.store()`. Option (b) was
+  rejected for the reason recorded below, option (c) for the heartbeat one. One thing the three
+  options did not cover surfaced on implementation: `deploy()` also passed `run_id=""`, which
+  `_record_provisional_row` refuses to key a row on AND which makes providers fall back to a shared
+  constant resource name, so `deploy()` now mints a run id (`_mint_deploy_run_id`) and the row is
+  keyed by the name the provider will actually use. `deploy()` also records the REAL row now — it is
+  the only place that can order that write ahead of the provisional collapse — so `_cmd_deploy` no
+  longer does. The original analysis is kept verbatim below because the rejected options' failure
+  modes are still the reasons not to revisit them. The review confirmed the gap this doc already
+  called out below: `deploy()`
   (`core/orchestrator.py:1520`, the entry point `cli/_commands.py:223` calls for the one-shot
   `kinoforge deploy` command — arguably the command most likely to eat a mid-launch Ctrl-C) takes no
   `store` or `state_dir` parameter, so it has no way to build the same `Ledger` the CLI's

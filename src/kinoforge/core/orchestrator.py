@@ -1336,9 +1336,9 @@ def _provision_instance_and_build_backend(
         ValidationError: Two distinct sites. (1) ``assert_launch_capabilities``
             finds an ERROR-severity capability gap. It runs once, after
             ``render_provision`` (it needs the authoritative launch) and
-            above the offer-retry / capacity-wait loops — so it raises before
-            ``find_offers`` or ``create_instance`` are reached and nothing
-            exists yet to destroy. (2) Spec validation fails inside ``_provision_compute_once``
+            above the capacity-wait loop — so it raises before
+            ``create_instance`` is reached (and with it the provider-side
+            selection S4 moved in there) and nothing exists yet to destroy. (2) Spec validation fails inside ``_provision_compute_once``
             after the instance is already created — that instance is destroyed
             before the exception propagates.
     """
@@ -1711,8 +1711,9 @@ def deploy_session(
         state_dir: Root for kinoforge state (provision markers, weights,
             locks).
         instance: Optional pre-created ``Instance`` to reuse. When
-            supplied, the orchestrator skips ``find_offers`` +
-            ``create_instance`` and uses the caller's instance directly.
+            supplied, the orchestrator skips ``create_instance`` (and the
+            provider-side selection inside it) and uses the caller's instance
+            directly.
             ``engine.provision`` still runs (idempotent via Layer I
             marker). Caller owns the lifecycle — teardown is suppressed
             on ``CapabilityMismatch`` so the warm pod survives drift

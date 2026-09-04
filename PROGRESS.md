@@ -431,7 +431,36 @@ first unchecked task without redoing committed work.
   longer route anyone into it. GCP's `roles.txt` is still entirely unmeasured — honest and labelled
   as such, rather than green from a caller-evaluated `testIamPermissions`.
 
-## RESUME SNAPSHOT (updated 2026-09-03 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-04 — read this, then STOP; below is history)
+
+**`kinoforge deploy` now has the same pre-launch protection as `deploy_session` (2026-09-04,
+commit `a305d092` + docs).** S5 closed F12 for the session path only; `deploy()` took no store, so
+the one-shot command — the one most likely to eat a mid-launch Ctrl-C — was the only launch path
+with no durable pre-launch record. Option **(a)** of the brief was taken: `store:
+ArtifactStore | None = None` is additive and defaulted, `_cmd_deploy` passes `ctx.store()`, and the
+row is written BEFORE `create_instance`, keyed by the client-side run id, kept on any raise the
+provider has not declared (ruling C1 parity), collapsed onto the real row on success.
+
+**Two things the brief's three options did not cover, decided on implementation:**
+- **`deploy()` mints a `run_id`.** It passed `run_id=""`, and an empty id is unusable twice over:
+  `_record_provisional_row` refuses to key a row on it (so the protection would have been a no-op
+  that looks wired — option (b)'s failure mode by another route), and providers fall back to a
+  SHARED constant name (`"kinoforge-pod"`, `"skypilot-cluster"`) when `spec.run_id` is empty, which
+  `cli/_reconcile._adopt_or_age_out` would then match against every concurrent deploy's resource.
+  `_mint_deploy_run_id` produces `kinoforge-deploy-<local-ts>-<6hex>`, used for BOTH the spec and
+  the row key. **Behaviour change:** a `kinoforge deploy` resource is now uniquely named instead of
+  taking the provider's constant fallback. No golden moved — the goldens are built by
+  `tools/snapshot_launch_payloads.build_spec`, not by `deploy()`.
+- **`deploy()` records the real row; `_cmd_deploy` no longer does.** The collapse needs the real row
+  to exist before it runs, and only the orchestrator can order that. `_cmd_deploy` keeps its
+  stall-window / restart-loop `touch` calls, which still find the row.
+
+Heartbeat wiring is intact and now pinned: `deploy()` still resolves through `_resolve_provider`,
+the sole site installing the B5a endpoint — the reason option (c) was rejected. Doc rot from S1–S5
+swept in the orchestrator + CLI: `deploy()`'s docstring no longer claims it calls `find_offers` and
+raises on an empty list; two other `find_offers` references corrected. No live spend — the fakes
+cover the ordering contract; four mutations (write-after-create, `run_id=""`, no collapse,
+unconditional forget) were each verified to fail the new tests.
 
 **WHOLE-BRANCH REVIEW APPLIED 2026-09-03 (one blocker + riders, one commit).** The review of
 `feat/compute-seam-s5-endpoint-shape-ledger` found ONE blocker, ruled by the operator, plus a set
