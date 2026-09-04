@@ -20,9 +20,11 @@ import dataclasses
 import logging
 import os
 import time
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
@@ -61,6 +63,7 @@ from kinoforge.core.interfaces import (
     Instance,
     InstanceSpec,
     Launch,
+    Lifecycle,
     ModelProfile,
     ModelProfileProvider,
     PipelineState,
@@ -652,6 +655,39 @@ def _record_provisional_row(
     return run_id
 
 
+def _mint_deploy_run_id(now: float | None = None) -> str:
+    """Return a fresh client-side run id for a one-shot ``deploy()``.
+
+    ``deploy`` takes no ``run_id`` from its caller the way ``deploy_session``
+    does, and an EMPTY one is not an option once the provisional row exists:
+
+    * :func:`_record_provisional_row` refuses to write a row it cannot key, so
+      an empty run id silently forfeits F12 protection on exactly the path most
+      likely to be interrupted;
+    * providers fall back to a SHARED constant name when ``spec.run_id`` is
+      empty (``"kinoforge-pod"`` on RunPod, ``"skypilot-cluster"`` on SkyPilot),
+      and ``cli/_reconcile._adopt_or_age_out`` adopts a launching row by
+      matching its id against that name — a constant would match every
+      concurrent deploy's resource, not this one's.
+
+    Local time, per project convention. The 6 hex characters are what make two
+    deploys inside the same second distinguishable; without them the row key and
+    the provider-side name would collide and the reconciler could adopt the
+    wrong resource. Lowercase/dash-only so it is a legal SkyPilot cluster name
+    and RunPod pod name.
+
+    Args:
+        now: Epoch seconds (injected for testability). Defaults to now.
+
+    Returns:
+        e.g. ``"kinoforge-deploy-20260904-141233-9f3ac1"``.
+    """
+    stamp = datetime.fromtimestamp(time.time() if now is None else now).strftime(
+        "%Y%m%d-%H%M%S"
+    )
+    return f"kinoforge-deploy-{stamp}-{uuid.uuid4().hex[:6]}"
+
+
 def _forget_provisional_row(
     ledger: Any,  # noqa: ANN401
     row_id: str | None,
@@ -697,6 +733,47 @@ def _forget_provisional_row(
             "F12 provisional ledger forget failed for %r; a stale 'launching' "
             "row may linger for a launch that never produced a resource",
             row_id,
+            exc_info=True,
+        )
+
+
+def _record_real_row(
+    ledger: Any,  # noqa: ANN401 — Ledger, or any object exposing record
+    instance: Instance,
+    *,
+    lifecycle: Lifecycle,
+    logger: logging.Logger = _log,
+) -> None:
+    """Write the durable row for a launched instance, best-effort.
+
+    The ``deploy()`` counterpart of ``deploy_session``'s ``_record_then_install``,
+    and it carries the same lifecycle snapshot so ``kinoforge status`` can
+    surface the policy without re-loading the YAML. ``max_age_s`` mirrors the
+    spec naming; the source attribute is ``Lifecycle.max_lifetime_s``.
+
+    Never raises, for the same reason every other ledger call on this path does
+    not: the instance is created and billing by the time this runs, and
+    ``deploy``'s error path DESTROYS the instance — so letting a store fault
+    escape here would tear down a healthy launch over bookkeeping. A fault
+    leaves the provisional row in place, which the reconciler can still resolve.
+
+    Args:
+        ledger: The ledger to write to.
+        instance: The launched instance.
+        lifecycle: Effective lifecycle guardrails for this launch.
+        logger: Injected for testability.
+    """
+    try:
+        ledger.record(
+            instance,
+            idle_timeout_s=int(lifecycle.idle_timeout_s),
+            max_age_s=int(lifecycle.max_lifetime_s),
+        )
+    except Exception:  # noqa: BLE001 — a ledger fault must not destroy a live pod
+        logger.warning(
+            "ledger.record failed for %r; the launch stands and its pre-launch "
+            "'launching' row is left for cli/_reconcile to resolve",
+            instance.id,
             exc_info=True,
         )
 
@@ -2114,6 +2191,8 @@ def deploy(
     engine: GenerationEngine | None = None,
     creds: CredentialProvider | None = None,
     tags: dict[str, str] | None = None,
+    store: ArtifactStore | None = None,
+    run_id: str = "",
 ) -> DeployResult:
     """Provision compute (or confirm hosted endpoint) for a kinoforge config.
 
@@ -2123,14 +2202,18 @@ def deploy(
     2. Resolve the engine (registry or injection).
     3. If ``engine.requires_compute == False`` (hosted): skip compute entirely,
        return a ``DeployResult`` with ``instance=None`` and the engine's endpoints.
-    4. Resolve the provider.  Call ``provider.find_offers(cfg.placement())``;
-       raise ``CapacityError`` if the list is empty.
+    4. Resolve the provider.  Since compute-seam S4 there is no offer pre-check
+       here: ``find_offers`` is off the ABC and selection happens inside
+       ``create_instance``, so an enumerating provider raises ``CapacityError``
+       from its own empty catalog, with its own message.
     5. **Dry-run:** print a vendor/engine-neutral plan and return a
        ``DeployResult(instance=None, plan_text=...)``.  ``create_instance`` is
-       NEVER called in dry-run mode.
-    6. **Live run:** create an instance, wait for ``status == "ready"``
-       (``LocalProvider`` returns ready immediately), and return a
-       ``DeployResult`` with the instance and provider endpoints.
+       NEVER called in dry-run mode, and no ledger row is written.
+    6. **Live run:** write the pre-launch provisional row (when *store* is
+       given), create an instance, wait for ``status == "ready"``
+       (``LocalProvider`` returns ready immediately), record the real row and
+       collapse the provisional one onto it, and return a ``DeployResult`` with
+       the instance and provider endpoints.
 
     Args:
         cfg: The loaded kinoforge configuration.
@@ -2145,12 +2228,26 @@ def deploy(
             built-in ``{kinoforge_engine, kinoforge_key}``. Caller wins on
             key collision, EXCEPT for kinoforge-reserved keys, which are
             dropped with a warning (see :func:`_strip_reserved_tags`).
+        store: The artifact store whose ledger receives this launch's rows —
+            the pre-launch ``kf_launch_phase=launching`` row (finding F12) and,
+            on success, the real one. Additive and defaulted so every existing
+            caller keeps working; ``None`` means no ledger row of either kind,
+            which is the pre-S5 behaviour. ``cli/_commands._cmd_deploy`` passes
+            ``ctx.store()`` — the same store ``kinoforge list``, the reconciler
+            and the sweeper read, which a store constructed in here from a
+            default path would NOT be.
+        run_id: Client-side id for this launch. It becomes ``spec.run_id``
+            (hence the provider-side resource NAME) and the provisional row's
+            key, which is what lets ``cli/_reconcile`` adopt the row by name.
+            Empty (the default) mints one — see :func:`_mint_deploy_run_id` for
+            why an empty id cannot simply be passed through.
 
     Returns:
         A ``DeployResult`` describing the outcome.
 
     Raises:
-        CapacityError: No compute offer satisfies ``cfg.placement()``.
+        CapacityError: The provider found nothing bookable for the cfg's
+            placement, or every candidate it tried lacked capacity.
     """
     key = cfg.capability_key()
     resolved_engine = _resolve_engine(cfg, engine)
@@ -2200,6 +2297,7 @@ def deploy(
     # ``kf_launch_phase`` produces a REAL row that reads as provisional and
     # every later collapse silently refuses.
     tags = _strip_reserved_tags(dict(tags or {}))
+    launch_run_id = run_id or _mint_deploy_run_id()
 
     def _build_spec() -> InstanceSpec:
         return build_instance_spec(
@@ -2212,12 +2310,49 @@ def deploy(
             image=image,
             lifecycle=lifecycle,
             env={},
-            run_id="",
+            run_id=launch_run_id,
             tags=tags,
         )
 
+    # F12 on the one-shot path. ``kinoforge deploy`` is the launch most likely
+    # to be interrupted mid-create, and until now it was the only launch path
+    # with no durable pre-launch record at all: a Ctrl-C during a multi-minute
+    # provision left a billing cluster with nothing in the ledger to find it.
+    # Same contract as ``_provision_instance_and_build_backend`` — written
+    # BEFORE create, keyed by the client-side run id, and kept on any raise the
+    # provider has not declared as booking nothing (ruling C1).
+    provisional_ledger = Ledger(store=store) if store is not None else None
+    provisional_id = (
+        _record_provisional_row(
+            ledger=provisional_ledger,
+            run_id=launch_run_id,
+            provider_name=getattr(resolved_provider, "name", "unknown"),
+            tags=dict(tags),
+            max_age_s=int(lifecycle.max_lifetime_s),
+            now=time.time(),
+        )
+        if provisional_ledger is not None
+        else None
+    )
+    # Read BEFORE the create so a fault in the declaration cannot land inside
+    # the failure path itself.
+    nothing_was_booked = _nothing_booked_error_types(resolved_provider)
+
     # compute-seam S4: selection and its retry belong to the provider.
-    instance = resolved_provider.create_instance(_build_spec())
+    try:
+        instance = resolved_provider.create_instance(_build_spec())
+    except nothing_was_booked:
+        # These, and ONLY these, prove no resource exists. A create that never
+        # produced one must not leave a row whose est_spend inflates forever
+        # (cli/_reconcile's "$210 phantom pod").
+        _forget_provisional_row(provisional_ledger, provisional_id)
+        raise
+    except BaseException:
+        # Ruling C1: a raise does not prove the provider booked nothing, and a
+        # Ctrl-C lands here as a BaseException while the provider's own API
+        # server goes on creating the resource. Leave the row;
+        # cli/_reconcile._adopt_or_age_out resolves it after the grace window.
+        raise
 
     try:
         # Poll until ready (LocalProvider returns ready immediately; cloud providers
@@ -2243,6 +2378,15 @@ def deploy(
         # that will immediately make HTTP requests against it, so use the
         # door that repairs a dead tunnel rather than the pure read.
         endpoints = resolved_provider.ensure_endpoints(instance)
+        # Order is load-bearing, and mirrors ``_provision_instance_and_build_backend``:
+        # the REAL row is written first, so no window exists in which a kill
+        # loses both rows, and ``_collapse_provisional_row`` removes the
+        # provisional one only because the real one is there to survive it.
+        # ``_cmd_deploy`` used to write this row after ``deploy`` returned;
+        # doing it here is what makes the collapse expressible at all.
+        if provisional_ledger is not None:
+            _record_real_row(provisional_ledger, instance, lifecycle=lifecycle)
+            _collapse_provisional_row(provisional_ledger, provisional_id, instance.id)
         _log.info(
             "deployed instance %r via %r (status=%s)",
             instance.id,

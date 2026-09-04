@@ -221,7 +221,14 @@ def _cmd_deploy(args: argparse.Namespace, ctx: SessionContext) -> int:
                 return 1
 
     try:
-        result = deploy(cfg, dry_run=args.dry_run)
+        # F12 — the store is what gives this one-shot path a durable
+        # pre-launch row. It MUST be ctx.store(): that is the store
+        # `kinoforge list`, the reconciler and the sweeper read, and a row
+        # anywhere else is protection that looks wired and finds nothing.
+        # The orchestrator also writes the REAL row from this store now (it
+        # is the only place that can order it before the provisional-row
+        # collapse), so this command no longer records it itself.
+        result = deploy(cfg, dry_run=args.dry_run, store=ctx.store())
     except UnknownAdapter as exc:
         print(f"error: unknown adapter — {exc}", file=sys.stderr)
         return 1
@@ -230,19 +237,8 @@ def _cmd_deploy(args: argparse.Namespace, ctx: SessionContext) -> int:
         print(result.plan_text)
     else:
         print(f"deployed: instance={result.instance and result.instance.id!r}")
-        # Record to ledger if an instance was created
         if result.instance is not None:
             ledger = ctx.ledger()
-            lc = cfg.lifecycle()
-            # Layer S: snapshot lifecycle policy onto the ledger entry so
-            # `kinoforge status` can surface it without re-loading the YAML.
-            # The persisted key `max_age_s` mirrors the spec naming; the
-            # source attribute on the Lifecycle dataclass is `max_lifetime_s`.
-            ledger.record(
-                result.instance,
-                idle_timeout_s=int(lc.idle_timeout_s),
-                max_age_s=int(lc.max_lifetime_s),
-            )
             override = getattr(args, "stall_window_override", None)
             if override is not None:
                 ledger.touch(result.instance.id, stall_window_s=float(override))
