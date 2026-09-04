@@ -40,12 +40,13 @@ first unchecked task without redoing committed work.
   live smokes PROVEN for ~$0.016 total. See the RESUME SNAPSHOT for the four corrections the design
   needed, which 4 goldens moved in the inversion (and why 13 more moved for an unrelated,
   mechanical reason), and the two follow-ups handed to S5.
-  **S5 (one endpoint shape + the ledger row generalised) SHIPPED 2026-09-02 — branch NOT yet merged**
+  **S5 (one endpoint shape + the ledger row generalised) SHIPPED 2026-09-02, MERGED to `main`**
   — plan `docs/superpowers/plans/2026-09-01-compute-seam-s5-endpoint-shape-ledger-generalisation.md`
   (`.tasks.json` co-located, 11 tasks, all committed), branch
-  `feat/compute-seam-s5-endpoint-shape-ledger`. Whole-branch review DONE 2026-09-03; its one
+  `feat/compute-seam-s5-endpoint-shape-ledger`, merged at `24363578` and the branch deleted
+  (it exists neither locally nor on `origin`). Whole-branch review DONE 2026-09-03; its one
   blocker (**ruling C1** — a create that raises now KEEPS its provisional row, and the reconciler's
-  provider-agnostic age-out is what clears it) and every rider are fixed. Ready to merge.
+  provider-agnostic age-out is what clears it) and every rider were fixed before the merge.
   **F11 and F12 are closed**: warm attach asks the provider for a LIVE endpoint instead of replaying
   a dead `127.0.0.1:<port>` or handing `ssh://` to an HTTP client, and every provider now gets an
   orchestrator-written `kf_launch_phase=launching` row before `create_instance`. One port-keyed
@@ -433,6 +434,39 @@ first unchecked task without redoing committed work.
 
 ## RESUME SNAPSHOT (updated 2026-09-04 — read this, then STOP; below is history)
 
+**Scanner coverage + a suite-fragility pass (2026-09-04, commits `39d915fd`, `a4e86d97`,
+`1d19ce6d`).** Three credential shapes that passed `tools/scan_secrets.py` in BOTH tiers are now
+covered: `google_api_key` (strict; `AIza` + a 30–45 url-safe band, because the documented 39-char
+form misses the truncated pastes it exists to catch, and the band's upper bound is what rejects a
+64-char digest), `gcp_private_key_id` (strict; anchored on the field name — `.gcp/kinoforge-sa.json`
+IS the GCP credential and a partial paste without the PEM body used to commit clean), and
+`url_credentials` (loose) + `url_credentials_strict` (strict). **The G2 tiering call, recorded
+because it is the judgement here:** blocking requires a >=12-char password that contains a digit and
+is not a `$VAR` reference; length alone is not enough, since
+`postgres://user:mysecretpassword@localhost:5432/db` is 16 chars with no placeholder marker, and a
+strict pattern that fires on a docs example teaches `--no-verify`. Accepted gap, stated plainly: a
+long lowercase digit-free password passes strict, is still redacted, and still shows under
+`--tier all`. Mirrored to `.claude/hooks/redact_secrets.py`; parity test green;
+`--all-tracked --tier strict` exits 0.
+
+**Two things found while chasing an unreproducible test failure — read this before trusting a
+one-off red run.** `test_second_generate_same_key_skips_provision` failed once in a full-suite run
+and was NEVER reproduced: three reruns of the identical file set, two of them under the ~10x CPU
+starvation the original run's 1045s wall-clock implies (vs 83s clean). It is NOT explained. What the
+hunt did produce:
+- `read_marker` collapsed "marker absent" (normal first generate) and "marker present but
+  unreadable/malformed" into the same bare `None`, and the caller's only reaction to `None` is to
+  re-provision — so a transient `EIO` produced a silent, minutes-long, on a live pod money-costing
+  re-provision with nothing recording why. Absent stays silent; present-but-unusable now warns
+  (`a4e86d97`). Confirmed by fault injection that this mechanism reproduces the exact symptom.
+- Three cross-process tests were genuinely load-fragile and failed reproducibly under contention:
+  they had subprocess A hold a lock for a fixed `time.sleep(2.0–2.5)` while subprocess B had to
+  cold-start an interpreter and import kinoforge inside that window. A now holds until the test
+  writes a release flag (`1d19ce6d`). Verified they still kill a lock-dropping mutant, and the full
+  file set passes **1993/1993 under 80 spinners on 4 cores** — the same load that failed all three
+  before. **Rule worth keeping: in these xprocess tests a wall-clock number may be a ceiling, never
+  the mechanism.**
+
 **`kinoforge deploy` now has the same pre-launch protection as `deploy_session` (2026-09-04,
 commit `a305d092` + docs).** S5 closed F12 for the session path only; `deploy()` took no store, so
 the one-shot command — the one most likely to eat a mid-launch Ctrl-C — was the only launch path
@@ -527,9 +561,10 @@ empty), `core/errors.py` untouched, `pixi run lint` / `typecheck` clean, and 268
 **Compute-seam S5 (one endpoint shape + the ledger row generalised) — SHIPPED 2026-09-02.** Plan
 `docs/superpowers/plans/2026-09-01-compute-seam-s5-endpoint-shape-ledger-generalisation.md`
 (`.tasks.json` co-located), all 11 tasks committed on branch
-`feat/compute-seam-s5-endpoint-shape-ledger`, commit range `876ea373`..HEAD. All three live claims
-**PROVEN**, **$0.0091 total** — two of them book nothing at all. **NOT yet merged to `main`:** the
-branch is held for a final whole-branch review.
+`feat/compute-seam-s5-endpoint-shape-ledger`, commit range `876ea373`..`d362d303`. All three live
+claims **PROVEN**, **$0.0091 total** — two of them book nothing at all. **MERGED to `main` at
+`24363578`** once the final whole-branch review cleared; the branch has been deleted locally and on
+`origin`.
 
 **F11 and F12 are closed.** F11: warm attach used to replay a dead `127.0.0.1:<port>` from the
 ledger, or fall back to handing an `ssh://` URL to an HTTP client. Now the caller asks the provider
@@ -657,10 +692,18 @@ HTTP client) and F12 (no durable record before `sky.launch`). Both S4-recorded f
   file moves all 13, so it must not ride along with unrelated work.
 - The pre-existing hang in `tests/engines/test_diffusers_set_lora_stack.py`.
 
-**SINGLE NEXT ACTION: merge `feat/compute-seam-s5-endpoint-shape-ledger` to `main`** the way S1
-(`40f0596c`), S2 (`e7e1df3d`), S3 (`2f062b75`) and S4 (`9e80470c`) landed. The whole-branch review
-is DONE and its one blocker (C1) plus every rider are fixed — see the C1 block at the top of this
-snapshot.
+**S5 IS MERGED — that action is DONE.** It landed at `24363578`, the way S1 (`40f0596c`), S2
+(`e7e1df3d`), S3 (`2f062b75`) and S4 (`9e80470c`) did, and the branch has been deleted locally and
+on `origin`. This line previously read "merge the S5 branch" and was stale for two days; it sent a
+later session hunting for a branch that no longer exists. **Verify merge state with
+`git log --oneline -1 24363578` and `git branch -a`, not with this file.**
+
+**SINGLE NEXT ACTION (updated 2026-09-04): none pending — operator picks the next brief.** The
+compute-seam stages S1–S5 are all shipped and merged, F4/F5/F6/F11/F12 are closed, and nothing in
+this snapshot is blocked. The forward pointer at the top of the file is the Modal provider roadmap
+brief; confirm with the operator that it is still the intended next line of work before starting it.
+Carried, not blocking: the one unreproduced `test_second_generate_same_key_skips_provision` failure
+described at the top of this snapshot.
 
 ---
 
