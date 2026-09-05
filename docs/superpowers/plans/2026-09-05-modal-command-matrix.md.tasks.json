@@ -1,0 +1,93 @@
+{
+  "planPath": "docs/superpowers/plans/2026-09-05-modal-command-matrix.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Results document skeleton",
+      "status": "pending",
+      "description": "**Goal:** Create `docs/modal-command-matrix.md` with every cell pre-listed as `PENDING`, so a mid-campaign crash leaves a legible record of what was and was not run.\n\n**Files:**\n- Create: `docs/modal-command-matrix.md`\n\n**Acceptance Criteria:**\n- [ ] The document has a preamble (purpose, date, budget, link to the plan and spec), a running `Spend so far` line, and one table per tier.\n- [ ] Every cell id from Tasks 1\u20138 appears exactly once with verdict `PENDING`.\n- [ ] `pixi run pre-commit run --files docs/modal-command-matrix.md` passes.\n\n**Verify:** `rg -c \"PENDING\" docs/modal-command-matrix.md` \u2192 54\n\n```json:metadata\n{\"files\": [\"docs/modal-command-matrix.md\"], \"verifyCommand\": \"rg -c \\\"PENDING\\\" docs/modal-command-matrix.md\", \"acceptanceCriteria\": [\"The document has a preamble (purpose, date, budget, link to the plan and spec), a running `Spend so far` line, and one table per tier.\", \"Every cell id from Tasks 1\\u20138 appears exactly once with verdict `PENDING`.\", \"`pixi run pre-commit run --files docs/modal-command-matrix.md` passes.\"], \"modelTier\": \"standard\", \"liveSpend\": false}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: Tier 0 \u2014 the offline surface ($0)",
+      "status": "pending",
+      "description": "**Goal:** Run every command that spends nothing against all five Modal configs and an empty ledger, and record each verdict.\n\n**Files:**\n- Modify: `docs/modal-command-matrix.md`\n\n**Acceptance Criteria:**\n- [ ] Every T0 cell has a verdict and, for FAIL, the exact error text.\n- [ ] Any validation regression from S1\u2013S5 that surfaces here is either fixed (small) or filed before Tier 1 starts.\n\n**Verify:** `rg -c \"T0-.*PENDING\" docs/modal-command-matrix.md` \u2192 0\n\n```json:metadata\n{\"files\": [\"docs/modal-command-matrix.md\"], \"verifyCommand\": \"rg -c \\\"T0-.*PENDING\\\" docs/modal-command-matrix.md\", \"acceptanceCriteria\": [\"Every T0 cell has a verdict and, for FAIL, the exact error text.\", \"Any validation regression from S1\\u2013S5 that surfaces here is either fixed (small) or filed before Tier 1 starts.\"], \"modelTier\": \"standard\", \"liveSpend\": false}\n```",
+      "blockedBy": [
+        0
+      ]
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Tier 1a \u2014 one warm Wan 2.1 1.3B pod through every stateful command (~$0.",
+      "status": "pending",
+      "description": "**Goal:** Cold-boot one A10 pod with default warm-reuse and drive every read, attach, batch and teardown command against it before destroying it.\n\n**Files:**\n- Modify: `docs/modal-command-matrix.md`, `successful-generations.md` (See-also under \u00a722; new section for batch-on-Modal if T1-13 passes)\n\n**Acceptance Criteria:**\n- [ ] T1-01 produces an mp4 with frame-QA PASS and the pod survives (warm-reuse default).\n- [ ] Every T1-02 \u2026 T1-14 cell has a verdict recorded against the live pod.\n- [ ] Teardown proof (ledger empty + no running app) recorded after T1-16.\n\n**Verify:** `rg -c \"T1-(0[1-9]|1[0-6]).*PENDING\" docs/modal-command-matrix.md` \u2192 0\n\n```json:metadata\n{\"files\": [\"docs/modal-command-matrix.md\", \"successful-generations.md\"], \"verifyCommand\": \"rg -c \\\"T1-(0[1-9]|1[0-6]).*PENDING\\\" docs/modal-command-matrix.md\", \"acceptanceCriteria\": [\"T1-01 produces an mp4 with frame-QA PASS and the pod survives (warm-reuse default).\", \"Every T1-02 \\u2026 T1-14 cell has a verdict recorded against the live pod.\", \"Teardown proof (ledger empty + no running app) recorded after T1-16.\"], \"modelTier\": \"standard\", \"liveSpend\": true}\n```",
+      "blockedBy": [
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Tier 1b \u2014 deploy-first lifecycle (~$0.10)",
+      "status": "pending",
+      "description": "**Goal:** Prove the `deploy` \u2192 `provision` \u2192 `generate --instance-id` \u2192 `reap --apply` path on Modal.\n\n**Files:**\n- Modify: `docs/modal-command-matrix.md`, `successful-generations.md` (new section if PASS: deploy-first on Modal)\n\n**Acceptance Criteria:**\n- [ ] `deploy` returns an instance id and writes the pre-launch provisional row (visible in `list` during boot).\n- [ ] `generate --instance-id` attaches without a second deploy and produces a frame-QA-PASS mp4.\n- [ ] `reap --apply --id` destroys it; teardown proof recorded.\n\n**Verify:** `rg -c \"T1-(19|2[0-2]).*PENDING\" docs/modal-command-matrix.md` \u2192 0\n\n```json:metadata\n{\"files\": [\"docs/modal-command-matrix.md\", \"successful-generations.md\"], \"verifyCommand\": \"rg -c \\\"T1-(19|2[0-2]).*PENDING\\\" docs/modal-command-matrix.md\", \"acceptanceCriteria\": [\"`deploy` returns an instance id and writes the pre-launch provisional row (visible in `list` during boot).\", \"`generate --instance-id` attaches without a second deploy and produces a frame-QA-PASS mp4.\", \"`reap --apply --id` destroys it; teardown proof recorded.\"], \"modelTier\": \"standard\", \"liveSpend\": true}\n```",
+      "blockedBy": [
+        2
+      ]
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Tier 1c \u2014 ephemeral runs and the reapers (~$0.15)",
+      "status": "pending",
+      "description": "**Goal:** Prove `--ephemeral generate` leaves no local record, that `sweeper start` reaps the idle ephemeral app, and that `reap --include-orphans --apply` is the alternative.\n\n**Files:**\n- Modify: `docs/modal-command-matrix.md` (no successful-generations entry \u2014 ephemeral)\n\n**Acceptance Criteria:**\n- [ ] After T1-23 the ledger is empty, the artifact exists locally only where `--ephemeral` allows, and `ephemeral-index.json` names the app.\n- [ ] The sweeper (stall-tight window) reaches `STALL_REAP` \u2192 `destroyed_and_forgot`; app gone from Modal.\n- [ ] Second ephemeral gen reaped by `reap --include-orphans --apply`; teardown proof.\n\n**Verify:** `rg -c \"T1-2[3-7].*PENDING\" docs/modal-command-matrix.md` \u2192 0\n\n```json:metadata\n{\"files\": [\"docs/modal-command-matrix.md\"], \"verifyCommand\": \"rg -c \\\"T1-2[3-7].*PENDING\\\" docs/modal-command-matrix.md\", \"acceptanceCriteria\": [\"After T1-23 the ledger is empty, the artifact exists locally only where `--ephemeral` allows, and `ephemeral-index.json` names the app.\", \"The sweeper (stall-tight window) reaches `STALL_REAP` \\u2192 `destroyed_and_forgot`; app gone from Modal.\", \"Second ephemeral gen reaped by `reap --include-orphans --apply`; teardown proof.\"], \"modelTier\": \"standard\", \"liveSpend\": true}\n```",
+      "blockedBy": [
+        3
+      ]
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Tier 1d \u2014 grid (~$0.15)",
+      "status": "pending",
+      "description": "**Goal:** Prove `kinoforge grid` composes a 1x2 grid from two Modal generations sharing one warm pod, with the last cell auto-destroying.\n\n**Files:**\n- Modify: `docs/modal-command-matrix.md`, `successful-generations.md` (new section if PASS: grid on Modal)\n\n**Acceptance Criteria:**\n- [ ] Exit code 0 (`full`), composed mp4 with two captioned cells, frame-QA PASS.\n- [ ] `budget_cap_usd` respected (exit 3 recorded if crossed).\n- [ ] Teardown proof after the run.\n\n**Verify:** `rg -c \"T1-2[89].*PENDING\" docs/modal-command-matrix.md` \u2192 0\n\n```json:metadata\n{\"files\": [\"docs/modal-command-matrix.md\", \"successful-generations.md\"], \"verifyCommand\": \"rg -c \\\"T1-2[89].*PENDING\\\" docs/modal-command-matrix.md\", \"acceptanceCriteria\": [\"Exit code 0 (`full`), composed mp4 with two captioned cells, frame-QA PASS.\", \"`budget_cap_usd` respected (exit 3 recorded if crossed).\", \"Teardown proof after the run.\"], \"modelTier\": \"standard\", \"liveSpend\": true}\n```",
+      "blockedBy": [
+        4
+      ]
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Tier 2a \u2014 FlashVSR upscale on A100-80GB (~$0.45)",
+      "status": "pending",
+      "description": "**Goal:** Prove `upscale` x4 with warm-reuse, the `--scale 1080p` warm-attach on the same pod, and an ephemeral `--no-reuse` upscale.\n\n**Files:**\n- Modify: `docs/modal-command-matrix.md`, `successful-generations.md` (See-also under \u00a724 and \u00a727)\n\n**Acceptance Criteria:**\n- [ ] T2-01 output is 1920\u00b2 and frame-QA PASS (no false colour \u2014 the 2026-07-03 failure mode).\n- [ ] T2-02 attaches to the T2-01 pod without a second deploy and outputs 1080\u00b2.\n- [ ] Teardown proof after T2-04 and after T2-05.\n\n**Verify:** `rg -c \"T2-0[1-5].*PENDING\" docs/modal-command-matrix.md` \u2192 0\n\n```json:metadata\n{\"files\": [\"docs/modal-command-matrix.md\", \"successful-generations.md\"], \"verifyCommand\": \"rg -c \\\"T2-0[1-5].*PENDING\\\" docs/modal-command-matrix.md\", \"acceptanceCriteria\": [\"T2-01 output is 1920\\u00b2 and frame-QA PASS (no false colour \\u2014 the 2026-07-03 failure mode).\", \"T2-02 attaches to the T2-01 pod without a second deploy and outputs 1080\\u00b2.\", \"Teardown proof after T2-04 and after T2-05.\"], \"modelTier\": \"standard\", \"liveSpend\": true}\n```",
+      "blockedBy": [
+        5
+      ]
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Tier 2b \u2014 RIFE interpolate on T4 (~$0.10)",
+      "status": "pending",
+      "description": "**Goal:** Prove `interpolate --fps 60 --no-reuse`, an alternate fps, and chaining on the T2-01 upscaled output.\n\n**Files:**\n- Modify: `docs/modal-command-matrix.md`, `successful-generations.md` (See-also under \u00a725)\n\n**Acceptance Criteria:**\n- [ ] T2-06 output has 60 fps per `ffprobe_fps` and ~4\u00d7 the input frame count; frame-QA PASS.\n- [ ] T2-07 (input = T2-01's 1920\u00b2 mp4, `--fps 32`) succeeds or fails with a recorded reason (VRAM on T4).\n- [ ] Teardown proof after each (both `--no-reuse`).\n\n**Verify:** `rg -c \"T2-0[67].*PENDING\" docs/modal-command-matrix.md` \u2192 0\n\n```json:metadata\n{\"files\": [\"docs/modal-command-matrix.md\", \"successful-generations.md\"], \"verifyCommand\": \"rg -c \\\"T2-0[67].*PENDING\\\" docs/modal-command-matrix.md\", \"acceptanceCriteria\": [\"T2-06 output has 60 fps per `ffprobe_fps` and ~4\\u00d7 the input frame count; frame-QA PASS.\", \"T2-07 (input = T2-01's 1920\\u00b2 mp4, `--fps 32`) succeeds or fails with a recorded reason (VRAM on T4).\", \"Teardown proof after each (both `--no-reuse`).\"], \"modelTier\": \"standard\", \"liveSpend\": true}\n```",
+      "blockedBy": [
+        6
+      ]
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: Tier 3 \u2014 Wan 2.2 14B on A100-80GB, capped $4",
+      "status": "pending",
+      "description": "**Goal:** One `generate --no-reuse` on the 14B config, killed at $4 of spend, never retried.\n\n**Files:**\n- Modify: `docs/modal-command-matrix.md`, `successful-generations.md` (See-also under \u00a723 if PASS)\n\n**Acceptance Criteria:**\n- [ ] Cumulative matrix spend before launch \u2264 $14 (else SKIPPED, recorded).\n- [ ] The run is destroyed the moment wall-clock \u00d7 $2.50/hr reaches $4 (96 min) or the util rule fires.\n- [ ] Verdict recorded with boot time, gen time, and whether the HF Volume cache served the weights.\n\n**Verify:** `rg -c \"T3-01.*PENDING\" docs/modal-command-matrix.md` \u2192 0\n\n```json:metadata\n{\"files\": [\"docs/modal-command-matrix.md\", \"successful-generations.md\"], \"verifyCommand\": \"rg -c \\\"T3-01.*PENDING\\\" docs/modal-command-matrix.md\", \"acceptanceCriteria\": [\"Cumulative matrix spend before launch \\u2264 $14 (else SKIPPED, recorded).\", \"The run is destroyed the moment wall-clock \\u00d7 $2.50/hr reaches $4 (96 min) or the util rule fires.\", \"Verdict recorded with boot time, gen time, and whether the HF Volume cache served the weights.\"], \"modelTier\": \"standard\", \"liveSpend\": true}\n```",
+      "blockedBy": [
+        7
+      ]
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: Wrap-up",
+      "status": "pending",
+      "description": "**Goal:** Turn the matrix into the operator's answer: a summary of what works, what does not, what was fixed, and what is filed.\n\n**Files:**\n- Modify: `docs/modal-command-matrix.md` (summary section at top), `PROGRESS.md` (RESUME SNAPSHOT entry + follow-ups), `README.md` (one line pointing at the matrix under project structure)\n\n**Acceptance Criteria:**\n- [ ] No `PENDING` left; every FAIL names a follow-up or the fix commit.\n- [ ] Total spend line \u2264 $18 and reconciled against `kinoforge cost` + Modal's dashboard figure the operator can check.\n- [ ] `pixi run pre-commit run --all-files` green; final commit on `main`.\n\n**Verify:** `rg -c \"PENDING\" docs/modal-command-matrix.md` \u2192 0\n\n```json:metadata\n{\"files\": [\"docs/modal-command-matrix.md\", \"PROGRESS.md\", \"README.md\"], \"verifyCommand\": \"rg -c \\\"PENDING\\\" docs/modal-command-matrix.md\", \"acceptanceCriteria\": [\"No `PENDING` left; every FAIL names a follow-up or the fix commit.\", \"Total spend line \\u2264 $18 and reconciled against `kinoforge cost` + Modal's dashboard figure the operator can check.\", \"`pixi run pre-commit run --all-files` green; final commit on `main`.\"], \"modelTier\": \"standard\", \"liveSpend\": false}\n```",
+      "blockedBy": [
+        8
+      ]
+    }
+  ],
+  "lastUpdated": "2026-09-05T16:16:43"
+}
