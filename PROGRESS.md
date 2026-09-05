@@ -443,6 +443,17 @@ first unchecked task without redoing committed work.
 
 ## RESUME SNAPSHOT (updated 2026-09-05 — read this, then STOP; below is history)
 
+**CI back to green — macOS `setsid` (2026-09-05, one commit).** The `Test (macos-latest)` leg had
+failed on every push since 2026-08-18 (8-run streak; Ubuntu green throughout): the five
+`test_watchdog_arm_idempotency` tests run the REAL arm prelude, whose spawn was hard-wired to
+`setsid nohup …`, and macOS ships no `setsid`. The `2>&1 >> watchdog.log` redirect swallowed the
+"command not found", so pytest only saw "spawn failed". Fix in the prelude, not a Darwin skip: `_kf_setsid`
+is set only when `command -v setsid` finds one, so Linux nodes still detach from the setup session and
+hosts without util-linux fall back to bare `nohup`. Pinned on Linux by
+`test_arming_spawns_when_setsid_is_absent_from_path` (real prelude under a symlink-only PATH that omits
+`setsid`), which reproduced the exact macOS message RED. Five SkyPilot goldens re-snapshotted; only the
+spawn lines differ. CI history 2026-06-10→09-05: 54 success / 49 failure / 26 cancelled.
+
 **The unprotected `deploy()` path says so (2026-09-05, one commit).** `deploy(store=None)` on a live
 compute run now logs a WARNING naming the consequence — no pre-launch record, so a mid-create
 interruption leaves a billing resource nothing can find. Log, not raise: the default exists for library

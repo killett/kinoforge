@@ -12,6 +12,7 @@ interpreter, because the guarantee lives in the shell, not in python.
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -88,8 +89,18 @@ def _sudo_calls(wd_dir: Path) -> list[str]:
     return [line for line in log.read_text().splitlines() if line]
 
 
-def _arm(wd_dir: Path, stub: Path, deadline: float, now: float, sudo: Path) -> str:
-    """Run the rendered arming snippet; return its combined output."""
+def _arm(
+    wd_dir: Path,
+    stub: Path,
+    deadline: float,
+    now: float,
+    sudo: Path,
+    env_overrides: dict[str, str] | None = None,
+) -> str:
+    """Run the rendered arming snippet; return its combined output.
+
+    ``env_overrides`` is layered last, so a test can pin e.g. ``PATH``.
+    """
     script = RENDER_ARM(deadline_epoch=deadline, now=now)
     completed = subprocess.run(
         ["bash", "-c", script],
@@ -101,6 +112,7 @@ def _arm(wd_dir: Path, stub: Path, deadline: float, now: float, sudo: Path) -> s
             "KF_WD_PYTHON": str(stub),
             "KF_WD_SUDO": str(sudo),
             "HOME": str(wd_dir.parent),
+            **(env_overrides or {}),
         },
         timeout=30,
     )
@@ -372,5 +384,55 @@ def test_watchdog_process_inherits_kf_wd_dir_via_export(
         assert child_env_file.exists(), "watchdog never wrote its env snapshot"
         child_env = child_env_file.read_text()
         assert f"KF_WD_DIR={wd_dir}\n" in child_env, child_env
+    finally:
+        _kill(wd_dir)
+
+
+_PRELUDE_TOOLS = (
+    "bash",
+    "sh",
+    "mkdir",
+    "mv",
+    "cat",
+    "pgrep",
+    "head",
+    "nohup",
+    "sleep",
+    "env",
+    "dirname",
+)
+
+
+def test_arming_spawns_when_setsid_is_absent_from_path(
+    tmp_path: Path, stub_python: Path, sudo_stub: Path
+) -> None:
+    """The spawn must not depend on ``setsid``, which macOS does not ship.
+
+    A bug this catches: ``setsid nohup ...`` hard-wired into the prelude, so
+    every host without util-linux (macOS CI, a dev laptop) reports
+    "spawn failed" and leaves only the kernel backstop. Reproduced by running
+    the real prelude under a PATH that holds every tool it needs EXCEPT
+    ``setsid`` — on Linux, where ``setsid`` is otherwise always found.
+    """
+    bin_dir = tmp_path / "bin-without-setsid"
+    bin_dir.mkdir()
+    for tool in _PRELUDE_TOOLS:
+        real = shutil.which(tool)
+        assert real is not None, f"{tool} missing on test host"
+        (bin_dir / tool).symlink_to(real)
+    wd_dir = tmp_path / "wd"
+    try:
+        out = _arm(
+            wd_dir,
+            stub_python,
+            deadline=2_000_000_000.0,
+            now=1_999_999_000.0,
+            sudo=sudo_stub,
+            env_overrides={"PATH": str(bin_dir)},
+        )
+        assert "spawn failed" not in out, out
+        assert "armed pid" in out, out
+        pid = int((wd_dir / "pid").read_text().strip())
+        os.kill(pid, 0)  # raises if not alive
     finally:
         _kill(wd_dir)

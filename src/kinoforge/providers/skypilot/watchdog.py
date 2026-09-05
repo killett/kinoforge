@@ -325,7 +325,12 @@ if [ -n "$_kf_live_pid" ]; then
   echo "$_kf_live_pid" > "$KF_WD_DIR/pid" 2>/dev/null
   echo "[kinoforge-watchdog] already armed (pid $_kf_live_pid); deadline refreshed to @deadline_epoch"
 else
-  setsid nohup "$KF_WD_PYTHON" "$KF_WD_DIR/watchdog.py" >> "$KF_WD_DIR/watchdog.log" 2>&1 &
+  # setsid (util-linux) detaches the daemon from setup's session so it
+  # survives the setup shell; macOS has no setsid, so fall back to a bare
+  # nohup there rather than failing the spawn outright.
+  _kf_setsid=""
+  command -v setsid >/dev/null 2>&1 && _kf_setsid="setsid"
+  $_kf_setsid nohup "$KF_WD_PYTHON" "$KF_WD_DIR/watchdog.py" >> "$KF_WD_DIR/watchdog.log" 2>&1 &
   sleep 0.2
   _kf_live_pid="$(pgrep -f "$KF_WD_DIR/watchdog.py" 2>/dev/null | head -n1)"
   if [ -n "$_kf_live_pid" ]; then
