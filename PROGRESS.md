@@ -456,9 +456,22 @@ history rewrite, because a rewrite would have been undone by the next commit oth
   file. Renamed `.template.json`, `<S3_OUTPUT_BUCKET>` placeholder, rendered via
   `tools/render_aws_policy.py --policy bedrock-{nova-reel,luma-ray} --output-bucket …`. A test pins every
   S3 ARN in both is the placeholder — the identifier guard only sees `s3://` URIs, not `arn:aws:s3:::`.
-**Still pending after these land: the history rewrite** (`git-filter-repo` v2.47.0 fetched to the
-scratchpad; replacement map built; backup bundle verified) and the force-push the operator authorised.
-The `kf-prod` and `acme-*` values are test doubles and are OUT of the map.
+**History rewrite DONE 2026-09-04** (`git-filter-repo` v2.47.0, `--replace-text` + `--replace-message`,
+run as a continuation of the 2026-07-19 E51 rewrite). The map from the earlier session had not survived
+on disk, so it was rebuilt from a scan of every blob in every ref with the `scan_identifiers` patterns
+plus an `arn:aws:s3:::` shape the tracked-tree guard does not cover. Eight literal values, all replaced
+with the placeholders the tracked tree already used: the AWS account (`<AWS_ACCOUNT>`), the GCP project
+(`<GCP_PROJECT>`), the GCP billing account (`<GCP_BILLING_ACCOUNT>`), the AWS KMS key UUID
+(`<KMS_KEY_ID>`), the pre-June keyring/bucket-prefix name (`<GCS_KMS_KEYRING>`), the two Bedrock output
+buckets (both `<S3_OUTPUT_BUCKET>`), and the diagnostics bucket (`<DIAG_BUCKET>`). `kf-prod`, `acme-*`,
+`layer-w-test`, `probe-discard` and the `skypilot-`/`kf-example-` prefixes are test doubles and stayed.
+Verified after the rewrite: the blob scan over all refs reports only those doubles; no value survives in
+any commit message; the tracked-tree guards pass; `git fsck` is clean; 2365 commits before and after.
+Four of the values were still in tracked docs (plans, PROGRESS history, one pragma'd research note), so
+HEAD's tree changed too — that is the point. **Every short SHA quoted in this file before this entry
+predates the rewrite**; translate through `.git/filter-repo/commit-map` (old → new, cumulative over
+both rewrites). Only `main` and `v0.5.0` moved on `origin`; the five older tags predate the first leak.
+Pre-rewrite backup: `kinoforge-pre-rewrite-20260904-*.bundle` in the session scratchpad (ephemeral).
 
 **The scoped-policy UNVALIDATED banner is retired on AWS and replaced on GCP (2026-09-04, commits
 `352323ad`, `41c38654`, `d097c320`, `c4225787`).** Brief:
