@@ -6,7 +6,13 @@
 # Ray v2, or any future Bedrock async-video model — no code change needed.
 #
 # Setup (one-time):
-#   1. Attach .aws/policies/bedrock-luma-ray.json to the kinoforge-ci IAM user
+#   1. Render and attach the scoped policy. The tracked file is a TEMPLATE
+#      (`<AWS_ACCOUNT>`, `<S3_OUTPUT_BUCKET>`) and cannot be attached as-is:
+#        pixi run python tools/render_aws_policy.py --policy bedrock-luma-ray \
+#          --output-bucket "$KINOFORGE_LIVE_S3_BUCKET" \
+#          --out /tmp/bedrock-luma-ray.rendered.json
+#      then attach /tmp/bedrock-luma-ray.rendered.json to the kinoforge-ci IAM user
+#      (see .aws/README.md, "Bedrock policies").
 #   2. AWS Model access page is retired — serverless foundation models
 #      auto-activate on first invoke. No console step needed.
 #

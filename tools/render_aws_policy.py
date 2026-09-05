@@ -1,17 +1,30 @@
-r"""Render `.aws/policies/skypilot-minimal.template.json` into an attachable policy.
+r"""Render a tracked `.aws/policies/*.template.json` into an attachable policy.
 
-The tracked policy carries `<AWS_ACCOUNT>`, `<KMS_KEY_ID>` and
-`<S3_BUCKET_PREFIX>` placeholders, so it cannot be handed to
-`aws iam put-user-policy` directly — AWS rejects a malformed ARN. This
-module substitutes them and writes the result OUTSIDE the repository, which
-is what lets the tracked file stay clean under
+The tracked policies carry `<AWS_ACCOUNT>`, `<KMS_KEY_ID>`,
+`<S3_BUCKET_PREFIX>` and `<S3_OUTPUT_BUCKET>` placeholders, so they cannot
+be handed to `aws iam put-user-policy` directly — AWS rejects a malformed
+ARN. This module substitutes them and writes the result OUTSIDE the
+repository, which is what lets the tracked files stay clean under
 `tests/test_cloud_identifier_scrub.py` while the attach still works.
+
+Three templates, selected with `--policy`:
+
+- `skypilot-minimal` (default) — needs `--bucket-prefix`; `<KMS_KEY_ID>`
+  is optional (see below).
+- `bedrock-nova-reel`, `bedrock-luma-ray` — need `--output-bucket`, the ONE
+  S3 bucket the async-invoke job writes its video to. These two hardcoded a
+  real bucket in their S3 ARNs for three months while templating
+  `<AWS_ACCOUNT>` in the same file; the placeholder is what stopped that.
 
 Usage::
 
     python tools/render_aws_policy.py \\
       --bucket-prefix my-prefix \\
       --out /tmp/skypilot-minimal.rendered.json
+
+    python tools/render_aws_policy.py --policy bedrock-luma-ray \\
+      --output-bucket my-video-output-bucket \\
+      --out /tmp/bedrock-luma-ray.rendered.json
 
 `--account` defaults to the caller's own account via `sts:GetCallerIdentity`;
 `--kms-key-id` defaults to the key id parsed out of the gitignored
@@ -33,7 +46,19 @@ from pathlib import Path
 from typing import Any
 
 _REPO_ROOT: Path = Path(__file__).resolve().parents[1]
-_POLICY_PATH: Path = _REPO_ROOT / ".aws" / "policies" / "skypilot-minimal.template.json"
+_POLICIES_DIR: Path = _REPO_ROOT / ".aws" / "policies"
+_POLICY_PATH: Path = _POLICIES_DIR / "skypilot-minimal.template.json"
+#: `--policy` choices -> tracked template. Which placeholders each carries
+#: is not encoded here on purpose: `render()`'s survivor check is the
+#: authority, and a table that disagreed with the file would be the bug.
+_POLICY_TEMPLATES: dict[str, Path] = {
+    "skypilot-minimal": _POLICY_PATH,
+    "bedrock-nova-reel": _POLICIES_DIR / "bedrock-nova-reel.template.json",
+    "bedrock-luma-ray": _POLICIES_DIR / "bedrock-luma-ray.template.json",
+}
+#: Templates that scope S3 by prefix vs. to one named output bucket.
+_PREFIX_POLICIES = frozenset({"skypilot-minimal"})
+_OUTPUT_BUCKET_POLICIES = frozenset({"bedrock-nova-reel", "bedrock-luma-ray"})
 _KMS_ARN_FILE: Path = _REPO_ROOT / ".aws" / "kms-test-key.arn"
 
 # Named placeholders this module knows how to substitute. Deliberately
@@ -47,13 +72,22 @@ _KMS_ARN_FILE: Path = _REPO_ROOT / ".aws" / "kms-test-key.arn"
 _PLACEHOLDER_RE = re.compile(r"<[A-Z0-9_]+>")
 
 _ACCOUNT_RE = re.compile(r"^[0-9]{12}$")
+#: S3 bucket-name grammar, the strict subset: lowercase, digits, dot,
+#: hyphen, 3-63 chars, starts and ends alphanumeric. No `*` -- a wildcard
+#: in the output-bucket ARN widens the grant to every bucket in the account.
+_BUCKET_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
 
 
 _KMS_STATEMENT_SID = "KMSLayerW"
 
 
 def render(
-    policy_text: str, *, account: str, kms_key_id: str | None, bucket_prefix: str
+    policy_text: str,
+    *,
+    account: str,
+    kms_key_id: str | None,
+    bucket_prefix: str | None,
+    output_bucket: str | None = None,
 ) -> str:
     """Substitute every placeholder in *policy_text*.
 
@@ -66,13 +100,21 @@ def render(
             When `None`, a one-line notice naming the dropped statement
             and `--kms-key-id` as the way to get it back is printed to
             stderr.
-        bucket_prefix: S3 bucket-name prefix the policy is scoped to.
+        bucket_prefix: S3 bucket-name prefix the policy is scoped to, or
+            `None` for a template that has no `<S3_BUCKET_PREFIX>`. `None`
+            and `""` are deliberately different: the empty string is still
+            refused, because it is a flag the operator got wrong, not a
+            template that has no prefix.
+        output_bucket: The one S3 bucket a Bedrock template's
+            `<S3_OUTPUT_BUCKET>` scopes to, or `None` for a template that
+            has no such placeholder.
 
     Returns:
         The rendered policy JSON as text.
 
     Raises:
         ValueError: *bucket_prefix* is empty, `*`, or contains whitespace;
+            *output_bucket* is not a legal, wildcard-free bucket name;
             *account* is not a 12-digit id; or a `<...>` placeholder
             survived substitution (named, if it matches the known
             `<[A-Z0-9_]+>` shape, or unnamed otherwise).
@@ -80,23 +122,33 @@ def render(
             example a substituted value contained an unescaped quote or
             backslash and corrupted the surrounding structure.
     """
-    if not bucket_prefix:
+    if bucket_prefix is not None:
+        if not bucket_prefix:
+            raise ValueError(
+                "bucket_prefix must be non-empty; an empty prefix widens the S3 grant"
+            )
+        if bucket_prefix != bucket_prefix.strip() or any(
+            ch.isspace() for ch in bucket_prefix
+        ):
+            raise ValueError(
+                f"bucket_prefix {bucket_prefix!r} contains whitespace; that is "
+                "never a valid S3 bucket-name-prefix character and likely "
+                "indicates a copy-paste mistake"
+            )
+        if "*" in bucket_prefix:
+            raise ValueError(
+                f"bucket_prefix {bucket_prefix!r} contains '*'; a wildcard prefix "
+                "widens the S3 grant to arn:aws:s3:::*-* -- far broader than the "
+                "operator asked for"
+            )
+    if output_bucket is not None and not _BUCKET_NAME_RE.fullmatch(output_bucket):
         raise ValueError(
-            "bucket_prefix must be non-empty; an empty prefix widens the S3 grant"
-        )
-    if bucket_prefix != bucket_prefix.strip() or any(
-        ch.isspace() for ch in bucket_prefix
-    ):
-        raise ValueError(
-            f"bucket_prefix {bucket_prefix!r} contains whitespace; that is "
-            "never a valid S3 bucket-name-prefix character and likely "
-            "indicates a copy-paste mistake"
-        )
-    if "*" in bucket_prefix:
-        raise ValueError(
-            f"bucket_prefix {bucket_prefix!r} contains '*'; a wildcard prefix "
-            "widens the S3 grant to arn:aws:s3:::*-* -- far broader than the "
-            "operator asked for"
+            f"output_bucket {output_bucket!r} is not a legal S3 bucket name "
+            "(lowercase letters, digits, '.', '-'; 3-63 chars; no '*'). The "
+            "Bedrock templates grant PutObject on exactly this one bucket, so a "
+            "wildcard here widens that to every bucket in the account, and "
+            "anything AWS would reject as a name only ever means a copy-paste "
+            "mistake"
         )
     if not _ACCOUNT_RE.fullmatch(account):
         raise ValueError(
@@ -126,9 +178,11 @@ def render(
         policy["Statement"] = kept
         policy_text = json.dumps(policy)
 
-    out = policy_text.replace("<AWS_ACCOUNT>", account).replace(
-        "<S3_BUCKET_PREFIX>", bucket_prefix
-    )
+    out = policy_text.replace("<AWS_ACCOUNT>", account)
+    if bucket_prefix is not None:
+        out = out.replace("<S3_BUCKET_PREFIX>", bucket_prefix)
+    if output_bucket is not None:
+        out = out.replace("<S3_OUTPUT_BUCKET>", output_bucket)
     if kms_key_id is not None:
         out = out.replace("<KMS_KEY_ID>", kms_key_id)
     survivors = sorted(set(_PLACEHOLDER_RE.findall(out)))
@@ -260,11 +314,35 @@ def main(argv: list[str] | None = None) -> int:
         statement (see `render`'s *kms_key_id* behavior).
     """
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--policy",
+        choices=sorted(_POLICY_TEMPLATES),
+        default="skypilot-minimal",
+        help="which tracked template to render (default: skypilot-minimal)",
+    )
     parser.add_argument("--account", default=None)
     parser.add_argument("--kms-key-id", default=None)
-    parser.add_argument("--bucket-prefix", required=True)
+    parser.add_argument(
+        "--bucket-prefix",
+        default=None,
+        help="S3 bucket-name prefix; required for --policy skypilot-minimal",
+    )
+    parser.add_argument(
+        "--output-bucket",
+        default=None,
+        help="the one S3 output bucket; required for the bedrock-* policies",
+    )
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
+
+    # Per-template required flags, enforced here rather than by argparse so
+    # the message names the flag the operator missed. Left to the survivor
+    # check, the error would name the placeholder inside the template
+    # instead, which points at the wrong thing to fix.
+    if args.policy in _PREFIX_POLICIES and args.bucket_prefix is None:
+        raise ValueError(f"--policy {args.policy} requires --bucket-prefix")
+    if args.policy in _OUTPUT_BUCKET_POLICIES and args.output_bucket is None:
+        raise ValueError(f"--policy {args.policy} requires --output-bucket")
 
     # Resolved path is for the containment check (and the printed message)
     # ONLY -- resolving follows symlinks, which is exactly the information
@@ -282,7 +360,10 @@ def main(argv: list[str] | None = None) -> int:
 
     account = args.account or _default_account()
     kms_key_id: str | None = args.kms_key_id
-    if not kms_key_id:
+    # Only the SkyPilot template carries <KMS_KEY_ID>. Resolving the ARN
+    # file for a Bedrock render would make it fail on a malformed
+    # .aws/kms-test-key.arn that the Bedrock policy never reads.
+    if not kms_key_id and args.policy in _PREFIX_POLICIES:
         try:
             kms_key_id = resolve_kms_key_id()
         except FileNotFoundError:
@@ -293,10 +374,11 @@ def main(argv: list[str] | None = None) -> int:
             # that signals corrupted state, not "no key available".
             kms_key_id = None
     rendered = render(
-        _POLICY_PATH.read_text(),
+        _POLICY_TEMPLATES[args.policy].read_text(),
         account=account,
-        kms_key_id=kms_key_id,
+        kms_key_id=kms_key_id or None,
         bucket_prefix=args.bucket_prefix,
+        output_bucket=args.output_bucket,
     )
     _write_secure(out_path, rendered)
     print(f"rendered policy written to {resolved_out_path}")  # noqa: T201

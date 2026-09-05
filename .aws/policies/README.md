@@ -54,6 +54,23 @@ service interaction IAM's simulator doesn't model, or a quota/capacity
 limit that has nothing to do with permissions. That gap is what the live
 run below closes.
 
+## `bedrock-nova-reel.template.json`, `bedrock-luma-ray.template.json`
+
+Inline-sized policies for the two Bedrock async-video engines: model invoke
+in the engine's region plus `s3:PutObject`/`GetObject`/`HeadObject` on
+`<S3_OUTPUT_BUCKET>` — the **one** bucket the job writes its output to.
+Render with `tools/render_aws_policy.py --policy <name> --output-bucket
+<bucket>`; the renderer refuses a wildcard or an illegal bucket name. Apply
+steps are in `.aws/README.md` under "Bedrock policies".
+
+Neither has been simulate- or launch-validated the way the SkyPilot policy
+above has; they were attached by hand on 2026-06-07 and the live smokes
+(`tests/live/test_nova_reel_live.py`, `tests/live/test_luma_ray_live.py`)
+have run green under them since. `tests/tools/test_render_aws_policy.py`
+pins that every S3 ARN in both files is the placeholder — the tracked-tree
+identifier guard only sees `s3://` URIs, not `arn:aws:s3:::` resources, so
+that test is the guard for the shape these files actually use.
+
 ## What the live launch proved
 
 2026-09-04, `tests/live/test_scoped_policy_aws_live.py`, ~$0.02 of EC2.

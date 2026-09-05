@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.render_aws_policy import render, resolve_kms_key_id
+from tools.render_aws_policy import main, render, resolve_kms_key_id
 
 _ACCOUNT = "9" + "18273645" + "019"
 _KEY_ID = "4b0dbe0c-" + "3a76-401a-" + "ac2e-" + "d0d949b9fa3e"
@@ -472,3 +472,203 @@ def test_main_chmods_a_pre_existing_regular_file_at_out(tmp_path: Path) -> None:
         ]
     )
     assert stat.S_IMODE(out_path.stat().st_mode) == 0o600
+
+
+# ---------------------------------------------------------------------------
+# Bedrock output-bucket templates. The two Bedrock policies hardcoded a real
+# bucket in their S3 ARNs for three months while templating <AWS_ACCOUNT> in
+# the very same file. They now carry <S3_OUTPUT_BUCKET> and render through
+# the same path as the SkyPilot template.
+# ---------------------------------------------------------------------------
+
+_REPO = Path(__file__).resolve().parents[2]
+_BEDROCK_TEMPLATES = (
+    _REPO / ".aws" / "policies" / "bedrock-nova-reel.template.json",
+    _REPO / ".aws" / "policies" / "bedrock-luma-ray.template.json",
+)
+
+_BEDROCK_SHAPED = json.dumps(
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "AsyncInvoke",
+                "Effect": "Allow",
+                "Action": ["bedrock:StartAsyncInvoke"],
+                "Resource": ["arn:aws:bedrock:us-west-2:<AWS_ACCOUNT>:async-invoke/*"],
+            },
+            {
+                "Sid": "OutputBucket",
+                "Effect": "Allow",
+                "Action": ["s3:PutObject"],
+                "Resource": [
+                    "arn:aws:s3:::<S3_OUTPUT_BUCKET>",
+                    "arn:aws:s3:::<S3_OUTPUT_BUCKET>/*",
+                ],
+            },
+        ],
+    }
+)
+
+
+def test_render_substitutes_the_output_bucket_placeholder() -> None:
+    """A Bedrock-shaped template renders with only account + output bucket.
+
+    Bug caught: `render()` not knowing `<S3_OUTPUT_BUCKET>` -- the survivor
+    check then refuses the whole document, which is correct behaviour for
+    an unknown placeholder and exactly why this test has to exist before
+    the placeholder does.
+    """
+    out = render(
+        _BEDROCK_SHAPED,
+        account=_ACCOUNT,
+        kms_key_id=None,
+        bucket_prefix=None,
+        output_bucket="example-video-out",
+    )
+    parsed = json.loads(out)
+    by_sid = {s["Sid"]: s for s in parsed["Statement"]}
+    assert by_sid["OutputBucket"]["Resource"] == [
+        "arn:aws:s3:::example-video-out",
+        "arn:aws:s3:::example-video-out/*",
+    ]
+    assert by_sid["AsyncInvoke"]["Resource"] == [
+        f"arn:aws:bedrock:us-west-2:{_ACCOUNT}:async-invoke/*"
+    ]
+    assert "<" not in out
+
+
+@pytest.mark.parametrize("bad", ["", "*", "example-*", "Has Space", "UPPER-case"])
+def test_render_rejects_a_malformed_or_wildcard_output_bucket(bad: str) -> None:
+    """The S3 grant is scoped to ONE bucket; anything wider is refused.
+
+    Bug caught: passing the value straight into the ARN. `*` and `example-*`
+    widen the grant to every bucket; the empty string yields
+    `arn:aws:s3:::` which IAM accepts and which grants nothing, so the
+    launch fails later and elsewhere; uppercase and spaces are not legal
+    bucket names and only ever indicate a copy-paste mistake.
+    """
+    with pytest.raises(ValueError, match="output_bucket"):
+        render(
+            _BEDROCK_SHAPED,
+            account=_ACCOUNT,
+            kms_key_id=None,
+            bucket_prefix=None,
+            output_bucket=bad,
+        )
+
+
+def test_render_still_refuses_an_empty_bucket_prefix_when_a_prefix_is_given() -> None:
+    """`None` means "this template has no prefix"; `""` is still a mistake.
+
+    Bug caught: relaxing the existing empty-prefix guard to `if bucket_prefix`
+    while making the parameter optional -- an explicit empty string would
+    then silently skip validation and leave `<S3_BUCKET_PREFIX>` to the
+    survivor check, whose message points at the template rather than at
+    the flag the operator actually got wrong.
+    """
+    with pytest.raises(ValueError, match="bucket_prefix"):
+        render(_TEMPLATE, account=_ACCOUNT, kms_key_id=_KEY_ID, bucket_prefix="")
+
+
+@pytest.mark.parametrize("template", _BEDROCK_TEMPLATES, ids=lambda p: p.name)
+def test_tracked_bedrock_templates_carry_no_concrete_bucket(template: Path) -> None:
+    """Every S3 ARN in the tracked Bedrock templates is the placeholder.
+
+    Bug caught: a real bucket name pasted back into an S3 ARN. The
+    identifier guard (`tests/test_cloud_identifier_scrub.py`) only sees
+    `s3://` URIs, not `arn:aws:s3:::` resources, so this is the guard for
+    the shape these files actually use.
+    """
+    doc = json.loads(template.read_text())
+    s3_resources = [
+        r
+        for stmt in doc["Statement"]
+        for r in (
+            stmt["Resource"]
+            if isinstance(stmt["Resource"], list)
+            else [stmt["Resource"]]
+        )
+        if r.startswith("arn:aws:s3:::")
+    ]
+    assert s3_resources, (
+        f"{template.name} grants nothing on S3 -- template shape changed?"
+    )
+    assert all("<S3_OUTPUT_BUCKET>" in r for r in s3_resources), s3_resources
+
+
+@pytest.mark.parametrize(
+    ("policy", "sid"),
+    [
+        ("bedrock-nova-reel", "NovaReelOutputBucket"),
+        ("bedrock-luma-ray", "LumaRayOutputBucket"),
+    ],
+)
+def test_main_renders_a_tracked_bedrock_template(
+    tmp_path: Path, policy: str, sid: str
+) -> None:
+    """The CLI can select a Bedrock template and render it attachable.
+
+    Reads the REAL tracked template, so this also proves the file on disk is
+    placeholder-clean and renders to valid JSON -- not just that the
+    substitution logic works on a fixture.
+    """
+    out_path = tmp_path / "rendered.json"
+    exit_code = main(
+        [
+            "--policy",
+            policy,
+            "--account",
+            _ACCOUNT,
+            "--output-bucket",
+            "example-video-out",
+            "--out",
+            str(out_path),
+        ]
+    )
+    assert exit_code == 0
+    text = out_path.read_text()
+    assert "<" not in text
+    by_sid = {s["Sid"]: s for s in json.loads(text)["Statement"]}
+    assert by_sid[sid]["Resource"] == [
+        "arn:aws:s3:::example-video-out",
+        "arn:aws:s3:::example-video-out/*",
+    ]
+
+
+def test_main_refuses_a_bedrock_policy_without_an_output_bucket(tmp_path: Path) -> None:
+    """Selecting a Bedrock template without `--output-bucket` is an error.
+
+    Bug caught: falling through to the survivor check, whose message names
+    the placeholder in the template rather than the missing flag.
+    """
+    with pytest.raises(ValueError, match="--output-bucket"):
+        main(
+            [
+                "--policy",
+                "bedrock-luma-ray",
+                "--account",
+                _ACCOUNT,
+                "--out",
+                str(tmp_path / "rendered.json"),
+            ]
+        )
+
+
+def test_main_refuses_the_skypilot_policy_without_a_bucket_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--bucket-prefix` stops being argparse-required but stays required here.
+
+    Bug caught: dropping `required=True` to make room for the Bedrock
+    templates and forgetting to re-enforce it for the one template that
+    needs it.
+    """
+    import tools.render_aws_policy as render_aws_policy_module
+
+    def _raise_absent(arn_file: Path = tmp_path / "absent.arn") -> str:
+        raise FileNotFoundError(arn_file)
+
+    monkeypatch.setattr(render_aws_policy_module, "resolve_kms_key_id", _raise_absent)
+    with pytest.raises(ValueError, match="--bucket-prefix"):
+        main(["--account", _ACCOUNT, "--out", str(tmp_path / "rendered.json")])

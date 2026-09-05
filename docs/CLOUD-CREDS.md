@@ -122,7 +122,7 @@ models auto-activate on first invoke; no console step needed for Luma Ray v2.
 
 | Policy name | Grants | Attachment | Date | Source |
 |---|---|---|---|---|
-| `kinoforge-luma-ray` (inline) | Bedrock InvokeModel + StartAsyncInvoke + GetAsyncInvoke (Luma Ray v2 ARNs in us-west-2) + ListFoundationModels + GetFoundationModelAvailability + CreateFoundationModelAgreement + S3 read/write on `<S3_BUCKET_LUMA_RAY>` | Inline on `kinoforge-ci` (replaces `kinoforge-nova-reel`) | 2026-06-07 | `.aws/policies/bedrock-luma-ray.json` (extended in-situ) |
+| `kinoforge-luma-ray` (inline) | Bedrock InvokeModel + StartAsyncInvoke + GetAsyncInvoke (Luma Ray v2 ARNs in us-west-2) + ListFoundationModels + GetFoundationModelAvailability + CreateFoundationModelAgreement + S3 read/write on `<S3_BUCKET_LUMA_RAY>` | Inline on `kinoforge-ci` (replaces `kinoforge-nova-reel`) | 2026-06-07 | `.aws/policies/bedrock-luma-ray.template.json` (extended in-situ; rendered with `tools/render_aws_policy.py --policy bedrock-luma-ray`) |
 | `AmazonBedrockFullAccess` (managed) | Full Bedrock control-plane access; used for model-access diagnostics | Attached to `kinoforge-ci` | 2026-06-07 | AWS managed; can be detached once smoke passes |
 
 Reversible: `aws iam delete-user-policy --user-name kinoforge-ci --policy-name kinoforge-luma-ray`

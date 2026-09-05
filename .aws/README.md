@@ -275,6 +275,36 @@ The scoped policy covers all S3 operations kinoforge needs against the
 `<S3_BUCKET_PREFIX>-*` and `skypilot-*` prefixes; broader S3
 access is not required.
 
+## Bedrock policies — apply instructions
+
+`.aws/policies/bedrock-nova-reel.template.json` and
+`.aws/policies/bedrock-luma-ray.template.json` scope Bedrock async-invoke plus
+`s3:PutObject`/`GetObject`/`HeadObject` on the **one** bucket the job writes
+its video to. Like the SkyPilot template, they carry placeholders
+(`<AWS_ACCOUNT>`, `<S3_OUTPUT_BUCKET>`) and must be rendered first:
+
+```bash
+pixi run python tools/render_aws_policy.py \
+  --policy bedrock-luma-ray \
+  --output-bucket "$KINOFORGE_LIVE_S3_BUCKET" \
+  --out /tmp/bedrock-luma-ray.rendered.json
+```
+
+`--output-bucket` is the same bucket the live smokes read from
+`KINOFORGE_LIVE_S3_BUCKET` in `.env`; the renderer refuses a wildcard or an
+illegal name, because the grant is meant to cover exactly one bucket. These
+policies are small enough to attach **inline** (unlike the SkyPilot one):
+
+```bash
+aws iam put-user-policy --user-name kinoforge-ci \
+  --policy-name kinoforge-luma-ray \
+  --policy-document file:///tmp/bedrock-luma-ray.rendered.json
+```
+
+Until 2026-09-04 both files hardcoded a real bucket name in their S3 ARNs
+while templating `<AWS_ACCOUNT>` in the same document. That is the reason
+for the `.template` rename: the name is what tells you not to attach it as-is.
+
 ## Rotation
 
 Access keys age. AWS recommends rotation every 90 days.

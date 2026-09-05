@@ -443,6 +443,23 @@ first unchecked task without redoing committed work.
 
 ## RESUME SNAPSHOT (updated 2026-09-04 — read this, then STOP; below is history)
 
+**Bucket names out of source (2026-09-04, two commits after `800dc642`).** A history scan for the
+account-id scrub found five real bucket names in tracked files, and the operator's question — "shouldn't
+those have been in `.env` the whole time?" — was the right one. `.env.example` already carried five
+`KINOFORGE_*_BUCKET` variables; three places bypassed the convention. Fixed at the source, **before** the
+history rewrite, because a rewrite would have been undone by the next commit otherwise:
+- `orchestrator._build_diagnostic_env` had a hardcoded real default for `KINOFORGE_DIAG_BUCKET`. No default
+  now; absent/empty means the in-pod trap skips the upload (its `-n` guard already existed). Provisioner
+  and probe tools resolve the bucket at RUN time and refuse when unset; live C28/C30 paths skip; golden
+  substrate uses `STUB_DIAG_BUCKET`. Documented in `.env.example` as OPTIONAL.
+- The two Bedrock IAM policies hardcoded a real bucket ARN while templating `<AWS_ACCOUNT>` in the same
+  file. Renamed `.template.json`, `<S3_OUTPUT_BUCKET>` placeholder, rendered via
+  `tools/render_aws_policy.py --policy bedrock-{nova-reel,luma-ray} --output-bucket …`. A test pins every
+  S3 ARN in both is the placeholder — the identifier guard only sees `s3://` URIs, not `arn:aws:s3:::`.
+**Still pending after these land: the history rewrite** (`git-filter-repo` v2.47.0 fetched to the
+scratchpad; replacement map built; backup bundle verified) and the force-push the operator authorised.
+The `kf-prod` and `acme-*` values are test doubles and are OUT of the map.
+
 **The scoped-policy UNVALIDATED banner is retired on AWS and replaced on GCP (2026-09-04, commits
 `352323ad`, `41c38654`, `d097c320`, `c4225787`).** Brief:
 `docs/superpowers/briefs/2026-09-04-scoped-policy-validation.md`; decision + plan:

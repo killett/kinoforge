@@ -1,7 +1,13 @@
 # AWS Bedrock Nova Reel 1.1 — text-to-video on the official Amazon model.
 #
 # Setup (one-time, automated in Layer 3 plan Tasks 4-5):
-#   1. Attach .aws/policies/bedrock-nova-reel.json to the kinoforge-ci IAM user
+#   1. Render and attach the scoped policy. The tracked file is a TEMPLATE
+#      (`<AWS_ACCOUNT>`, `<S3_OUTPUT_BUCKET>`) and cannot be attached as-is:
+#        pixi run python tools/render_aws_policy.py --policy bedrock-nova-reel \
+#          --output-bucket "$KINOFORGE_LIVE_S3_BUCKET" \
+#          --out /tmp/bedrock-nova-reel.rendered.json
+#      then attach /tmp/bedrock-nova-reel.rendered.json to the kinoforge-ci IAM user
+#      (see .aws/README.md, "Bedrock policies").
 #   2. Verify Nova Reel model access via `pixi run probe-hosted --config examples/configs/bedrock-nova-reel-t2v.yaml`
 #
 # Live smoke: `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_nova_reel_live.py -v`
