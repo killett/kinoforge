@@ -471,7 +471,9 @@ Four of the values were still in tracked docs (plans, PROGRESS history, one prag
 HEAD's tree changed too — that is the point. **Every short SHA quoted in this file before this entry
 predates the rewrite**; translate through `.git/filter-repo/commit-map` (old → new, cumulative over
 both rewrites). Only `main` and `v0.5.0` moved on `origin`; the five older tags predate the first leak.
-Pre-rewrite backup: `kinoforge-pre-rewrite-20260904-*.bundle` in the session scratchpad (ephemeral).
+The pre-rewrite backup bundle was deleted on 2026-09-05 at the operator's request — it held the leaked
+history, so no copy of the old refs exists locally. The only remaining pre-rewrite objects are the ones
+GitHub retains behind `refs/pull/10/head` until GitHub Support runs a gc on the repository.
 
 **The scoped-policy UNVALIDATED banner is retired on AWS and replaced on GCP (2026-09-04, commits
 `352323ad`, `41c38654`, `d097c320`, `c4225787`).** Brief:
