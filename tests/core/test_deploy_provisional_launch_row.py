@@ -16,6 +16,7 @@ errors that prove nothing was booked, collapse onto the real row on success.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -461,4 +462,82 @@ def test_deploy_installs_the_heartbeat_endpoint_it_resolves(
     assert installed == [sentinel], (
         "deploy() did not resolve its provider through _resolve_provider, so "
         "compute.heartbeat_mode was dropped"
+    )
+
+
+def _orchestrator_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the WARNING-or-higher messages the orchestrator logger emitted.
+
+    Scoped by logger name on purpose: ``kinoforge.validation`` warns about
+    field-support gaps on every deploy of the fake/local pair, and that noise
+    must not be able to satisfy — or break — an assertion about deploy()'s
+    own warning.
+
+    Args:
+        caplog: The pytest log-capture fixture.
+
+    Returns:
+        The captured messages, in emission order.
+    """
+    return [
+        r.message
+        for r in caplog.records
+        if r.name == "kinoforge.orchestrator" and r.levelno >= logging.WARNING
+    ]
+
+
+def test_deploy_without_a_store_warns_that_nothing_will_protect_the_launch(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The unprotected path says so, and only that path says so.
+
+    ``store=None`` is legitimate for library and test callers, so it must not
+    raise — but a safety mechanism that is present in the signature and absent
+    in effect must not be SILENT about it either (the Brief 2 principle). The
+    warning names the consequence a future caller is opting into: no pre-launch
+    record, so a mid-create interruption leaves a billing resource nothing can
+    find.
+
+    Bug caught: dropping the warning, logging it below WARNING (invisible at
+    the default level), or hoisting it above the dry-run guard / outside the
+    ``store is None`` branch — where it becomes noise on every ``--dry-run``
+    and on the one production caller that does pass a store.
+    """
+    store = LocalArtifactStore(tmp_path)
+    provider = _LedgerPeekProvider(Ledger(store=store))
+    caplog.set_level(logging.WARNING, logger="kinoforge.orchestrator")
+
+    result = deploy(
+        _compute_cfg(),
+        provider=provider,
+        engine=_make_engine(),
+        run_id="kf-deploy-unprotected",
+    )
+
+    assert result.instance is not None
+    warnings = _orchestrator_warnings(caplog)
+    assert len(warnings) == 1, f"expected exactly one warning, got {warnings}"
+    assert "no pre-launch record" in warnings[0]
+    assert "kf-deploy-unprotected" in warnings[0], (
+        "the warning does not name the launch it failed to protect"
+    )
+
+    caplog.clear()
+    deploy(
+        _compute_cfg(),
+        dry_run=True,
+        provider=provider,
+        engine=_make_engine(),
+        run_id="kf-deploy-unprotected-dry",
+    )
+    deploy(
+        _compute_cfg(),
+        provider=provider,
+        engine=_make_engine(),
+        store=store,
+        run_id="kf-deploy-protected",
+    )
+    assert _orchestrator_warnings(caplog) == [], (
+        "the warning fired on a path that never reaches create_instance, or on "
+        "one that IS protected"
     )

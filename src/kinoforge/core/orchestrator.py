@@ -2239,7 +2239,9 @@ def deploy(
             the pre-launch ``kf_launch_phase=launching`` row (finding F12) and,
             on success, the real one. Additive and defaulted so every existing
             caller keeps working; ``None`` means no ledger row of either kind,
-            which is the pre-S5 behaviour. ``cli/_commands._cmd_deploy`` passes
+            which is the pre-S5 behaviour — and a live run without one logs a
+            WARNING saying so, since a mid-create interruption then leaves a
+            billing resource nothing can find. ``cli/_commands._cmd_deploy`` passes
             ``ctx.store()`` — the same store ``kinoforge list``, the reconciler
             and the sweeper read, which a store constructed in here from a
             default path would NOT be.
@@ -2328,6 +2330,18 @@ def deploy(
     # Same contract as ``_provision_instance_and_build_backend`` — written
     # BEFORE create, keyed by the client-side run id, and kept on any raise the
     # provider has not declared as booking nothing (ruling C1).
+    #
+    # ``store=None`` is legitimate for library and test callers, so it is a
+    # warning and not a raise — but a safety mechanism that is present in the
+    # signature and absent in effect must say so (the Brief 2 principle), or a
+    # future caller inherits the pre-S5 hole without ever being told.
+    if store is None:
+        _log.warning(
+            "deploy() called without a store: no pre-launch record will exist "
+            "for run %r, so an interruption during create_instance leaves a "
+            "billing resource that no kinoforge command can find",
+            launch_run_id,
+        )
     provisional_ledger = Ledger(store=store) if store is not None else None
     provisional_id = (
         _record_provisional_row(

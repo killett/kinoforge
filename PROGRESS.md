@@ -441,7 +441,17 @@ first unchecked task without redoing committed work.
   longer route anyone into it. GCP's `roles.txt` is still entirely unmeasured — honest and labelled
   as such, rather than green from a caller-evaluated `testIamPermissions`.
 
-## RESUME SNAPSHOT (updated 2026-09-04 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-05 — read this, then STOP; below is history)
+
+**The unprotected `deploy()` path says so (2026-09-05, one commit).** `deploy(store=None)` on a live
+compute run now logs a WARNING naming the consequence — no pre-launch record, so a mid-create
+interruption leaves a billing resource nothing can find. Log, not raise: the default exists for library
+and test callers. Not emitted on `--dry-run` (never reaches `create_instance`) nor when a store is
+given; `_cmd_deploy`, the only production caller, passes `ctx.store()`. Pinned by
+`test_deploy_without_a_store_warns_that_nothing_will_protect_the_launch`, scoped to the
+`kinoforge.orchestrator` logger because `kinoforge.validation` warns on every fake/local deploy. The
+writes-nothing test beside it is untouched. Brief 2's principle, applied to the one place round 2
+contradicted it.
 
 **Bucket names out of source (2026-09-04, two commits after `800dc642`).** A history scan for the
 account-id scrub found five real bucket names in tracked files, and the operator's question — "shouldn't
