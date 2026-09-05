@@ -30,7 +30,9 @@ from typing import Any
 GRAPHQL_URL = "https://api.runpod.io/graphql"
 UA = "kinoforge/0.1 c33-k-probe"
 IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
-S3_BUCKET = "<DIAG_BUCKET>"
+# No default: the bucket is an account identifier. Empty here is refused
+# by main() before anything is launched.
+S3_BUCKET = os.environ.get("KINOFORGE_DIAG_BUCKET", "").strip()
 
 POLL_INTERVAL_S = 6.0
 OBSERVATION_WINDOW_S = 360.0
@@ -362,6 +364,13 @@ def _classify(uploads: list[dict[str, Any]]) -> tuple[str, str]:
 
 def main() -> int:
     """Run the (k) phase-bisection probe."""
+    if not S3_BUCKET:
+        print(
+            "c33_k_probe: set KINOFORGE_DIAG_BUCKET to the diagnostics bucket "
+            "(see .env.example)",
+            file=sys.stderr,
+        )
+        return 2
     _load_env()
     sidecar = Path("tests/live/_c33_probe_k_evidence.json")
     if sidecar.exists():

@@ -36,7 +36,7 @@ _BUDGET_USD_CAP = 0.20
 _CFG_PATH = Path("tests/live/cfg_c28_phase_a_diagnostic.yaml")
 _PROMPT_PATH = Path("/workspace/prompt-field-realistic.txt")
 _SIDECAR_PATH = Path("tests/live/_c28_phase_a_evidence.json")
-_BUCKET = "<DIAG_BUCKET>"
+_BUCKET = os.environ.get("KINOFORGE_DIAG_BUCKET", "")  # no default: an identifier
 _REGION = "us-west-2"
 _GEN_TIMEOUT_S = 60.0 * 40.0  # 40 min — cold boot + first frame
 _MAX_BOOT_ATTEMPTS = 3
@@ -60,6 +60,10 @@ def _gate_on_live_env() -> None:
         pytest.skip(
             f"set {_LIVE_GATE_ENV}=1 to run the C28 Phase A diagnostic smoke "
             f"(~${_BUDGET_USD_CAP} per invocation)",
+        )
+    if not _BUCKET:
+        pytest.skip(
+            "KINOFORGE_DIAG_BUCKET not set (the smoke reads boot logs back from it)"
         )
 
 

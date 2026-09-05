@@ -62,6 +62,10 @@ GOLDEN_KEY_HASH = "golden-key"
 # is a strong suppressor for tools/scan_secrets.py, so it can never be mistaken
 # for a real value by the pre-commit scanner or the tracked-tree guard.
 STUB_SECRET = "kinoforge-prod-deadbeef"  # noqa: S105
+#: Diagnostic-mode bucket for golden derivation. A stub, like STUB_SECRET:
+#: the orchestrator ships no default bucket (it used to, and it was a real
+#: one), so the golden substrate supplies an obviously-fake name of its own.
+STUB_DIAG_BUCKET = "example-diag-bucket"
 
 #: Configs deliberately outside the ratchet, mapped to the reason. An entry
 #: here is a reviewed decision, not a silent hole: the golden test reads this
@@ -247,8 +251,8 @@ def _diagnostic_env(cfg: Config) -> dict[str, str] | None:
     tool's determinism contract (frozen clock, synthetic secrets only) and
     risks a real credential landing in a checked-in golden file. Every value
     that would otherwise come from ``os.environ`` or boto3 is instead the
-    synthetic :data:`STUB_SECRET`, or the same hardcoded default the
-    orchestrator falls back to when no override is set.
+    synthetic :data:`STUB_SECRET`, or the equally synthetic
+    :data:`STUB_DIAG_BUCKET`.
 
     Args:
         cfg: The loaded config.
@@ -261,7 +265,7 @@ def _diagnostic_env(cfg: Config) -> dict[str, str] | None:
     if not cfg.diagnostic_mode:
         return None
     return {
-        "KINOFORGE_DIAG_BUCKET": "<DIAG_BUCKET>",
+        "KINOFORGE_DIAG_BUCKET": STUB_DIAG_BUCKET,
         "KINOFORGE_DIAG_PREFIX": f"boot-logs/{GOLDEN_RUN_ID}",
         "AWS_DEFAULT_REGION": "us-west-2",
         "AWS_ACCESS_KEY_ID": STUB_SECRET,

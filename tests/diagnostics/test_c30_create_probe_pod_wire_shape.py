@@ -39,10 +39,10 @@ def test_a1a_no_port_payload() -> None:
         image="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
         ports=None,
         provision_script="echo a1a && sleep 600",
-        env={"KINOFORGE_DIAG_BUCKET": "<DIAG_BUCKET>"},
+        env={"KINOFORGE_DIAG_BUCKET": "example-diag-bucket"},
         gpu_type_id="NVIDIA RTX A2000",
         run_id="c30-a1a-20260614T120000",
-        diag_bucket="<DIAG_BUCKET>",
+        diag_bucket="example-diag-bucket",
     )
     assert pod_id == "pod-abc"
     assert len(client.payloads) == 1
@@ -61,10 +61,10 @@ def test_a1b_port_declared_payload() -> None:
         image="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
         ports="8188/http",
         provision_script="echo a1b && sleep 600",
-        env={"KINOFORGE_DIAG_BUCKET": "<DIAG_BUCKET>"},
+        env={"KINOFORGE_DIAG_BUCKET": "example-diag-bucket"},
         gpu_type_id="NVIDIA RTX A2000",
         run_id="c30-a1b-20260614T130000",
-        diag_bucket="<DIAG_BUCKET>",
+        diag_bucket="example-diag-bucket",
     )
     _, vars_ = client.payloads[0]
     assert vars_["input"]["ports"] == "8188/http"
@@ -77,10 +77,10 @@ def test_a1c_listener_payload_has_http_server_in_args() -> None:
         image="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
         ports="8188/http",
         provision_script="python3 -m http.server 8188 & sleep 600",
-        env={"KINOFORGE_DIAG_BUCKET": "<DIAG_BUCKET>"},
+        env={"KINOFORGE_DIAG_BUCKET": "example-diag-bucket"},
         gpu_type_id="NVIDIA RTX A2000",
         run_id="c30-a1c-20260614T140000",
-        diag_bucket="<DIAG_BUCKET>",
+        diag_bucket="example-diag-bucket",
     )
     _, vars_ = client.payloads[0]
     assert "python3 -m http.server 8188" in vars_["input"]["dockerArgs"]
@@ -146,14 +146,14 @@ def test_diag_env_propagated_to_input() -> None:
         image="ubuntu:22.04",
         ports=None,
         provision_script="apt-get install -y awscli && sleep 600",
-        env={"KINOFORGE_DIAG_BUCKET": "<DIAG_BUCKET>", "EXTRA": "ok"},
+        env={"KINOFORGE_DIAG_BUCKET": "example-diag-bucket", "EXTRA": "ok"},
         gpu_type_id="NVIDIA RTX A2000",
         run_id="c30-a0prime-20260614T150000",
-        diag_bucket="<DIAG_BUCKET>",
+        diag_bucket="example-diag-bucket",
     )
     _, vars_ = client.payloads[0]
     env_list = vars_["input"]["env"]
     keys = {e["key"]: e["value"] for e in env_list}
-    assert keys["KINOFORGE_DIAG_BUCKET"] == "<DIAG_BUCKET>"
+    assert keys["KINOFORGE_DIAG_BUCKET"] == "example-diag-bucket"
     assert keys["KINOFORGE_DIAG_PREFIX"] == "boot-logs/c30-a0prime-20260614T150000"
     assert keys["EXTRA"] == "ok"

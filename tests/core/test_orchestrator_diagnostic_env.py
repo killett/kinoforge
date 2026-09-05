@@ -15,7 +15,6 @@ from typing import Any
 import pytest
 
 from kinoforge.core.orchestrator import (
-    _DIAG_BUCKET_DEFAULT,
     _DIAG_REGION_DEFAULT,
     _build_diagnostic_env,
 )
@@ -52,10 +51,19 @@ def _patch_boto3(
     monkeypatch.setitem(__import__("sys").modules, "boto3", fake_boto3)
 
 
-def test_diagnostic_env_defaults_when_environment_silent(
+def test_diagnostic_env_omits_bucket_when_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Empty env → defaults for bucket/prefix/region, AWS keys from boto3 chain."""
+    """No ``KINOFORGE_DIAG_BUCKET`` in the env → no bucket key in the overlay.
+
+    Bug caught: a hardcoded fallback bucket name. There used to be one, and
+    it was a real bucket in a real account — which put that identifier into
+    every diagnostic-mode pod env, every golden derived from it, and this
+    test file. The in-pod trap already guards on
+    ``[ -n "${KINOFORGE_DIAG_BUCKET:-}" ]``, so "absent" is the documented
+    degradation (upload skipped), not a crash. Prefix and region still
+    default: neither is an identifier of anything.
+    """
     for k in (
         "KINOFORGE_DIAG_BUCKET",
         "KINOFORGE_DIAG_PREFIX",
@@ -69,12 +77,32 @@ def test_diagnostic_env_defaults_when_environment_silent(
 
     overlay = _build_diagnostic_env("run-abc")
 
-    assert overlay["KINOFORGE_DIAG_BUCKET"] == _DIAG_BUCKET_DEFAULT
+    assert "KINOFORGE_DIAG_BUCKET" not in overlay
     assert overlay["KINOFORGE_DIAG_PREFIX"] == "boot-logs/run-abc"
     assert overlay["AWS_DEFAULT_REGION"] == _DIAG_REGION_DEFAULT
     assert overlay["AWS_ACCESS_KEY_ID"] == "AKIA-FIXTURE"
     assert overlay["AWS_SECRET_ACCESS_KEY"] == "fixture-secret"
     assert "AWS_SESSION_TOKEN" not in overlay
+
+
+def test_diagnostic_env_omits_bucket_when_set_to_empty_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``KINOFORGE_DIAG_BUCKET=`` (present, empty) is treated as unset.
+
+    Bug caught: a plain ``os.environ.get`` passes ``""`` through, and the
+    in-pod trap's ``-n`` guard then correctly skips — but only after the
+    controller has shipped a meaningless empty var and any later reader
+    that keys on presence rather than emptiness has been misled. An
+    operator's ``.env`` copied from ``.env.example`` has exactly this
+    empty-assignment shape.
+    """
+    monkeypatch.setenv("KINOFORGE_DIAG_BUCKET", "")
+    _patch_boto3(monkeypatch, None)
+
+    overlay = _build_diagnostic_env("run-empty")
+
+    assert "KINOFORGE_DIAG_BUCKET" not in overlay
 
 
 def test_diagnostic_env_honours_env_overrides(
@@ -114,6 +142,7 @@ def test_diagnostic_env_omits_aws_keys_when_no_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No boto3 chain creds → AWS keys absent (trap PUT fails silently)."""
+    monkeypatch.setenv("KINOFORGE_DIAG_BUCKET", "example-diag-bucket")
     _patch_boto3(monkeypatch, None)
 
     overlay = _build_diagnostic_env("run-no-creds")
@@ -122,7 +151,8 @@ def test_diagnostic_env_omits_aws_keys_when_no_credentials(
     assert "AWS_SECRET_ACCESS_KEY" not in overlay
     # Non-credential keys still populated so the trap upload path can be
     # exercised end-to-end once creds become available.
-    assert overlay["KINOFORGE_DIAG_BUCKET"] == _DIAG_BUCKET_DEFAULT
+    assert overlay["KINOFORGE_DIAG_BUCKET"] == "example-diag-bucket"
+    assert overlay["KINOFORGE_DIAG_PREFIX"] == "boot-logs/run-no-creds"
 
 
 def test_diagnostic_env_value_shape_is_strings_only() -> None:

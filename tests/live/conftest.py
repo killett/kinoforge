@@ -47,7 +47,11 @@ if load_env_file is not None:
 # ---------------------------------------------------------------------------
 
 C30_LEDGER = Path(__file__).parent / "_c30_spend_ledger.json"
-C30_DIAG_BUCKET = "<DIAG_BUCKET>"
+# Read from the environment, never defaulted: the bucket name is an account
+# identifier. Empty means "not configured" — every C30 fixture path goes
+# through c30_preflight below, which skips rather than launching a pod whose
+# trap would upload to s3:///.
+C30_DIAG_BUCKET = os.environ.get("KINOFORGE_DIAG_BUCKET", "")
 C30_HARD_CAP_USD = 1.50
 C30_PER_PROBE_CAP_USD = 0.10
 # Ranked cheap-GPU candidates with on-demand cents/hr (community cloud).
@@ -89,6 +93,8 @@ class _C30GraphQLClient:
 @pytest.fixture(scope="session", autouse=False)
 def c30_preflight() -> None:
     """Run ``pixi run preflight`` once per session before any live spend."""
+    if not C30_DIAG_BUCKET:
+        pytest.skip("KINOFORGE_DIAG_BUCKET not set (C30 probes upload boot logs to it)")
     result = subprocess.run(
         ["pixi", "run", "preflight"],
         capture_output=True,

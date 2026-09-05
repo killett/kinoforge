@@ -46,7 +46,12 @@ from kinoforge.core.interfaces import (
 )
 from kinoforge.core.spec_builder import build_instance_spec
 from kinoforge.providers.runpod import RunPodProvider
-from tools.snapshot_launch_payloads import GOLDEN_RUN_ID, STUB_SECRET, capture_launch
+from tools.snapshot_launch_payloads import (
+    GOLDEN_RUN_ID,
+    STUB_DIAG_BUCKET,
+    STUB_SECRET,
+    capture_launch,
+)
 
 _CFG = "examples/configs/runpod-diffusers-rife-60fps-interpolate.yaml"
 
@@ -184,7 +189,7 @@ def test_diagnostic_env_overlay_merged_into_pod_env() -> None:
     captured, post = _capture_post()
     p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
     overlay = {
-        "KINOFORGE_DIAG_BUCKET": "<DIAG_BUCKET>",
+        "KINOFORGE_DIAG_BUCKET": "example-diag-bucket",
         "KINOFORGE_DIAG_PREFIX": "boot-logs/run-xyz",
         "AWS_ACCESS_KEY_ID": "AKIA-FIXTURE",
         "AWS_SECRET_ACCESS_KEY": "fixture-secret",
@@ -239,7 +244,7 @@ def test_capture_launch_diagnostic_mode_produces_expected_wire_env() -> None:
         mutate_cfg=_turn_on_diagnostic_mode,
     )
     env = {e["key"]: e["value"] for e in launch.payload["input"]["env"]}
-    assert env["KINOFORGE_DIAG_BUCKET"] == "<DIAG_BUCKET>"
+    assert env["KINOFORGE_DIAG_BUCKET"] == STUB_DIAG_BUCKET
     assert env["KINOFORGE_DIAG_PREFIX"] == f"boot-logs/{GOLDEN_RUN_ID}"
     assert env["AWS_DEFAULT_REGION"] == "us-west-2"
     assert env["AWS_ACCESS_KEY_ID"] == STUB_SECRET

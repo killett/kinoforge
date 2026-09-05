@@ -231,17 +231,21 @@ def _cfg_dict(cfg: Config) -> dict[str, object]:
     return cfg.model_dump()
 
 
-_DIAG_BUCKET_DEFAULT = "<DIAG_BUCKET>"
 _DIAG_REGION_DEFAULT = "us-west-2"
 
 
 def _build_diagnostic_env(run_id: str) -> dict[str, str]:
     """Build the C28 diagnostic env overlay for an InstanceSpec.
 
-    Reads ``KINOFORGE_DIAG_BUCKET`` (default ``<DIAG_BUCKET>``),
-    derives ``KINOFORGE_DIAG_PREFIX`` from ``run_id``, and resolves AWS
-    credentials via the boto3 default chain so the in-pod ``aws s3 cp`` call
-    in the EXIT trap can authenticate.
+    Reads ``KINOFORGE_DIAG_BUCKET`` — and only ships it when it is set and
+    non-empty. There is deliberately NO default bucket: the previous one was
+    a real bucket in a real account, and a default put that identifier into
+    every diagnostic-mode pod env and every artifact derived from one. With
+    the var absent the in-pod EXIT trap's ``[ -n "${KINOFORGE_DIAG_BUCKET:-}" ]``
+    guard skips the upload, which is the same documented degradation as
+    missing AWS credentials below. Derives ``KINOFORGE_DIAG_PREFIX`` from
+    ``run_id``, and resolves AWS credentials via the boto3 default chain so
+    the in-pod ``aws s3 cp`` call can authenticate.
 
     AWS keys are looked up through ``boto3.Session().get_credentials()``
     rather than ``os.environ`` directly so the project's
@@ -261,10 +265,6 @@ def _build_diagnostic_env(run_id: str) -> dict[str, str]:
         spec field).
     """
     overlay: dict[str, str] = {
-        "KINOFORGE_DIAG_BUCKET": os.environ.get(
-            "KINOFORGE_DIAG_BUCKET",
-            _DIAG_BUCKET_DEFAULT,
-        ),
         "KINOFORGE_DIAG_PREFIX": os.environ.get(
             "KINOFORGE_DIAG_PREFIX",
             f"boot-logs/{run_id}",
@@ -274,6 +274,12 @@ def _build_diagnostic_env(run_id: str) -> dict[str, str]:
             _DIAG_REGION_DEFAULT,
         ),
     }
+    # Empty counts as unset: `.env` files copied from `.env.example` carry
+    # `KINOFORGE_DIAG_BUCKET=` verbatim, and an empty bucket name would
+    # render `s3:///<prefix>` in the pod.
+    diag_bucket = os.environ.get("KINOFORGE_DIAG_BUCKET", "")
+    if diag_bucket:
+        overlay["KINOFORGE_DIAG_BUCKET"] = diag_bucket
     try:
         import boto3
 
