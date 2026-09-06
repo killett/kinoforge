@@ -447,7 +447,7 @@ Found by the Modal command-matrix campaign (plan
 `docs/superpowers/plans/2026-09-05-modal-command-matrix.md`, results
 `docs/modal-command-matrix.md`). Operator directive 2026-09-06: big issues land HERE as urgent
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
-suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`), U10 is fixed (`7d535503`, the interval-reporting half of it excepted), U5 is half-fixed (help text corrected in `c08c3cce`, wiring still open), and U12 is fully diagnosed with a one-string fix specified but not applied (it is shared provision code affecting RunPod and SkyPilot too — read U12 before touching FlashVSR on any provider). Every other item is untouched.**
+suspected site. **Status 2026-09-06 (updated after the `av` pin): U4 is fixed (`c08c3cce`), U10 is fixed (`7d535503`, the interval-reporting half of it excepted), U5 is half-fixed (help text corrected in `c08c3cce`, wiring still open), and **U12 is CLOSED** — the `av<18` pin landed in `82ad084b` and was proven live on Modal at 1920x1920 and 1080x1080 with clean frame QA for $0.64. RunPod and SkyPilot carry the same one-line pin (their goldens moved in that commit) but were **not** re-run, so they are inferred-safe, not demonstrated-safe. **U15 is new** (`--attach-pod` refuses a healthy pod whose endpoint the ledger holds) and, together with U14, currently leaves no way to run a second upscale on an existing pod. Every other item is untouched.**
 
 - **U1 — the warm-attach matcher is provider-blind (cross-provider attach risk).**
   `WarmAttachKey` (`src/kinoforge/core/interfaces.py:649`) carries base_model / engine /
@@ -680,7 +680,7 @@ suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`), U10 is fixed (`7d
   per-cell `no_reuse=True` teardown (`executor.py:852`), which a plain non-ephemeral grid produces
   identically. A user who asked for ephemeral has no way to tell they did not get it.
 
-- **U12 — DIAGNOSED (fix specified, NOT applied) — FlashVSR upscale is dead on every provider: `av` 18 broke the mp4 encode.**
+- **U12 — CLOSED 2026-09-06 (pin applied in `82ad084b`, proven live on Modal) — FlashVSR upscale was dead on every provider: `av` 18 broke the mp4 encode.**
   **Symptom:** the pod boots, loads FlashVSR, reaches the GPU and computes (util probe caught
   `gpu_util_percent=100.0`), then the job fails server-side and no artifact is produced:
   `kinoforge.core.errors.UpscaleFailed: upscale job <id> failed on server: Cannot change width
@@ -744,20 +744,60 @@ suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`), U10 is fixed (`7d
   have not been rebuilt since `av` 18 shipped. This is a three-provider outage with a
   time-delayed trigger, not a Modal problem.
 
-  **Fix, specified but deliberately NOT applied here:** change that one string to `"av<18"`. It was
-  left for the operator because it is shared provision code, not a cfg key — applying it
-  re-snapshots four golden launch payloads and changes the boot payload for RunPod and SkyPilot as
-  well as Modal, which is past this campaign's one-function/one-config-key/one-guard fix bar.
-  Pinning `av` in a cfg's `pip:` block would also work mechanically (the later unpinned
-  `pip install "av"` is then a no-op) but would fix only that one cfg and leave the shared fuse lit.
-  **Do not spend an A100 to confirm the pin** — the $0 CPU probe already exercises the exact
-  failing call; a live re-run belongs to whatever budget picks up the fix.
+  **FIX APPLIED — `82ad084b`, 2026-09-06.** The one string became `"av<18"`, red/green with
+  `tests/upscalers/flashvsr/test_engine.py::test_render_provision_pins_av_below_18`, which parses the
+  rendered provision's quoted pip tokens and asserts that av **18.1.0 does not** satisfy the
+  constraint while **17.1.0 does** — so a bare `"av"`, a wrong-direction pin (`av>=18`) and an
+  over-tight pin (`av<13`) all fail it. Confirmed RED against the unpinned string first. **Ten**
+  goldens moved (the earlier note said four; the real count is ten) and were re-snapshotted with
+  `tools/snapshot_launch_payloads.py` after reviewing every delta: 2 modal, **5 runpod** and 2
+  skypilot launch payloads under `tests/providers/golden/launch_payloads/`, plus
+  `tests/engines/diffusers/_golden_provision.json`. Each decodes to exactly the `"av"` → `"av<18"`
+  token plus the embedded `_engine.py` blob carrying the new comment. Full suite green: 5172 passed.
+
+  **PROVEN LIVE ON MODAL, 2026-09-06 09:39–10:09, $0.64.** The pin was worth confirming despite the
+  earlier "do not spend an A100" note, because the $0 probe could only show that the *writer* call
+  works at `av` 17 — not that a real FlashVSR job end-to-end produces a good clip. Both previously
+  failing cells now pass:
+
+  | cell | cfg | result |
+  |---|---|---|
+  | T2-01 | `modal-diffusers-flashvsr-x4-upscale.yaml` | exit 0, **1920×1920 / 16 fps / 77 frames / 4.8125 s**, 6.42 MB |
+  | T2-03 | `modal-diffusers-flashvsr-1080p-upscale.yaml` | exit 0, **1080×1080 / 16 fps** (height target resolves) |
+
+  The rebuilt image's build log carries the pin in plain text: `Successfully installed … av-17.1.0`.
+  Util probe caught `gpu_util_percent=100.0, cpu_percent=5.9` mid-job, so this was real compute.
+  **Frame QA PASS on both** (`/home/claudeuser/kinoforge-matrix/sheetT2-01-rerun.png`,
+  `sheetT2-03-rerun.png`, `cropcmp.png`): colour faithful to the source with **no false-colour cast**
+  — the 2026-07 FlashVSR failure mode is absent — temporally coherent, and a 640 px native crop
+  against a nearest-neighbour blow-up of the same source region shows genuine detail synthesis
+  (resolved rock texture, individual hair strands, facial features, butterfly wing edges), not a soft
+  interpolation. The full image re-bake took 19m27s on Modal's builder (not A100 time); A100 time was
+  ~10m + ~5m across two pods, both destroyed, teardown proven from a new process.
+
+  **RunPod and SkyPilot: protected, but NOT demonstrated.** They render the *same* line from the
+  *same* function, so the identical pin is in their provision scripts — their goldens moved in the
+  same commit, which is the mechanical proof that the string reaches them. But **no RunPod or
+  SkyPilot image was rebuilt or run**, so their status is **inferred from shared code, not
+  demonstrated by a live run**. If either provider's FlashVSR path matters, it still deserves one
+  live boot before being called green.
+
+  **Also not demonstrated:** T2-05b (the `--ephemeral --no-reuse` route) was not re-run. It is the
+  same encode path, so the pin covers it, but that too is inference.
 
 - **U13 — the CLI hangs forever after `UpscaleFailed` instead of exiting.**
   **Symptom:** after the traceback prints, the process never terminates. T2-01 was still alive 16
   minutes after its exception and had to be `kill -9`ed; T2-05b did the same.
   **Reproducer (live, T2-01 / T2-05b):** any failing `kinoforge upscale` (see U12's command) —
   the traceback appears, then the shell never gets its prompt back.
+  **New evidence 2026-09-06 (post-`av<18` re-run):** the hang is **specific to the failure path**.
+  Both post-fix upscale runs — T2-01 (4x) and T2-03 (1080p) — reached `upscaled: uri=…` and the
+  process **exited on its own**, verified by the launcher PID going to `Z` with no live
+  `kinoforge` process behind it. So whatever holds the interpreter open is reached only after
+  `UpscaleFailed`, not on the normal completion path, which narrows the search to the exception
+  handler and its unwinding rather than to any always-running thread. Note the practical
+  consequence: with U12 fixed, the ordinary way of triggering U13 is gone, so the offline stubbed
+  reproducer described below is now the *only* cheap way to reproduce it.
   **Not a pod leak:** T2-05b confirmed `--no-reuse` destroys the pod even on the failure path
   (0 non-stopped `kinoforge-*` apps while the CLI still hung).
 
@@ -803,6 +843,10 @@ suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`), U10 is fixed (`7d
   **Symptom:** with `upscale-20260906-023846` (A100-80GB) up and idle at 0% GPU, a second upscale
   resolving to the **same capability key `7afe34198cc9`** did not attach — it deployed a fresh app
   `upscale-20260906-025335`, so two A100s billed concurrently.
+  **Reproduced verbatim 2026-09-06 (post-`av<18` re-run):** with `upscale-20260906-093919` warm and
+  idle at 0% GPU, the same VSR1080 command again cold-booted a second app,
+  `upscale-20260906-100335` (`✓ App deployed in 1.700s` — fast only because the image was cached).
+  Two passes, two duplicate A100s: this is a deterministic matcher defect, not a race.
   **Reproducer (live, T2-03):** leave a pod up from
   `kinoforge upscale -c examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml --video <fix>`
   (no `--no-reuse`), then run
@@ -820,6 +864,37 @@ suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`), U10 is fixed (`7d
   site logs no reject reason, so establishing why costs another cold boot. Logging the reason is
   the cheap first fix, ahead of the matcher change itself.
 
+- **U15 — `--attach-pod` cannot attach to a healthy pod whose endpoint the ledger is holding.**
+  **Symptom:** `kinoforge upscale … --attach-pod <id>` exits **1** with
+  `pod <id> has no endpoints after ledger tag merge (ledger tag keys=['kinoforge_engine',
+  'kinoforge_key', 'mode']); cannot --attach-pod.`
+  **The claim is false.** Observed live 2026-09-06 10:02 against `upscale-20260906-093919`, an
+  A100-80GB that had published an artifact ninety seconds earlier and was still warm. The ledger
+  entry read at that moment held
+  `endpoints: {"8000": "https://emmykillett--kinoforge-upscale-20260906-093919-build-mod-bcb59b.modal.run"}`,
+  and that exact URL answered `GET /util` with
+  `{"gpu_util_percent":0.0,"cpu_percent":4.0,"memory_percent":1.1,"uptime_seconds":118}` seconds
+  before and after the refusal. The pod was reachable; the command refused anyway.
+  **Reproducer:** boot any Modal pod with a warm-reuse `kinoforge upscale` (no `--no-reuse`), then
+  from a new process run
+  `pixi run -e live-modal kinoforge upscale
+  --config examples/configs/modal-diffusers-flashvsr-1080p-upscale.yaml
+  --video output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4
+  --attach-pod <id>`. Costs $0 — it refuses before touching the pod.
+  **Suspected site, labelled as a hypothesis:** the error text names a "ledger tag merge" and then
+  reports the *tag* keys, which suggests the merge builds its `Instance` from `tags` and never
+  copies the sibling `endpoints` field, so the downstream `has endpoints?` guard sees an empty dict.
+  That is inference from the message alone — **verify against the code before editing**, and do not
+  repeat U13's mistake of recording a suspected site that turns out to be wrong.
+  **Relationship to U3:** same underlying shape — the endpoint URL is in the ledger and no read path
+  consults it — but a different site. U3 is about `status` / `pod lora ls` failing to *report* the
+  URL; U15 is about the attach path failing to *use* it. Fixing one will not obviously fix the other.
+  **Why it matters:** `--attach-pod` is the explicit escape hatch from U14. With the matcher
+  cold-booting duplicate A100s and the explicit override refusing to attach, there is currently **no
+  way at all** to run a second upscale on an existing pod — every upscale costs a fresh boot. The two
+  defects together are what put two $2.50/hr A100s on the clock in both passes of Tier 2a.
+  **Discovered by:** matrix cell T2-02 re-run, 2026-09-06.
+
 Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
 on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interval_s`
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
@@ -827,38 +902,50 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 
 ## RESUME SNAPSHOT (updated 2026-09-06 — read this, then STOP; below is history)
 
-**Modal command matrix CLOSED (2026-09-05/06, $2.61 of $20).** Every `kinoforge` subcommand run
-against the Modal provider, one verdict per cell: **57 cells — 30 PASS, 17 FAIL, 10
-EXPECTED-REFUSAL, 0 pending**. Results and the operator-facing summary are at the TOP of
-`docs/modal-command-matrix.md`; defects are **U1–U14** in the URGENT ACTION ITEMS section above.
+**Modal command matrix CLOSED (2026-09-05/06, $3.25 of $20; FlashVSR re-proven 2026-09-06 after
+the `av` pin).** Every `kinoforge` subcommand run against the Modal provider, one verdict per cell:
+**57 cells — 32 PASS, 16 FAIL, 9 EXPECTED-REFUSAL, 0 pending**. Results and the operator-facing
+summary are at the TOP of `docs/modal-command-matrix.md`; defects are **U1–U15** in the URGENT
+ACTION ITEMS section above.
 
-- **Headline defect — read U12 before touching FlashVSR on ANY provider.** `av` 18 broke the
-  FlashVSR mp4 writer; upscale is a total loss on Modal (3/3, computes on the GPU then dies at
-  `Cannot change width after codec is open`). Diagnosed for **$0** on a CPU-only Modal build
+- **Headline defect FIXED — `av<18` pinned in `82ad084b` and proven live.** `av` 18 broke the
+  FlashVSR mp4 writer on every provider (upscale computed on the GPU, then died at
+  `Cannot change width after codec is open`, 3/3). Diagnosed for **$0** on a CPU-only Modal build
   (`tools/diagnose_flashvsr_writer_modal.py`): `imageio` 2.37.4 + **`av` 18.1.0**; av 17.1.0 and
-  below all write fine, so the pin is **`av<18`**. The unpinned `"av"` is in shared provision code
-  (`upscalers/flashvsr/_engine.py`), not a cfg, so **RunPod and SkyPilot will fail identically the
-  next time their images are rebuilt.** Fix specified, deliberately NOT applied — it re-snapshots
-  four golden launch payloads and moves the boot payload for three providers.
+  below all write fine. The unpinned `"av"` was in shared provision code
+  (`upscalers/flashvsr/_engine.py`), not a cfg. The pin moved **ten** goldens — 2 modal, 5 runpod,
+  2 skypilot launch payloads + the diffusers provision golden — which is the blast radius made
+  visible. **Live proof on Modal 2026-09-06 for $0.64:** T2-01 published 1920×1920/77f and T2-03
+  published 1080×1080, both frame-QA clean with real detail synthesis and no false colour; the
+  rebuilt image logs `Successfully installed … av-17.1.0`. **RunPod and SkyPilot carry the same
+  one-line pin but were NOT re-run — inferred safe, not demonstrated safe.**
 - **Works:** t2v at both ends of the model range (Wan 2.1 1.3B on A10; Wan 2.2 **14B** on
-  A100-80GB, T3-01 PASS at $1.15 for 27m37s), warm re-attach in all three forms, `batch`, `grid`
+  A100-80GB, T3-01 PASS at $1.15 for 27m37s), **FlashVSR upscale at 4x and at the 1080p height
+  target (post-pin)**, warm re-attach in all three forms on the *generate* path, `batch`, `grid`
   mechanics, ephemeral generation, RIFE interpolate, the whole read surface, and `--no-reuse`
   teardown (proven from a new process after every single live cell).
 - **Does not work:** `deploy` and `provision` (U6/U7 — the second leaked $0.13 on a pod no
   kinoforge command could see), a pod's endpoint URL from any fresh process (U3), automatic reaping
   of ephemeral pods (U9), `grid --ephemeral` (U11), `--vault` prompts (U5), the warm-attach matcher
-  (U1/U14 — U14 put two $2.50/hr A100s on the clock at once), `batch --dry-run-swap`'s manifest
-  (U2), ephemeral index timing (U8), and CLI exit after `UpscaleFailed` (U13).
+  (U1/U14 — U14 reproduced verbatim on 2026-09-06, putting two $2.50/hr A100s on the clock in both
+  passes), **`--attach-pod` on a healthy pod whose endpoint the ledger holds (U15, new)**,
+  `batch --dry-run-swap`'s manifest (U2), ephemeral index timing (U8), and CLI exit after
+  `UpscaleFailed` (U13 — now known to be failure-path only; both post-fix upscales exited cleanly).
+- **Warm reuse on the upscale path is currently impossible.** U14 makes the matcher cold-boot a
+  duplicate A100, and U15 makes the explicit `--attach-pod` override refuse. Together they mean
+  every upscale pays a fresh boot. That pair is the highest-value next fix.
 - **Fixed in-session, red/green:** `c9d9b284` (doctor), `3c7822b8` (reap --format json),
   `c08c3cce` (logs provider guard + vault help text), `7d535503` (sweeper stop now removes its own
-  ledger row, so `kinoforge list` can report a clean ledger again).
+  ledger row), `82ad084b` (`av<18` pin).
 - **Two corrections applied on review, both worth knowing:** T1-28 was carrying a `PASS ⚠️` whose
   own notes described a whole-clip render defect — reclassified FAIL, and the Verdict column is now
   restricted to the four bare tokens because the glyph is what hid it. And **U13's suspected site
   was wrong and has been retracted** (`submit_and_poll` starts no threads; every local thread is
   daemon) — it now hedges the mechanism and names a $0 offline first step.
-- **Next action:** none required. If picking this up, the highest-value single move is the `av<18`
-  pin from U12 plus its four golden re-snapshots.
+- **Next action:** none required. If picking this up, the highest-value single move is the
+  U14 + U15 pair (no warm reuse at all on the upscale path). One live RunPod or SkyPilot FlashVSR
+  boot would also convert the `av<18` pin from inferred-safe to demonstrated-safe on those two
+  providers.
 
 **CI back to green — macOS `setsid` (2026-09-05, one commit).** The `Test (macos-latest)` leg had
 failed on every push since 2026-08-18 (8-run streak; Ubuntu green throughout): the five
