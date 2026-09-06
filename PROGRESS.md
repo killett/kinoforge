@@ -441,6 +441,46 @@ first unchecked task without redoing committed work.
   longer route anyone into it. GCP's `roles.txt` is still entirely unmeasured — honest and labelled
   as such, rather than green from a caller-evaluated `testIamPermissions`.
 
+## URGENT ACTION ITEMS — Modal command matrix (opened 2026-09-06)
+
+Found by the Modal command-matrix campaign (plan
+`docs/superpowers/plans/2026-09-05-modal-command-matrix.md`, results
+`docs/modal-command-matrix.md`). Operator directive 2026-09-06: big issues land HERE as urgent
+items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
+suspected site. **None of these is fixed.**
+
+- **U1 — the warm-attach matcher is provider-blind (cross-provider attach risk).**
+  `WarmAttachKey` (`src/kinoforge/core/interfaces.py:649`) carries base_model / engine /
+  precision / stages / upscaler only — no provider — and
+  `find_warm_attach_candidate` (`src/kinoforge/core/warm_reuse/matcher.py`) never references
+  `provider`, nor do `EphemeralIndex.rows_by_wak` / `rows_by_kinoforge_key`
+  (`src/kinoforge/core/warm_reuse/ephemeral_index.py:188-194`). A Modal cfg therefore matches a
+  RunPod row with the same engine/model and tries to attach to it.
+  **Reproducer (offline, T0-07):** with any non-modal row in
+  `.kinoforge/_lifecycle/ephemeral-index.json`, run
+  `pixi run -e live-modal kinoforge generate -c examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml
+  --mode t2v --prompt "$(cat examples/configs/prompts/field-realistic.txt)" --dry-run-swap`
+  — the swap preview names the RunPod pod.
+  **Why urgent:** silently points a Modal run at a dead (or worse, a LIVE and unrelated) pod on
+  another provider. Index rows already carry `provider`, so the cheap fix is to filter at the
+  match site; adding a provider field to the key itself would move every warm-attach hash.
+  **Mitigation applied 2026-09-06:** three stale 2026-07-13 RunPod rows were cleared from the
+  index (backup `/home/claudeuser/kinoforge-matrix/ephemeral-index.backup-20260906.json`). That
+  removed the confound for the campaign; **the defect is untouched.**
+
+- **U2 — `batch --dry-run-swap` never parses the manifest.**
+  `pixi run -e live-modal kinoforge batch -c <cfg> --manifest <path> --dry-run-swap` exits 0 and
+  prints the single-job swap preview even when `<path>` does not exist. The manifest is never
+  read on that path, so the flag validates nothing about the batch it claims to preview.
+  **Reproducer (offline, T0-08):** pass a nonexistent `--manifest` — still exit 0.
+  **Why urgent:** the one pre-flight check a batch has is inert, so a malformed or missing
+  manifest is discovered only after the pod is up and billing.
+
+Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
+on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interval_s`
+(`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
+(`3c7822b8`).
+
 ## RESUME SNAPSHOT (updated 2026-09-05 — read this, then STOP; below is history)
 
 **CI back to green — macOS `setsid` (2026-09-05, one commit).** The `Test (macos-latest)` leg had
