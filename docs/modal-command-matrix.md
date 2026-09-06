@@ -10,7 +10,9 @@ assorted commands without a record of which; this document is that record.
 **Spec:** `docs/superpowers/specs/2026-09-05-modal-command-matrix-design.md`
 **Logs:** `/home/claudeuser/kinoforge-matrix/logs/<cell id>.log` (operator-side, not tracked)
 
-**Spend so far: $1.46** (Tier 0 $0.00 + Tier 1a $0.38 + Tier 1b $0.28 + Tier 1c $0.13 + Tier 1d $0.10 + Tier 2a ~$0.50 + Tier 2b ~$0.07)
+**Total spend: $2.61 of the $20 budget** (Tier 0 $0.00 + Tier 1a $0.38 + Tier 1b $0.28 + Tier 1c $0.13
++ Tier 1d $0.10 + Tier 2a ~$0.50 + Tier 2b ~$0.07 + Tier 3 $1.15). Tier 3, the one cell with a $4 cap,
+came in at $1.15.
 
 **Verdicts.** `PASS` — behaved as expected. `FAIL` — a crash, a traceback, or a wrong result.
 `EXPECTED-REFUSAL` — refused cleanly and on purpose (not-found id, unsupported operation,
@@ -248,7 +250,20 @@ exited shows `[instance overview] No running instances.`, `No instances recorded
 
 | Cell | Command | Config | Verdict | Cost | Evidence | Notes |
 |------|---------|--------|---------|------|----------|-------|
-| T3-01 | `kinoforge generate -c WAN14B --mode t2v --prompt PROMPT --no-reuse` | WAN14B | PENDING | | | |
+| T3-01 | `kinoforge generate -c WAN14B --mode t2v --prompt PROMPT --no-reuse` | WAN14B | PASS | $1.15 | `logs/T3-01.log`, `logs/T3-01-util.log`, `logs/T3-01-boot.log`, `sheetT3.png` | Exit 0. **Cold boot 24m25s, generation ~3m06s, total pod life 27m37s** — 03:32:28 create → `✓ App deployed in 84.812s` at 03:33:58 (image built in 81.4 s) → `provisioner.provision` → server up ~03:56:53 (`/util` reported `uptime_seconds=68` at 03:58:01) → artifact published 03:59:59 → `--no-reuse: destroyed + forgot pod run-20260906-033228` at 04:00:05. Instance `run-20260906-033228` (A100-80GB, **$2.50/hr**) → **$1.15**, well inside the $4 cap. **The weights were fetched COLD, and that is the number that matters here:** before launch the `kinoforge-hf-cache` Modal Volume held only `models--Wan-AI--Wan2.1-T2V-1.3B-Diffusers`; after the run it also holds `models--Wan-AI--Wan2.2-T2V-A14B-Diffusers`. So ~23 of the 27.6 billed minutes were the ~63 GB HF snapshot, and **a warm re-run off this now-populated volume should cost roughly $0.30 rather than $1.15** — the single biggest lever on this cell's price. **Utilisation proves real compute:** `gpu_util_percent=100.0, cpu=6.0, mem=0.5` at both 03:58:01 and 03:59:18, mid-generation. During the fetch phase `/util` is unreachable by design (the server is not up yet), so the boot-phase health signal was the Modal container's existence and the app's task count, polled every ~80 s: `containers=1 app=[deployed tasks=1]` throughout, never flat-lining. mp4 **480x480 / 81 frames / 16 fps / 5.06 s**, 1,195,886 B — exactly the cfg's `spec`. **Frame-QA PASS** (5 frames via `ffmpeg_frames_by_count`, montage `sheetT3.png`, plus a 3x crop of the subject): coherent alpine meadow of red/orange/yellow wildflowers, tall waterfall down mossy cliffs, correct golden-hour backlight with the sun flaring over the ridge, glowing butterflies and wisps, and the prompt's specific beats all land — the camera pushes in across the five frames and she turns to glance over her shoulder with a legible smile. Temporally stable, no false colour, no seams or banding. *Soft flags, named rather than hidden:* the multi-panel red/blue/yellow dress is flag-like and its drape is loosely resolved, and her right hand is indistinct where it meets the yellow fabric — ordinary 14B character rendering at 480², not corruption, and nothing on the order of T1-28's whole-clip band. **Cap enforcement, stated plainly:** an 85-minute watchdog was armed before launch and did fire at 04:58, but the pod had already been gone for 58 minutes, so it killed an already-dead process tree and destroyed nothing. It did not save this run; `--no-reuse` did. **Teardown proof from new processes after the orchestrator exited:** `kinoforge list` prints `[instance overview] No running instances.` AND `No instances recorded in ledger.`; `modal container list` is empty; `modal app list` shows **0 non-stopped `kinoforge-*` apps**. Recorded as a See-also under `successful-generations.md` §23 |
+
+**Tier 3 tally (1 cell):** **1 PASS**, 0 FAIL. Actual spend **$1.15** on one A100-80GB alive
+27m37s. **`kinoforge generate` works on Modal at the top of the model range**, unchanged from the
+1.3B path — same command, same `--no-reuse` teardown, same artifact placement, no 14B-specific
+handling and no failure. The cell was run once, last, and not retried, per the operator's recorded
+decision; it came in at **29% of its $4 cap** because generation is cheap and the cold weight fetch
+is not.
+
+**A capability gap this cell makes concrete.** The run log warns that `max_lifetime: 90m` never
+reaches Modal — the enforced ceiling is `@app.function(timeout=...)` derived from
+`boot_timeout: 45m`, so a 14B cold boot that hung would have been cut at 45 minutes by Modal and
+not at 90 by the cfg. That is follow-up **F3** stated in money: on this cfg the provider's ceiling
+is *tighter* than the cfg's, which is the safe direction, but it is not the number the cfg says.
 
 ---
 
