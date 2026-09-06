@@ -34,7 +34,8 @@ verdict in the Verdict column.
 
 ## Tier 0 — the offline surface ($0)
 
-17 cells, all run 2026-09-05. One FAIL (T0-02), fixed in-session; no cell left failing.
+17 cells, all run 2026-09-05. Four failed: two were cheap and were fixed in-session
+(T0-02, T0-12), two are not and stay FAIL pending the follow-ups below (T0-07, T0-08).
 
 | Cell | Command | Config | Verdict | Cost | Evidence | Notes |
 |------|---------|--------|---------|------|----------|-------|
@@ -44,19 +45,21 @@ verdict in the Verdict column.
 | T0-04 | `kinoforge upscale -c VSRX4 --video FIX --dry-run` | VSRX4 | PASS | $0.00 | `logs/T0-04.log` | `scale: 4x`, `engine: flashvsr`, `no_reuse: False`, exit 0 |
 | T0-05 | `kinoforge upscale -c VSR1080 --video FIX --dry-run` | VSR1080 | PASS | $0.00 | `logs/T0-05.log` | `scale: 1080p`, exit 0. The dry-run prints the raw cfg string, not the resolved target; `ScaleTarget(kind="height", value=1080)` is asserted by `tests/test_modal_config.py::test_flashvsr_1080p_config_is_height_target` |
 | T0-06 | `kinoforge interpolate -c RIFE60 --video FIX --fps 60 --dry-run` | RIFE60 | PASS | $0.00 | `logs/T0-06.log` | `fps: 60.0`, `engine: rife`, exit 0 |
-| T0-07 | `kinoforge generate -c WAN13B --mode t2v --prompt PROMPT --dry-run-swap` | WAN13B | PASS | $0.00 | `logs/T0-07.log` | swap plan printed (`loras_source: empty`, empty evict/download, `cost: 0.0s`), no deploy, exit 0. ⚠ the matcher selected a **RunPod** pod for a Modal cfg — see follow-up F1 |
-| T0-08 | `kinoforge batch -c WAN13B --manifest batch.yaml --dry-run-swap` | WAN13B | PASS | $0.00 | `logs/T0-08.log` | exit 0, same matcher preview as T0-07. ⚠ the manifest is never parsed on this path — a nonexistent `--manifest` also exits 0; see follow-up F2 |
+| T0-07 | `kinoforge generate -c WAN13B --mode t2v --prompt PROMPT --dry-run-swap` | WAN13B | FAIL | $0.00 | `logs/T0-07.log` | exit 0 and the swap plan printed (`loras_source: empty`, empty evict/download, `cost: 0.0s`) with no deploy — but the plan is **wrong**: `matcher: selected pod i5y9um06fxkq83` names a RunPod pod, dead since 2026-07-13, for a Modal cfg. A wrong result, so FAIL, not PASS. Not cheap to fix; see follow-up F1 |
+| T0-08 | `kinoforge batch -c WAN13B --manifest batch.yaml --dry-run-swap` | WAN13B | FAIL | $0.00 | `logs/T0-08.log` | exit 0, but carrying the same wrong matcher result as T0-07 (F1), and the manifest is never parsed on this path — verified by re-running with a `--manifest` path that does not exist, which also exits 0. Two defects, neither cheap; see follow-ups F1 and F2 |
 | T0-09 | `kinoforge grid --spec grid.yaml --out grid-dry.mp4 --dry-run` | WAN13B | PASS | $0.00 | `logs/T0-09.log` | `[grid dry-run] 2 cells, layout=1x2, budget_cap=$0.60`, exit 0. Spec lives outside the repo as the loader requires |
 | T0-10 | `kinoforge list` | — | PASS | $0.00 | `logs/T0-10.log` | `[instance overview] No running instances.` + `No instances recorded in ledger.`, exit 0 |
 | T0-11 | `kinoforge status --id does-not-exist` | — | EXPECTED-REFUSAL | $0.00 | `logs/T0-11.log` | `instance 'does-not-exist' not found in ledger`, exit 1, no traceback |
-| T0-12 | `kinoforge reap` / `kinoforge reap --format json` | — | PASS | $0.00 | `logs/T0-12a.log`, `logs/T0-12b.log` | both exit 0 with `reap: ledger empty (nothing to do)`. ⚠ `--format json` emits that same human line rather than JSON on an empty ledger — see follow-up F3 |
+| T0-12 | `kinoforge reap` / `kinoforge reap --format json` | — | PASS | $0.00 | `logs/T0-12a.log`, `logs/T0-12b.log` | FAILed on first pass: `--format json` printed the human line `reap: ledger empty (nothing to do)` rather than JSON, breaking any `jq` consumer on the empty ledger. Fixed in `3c7822b8`; the re-run emits `{"type": "header", "entries": 0}` under `--format json` and keeps the sentence under the default human format. Both exit 0 |
 | T0-13 | `kinoforge cost -c WAN13B` / `-c WAN13B --json` | WAN13B | PASS | $0.00 | `logs/T0-13c.log`, `logs/T0-13b.log` | `Burn rate: $0.00/hr`, `(no entries in ledger)`, exit 0; `--json` emits a well-formed object. `-c/--config` is **mandatory** — the config-less forms in the brief exit 2 on argparse. No Modal row: the ledger is empty and `balance` is `{}` (no Modal balance adapter; documented absent) |
 | T0-14 | `kinoforge gc --config WAN13B` | WAN13B | PASS | $0.00 | `logs/T0-14.log` | `gc: nothing to do (specify --run <id>)`, exit 0 on the empty store |
 | T0-15 | `kinoforge sweeper status -c WAN13B` / `sweeper metrics -c WAN13B --prom` | WAN13B | PASS | $0.00 | `logs/T0-15a.log`, `logs/T0-15b.log` | `running=false`, `pid=none`, `sweeps_total=0`, exit 0; `--json` variant matches. `metrics` renders the Prom textfile exposition, exit 0. Both subcommands require `-c/--config` (exit 2 without it), and `metrics` additionally requires `--prom` |
 | T0-16 | `kinoforge forget --id does-not-exist` | — | EXPECTED-REFUSAL | $0.00 | `logs/T0-16.log` | `instance 'does-not-exist' not found in ledger`, exit 1, no traceback |
 | T0-17 | bare `modal app list` without env, then with env loaded | — | EXPECTED-REFUSAL | $0.00 | `logs/T0-17a.log`, `logs/T0-17b.log` | without env: `Token missing. Could not authenticate client.`, exit 1 — expected. With the dotenv loader: the Apps table renders **empty**, exit 0, confirming no stray Modal app before Tier 1 |
 
-**Tier 0 tally:** 14 PASS, 3 EXPECTED-REFUSAL, 0 FAIL outstanding (1 found and fixed).
+**Tier 0 tally:** 12 PASS, 3 EXPECTED-REFUSAL, **2 FAIL outstanding** (T0-07 and T0-08, both
+blocked on follow-up F1 and, for T0-08, F2). Two further failures were found and fixed in
+session — T0-02 (`c9d9b284`) and T0-12 (`3c7822b8`) — and those cells now pass.
 
 ---
 ## Tier 1 — Wan 2.1 1.3B on A10 (~$0.70)
@@ -143,8 +146,10 @@ verdict in the Verdict column.
 
 ## Follow-ups
 
-Filed from Tier 0. None was fixed in-session: each is larger than the "one function /
-one config key / one guard" bar the campaign's fix policy sets.
+Filed from Tier 0. Each is larger than the "one function / one config key / one guard" bar
+the campaign's fix policy sets, so each is recorded rather than fixed. The two failures that
+*did* meet that bar were fixed in-session instead of filed: the `doctor` heartbeat ERROR
+(`c9d9b284`) and the `reap --format json` empty-ledger path (`3c7822b8`).
 
 **F1 — the ephemeral warm-reuse matcher is provider-blind.** `--dry-run-swap` on a
 Modal cfg (T0-07, T0-08) selected pod `i5y9um06fxkq83`, a **RunPod** pod whose
@@ -153,13 +158,15 @@ Modal cfg (T0-07, T0-08) selected pod `i5y9um06fxkq83`, a **RunPod** pod whose
 `provider`, and `EphemeralIndex.rows_by_wak` /
 `rows_by_kinoforge_key` (`src/kinoforge/core/warm_reuse/ephemeral_index.py:188-194`)
 filter on the warm-attach / capability key alone. The key does not encode the provider,
-so a row written by one provider is a legal candidate for any other. Three stale RunPod
-rows sit in `.kinoforge/_lifecycle/ephemeral-index.json` right now; `kinoforge list`
-does not surface them (it reads the ledger only), so they are invisible residue. Live
-consequence to expect in Tier 1c: `--ephemeral generate` on Modal may try to attach to a
-RunPod URL instead of booting. Fix shape: filter index rows by `cfg.compute.provider`,
-or fold the provider into the warm-attach key. Blast radius spans the warm-reuse tests,
-hence not attempted here.
+so a row written by one provider is a legal candidate for any other. The three stale
+RunPod rows that triggered this have since been cleared from
+`.kinoforge/_lifecycle/ephemeral-index.json` by the operator (backup kept outside the
+repo), so the live tiers no longer carry that confound — but the **defect is unfixed**:
+the next Modal ephemeral run writes rows that a RunPod cfg could equally claim, and vice
+versa. Note also that `kinoforge list` never surfaces index rows at all (it reads the
+ledger only), so this residue is invisible from the CLI. Fix shape: filter index rows by
+`cfg.compute.provider`, or fold the provider into the warm-attach key. Blast radius spans
+the warm-reuse tests, hence not attempted here.
 
 **F2 — `batch --dry-run-swap` never reads the manifest.** T0-08 exits 0 with
 `--manifest /home/claudeuser/kinoforge-matrix/NOPE.yaml`, a path that does not exist.
@@ -168,12 +175,7 @@ the cell proves the swap preview works but proves nothing about the manifest. Ei
 validate the manifest before the early return, or document that the flag is
 matcher-only.
 
-**F3 — `reap --format json` ignores the format on an empty ledger.** T0-12 prints the
-human line `reap: ledger empty (nothing to do)` under `--format json`, so a JSON consumer
-gets unparseable output for the empty case. A caller that pipes into `jq` breaks on the
-empty ledger specifically — the case most likely to be hit by a scripted teardown check.
-
-**F4 — Modal's declared guardrail gaps are worth a doc row, not a fix.** Every Modal cfg
+**F3 — Modal's declared guardrail gaps are worth a doc row, not a fix.** Every Modal cfg
 warns that the provider cannot enforce `max_lifetime`, `job_timeout` or a wire-level
 `heartbeat_interval_s` read, and ignores `disk_gb` and `max_usd_per_hr`; the effective
 ceiling is Modal's `@app.function(timeout=boot_timeout)`. Correct and already surfaced by
