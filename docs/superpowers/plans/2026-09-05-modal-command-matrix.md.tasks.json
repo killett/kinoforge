@@ -4,13 +4,13 @@
     {
       "id": 0,
       "subject": "Task 0: Results document skeleton",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Create `docs/modal-command-matrix.md` with every cell pre-listed as `PENDING`, so a mid-campaign crash leaves a legible record of what was and was not run.\n\n**Files:**\n- Create: `docs/modal-command-matrix.md`\n\n**Acceptance Criteria:**\n- [ ] The document has a preamble (purpose, date, budget, link to the plan and spec), a running `Spend so far` line, and one table per tier.\n- [ ] Every cell id from Tasks 1\u20138 appears exactly once with verdict `PENDING`.\n- [ ] `pixi run pre-commit run --files docs/modal-command-matrix.md` passes.\n\n**Verify:** `rg -c \"PENDING\" docs/modal-command-matrix.md` \u2192 54\n\n```json:metadata\n{\"files\": [\"docs/modal-command-matrix.md\"], \"verifyCommand\": \"rg -c \\\"PENDING\\\" docs/modal-command-matrix.md\", \"acceptanceCriteria\": [\"The document has a preamble (purpose, date, budget, link to the plan and spec), a running `Spend so far` line, and one table per tier.\", \"Every cell id from Tasks 1\\u20138 appears exactly once with verdict `PENDING`.\", \"`pixi run pre-commit run --files docs/modal-command-matrix.md` passes.\"], \"modelTier\": \"standard\", \"liveSpend\": false}\n```"
     },
     {
       "id": 1,
       "subject": "Task 1: Tier 0 \u2014 the offline surface ($0)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Run every command that spends nothing against all five Modal configs and an empty ledger, and record each verdict.\n\n**Files:**\n- Modify: `docs/modal-command-matrix.md`\n\n**Acceptance Criteria:**\n- [ ] Every T0 cell has a verdict and, for FAIL, the exact error text.\n- [ ] Any validation regression from S1\u2013S5 that surfaces here is either fixed (small) or filed before Tier 1 starts.\n\n**Verify:** `rg -c \"T0-.*PENDING\" docs/modal-command-matrix.md` \u2192 0\n\n```json:metadata\n{\"files\": [\"docs/modal-command-matrix.md\"], \"verifyCommand\": \"rg -c \\\"T0-.*PENDING\\\" docs/modal-command-matrix.md\", \"acceptanceCriteria\": [\"Every T0 cell has a verdict and, for FAIL, the exact error text.\", \"Any validation regression from S1\\u2013S5 that surfaces here is either fixed (small) or filed before Tier 1 starts.\"], \"modelTier\": \"standard\", \"liveSpend\": false}\n```",
       "blockedBy": [
         0
@@ -89,5 +89,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-05T16:16:43"
+  "lastUpdated": "2026-09-06T01:00:49"
 }
