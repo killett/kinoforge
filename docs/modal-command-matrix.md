@@ -111,10 +111,22 @@ no capture/destroy/fail-fast escalation was needed.
 
 | Cell | Command | Config | Verdict | Cost | Evidence | Notes |
 |------|---------|--------|---------|------|----------|-------|
-| T1-19 | `kinoforge deploy --config CFG` (also `--diagnostic-mode`) | WAN13B | PENDING | | | |
-| T1-20 | `kinoforge provision -c CFG` | WAN13B | PENDING | | | |
-| T1-21 | `kinoforge generate -c CFG --mode t2v --prompt PROMPT --instance-id ID --skip-preflight` | WAN13B | PENDING | | | |
-| T1-22 | `kinoforge reap --apply --id ID` (fallback `destroy --id ID`) then teardown proof | WAN13B | PENDING | | | |
+| T1-19 | `kinoforge deploy --config CFG` (also `--diagnostic-mode`) | WAN13B | FAIL | $0.00 | `logs/T1-19.log`, `logs/T1-19b.log` | Exit 1 with an **uncaught traceback** before anything is booked: `ValueError: ModalProvider requires spec.setup_steps and spec.launch (the server boot command); got setup_steps=0 launch=None`. Root cause: `orchestrator.deploy` builds its `InstanceSpec` from a hard-coded **empty** `RenderedProvision(script="", image=image, ports=[], env_required=[])` (`src/kinoforge/core/orchestrator.py:2313-2323`) — it never calls `engine.render_provision`, unlike `deploy_session` and `_cmd_provision`. `kinoforge deploy` is therefore unusable on Modal, and on RunPod it would boot a pod with no server and no ports (the documented `forewgeluuy9qh` 2026-07-03 hazard). The Modal refusal itself is the *right* call — refusing to book a pod that could never serve — but it surfaces as a traceback, not a clean error. **Pre-launch provisional row confirmed working**: `kinoforge list` during boot showed `kinoforge-deploy-20260906-013616-45da4a provider=modal capability_key=<unknown>`, and per ruling C1 the row survived the raise (cleared here with `forget`). `--diagnostic-mode` was exercised free via `--dry-run`: exit 0, plan byte-identical to the plain dry-run — correct, the flag is RunPod-only by its own help text. **No spend.** See follow-up F8 / **U6** |
+| T1-20 | `kinoforge provision -c CFG` | WAN13B | FAIL | $0.13 | `logs/T1-20.log` | Exit code not observed: the run was killed at ~7 min once `modal app list` revealed a live untracked container (see below), so the code is unrecorded rather than non-zero. Two defects. **(a)** It printed `provisioned: instance=''` — an **empty instance id**. `ModalProvider.create_instance` returned an instance whose id never reached the print, and the app was deployed as `kinoforge-` (bare prefix, no suffix) at `https://emmykillett--kinoforge--build-modal-app--locals--server.modal.run`. **(b)** `_cmd_provision` writes **nothing to the ledger** — no provisional row, no real row — so `kinoforge list` showed `No instances recorded in ledger.` while `modal app list` showed `ap-U8nQQQVqDECy3iTqpoKQ7j` `deployed` with **1 running task**, i.e. a live A10 billing at $1.10/hr that no kinoforge command could name or destroy. Recovered manually with `modal app stop -y ap-U8nQQQVqDECy3iTqpoKQ7j`; confirmed `stopped`/0 tasks. Alive 01:45:21 → 01:52 ≈ 7 min ≈ **$0.13 of unrecoverable spend**, the single most expensive defect in the campaign so far. Not a "re-provision of the existing instance" and not an "already provisioned" refusal — it is an unconditional second create with no ledger record. See follow-up F9 / **U7** |
+| T1-21 | `kinoforge generate -c CFG --mode t2v --prompt PROMPT --instance-id ID --skip-preflight` | WAN13B | PASS | $0.09 | `logs/T1-21-boot.log`, `logs/T1-21.log`, `logs/T1-21-util.log`, `sheetD.png` | **Precondition substituted, and this matters:** the cell's premise is an instance produced by `deploy`, and `deploy` cannot produce one (T1-19), so the instance came from a plain `kinoforge generate` cold boot at 01:51:07 (`run-20260906-015109`, A10, app deployed in **1.4 s** — the image was already baked from the 01:02 Tier 1a run — first mp4 at 01:54:09, **3m02s** wall). Util at 01:51:53, mid-generation: **gpu=95.0%**, cpu=5.9, mem=0.5 — genuinely computing. The cell's own command then exits 0 in **40 s** (01:58:01 → 01:58:41) with **zero deploy lines** in its log, i.e. it attached to the named instance and rendered a second clip. Both mp4s 480x480/33f/16fps. Frame-QA: cold-boot clip **PASS ⚠️** (coherent alpine meadow, waterfall, backlit subject, pink butterflies; the dress flips green → purple around frame 4 — 1.3B/480px instability, not false colour or temporal breakup); attach clip **PASS** (clean, stable, red dress, waterfall, glowing wisps, correct over-the-shoulder turn). So the `--instance-id --skip-preflight` attach works; the **deploy-first lifecycle this tier exists to prove does not**, because of T1-19 |
+| T1-22 | `kinoforge reap --apply --id ID` (fallback `destroy --id ID`) then teardown proof | WAN13B | EXPECTED-REFUSAL | $0.00 | `logs/T1-22.log`, `logs/T1-22b.log`, `logs/T1-22-proof-list.log`, `logs/T1-22-proof-apps.log` | `reap --apply --id run-20260906-015109` exits 0 and **declines to destroy**: `HEARTBEAT_SUBSTRATE_MISSING`, `acted on 0: 0 destroyed · 0 forgotten · 0 drift-skipped · 0 deferred · 0 failed`. Correct by design — `reap` acts on dead/idle/over-budget entries, and this pod was 8 minutes old and healthy, so `--apply` on a LIVE verdict is a no-op. `reap` is therefore **not** a teardown command for a warm pod; the documented fallback is. `destroy --id` exits 0 at 01:59:03 with `destroyed: run-20260906-015109` (lifetime 01:51:07 → 01:59:03 = **7m56s**). **Teardown proof, from new processes after the orchestrator exited:** `kinoforge list` prints `[instance overview] No running instances.` AND `No instances recorded in ledger.`; `modal app list` shows every `kinoforge-*` app `stopped` with **0 tasks** (`ap-OBPWR584j3WON7TSUYx0rB`, `ap-U8nQQQVqDECy3iTqpoKQ7j`, `ap-TxQQKII6kO7evRXi35KD5O`). The F6 verdict-column padding defect reproduced verbatim (`HEARTBEAT_SUBSTRATE_MISSINGrun-20260906-015109`) |
+
+**Tier 1b tally:** 1 PASS, 1 EXPECTED-REFUSAL, **2 FAIL** (T1-19, T1-20). Actual spend **$0.28**
+against a ~$0.10 estimate — the overrun is entirely T1-20's untracked orphan, which billed for
+7 minutes before `modal app list` exposed it.
+
+**The tier's stated goal is not met.** `deploy` → `provision` → `generate --instance-id` →
+`reap --apply` does not work on Modal: the first step crashes without booking anything (T1-19,
+**U6**) and the second books a pod that no kinoforge command can see or destroy (T1-20, **U7**).
+Only the third and fourth steps behave, and the fourth only once the fallback is used. Two
+independent code paths — `orchestrator.deploy` and `_cmd_provision` — each build an `InstanceSpec`
+by hand instead of going through the one route (`deploy_session`) that is exercised by the
+`generate` path, and each is broken in its own way.
 
 ### Tier 1c — ephemeral runs and the reapers
 
@@ -238,3 +250,25 @@ unparseable by eye at exactly the moment an operator is deciding whether to reap
 as the prompt. Either wire vault -> prompt resolution and make `--prompt` conditionally optional,
 or correct the `--vault` help text, which today promises a vault "holding the positive prompt".
 Independently, the empty-prompt path should fail before acquiring a pod, not after. Filed as **U5**.
+
+**F8 — `kinoforge deploy` never renders the engine's provision, so it can never boot a server.**
+`orchestrator.deploy` builds its `InstanceSpec` from a hard-coded empty
+`RenderedProvision(script="", image=image, ports=[], env_required=[])`
+(`src/kinoforge/core/orchestrator.py:2313-2323`) — `engine.render_provision` is never called on
+this route, unlike `deploy_session` and `_cmd_provision`. On Modal the provider refuses outright
+(`ValueError: ModalProvider requires spec.setup_steps and spec.launch`), which is the correct
+refusal delivered as an uncaught traceback; on RunPod the same spec would book a pod with no
+ports and no bootstrap, the documented `forewgeluuy9qh` 2026-07-03 failure. Fix shape: render the
+provision inside `_build_spec` and thread `env_required` / `ports` the way `deploy_session` does.
+Not attempted here — it moves the launch payload for every provider, so the golden suite moves
+with it, which is past the campaign's one-function bar. Filed as **U6**.
+
+**F9 — `kinoforge provision` books an instance that nothing records and nothing can destroy.**
+`_cmd_provision` calls `provider.create_instance(spec)` directly and writes **no ledger row at
+all** — not the provisional row `deploy` writes, not a real row afterwards. On Modal the created
+app is named from an empty instance id (`kinoforge-`, printed as `provisioned: instance=''`), so
+even the app name carries no id to reap by. Observed live at T1-20: `kinoforge list` reported an
+empty ledger while `modal app list` showed `ap-U8nQQQVqDECy3iTqpoKQ7j` `deployed` with one running
+container at $1.10/hr; recovery required a bare `modal app stop -y`. Fix shape: route `provision`
+through the same pre-launch-row contract as `deploy` (F12/ruling C1), and make the empty instance
+id an error rather than an app name. Filed as **U7**.

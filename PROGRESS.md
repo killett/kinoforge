@@ -531,6 +531,48 @@ suspected site. **None of these is fixed.**
   so anyone keeping prompts out of the repo for privacy silently cannot. Secondary: the
   empty-prompt path should fail before acquiring a pod, not after.
 
+- **U6 — `kinoforge deploy` never renders the engine's provision; on Modal it cannot boot at all.**
+  `orchestrator.deploy` builds its `InstanceSpec` from a hard-coded EMPTY
+  `RenderedProvision(script="", image=image, ports=[], env_required=[])`
+  (`src/kinoforge/core/orchestrator.py:2313-2323`); `engine.render_provision` is never called on
+  this route, unlike `deploy_session` (the `generate` path) and `_cmd_provision`. The resulting
+  spec has no setup steps, no launch command and no ports.
+  **Reproducer (live, T1-19):**
+  `pixi run -e live-modal kinoforge deploy --config examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml`
+  exits 1 with an uncaught
+  `ValueError: ModalProvider requires spec.setup_steps and spec.launch (the server boot command);
+  got setup_steps=0 launch=None`.
+  **Suspected site:** `_build_spec` inside `deploy` (`src/kinoforge/core/orchestrator.py:2311`).
+  **Why urgent:** `kinoforge deploy` — the documented deploy-first entry point — is dead on Modal,
+  and on RunPod the same empty spec books a pod with no ports and no bootstrap, which is the
+  already-documented `forewgeluuy9qh` (2026-07-03) money-loss shape: `wait_for_ready` raises
+  `ProvisionFailed: ... has no endpoints` only AFTER the pod is billing. The Modal refusal is the
+  right behaviour arriving as a traceback rather than a clean error. Fixing it moves the launch
+  payload for every provider, so the golden suite moves with it — not a one-function change.
+  Good news from the same cell: the F12 pre-launch provisional row works, and ruling C1 holds —
+  `kinoforge list` showed `kinoforge-deploy-20260906-013616-45da4a provider=modal` during boot and
+  the row survived the raise.
+
+- **U7 — `kinoforge provision` books a live instance that no kinoforge command can see or destroy.**
+  `_cmd_provision` (`src/kinoforge/cli/_commands.py:255`) calls `provider.create_instance(spec)`
+  directly and writes **nothing to the ledger** — no pre-launch provisional row, no real row after.
+  It also never checks whether an instance for this capability key already exists, so it is an
+  unconditional second create, not the "re-provision / already provisioned" the command name
+  implies. On Modal the instance id comes back empty, so the app is named `kinoforge-` (bare
+  prefix) and the CLI prints `provisioned: instance=''` — the id needed to reap it does not exist.
+  **Reproducer (live, T1-20):**
+  `pixi run -e live-modal kinoforge provision -c examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml`
+  → `provisioned: instance=''`; `kinoforge list` → `No instances recorded in ledger.`; `modal app
+  list` → `ap-U8nQQQVqDECy3iTqpoKQ7j` `kinoforge-` `deployed` **1 task**. Recovery required a bare
+  `modal app stop -y <app id>`.
+  **Suspected site:** `_cmd_provision`'s hand-rolled `InstanceSpec` + `create_instance` (no
+  `ctx.store()` write anywhere in the function), and whatever drops the id on the Modal create
+  return.
+  **Why urgent:** this is the exact failure mode F12 and ruling C1 were built to close, still open
+  on one command. It cost **$0.13 of unrecoverable spend** on 2026-09-06 and was found only
+  because the matrix run happened to check `modal app list`; an operator following
+  `kinoforge list` alone would have seen an empty ledger and walked away from a billing A10.
+
 Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
 on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interval_s`
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
