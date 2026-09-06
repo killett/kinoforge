@@ -201,7 +201,7 @@ not obtained is a clean composed clip on the first attempt.
 
 | Cell | Command | Config | Verdict | Cost | Evidence | Notes |
 |------|---------|--------|---------|------|----------|-------|
-| T2-01 | `kinoforge upscale -c VSRX4 --video FIX` | VSRX4 | FAIL | $0.32 | `logs/T2-01.log`, `logs/T2-01.util.log` | **Boot and compute fine; the job dies at the mp4 encode.** Cold boot succeeded: image bake + `✓ App deployed in 538.837s` (8m59s — the slowest boot in the campaign, as expected for A100 + FlashVSR, and well inside `boot_timeout: 45m`). Instance `upscale-20260906-023846` (A100-80GB, $2.50/hr). **Util proves real compute**, not wall-clock accrual: `gpu_util_percent=100.0, cpu=6.1, mem=1.0` at 02:48:28. Then the job failed server-side: `kinoforge.core.errors.UpscaleFailed: upscale job u-44451cdebe... failed on server: Cannot change width after codec is open.` — a PyAV/imageio encoder error raised writing the upscaled clip, at `_pod_http.py:147`. **No artifact was produced, so no frame QA was possible and the cell cannot be PASS.** Reproduced identically at T2-03 and T2-05b (3/3), so it is deterministic, not a flake. This exact path was live-green on 2026-07-10 (§24), so it reads as environment drift in the freshly-baked image (`imageio[ffmpeg]>=2.34` is unpinned and pulls whatever `av` it likes) rather than a code regression — **but that is a hypothesis, not a diagnosis: no version was captured off the pod before teardown.** Larger than the one-guard bar. **Second defect in the same cell:** after the exception the CLI **never exited** — still running 16 minutes later with the pod up, killed manually. See follow-ups F14 / F15 and **U12** / **U13** |
+| T2-01 | `kinoforge upscale -c VSRX4 --video FIX` | VSRX4 | FAIL | $0.32 | `logs/T2-01.log`, `logs/T2-01.util.log` | **Boot and compute fine; the job dies at the mp4 encode.** Cold boot succeeded: image bake + `✓ App deployed in 538.837s` (8m59s — the slowest boot in the campaign, as expected for A100 + FlashVSR, and well inside `boot_timeout: 45m`). Instance `upscale-20260906-023846` (A100-80GB, $2.50/hr). **Util proves real compute**, not wall-clock accrual: `gpu_util_percent=100.0, cpu=6.1, mem=1.0` at 02:48:28. Then the job failed server-side: `kinoforge.core.errors.UpscaleFailed: upscale job u-44451cdebe... failed on server: Cannot change width after codec is open.` — a PyAV/imageio encoder error raised writing the upscaled clip, at `_pod_http.py:147`. **No artifact was produced, so no frame QA was possible and the cell cannot be PASS.** Reproduced identically at T2-03 and T2-05b (3/3), so it is deterministic, not a flake. This exact path was live-green on 2026-07-10 (§24), so it read as environment drift in the freshly-baked image rather than a code regression. **That hypothesis is now CONFIRMED** by a $0 CPU-only Modal build on 2026-09-06 (`tools/diagnose_flashvsr_writer_modal.py`): the image carries `av` **18.1.0** with `imageio` 2.37.4, and the same `imwrite` call fails on plain uint8 zeros with no GPU and no FlashVSR present. `av` 17.1.0 and below write fine, so the break is exactly at `av` 18 and the pin is `av<18`. The unpinned `"av"` lives in shared provision code (`upscalers/flashvsr/_engine.py:163`), not in the cfg, so **RunPod and SkyPilot are on the same fuse**. Larger than the one-guard bar. **Second defect in the same cell:** after the exception the CLI **never exited** — still running 16 minutes later with the pod up, killed manually. See follow-ups F14 / F15 and **U12** / **U13** |
 | T2-02 | `kinoforge upscale -c VSRX4 --video FIX --scale 1080p --attach-pod ID` | VSRX4 | EXPECTED-REFUSAL | $0.00 | `logs/T2-02.log` | Exit 2, no traceback, refused at argument validation *before* touching the pod: `error: --scale 1080p deferred to a later session; use --scale Nx for v1`. A deliberate guard — the height-target path is a **cfg** key (`upscale.scale: 1080p`, the VSR1080 cfg, live-green as §27), not a CLI flag, and the CLI says so plainly. Correct behaviour, but note what it costs the matrix: because the refusal fires before attach, **this cell never exercised `--attach-pod`**, so warm-attach on the `upscale` path is left unproven here (T2-03 covers the matcher instead, and fails). The brief's efficiency plan — T2-02 warm-attaching to T2-01's pod rather than paying a second A100 boot — could not run as written |
 | T2-03 | `kinoforge upscale -c VSR1080 --video FIX` | VSR1080 | FAIL | $0.08 | `logs/T2-03.log` | **Two findings, both negative.** (a) **It did not warm-attach.** T2-01's pod `upscale-20260906-023846` was alive and idle at 0% GPU when this launched, and the run log shows this cfg resolving to the **same capability key `7afe34198cc9`** — yet the matcher cold-booted a *second* A100 app, `upscale-20260906-025335`, putting two $2.50/hr cards on the clock at once. Deploy took only `1.477s` because the image was now cached, so the answer to the brief's "attach or cold boot?" is **cold boot, despite an identical key on a live pod**. See follow-up F16 / **U14**. (b) It then died at exactly the same encode: `UpscaleFailed: upscale job u-c11cfbd94d... failed on server: Cannot change width after codec is open.` No artifact, no frame QA |
 | T2-04 | `kinoforge destroy --id ID` + proof | VSRX4 | PASS | $0.00 | `logs/T2-04-proof-list.log`, `logs/T2-04-proof-apps.log` | Exit 0 on both pods — `destroyed: upscale-20260906-023846` and `destroyed: upscale-20260906-025335` at 02:55:3x. **Teardown proof from a new process after the orchestrator exited:** `kinoforge list` prints both required lines (`[instance overview] No running instances.` AND `No instances recorded in ledger.`), and a `modal app list` scan counts **0 non-stopped `kinoforge-*` apps**. Both A100s off the clock |
@@ -408,19 +408,29 @@ flag did nothing. Fix shape: thread `ephemeral` from `args` through `run_grid` i
 `_build_generate_cmd` as a `--ephemeral` argument on each cell's subprocess — or, if that is not
 wanted, reject the flag rather than accept it. Filed as **U11**.
 
-**F14 — FlashVSR's mp4 writer fails on Modal: `Cannot change width after codec is open`.** Every
-Tier 2a upscale that reached the GPU died at
+**F14 — FlashVSR's mp4 writer fails on every provider: `av` 18 broke it. DIAGNOSED; the fix is
+one string in shared code and is NOT applied.** Every Tier 2a upscale that reached the GPU died at
 `iio.imwrite(str(out), video, fps=fps, plugin="pyav", codec="libx264")`
 (`src/kinoforge/upscalers/flashvsr/_runtime.py:416`), surfacing at the controller as
 `kinoforge.core.errors.UpscaleFailed: upscale job <id> failed on server: Cannot change width after
 codec is open.` Three for three (T2-01, T2-03, T2-05b), across two cfgs and both lifecycle routes.
-The same code was live-green on 2026-07-10 (§24) and 2026-07-12 (§27), and the cfg pins torch
-exactly but leaves `imageio[ffmpeg]>=2.34` — and therefore `av` — unpinned, so the leading
-hypothesis is a newer PyAV in the freshly-baked image rejecting a stream reconfigure that older
-versions tolerated. **That is a hypothesis, not a diagnosis**: the pods were destroyed before any
-`av` / `imageio` version was read off them, so the first step of any fix is to capture those
-versions from a live pod (or from a CPU-only build of the same image, which costs nothing).
-Filed as **U12**.
+
+A CPU-only Modal build of the same image (`tools/diagnose_flashvsr_writer_modal.py`, $0, no GPU)
+captured the stack and reproduced the failure with **no GPU, no model and no FlashVSR**: plain
+`(T,H,W,C)` uint8 zeros through the same `imwrite` call raise the identical error at 1920² and
+480². Versions: **`imageio` 2.37.4, `av` 18.1.0**, `imageio-ffmpeg` 0.6.0, python 3.13.14. Holding
+`imageio` fixed and moving only `av`: **18.1.0 FAILS; 17.1.0, 16.1.0, 15.1.0 and 13.1.0 all write
+successfully.** So the leading hypothesis (an unpinned newer PyAV) is **confirmed**, the break is
+exactly at `av` 18, and the pin is **`av<18`**.
+
+The unpinned requirement is **not in any cfg**. It is the last entry of the runtime-deps line in
+`FlashVSREngine.render_provision` (`src/kinoforge/upscalers/flashvsr/_engine.py:163`), which is
+rendered into **every** FlashVSR provision script on every provider — the four golden launch
+payloads that embed it cover Modal x4, Modal 1080p, SkyPilot/Lambda and SkyPilot/Vast, and RunPod
+renders the same body. **RunPod and SkyPilot are on the same fuse and will fail identically the
+next time their images are rebuilt**; they are green today only because they have not been. Not
+applied here: it re-snapshots four golden payloads and moves the boot payload for three providers,
+which is past the campaign's one-function fix bar. Filed as **U12**, which carries the full table.
 
 **F15 — the CLI never exits after `UpscaleFailed`.** Once `submit_and_poll`
 (`src/kinoforge/engines/_pod_http.py:147`) raises, the traceback prints and the process stays

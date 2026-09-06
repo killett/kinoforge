@@ -246,7 +246,11 @@ def main() -> None:
     report = probe.remote()
     print(report)
     print("=== av bisect (imageio held at the baked version) ===")
-    for line in bisect_av.remote(
-        ["av==15.1.0", "av==14.4.0", "av==13.1.0", "av==12.3.0"]
-    ):
+    # Answer, 2026-09-06, imageio 2.37.4 / python 3.13.14 throughout:
+    #   av 18.1.0 -> RuntimeError: Cannot change width after codec is open.
+    #   av 17.1.0 -> OK      av 16.1.0 -> OK
+    #   av 15.1.0 -> OK      av 13.1.0 -> OK
+    # The break is exactly at av 18, so `av<18` is the pin. (av 14.x / 12.x
+    # publish no cp313 wheel and fail to build from source — not evidence.)
+    for line in bisect_av.remote(["av<18", "av<17", "av==15.1.0", "av==13.1.0"]):
         print(line)

@@ -447,7 +447,7 @@ Found by the Modal command-matrix campaign (plan
 `docs/superpowers/plans/2026-09-05-modal-command-matrix.md`, results
 `docs/modal-command-matrix.md`). Operator directive 2026-09-06: big issues land HERE as urgent
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
-suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`), U10 is fixed (`7d535503`, the interval-reporting half of it excepted), and U5 is half-fixed (help text corrected in `c08c3cce`, wiring still open). Every other item is untouched.**
+suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`), U10 is fixed (`7d535503`, the interval-reporting half of it excepted), U5 is half-fixed (help text corrected in `c08c3cce`, wiring still open), and U12 is fully diagnosed with a one-string fix specified but not applied (it is shared provision code affecting RunPod and SkyPilot too — read U12 before touching FlashVSR on any provider). Every other item is untouched.**
 
 - **U1 — the warm-attach matcher is provider-blind (cross-provider attach risk).**
   `WarmAttachKey` (`src/kinoforge/core/interfaces.py:649`) carries base_model / engine /
@@ -680,7 +680,7 @@ suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`), U10 is fixed (`7d
   per-cell `no_reuse=True` teardown (`executor.py:852`), which a plain non-ephemeral grid produces
   identically. A user who asked for ephemeral has no way to tell they did not get it.
 
-- **U12 — FlashVSR upscale on Modal is dead: every job fails at the mp4 encode.**
+- **U12 — DIAGNOSED (fix specified, NOT applied) — FlashVSR upscale is dead on every provider: `av` 18 broke the mp4 encode.**
   **Symptom:** the pod boots, loads FlashVSR, reaches the GPU and computes (util probe caught
   `gpu_util_percent=100.0`), then the job fails server-side and no artifact is produced:
   `kinoforge.core.errors.UpscaleFailed: upscale job <id> failed on server: Cannot change width
@@ -692,18 +692,66 @@ suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`), U10 is fixed (`7d
   --no-reuse`
   Identical with the `…-flashvsr-1080p-upscale.yaml` cfg, and identical under `--ephemeral`, so
   neither the cfg nor the lifecycle route is the variable.
-  **Suspected site:** `src/kinoforge/upscalers/flashvsr/_runtime.py:416` —
-  `iio.imwrite(str(out), video, fps=fps, plugin="pyav", codec="libx264")`. The error is PyAV's,
-  raised when a stream is reconfigured after the codec opens. The cfg pins torch exactly but
-  leaves `imageio[ffmpeg]>=2.34` (and transitively `av`) unpinned, and this same code was
-  live-green on 2026-07-10 (§24) and 2026-07-12 (§27), so a newer `av` in the freshly-baked image
-  is the leading hypothesis — **not yet a diagnosis.** No version was captured off the pod before
-  teardown; **capturing `av.__version__` and `imageio.__version__` from the baked image is the
-  first step**, and it can be done on a CPU-only build for $0 rather than on an A100.
-  **Why urgent:** it is a total loss of the upscale capability on Modal, it is invisible until
-  after a full A100 boot has been paid for (~9 min, ~$0.32 the first time), and if the cause is an
-  unpinned dependency then the RunPod and SkyPilot FlashVSR paths are on the same fuse and will
-  fail the same way the next time their images are rebuilt.
+  **Reproducer ($0, no GPU — use this one):**
+  `pixi run -e live-modal modal run tools/diagnose_flashvsr_writer_modal.py`
+
+  **CAPTURED VERSIONS (fact, 2026-09-06).** Read off a CPU-only Modal build of the same image the
+  x4 cfg specifies — `python:3.13-slim`, the cfg's `engine.diffusers.pip` list, then the runtime
+  deps line from `upscalers/flashvsr/_engine.py`, in that order:
+
+  | package | version |
+  |---|---|
+  | python | 3.13.14 |
+  | `imageio` | **2.37.4** |
+  | `imageio-ffmpeg` | 0.6.0 (bundled binary: ffmpeg 7.0.2-static) |
+  | **`av`** | **18.1.0** |
+  | `av.library_versions` | libavcodec 62.28.102, libavformat 62.12.102, libavutil 60.26.102 |
+  | `numpy` | 2.5.2 |
+
+  **THE HYPOTHESIS IS CONFIRMED, and it is now a diagnosis.** The recorded hypothesis was "a newer
+  PyAV in the freshly-baked image rejects a stream reconfigure that older versions tolerated." The
+  $0 probe ran the exact call from `_runtime.py:416` —
+  `iio.imwrite(path, video, fps=16.0, plugin="pyav", codec="libx264")` — on plain
+  `(T, H, W, C)` uint8 zeros with **no GPU, no model and no FlashVSR at all**, and it raised
+  `RuntimeError: Cannot change width after codec is open.` at both 1920² and 480². So the failure
+  is neither GPU-specific, nor content-specific, nor FlashVSR-specific: it is `imageio` 2.37.4's
+  pyav plugin setting `stream.width` after the codec context is open, which PyAV 18 refuses.
+
+  **The break is exactly at `av` 18** (same image, same `imageio` 2.37.4, `av` the only variable):
+
+  | `av` | result |
+  |---|---|
+  | 18.1.0 | **FAIL** — `Cannot change width after codec is open.` |
+  | 17.1.0 | OK (3351 B written) |
+  | 16.1.0 | OK |
+  | 15.1.0 | OK |
+  | 13.1.0 | OK |
+
+  (14.x and 12.x publish no cp313 wheel and fail to build from source — absence of evidence, not
+  evidence.) **The pin is `av<18`.**
+
+  **THE FUSE IS SHARED CODE, NOT THE CFG — RunPod and SkyPilot are on it too.** The unpinned
+  requirement is not in any YAML. It is the last entry of the runtime-deps line inside
+  `FlashVSREngine.render_provision` (`src/kinoforge/upscalers/flashvsr/_engine.py:163`):
+  `pip install "modelscope" … "imageio[ffmpeg,pyav]>=2.34" "av"`. That one line is rendered into
+  **every** FlashVSR provision script on every provider — the four golden launch payloads under
+  `tests/providers/golden/launch_payloads/` that embed it are
+  `modal-diffusers-flashvsr-x4-upscale.json`, `modal-diffusers-flashvsr-1080p-upscale.json`,
+  `skypilot-lambda-diffusers-flashvsr-upscale.json` and
+  `skypilot-vast-diffusers-flashvsr-upscale.json`, and RunPod renders the same body through
+  `tests/providers/test_runpod_provision_script.py`. So **RunPod and SkyPilot FlashVSR will fail
+  identically the next time their images are built** — they have not yet only because their images
+  have not been rebuilt since `av` 18 shipped. This is a three-provider outage with a
+  time-delayed trigger, not a Modal problem.
+
+  **Fix, specified but deliberately NOT applied here:** change that one string to `"av<18"`. It was
+  left for the operator because it is shared provision code, not a cfg key — applying it
+  re-snapshots four golden launch payloads and changes the boot payload for RunPod and SkyPilot as
+  well as Modal, which is past this campaign's one-function/one-config-key/one-guard fix bar.
+  Pinning `av` in a cfg's `pip:` block would also work mechanically (the later unpinned
+  `pip install "av"` is then a no-op) but would fix only that one cfg and leave the shared fuse lit.
+  **Do not spend an A100 to confirm the pin** — the $0 CPU probe already exercises the exact
+  failing call; a live re-run belongs to whatever budget picks up the fix.
 
 - **U13 — the CLI hangs forever after `UpscaleFailed` instead of exiting.**
   **Symptom:** after the traceback prints, the process never terminates. T2-01 was still alive 16
