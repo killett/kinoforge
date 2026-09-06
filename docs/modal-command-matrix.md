@@ -10,7 +10,7 @@ assorted commands without a record of which; this document is that record.
 **Spec:** `docs/superpowers/specs/2026-09-05-modal-command-matrix-design.md`
 **Logs:** `/home/claudeuser/kinoforge-matrix/logs/<cell id>.log` (operator-side, not tracked)
 
-**Spend so far: $0.89** (Tier 0 $0.00 + Tier 1a $0.38 + Tier 1b $0.28 + Tier 1c $0.13 + Tier 1d $0.10)
+**Spend so far: $1.46** (Tier 0 $0.00 + Tier 1a $0.38 + Tier 1b $0.28 + Tier 1c $0.13 + Tier 1d $0.10 + Tier 2a ~$0.50 + Tier 2b ~$0.07)
 
 **Verdicts.** `PASS` — behaved as expected. `FAIL` — a crash, a traceback, or a wrong result.
 `EXPECTED-REFUSAL` — refused cleanly and on purpose (not-found id, unsupported operation,
@@ -221,8 +221,18 @@ hang) and **U14** (warm-attach miss).
 
 | Cell | Command | Config | Verdict | Cost | Evidence | Notes |
 |------|---------|--------|---------|------|----------|-------|
-| T2-06 | `kinoforge interpolate -c RIFE60 --video FIX --fps 60 --no-reuse` | RIFE60 | PENDING | | | |
-| T2-07 | same cfg, `--video <T2-01 output> --fps 32 --no-reuse` | RIFE60 | PENDING | | | |
+| T2-06 | `kinoforge interpolate -c RIFE60 --video FIX --fps 60 --no-reuse` | RIFE60 | PASS | $0.04 | `logs/T2-06.log`, `logs/T2-06.util.log`, `frames/T2-06.png` | Exit 0, **3m30s end to end including the first image bake** — cold boot at 03:01:52, provision at 03:04:55, artifact materialised 03:05:21, published `output/20260906-030522_interpolated_rife_interp_interpolate.mp4`. `ffprobe`: **480×480, 60/1 fps, 304 frames, 5.066667s** against the source's 480×480 / 16 fps / 81 frames / 5.0625s — 3.75× the frames at 3.75× the rate, with **duration preserved**, which is the invariant that matters (a naive frame-doubler that leaves fps alone would stretch the clip to 19s). Frame-QA **PASS** (5-frame contact sheet, judged against the source sheet): the golden-hour meadow, backlit waterfall, red/purple dress and glowing butterflies are all exactly as in the source, colour is natural with **no false-colour cast** (the 2026-07-03 failure mode), and the sampled frames show no ghosting, warping or subject morphing. `--no-reuse` tore the pod down on its own (`--no-reuse: destroyed + forgot pod interpolate-20260906-030152`) |
+| T2-07 | same cfg, `--fps 32 --no-reuse` (**not** on T2-01's output — see note) | RIFE60 | PASS | $0.03 | `logs/T2-07.log`, `frames/T2-07.png`, `logs/T2-07-proof-list.log`, `logs/T2-07-proof-apps.log` | Exit 0 in **32s** — the image was cached from T2-06, so this is the warm-image cold-boot cost. `ffprobe`: **480×480, 32/1 fps, 162 frames, 5.0625s** — exactly 2× the source's 81 frames at exactly 2× its 16 fps, duration bit-identical to the source. The alternate-fps path resolves correctly and is not hard-coded to the cfg's `fps: 60.0`. Frame-QA **PASS**, indistinguishable from the source sheet, no artefacts. **What this cell does NOT test, stated plainly:** the brief specified `--video <T2-01 output>` to put a 1920² clip through RIFE on a 16GB T4 and find out whether it OOMs. T2-01 produced no artifact (see U12), so **that input did not exist** and the fixture was substituted. The T4-VRAM question the cell was designed to answer is therefore **untested**, and stays open until FlashVSR on Modal produces a clip again. Incidental finding relevant to U14: `--fps 32` resolved to capability key `82e591e03237` where `--fps 60` gave `ce2647e63e90`, so the key *does* discriminate fps — while at T2-03 it did **not** discriminate `upscale.scale` |
+
+**Tier 2b tally (2 cells):** **2 PASS**, 0 FAIL. Actual spend **~$0.07** on two T4 containers
+(~$0.60/hr), 3m30s and 32s. **RIFE interpolate on Modal works**, at both the cfg fps and a CLI
+override, with correct frame-count and duration arithmetic and clean frames — the one capability
+in Tier 2 that is healthy. A See-also line is added under `successful-generations.md` §25.
+`--no-reuse` self-teardown fired on both, and the proof from a new process after the orchestrator
+exited shows `[instance overview] No running instances.`, `No instances recorded in ledger.` and
+**0 non-stopped `kinoforge-*` apps**.
+
+**Tier 2 total spend: ~$0.57** (2a ~$0.50 on A100-80GB, 2b ~$0.07 on T4).
 
 ---
 
@@ -383,3 +393,39 @@ per-cell `no_reuse=True` teardown, not by ephemeral mode, so there is no observa
 flag did nothing. Fix shape: thread `ephemeral` from `args` through `run_grid` into
 `_build_generate_cmd` as a `--ephemeral` argument on each cell's subprocess — or, if that is not
 wanted, reject the flag rather than accept it. Filed as **U11**.
+
+**F14 — FlashVSR's mp4 writer fails on Modal: `Cannot change width after codec is open`.** Every
+Tier 2a upscale that reached the GPU died at
+`iio.imwrite(str(out), video, fps=fps, plugin="pyav", codec="libx264")`
+(`src/kinoforge/upscalers/flashvsr/_runtime.py:416`), surfacing at the controller as
+`kinoforge.core.errors.UpscaleFailed: upscale job <id> failed on server: Cannot change width after
+codec is open.` Three for three (T2-01, T2-03, T2-05b), across two cfgs and both lifecycle routes.
+The same code was live-green on 2026-07-10 (§24) and 2026-07-12 (§27), and the cfg pins torch
+exactly but leaves `imageio[ffmpeg]>=2.34` — and therefore `av` — unpinned, so the leading
+hypothesis is a newer PyAV in the freshly-baked image rejecting a stream reconfigure that older
+versions tolerated. **That is a hypothesis, not a diagnosis**: the pods were destroyed before any
+`av` / `imageio` version was read off them, so the first step of any fix is to capture those
+versions from a live pod (or from a CPU-only build of the same image, which costs nothing).
+Filed as **U12**.
+
+**F15 — the CLI never exits after `UpscaleFailed`.** Once `submit_and_poll`
+(`src/kinoforge/engines/_pod_http.py:147`) raises, the traceback prints and the process stays
+alive indefinitely — T2-01 was still running 16 minutes later and had to be `kill -9`ed, and
+T2-05b behaved the same. The pod is **not** leaked (T2-05b proved `--no-reuse` destroys it even
+on the failure path, verified as 0 non-stopped `kinoforge-*` apps while the CLI was still hung),
+so the hang is in the post-teardown unwind — a non-daemon thread (heartbeat or util poller) that
+is never joined on the error path. Still serious: an operator who trusts the process to exit will
+sit on a dead run, and in CI it is a job that hangs until the runner's own timeout. Filed as
+**U13**.
+
+**F16 — warm-attach cold-booted a second A100 despite an identical capability key on a live
+pod.** At T2-03 the VSR1080 cfg resolved to capability key `7afe34198cc9` — the *same* key T2-01's
+still-running, idle pod `upscale-20260906-023846` was registered under — and the matcher started a
+fresh app `upscale-20260906-025335` anyway, putting two $2.50/hr A100s on the clock at once. This
+is the mirror image of F1: there the matcher was too eager and crossed providers, here it is too
+reluctant and misses its own. Note the two cfgs differ only in `upscale.scale` (`4x` vs `1080p`),
+which the key evidently does not distinguish, so key equality was not the discriminator — whatever
+rejected the candidate lives past the key comparison. Fix shape: log the reject reason at the
+match site so a miss is diagnosable without a second $2.50/hr boot; this task could not tell
+whether the pod was rejected, never enumerated, or never consulted. Filed as **U14**.
+

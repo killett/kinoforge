@@ -665,6 +665,67 @@ suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`) and U5 is half-fix
   per-cell `no_reuse=True` teardown (`executor.py:852`), which a plain non-ephemeral grid produces
   identically. A user who asked for ephemeral has no way to tell they did not get it.
 
+- **U12 — FlashVSR upscale on Modal is dead: every job fails at the mp4 encode.**
+  **Symptom:** the pod boots, loads FlashVSR, reaches the GPU and computes (util probe caught
+  `gpu_util_percent=100.0`), then the job fails server-side and no artifact is produced:
+  `kinoforge.core.errors.UpscaleFailed: upscale job <id> failed on server: Cannot change width
+  after codec is open.`
+  **Reproducer (live, T2-01 / T2-03 / T2-05b — 3 for 3):**
+  `pixi run -e live-modal kinoforge upscale
+  --config examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml
+  --video output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4
+  --no-reuse`
+  Identical with the `…-flashvsr-1080p-upscale.yaml` cfg, and identical under `--ephemeral`, so
+  neither the cfg nor the lifecycle route is the variable.
+  **Suspected site:** `src/kinoforge/upscalers/flashvsr/_runtime.py:416` —
+  `iio.imwrite(str(out), video, fps=fps, plugin="pyav", codec="libx264")`. The error is PyAV's,
+  raised when a stream is reconfigured after the codec opens. The cfg pins torch exactly but
+  leaves `imageio[ffmpeg]>=2.34` (and transitively `av`) unpinned, and this same code was
+  live-green on 2026-07-10 (§24) and 2026-07-12 (§27), so a newer `av` in the freshly-baked image
+  is the leading hypothesis — **not yet a diagnosis.** No version was captured off the pod before
+  teardown; **capturing `av.__version__` and `imageio.__version__` from the baked image is the
+  first step**, and it can be done on a CPU-only build for $0 rather than on an A100.
+  **Why urgent:** it is a total loss of the upscale capability on Modal, it is invisible until
+  after a full A100 boot has been paid for (~9 min, ~$0.32 the first time), and if the cause is an
+  unpinned dependency then the RunPod and SkyPilot FlashVSR paths are on the same fuse and will
+  fail the same way the next time their images are rebuilt.
+
+- **U13 — the CLI hangs forever after `UpscaleFailed` instead of exiting.**
+  **Symptom:** after the traceback prints, the process never terminates. T2-01 was still alive 16
+  minutes after its exception and had to be `kill -9`ed; T2-05b did the same.
+  **Reproducer (live, T2-01 / T2-05b):** any failing `kinoforge upscale` (see U12's command) —
+  the traceback appears, then the shell never gets its prompt back.
+  **Suspected site:** the error path out of `submit_and_poll`
+  (`src/kinoforge/engines/_pod_http.py:147`), which unwinds without joining the non-daemon
+  heartbeat / util-poller threads the orchestrator started.
+  **Why urgent:** it is *not* a pod leak — T2-05b confirmed `--no-reuse` destroys the pod even on
+  the failure path (0 non-stopped `kinoforge-*` apps while the CLI still hung) — but an operator
+  who reads a hung process as "still working" will leave it, and any CI or scripted use hangs
+  until an outer timeout fires. It also makes the failure *look* like the money leak it is not,
+  which costs the operator a panic and a manual `modal app list` every time.
+
+- **U14 — warm-attach cold-booted a second $2.50/hr A100 while an idle pod with the identical
+  capability key was live.**
+  **Symptom:** with `upscale-20260906-023846` (A100-80GB) up and idle at 0% GPU, a second upscale
+  resolving to the **same capability key `7afe34198cc9`** did not attach — it deployed a fresh app
+  `upscale-20260906-025335`, so two A100s billed concurrently.
+  **Reproducer (live, T2-03):** leave a pod up from
+  `kinoforge upscale -c examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml --video <fix>`
+  (no `--no-reuse`), then run
+  `pixi run -e live-modal kinoforge upscale
+  --config examples/configs/modal-diffusers-flashvsr-1080p-upscale.yaml --video <fix>`
+  — the run log shows the same key and a fresh `✓ App deployed`.
+  **Suspected site:** `find_warm_attach_candidate`
+  (`src/kinoforge/core/warm_reuse/matcher.py`) and the `EphemeralIndex` lookups it consults. The
+  two cfgs differ only in `upscale.scale` (`4x` vs `1080p`), which the key does not distinguish,
+  so key equality was **not** the discriminator — whatever rejected the candidate sits past the
+  key comparison, and nothing in the output says what it was.
+  **Why urgent:** this is F1/U1's failure mode inverted — the matcher is provider-blind *and*
+  unreliable at recognising its own live pods — and on A100-class hardware a silent miss doubles
+  the burn rate with no warning. It is also **undiagnosable without spending again**: the match
+  site logs no reject reason, so establishing why costs another cold boot. Logging the reason is
+  the cheap first fix, ahead of the matcher change itself.
+
 Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
 on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interval_s`
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
