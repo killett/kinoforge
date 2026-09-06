@@ -447,7 +447,7 @@ Found by the Modal command-matrix campaign (plan
 `docs/superpowers/plans/2026-09-05-modal-command-matrix.md`, results
 `docs/modal-command-matrix.md`). Operator directive 2026-09-06: big issues land HERE as urgent
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
-suspected site. **None of these is fixed.**
+suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`) and U5 is half-fixed (help text corrected in the same commit, wiring still open). Every other item is untouched.**
 
 - **U1 — the warm-attach matcher is provider-blind (cross-provider attach risk).**
   `WarmAttachKey` (`src/kinoforge/core/interfaces.py:649`) carries base_model / engine /
@@ -501,7 +501,7 @@ suspected site. **None of these is fixed.**
   what is new is the measured cost of the deferral. Cheap fix shape: fall back to the ledger
   entry's `endpoints` map.
 
-- **U4 — `kinoforge logs` is hard-wired to the RunPod proxy and 404s on every other provider.**
+- **U4 — FIXED in `c08c3cce` — `kinoforge logs` was hard-wired to the RunPod proxy and 404'd on every other provider.**
   `_cmd_logs` does `del ctx  # ledger not consulted — proxy URL is deterministic from id` and
   builds `https://{id}-8001.proxy.runpod.net/{file}` with no provider check.
   **Reproducer (live, T1-04):** against a live *Modal* pod,
@@ -512,10 +512,16 @@ suspected site. **None of these is fixed.**
   **Why urgent:** the sidecar is legitimately RunPod-shaped, so being unsupported on Modal is
   fine — but reporting it as a 404 against a fabricated hostname tells the operator "the pod has
   no log" instead of "wrong provider", which is exactly the wrong thing to believe while
-  debugging a live pod that is still billing. Minimum fix: branch on the ledger entry's
-  `provider` and refuse cleanly.
+  debugging a live pod that is still billing.
+  **Fix (`c08c3cce`, 2026-09-06):** `_cmd_logs` no longer discards its context. It looks the id up in
+  the ledger and, on any provider outside `_LOG_SIDECAR_PROVIDERS` (RunPod alone), prints
+  `logs: unsupported on provider 'modal' (instance '<id>')` with the provider's own log surface
+  as the alternative and returns **2** — no network call, no `--out` file written, no traceback.
+  The ledger lookup is advisory: an id it does not hold (a destroyed or `forget`-ed pod) and an
+  unreadable ledger both fall through to the fetch, so post-mortem log pulls still work. Five
+  red/green tests in `tests/cli/test_cmd_logs.py`. Matrix cell T1-04 is now EXPECTED-REFUSAL.
 
-- **U5 — `--vault` cannot supply the prompt its own help text advertises.**
+- **U5 — PARTLY FIXED in `c08c3cce` (help text corrected; wiring still open) — `--vault` cannot supply the prompt its own help text advertised.**
   `kinoforge generate` requires `--prompt` at argparse even under `--vault`, and
   `vault.positive_prompt` is referenced in exactly one place in the tree —
   `register_vault_tokens` (`src/kinoforge/core/vault.py:228`), which registers it as a
@@ -527,6 +533,13 @@ suspected site. **None of these is fixed.**
   `warm-reuse: attached to <id>` — i.e. after the pod was acquired and billed.
   **Suspected site:** the `generate` argparse definition plus prompt resolution
   (`src/kinoforge/core/prompt_routing.py:resolve_prompt`), neither of which consults the vault.
+  **Partial fix (`c08c3cce`, 2026-09-06):** the `--vault` help string in `src/kinoforge/cli/_main.py`
+  no longer claims the vault holds "the positive prompt". It now states that the vault supplies
+  redaction tokens and that `--prompt` is still required and is the only prompt source, so the
+  advertised-but-absent capability is no longer advertised. **Still open, and this item stays
+  open for it:** wiring `vault.positive_prompt` into prompt resolution, making `--prompt`
+  conditionally optional under `--vault`, and failing the empty-prompt path *before* a pod is
+  acquired and billed rather than after.
   **Why urgent:** `--vault`'s documented purpose ("holding the positive prompt") is unreachable,
   so anyone keeping prompts out of the repo for privacy silently cannot. Secondary: the
   empty-prompt path should fail before acquiring a pod, not after.
