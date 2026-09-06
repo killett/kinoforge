@@ -2705,7 +2705,13 @@ def _cmd_reap(args: argparse.Namespace, ctx: SessionContext) -> int:
     if single_id is not None:
         ledger = _SingleIdLedgerView(ledger, single_id)
     if not ledger.entries():
-        print("reap: ledger empty (nothing to do)")
+        # Honour the requested format on the short-circuit too: a consumer
+        # piping `--format json` into jq must not choke on the one case it is
+        # most likely to hit — nothing left to reap.
+        if fmt == "json":
+            print(json.dumps({"type": "header", "entries": 0}))
+        else:
+            print("reap: ledger empty (nothing to do)")
         return 0
 
     cfg = ctx.cfg

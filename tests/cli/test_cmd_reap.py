@@ -497,3 +497,56 @@ def test_emit_reap_jsonl_handles_deferred_action(
             assert rec.get("reason", "").startswith("held by pid ")
             break
     assert found, captured.out
+
+
+# ---------------------------------------------------------------------------
+# Empty ledger — the --format json contract holds on the short-circuit path
+# ---------------------------------------------------------------------------
+
+
+def test_reap_empty_ledger_json_emits_parseable_records(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`reap --format json` on an empty ledger stays machine-readable.
+
+    Bug caught: the empty-ledger early return printed the human sentence
+    "reap: ledger empty (nothing to do)" without consulting the requested
+    format, so `kinoforge reap --format json | jq` died on exactly the case a
+    scripted teardown check hits most — the one where there is nothing left to
+    reap. Every stdout line must parse as JSON, and the header must report zero
+    entries so the consumer can distinguish "empty" from "not run".
+    """
+    ctx = _ctx([])
+
+    code = _cmd_reap(_args(format="json"), ctx)
+
+    assert code == 0
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    assert lines, "empty ledger emitted nothing at all under --format json"
+    records = []
+    for line in lines:
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError as exc:  # pragma: no cover - failure path
+            pytest.fail(f"non-JSON line under --format json: {line!r} ({exc})")
+    headers = [r for r in records if r.get("type") == "header"]
+    assert len(headers) == 1, f"expected exactly one header record, got {records}"
+    assert headers[0]["entries"] == 0
+    assert "nothing to do" not in out
+
+
+def test_reap_empty_ledger_human_keeps_the_sentence(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The default human format still says so in words.
+
+    Bug caught: fixing the JSON path by always emitting records would strip the
+    operator-facing message that makes an empty `kinoforge reap` legible.
+    """
+    ctx = _ctx([])
+
+    code = _cmd_reap(_args(), ctx)
+
+    assert code == 0
+    assert "reap: ledger empty (nothing to do)" in capsys.readouterr().out
