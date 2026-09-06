@@ -33,6 +33,7 @@ no branching on provider names in core logic.
   - Cloud stores → [docs/cloud-stores.md](docs/cloud-stores.md)
   - Output layout → [docs/output-layout.md](docs/output-layout.md)
   - Breaking changes → [docs/breaking-changes.md](docs/breaking-changes.md)
+  - Modal command matrix → [docs/modal-command-matrix.md](docs/modal-command-matrix.md)
   - Roadmap → [docs/roadmap.md](docs/roadmap.md)
 - [Troubleshooting](#troubleshooting)
 - [Contributing / extending](#contributing--extending)
@@ -535,6 +536,11 @@ model slug, making outputs reproducible and diff-friendly.
 
 **Breaking changes** ([docs/breaking-changes.md](docs/breaking-changes.md)) — a versioned log of
 config-schema and CLI changes that require operator action on upgrade.
+
+**Modal command matrix** ([docs/modal-command-matrix.md](docs/modal-command-matrix.md)) — every
+`kinoforge` subcommand run against the Modal provider with one verdict per cell: what works, what
+does not, what was fixed, and what is filed. Read its summary section before running anything on
+Modal.
 
 **Roadmap** ([docs/roadmap.md](docs/roadmap.md)) — planned engines, providers, and capability axes
 for upcoming releases.

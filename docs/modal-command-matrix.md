@@ -1,5 +1,114 @@
 # Modal command matrix
 
+## Summary — read this first
+
+**Generation on Modal works. Upscaling does not, on any provider. The deploy-first lifecycle does
+not work at all.** 57 cells covering every `kinoforge` subcommand and the flag combinations that
+matter, run 2026-09-05/06 against the Modal provider: **30 PASS, 17 FAIL, 10 EXPECTED-REFUSAL**,
+for **$2.61 of the $20 budget**. Four defects were fixed in-session; fourteen were filed as
+**U1–U14** in `PROGRESS.md`.
+
+### The one thing to act on
+
+**`av` 18 broke the FlashVSR mp4 writer, and RunPod and SkyPilot are on the same fuse.** Every
+upscale on Modal computes on the GPU and then dies writing the file
+(`Cannot change width after codec is open`, 3/3). A CPU-only Modal build reproduced it for **$0**
+with no GPU, no model and no FlashVSR — the versions are `imageio` 2.37.4 with **`av` 18.1.0**, and
+holding `imageio` fixed while moving only `av` gives **18.1.0 FAIL / 17.1.0, 16.1.0, 15.1.0,
+13.1.0 all OK**. The pin is **`av<18`**. It is not in any YAML: the unpinned `"av"` is the last
+entry of the runtime-deps line in `FlashVSREngine.render_provision`
+(`src/kinoforge/upscalers/flashvsr/_engine.py`), which is rendered into **every** FlashVSR
+provision script on every provider. **RunPod and SkyPilot upscale will fail identically the next
+time their images are rebuilt** — they are green today only because they have not been. Details and
+the evidence tables are in **U12**; reproduce with
+`pixi run -e live-modal modal run tools/diagnose_flashvsr_writer_modal.py`.
+
+### What works
+
+- **Text-to-video, at both ends of the model range.** Wan 2.1 1.3B on A10 cold-boots in ~90 s off a
+  baked image and renders 480²/33f in under three minutes (T1-01). Wan 2.2 **14B** on A100-80GB
+  works unchanged — same command, same teardown, no 14B-specific handling: 27m37s of pod life for
+  **$1.15**, of which ~23 min was the cold ~63 GB weight fetch (T3-01).
+- **Warm re-attach, all three forms** — implicit matcher re-use, `--instance-id`, `--attach-pod` —
+  each attaching in ~40 s with no deploy (T1-09, T1-10, T1-21).
+- **`batch`** over a multi-row manifest on one warm container (T1-13, `successful-generations.md` §28).
+- **`grid`** — spec load, per-cell cfg overrides, sequential groups, ffmpeg compose with captions,
+  exit-code mapping, per-cell auto-teardown (T1-28; its *render* failed QA, its machinery did not).
+- **Ephemeral generation** — opaque `kinoforge-eph-<8hex>` app names, empty ledger, index row, store
+  copy cleaned, warm re-attach across processes (T1-23, T1-25).
+- **RIFE interpolation** on T4, at both the cfg fps and a CLI override (T2-06, T2-07).
+- **The read surface** — `doctor`, `list`, `cost`, `reap`, `gc`, `sweeper status`/`metrics`,
+  `forget`, and every `--dry-run` (Tier 0).
+- **Teardown.** `--no-reuse` self-destroys the pod, including on the failure path, and every
+  teardown in this campaign was proven from a new process.
+
+### What does not work
+
+| Broken | Cells | Filed |
+|---|---|---|
+| **FlashVSR upscale — total loss on every provider** (see above) | T2-01, T2-03, T2-05b | **U12** — diagnosed, pin specified |
+| **The deploy-first lifecycle.** `deploy` crashes before booking anything; `provision` books a pod no kinoforge command can see or destroy | T1-19, T1-20 | **U6**, **U7** |
+| **A pod's endpoint URL is unreachable from any fresh process** — the ledger holds it, no read path consults it, so `status` and `pod lora ls` are both dead | T1-03, T1-06 | **U3** |
+| **Nothing automatically reaps an idle ephemeral pod** — the sweeper cannot see the index; `reap` sees it but can only ever say LIVE | T1-24, T1-26 | **U9** |
+| **`grid --ephemeral` is accepted and silently dropped**, publishing the run id and timestamp to the provider | T1-29 | **U11** |
+| **`--vault` cannot supply a prompt**, and the empty-prompt path fails *after* the pod is billing | T1-12 | **U5** |
+| **The warm-attach matcher is provider-blind** — and separately misses its own live pods | T0-07, T0-08, T2-03 | **U1**, **U14** |
+| **`batch --dry-run-swap` never reads the manifest** | T0-08 | **U2** |
+| **An `--ephemeral` run is invisible to every state file until it has finished** | T1-23 | **U8** |
+| **The CLI hangs forever after `UpscaleFailed`** (holder unidentified — U13's original suspected site was retracted) | T2-01, T2-05b | **U13** |
+| **Artifacts that never cleared visual QA** — the flags behaved, the renders did not | T1-14a/b/c, T1-28 | no code defect; see each cell |
+
+Three of these cost real money when they bite: `provision` leaked **$0.13** on an untracked A10
+(U7), the warm-attach miss put **two $2.50/hr A100s** on the clock at once (U14), and an
+`--ephemeral` pod whose controller dies bills until a human types `destroy` (U9).
+
+### Fixed during the campaign
+
+| Commit | What |
+|---|---|
+| `c9d9b284` | `doctor` exited 1 on all five Modal cfgs over an undeclared `heartbeat_interval_s` |
+| `3c7822b8` | `reap --format json` printed a human sentence on the empty ledger, breaking any `jq` consumer |
+| `c08c3cce` | `logs` was hard-wired to the RunPod proxy and 404'd on Modal; `--vault`'s help text promised a prompt source it does not have |
+| `7d535503` | `sweeper stop` left its own ledger row behind, so `kinoforge list` could never report a clean ledger again on that host |
+
+Each met the campaign's fix bar — one function, one config key, or one guard — and each landed
+red/green. Everything larger was recorded rather than attempted.
+
+### Spend, reconciled
+
+| Tier | Hardware | Spend |
+|---|---|---|
+| Tier 0 — offline surface | none | $0.00 |
+| Tier 1a — one warm pod, every stateful command | A10 $1.10/hr, 20m52s | $0.38 |
+| Tier 1b — deploy-first lifecycle | A10, incl. the U7 orphan | $0.28 |
+| Tier 1c — ephemeral + reapers | A10, 7m16s | $0.13 |
+| Tier 1d — grid | A10 x4 apps, ~1 min each | $0.10 |
+| Tier 2a — FlashVSR upscale | A100-80GB x2 | ~$0.50 |
+| Tier 2b — RIFE interpolate | T4 x2 | ~$0.07 |
+| Tier 3 — Wan 2.2 14B | A100-80GB, 27m37s | $1.15 |
+| **Total** | | **$2.61 of $20** |
+
+Tier 3, the one cell carrying a hard $4 cap, came in at **29% of it**. The $0 `av` diagnosis
+replaced what would otherwise have been another A100 boot. Cross-check against
+`pixi run -e live-modal kinoforge cost` (ledger-derived) and Modal's own dashboard; the tier lines
+above are wall-clock x rate and are the figures of record, because the per-cell Cost column
+attributes only generating minutes and under-counts warm-pod idle time by design.
+
+**Four of the seventeen FAILs are not code defects, and no item is filed for them.** T1-14a/b/c
+and T1-28 record runs where the command behaved and the *output* did not clear visual QA — a
+`gc` that deleted the clip before frames could be pulled, two probes run with `--prompt "x"`, and
+one grid cell that rendered a band across its lower third. `live-constraints.md` makes visual QA an
+unconditional precondition of PASS, so they are FAILs; nothing in kinoforge is implicated, and the
+remedy for each is a re-run rather than a fix. Every one of the other thirteen names a filed item
+(U1–U14) or a fix commit in its own row.
+
+**A note on reading the table below.** The Verdict column carries exactly one of
+`PASS` / `FAIL` / `EXPECTED-REFUSAL` / `SKIPPED` — no glyphs, no qualifiers. Every nuance is in
+Notes. A cell whose notes describe a real defect is a FAIL, whether the defect is in the code or in
+the pixels.
+
+---
+
 **Purpose.** Run every `kinoforge` subcommand and the important flag combinations against the
 Modal provider, and record one verdict per cell. The operator has been hitting errors on
 assorted commands without a record of which; this document is that record.
@@ -52,8 +161,8 @@ real defect is a FAIL.
 | T0-04 | `kinoforge upscale -c VSRX4 --video FIX --dry-run` | VSRX4 | PASS | $0.00 | `logs/T0-04.log` | `scale: 4x`, `engine: flashvsr`, `no_reuse: False`, exit 0 |
 | T0-05 | `kinoforge upscale -c VSR1080 --video FIX --dry-run` | VSR1080 | PASS | $0.00 | `logs/T0-05.log` | `scale: 1080p`, exit 0. The dry-run prints the raw cfg string, not the resolved target; `ScaleTarget(kind="height", value=1080)` is asserted by `tests/test_modal_config.py::test_flashvsr_1080p_config_is_height_target` |
 | T0-06 | `kinoforge interpolate -c RIFE60 --video FIX --fps 60 --dry-run` | RIFE60 | PASS | $0.00 | `logs/T0-06.log` | `fps: 60.0`, `engine: rife`, exit 0 |
-| T0-07 | `kinoforge generate -c WAN13B --mode t2v --prompt PROMPT --dry-run-swap` | WAN13B | FAIL | $0.00 | `logs/T0-07.log` | exit 0 and the swap plan printed (`loras_source: empty`, empty evict/download, `cost: 0.0s`) with no deploy — but the plan is **wrong**: `matcher: selected pod i5y9um06fxkq83` names a RunPod pod, dead since 2026-07-13, for a Modal cfg. A wrong result, so FAIL, not PASS. Not cheap to fix; see follow-up F1 |
-| T0-08 | `kinoforge batch -c WAN13B --manifest batch.yaml --dry-run-swap` | WAN13B | FAIL | $0.00 | `logs/T0-08.log` | exit 0, but carrying the same wrong matcher result as T0-07 (F1), and the manifest is never parsed on this path — verified by re-running with a `--manifest` path that does not exist, which also exits 0. Two defects, neither cheap; see follow-ups F1 and F2 |
+| T0-07 | `kinoforge generate -c WAN13B --mode t2v --prompt PROMPT --dry-run-swap` | WAN13B | FAIL | $0.00 | `logs/T0-07.log` | exit 0 and the swap plan printed (`loras_source: empty`, empty evict/download, `cost: 0.0s`) with no deploy — but the plan is **wrong**: `matcher: selected pod i5y9um06fxkq83` names a RunPod pod, dead since 2026-07-13, for a Modal cfg. A wrong result, so FAIL, not PASS. Not cheap to fix; see follow-up F1 / **U1** |
+| T0-08 | `kinoforge batch -c WAN13B --manifest batch.yaml --dry-run-swap` | WAN13B | FAIL | $0.00 | `logs/T0-08.log` | exit 0, but carrying the same wrong matcher result as T0-07 (F1), and the manifest is never parsed on this path — verified by re-running with a `--manifest` path that does not exist, which also exits 0. Two defects, neither cheap; see follow-ups F1 / **U1** and F2 / **U2** |
 | T0-09 | `kinoforge grid --spec grid.yaml --out grid-dry.mp4 --dry-run` | WAN13B | PASS | $0.00 | `logs/T0-09.log` | `[grid dry-run] 2 cells, layout=1x2, budget_cap=$0.60`, exit 0. Spec lives outside the repo as the loader requires |
 | T0-10 | `kinoforge list` | — | PASS | $0.00 | `logs/T0-10.log` | `[instance overview] No running instances.` + `No instances recorded in ledger.`, exit 0 |
 | T0-11 | `kinoforge status --id does-not-exist` | — | EXPECTED-REFUSAL | $0.00 | `logs/T0-11.log` | `instance 'does-not-exist' not found in ledger`, exit 1, no traceback |
@@ -88,9 +197,9 @@ session — T0-02 (`c9d9b284`) and T0-12 (`3c7822b8`) — and those cells now pa
 | T1-11 | same + `--force-attach --instance-id ID` | WAN13B | PASS | $0.02 | `logs/T1-11.log`, `sheetA.png` | Exit 0 in 41s, attached bypassing the matcher, no deploy. Frame-QA **PASS**: the strongest clip of the set — clean subject, correct butterflies, stable camera push-in |
 | T1-12 | `kinoforge --vault vault.yaml generate -c CFG --mode t2v` | WAN13B | FAIL | $0.01 | `logs/T1-12.log`, `logs/T1-12b.log` | Two-part failure. **(a)** Without `--prompt`: exit 2, `error: the following arguments are required: --prompt` — argparse still mandates it, so the vault can never *be* the prompt source. **(b)** Per the brief, retried with `--prompt ""`: exit 1 with an **uncaught traceback** (`ValueError: prompt yielded zero non-empty segments`) raised *after* `warm-reuse: attached`, i.e. it acquired and billed the pod before failing. Diagnosis: `vault.positive_prompt` is referenced in exactly one place in the tree — `register_vault_tokens` (`src/kinoforge/core/vault.py:228`), which only registers it as a *redaction token*. It is never wired into prompt resolution, so the `--vault` help text ('holding the positive prompt') describes a capability `generate` does not have. See follow-up F7 / **U5** |
 | T1-13 | `kinoforge batch -c CFG --manifest batch.yaml --concurrent 1` then `--stream-format jsonl` | WAN13B | PASS | $0.05 | `logs/T1-13a.log`, `logs/T1-13b.log`, `sheetB.png` | Both runs exit 0. **One attach, no deploy** (`warm-reuse: attached to run-20260906-010255`), two artifacts each, `_batch_summary.json` written to the batch dir. Human format streams `[1/matrix-a] OK 36.2s <uri>` + a summary table; `--stream-format jsonl` emits well-formed `entry_start` / `entry_finish` / `batch_summary` records with per-entry `status`, `duration_s`, `uri`. Frame-QA **PASS** on all four clips; minor flag on `T1-13b/matrix-a`, whose first two frames are bloom-blown before converging |
-| T1-14a | `kinoforge generate ... --run-id matrix-runid` | WAN13B | FAIL | $0.01 | `logs/T1-14a.log` | **Placement mechanics verified; quality UNVERIFIED.** Exit 0 and `--run-id matrix-runid` placed the clip at `.kinoforge/matrix-runid/d1921fdc15369a32.mp4` exactly as asked, so the flag does what it says. But the artifact was consumed by the T1-18 `gc --run matrix-runid` probe before a single frame could be pulled, so **no visual QA was ever performed on it and none now can be** — the file is gone. The binding rule (`live-constraints.md`: "Visual QA before any PASS") is unconditional, so this cell cannot be PASS on mechanics alone. Re-run needs `gc` sequenced after frame extraction, not before |
-| T1-14b | `kinoforge generate ... --output-dir <dir>` | WAN13B | FAIL | $0.02 | `logs/T1-14b.log`, `sheetC.png` | **Mechanics verified; no quality signal.** Exit 0 and the publish line is correct: `output published: /home/claudeuser/kinoforge-matrix/out/20260906-012353_diffusers_Wan2.1-T2V-1.3B-Diffuser_x.mp4` (the flag **does** exist on `generate` — the truncated usage line in T1-12's argparse error is not the full flag list). Frames were pulled and read, but the probe ran on `--prompt "x"` instead of the standard prompt, so the clip is an abstract colour field: degenerate by construction, free of corruption, and **carrying no quality signal about the pod or the model**. Visual QA on a null prompt is not visual QA, so this is not a PASS |
-| T1-14c | `kinoforge generate ... --no-output-dir` | WAN13B | FAIL | $0.01 | `logs/T1-14c.log`, `sheetC.png` | **Mechanics verified; no quality signal.** Exit 0, no publish line emitted, clip present in the store only — the flag suppresses publication as designed. Same disqualifier as T1-14b: the probe used `--prompt "x"`, so the frames read as an abstract colour field with no bearing on output quality |
+| T1-14a | `kinoforge generate ... --run-id matrix-runid` | WAN13B | FAIL | $0.01 | `logs/T1-14a.log` | **Placement mechanics verified; quality UNVERIFIED.** Exit 0 and `--run-id matrix-runid` placed the clip at `.kinoforge/matrix-runid/d1921fdc15369a32.mp4` exactly as asked, so the flag does what it says. But the artifact was consumed by the T1-18 `gc --run matrix-runid` probe before a single frame could be pulled, so **no visual QA was ever performed on it and none now can be** — the file is gone. The binding rule (`live-constraints.md`: "Visual QA before any PASS") is unconditional, so this cell cannot be PASS on mechanics alone. Re-run needs `gc` sequenced after frame extraction, not before. **No follow-up is filed and none is owed:** the flags behaved exactly as designed — this is a FAIL of the *probe*, not of kinoforge, and the remedy is to re-run the cell in the right order |
+| T1-14b | `kinoforge generate ... --output-dir <dir>` | WAN13B | FAIL | $0.02 | `logs/T1-14b.log`, `sheetC.png` | **Mechanics verified; no quality signal.** Exit 0 and the publish line is correct: `output published: /home/claudeuser/kinoforge-matrix/out/20260906-012353_diffusers_Wan2.1-T2V-1.3B-Diffuser_x.mp4` (the flag **does** exist on `generate` — the truncated usage line in T1-12's argparse error is not the full flag list). Frames were pulled and read, but the probe ran on `--prompt "x"` instead of the standard prompt, so the clip is an abstract colour field: degenerate by construction, free of corruption, and **carrying no quality signal about the pod or the model**. Visual QA on a null prompt is not visual QA, so this is not a PASS. **No follow-up is filed and none is owed:** the mechanism worked; the probe's own prompt choice disqualified it, and the remedy is a re-run with the standard prompt |
+| T1-14c | `kinoforge generate ... --no-output-dir` | WAN13B | FAIL | $0.01 | `logs/T1-14c.log`, `sheetC.png` | **Mechanics verified; no quality signal.** Exit 0, no publish line emitted, clip present in the store only — the flag suppresses publication as designed. Same disqualifier as T1-14b: the probe used `--prompt "x"`, so the frames read as an abstract colour field with no bearing on output quality. **No follow-up is filed and none is owed** — same reason as T1-14b: re-run with the standard prompt |
 | T1-15 | `kinoforge stop --id ID` | WAN13B | EXPECTED-REFUSAL | $0.00 | `logs/T1-15.log` | Exit 1, no traceback, exactly the by-design refusal: `modal cannot pause billing; instances are either running or destroyed.` followed by the actionable `To tear it down: kinoforge destroy --id run-20260906-010255`. Pod confirmed still alive after (T1-16 destroyed it) |
 | T1-16 | `kinoforge destroy --id ID` then `kinoforge list` + Modal app list | WAN13B | PASS | $0.00 | `logs/T1-16.log`, `logs/T1-16-proof-list.log`, `logs/T1-16-proof-apps.log` | Exit 0, `destroyed: run-20260906-010255` at 01:25:14 (pod lifetime 01:04:22 -> 01:25:14 = **20m52s**). **Teardown proof from new processes:** `kinoforge list` prints both required lines (`[instance overview] No running instances.` AND `No instances recorded in ledger.`); `modal app list` shows the single `kinoforge-*` app in state **`stopped`** with **0 tasks**. Nothing left running |
 | T1-17 | `kinoforge forget --id ID` after destroy | WAN13B | EXPECTED-REFUSAL | $0.00 | `logs/T1-17.log` | Exit 1, `instance 'run-20260906-010255' not found in ledger`, no traceback — correct, because `destroy` already removed the entry |
@@ -178,7 +287,7 @@ that no automatic mechanism will ever stop.
 
 | Cell | Command | Config | Verdict | Cost | Evidence | Notes |
 |------|---------|--------|---------|------|----------|-------|
-| T1-28 | `kinoforge grid --spec grid.yaml --out grid.mp4 --max-parallel-groups 1` | WAN13B | FAIL | $0.05 | `logs/T1-28.log`, `logs/T1-28-util.log`, `logs/T1-28-proof-list.log`, `logs/T1-28-proof-apps.log`, `sheetF.png`, `sheetF2.png` | Exit **0** (`status=full`; the `[grid summary] composed mp4 → …` line is printed only on that status). 02:11:07 → 02:13, composed mp4 **960x480/33f/16fps** = two 480x480 cells side by side, both captioned (`cell A`, `cell B 17f`) — the 1x2 layout and the per-cell `spec.num_frames: 17` override both landed. `budget_cap_usd: 0.60` was **not crossed**, so the run exited 0 rather than 3; the exit-3 path is therefore *not* exercised by this cell, only the cap's presence in the plan (T0-09). Util during cell 0: **gpu=100.0%**, cpu=5.6 — real compute. **The cells do not share a warm pod, and that is deliberate, not a defect:** `_run_group` passes `no_reuse=True` for every plain `generate:` cell (`src/kinoforge/core/grid/executor.py:852`), so each cell boots its own Modal app and auto-destroys — pod survival is reserved for LoRA-swap-mode cells, which pass `--attach-pod` and `no_reuse=False` (`executor.py:415`). Two apps were created (`…__cell0` 02:11-02:12, `…__cell1` 02:12-02:13), each ~1 min. Frame-QA: **cell A pass** — coherent waterfall/meadow, glowing butterfly, over-the-shoulder smile, temporally stable. **cell B fails** — a hard horizontal seam across the lower third with a flat red-brown corduroy-textured band replacing the flower field, **present in every frame**. It is inside cell B's own frame (not a compose seam), so the composed artifact this cell exists to produce is half-defective. **Verdict reclassified PASS ⚠️ → FAIL on 2026-09-06 review:** the cell's acceptance criterion demanded an unqualified frame-QA pass on the composed mp4, and a whole-clip structural band is a wrong result, not a transient wobble — the same standard that made T0-07 a FAIL for a wrong-but-exit-0 plan. The defect did not recur in T1-29's 17-frame cell, so the *likely* cause is seed variance at 17 frames rather than a systematic grid defect, and **the `grid` machinery itself is sound** — spec load, per-cell cfg override, sequential groups, ffmpeg compose with captions, exit-code mapping and per-cell teardown all behaved (see the Tier 1d tally). No fix commit and no urgent item: nothing in kinoforge is implicated, so re-running the cell is the remedy, and the campaign's no-retry budget rule keeps it unrun. **Teardown proof from new processes:** `kinoforge list` both lines, `modal app list` both grid apps `stopped`/0 tasks. Logged as `successful-generations.md` §29, which carries a caveat banner recording this defect |
+| T1-28 | `kinoforge grid --spec grid.yaml --out grid.mp4 --max-parallel-groups 1` | WAN13B | FAIL | $0.05 | `logs/T1-28.log`, `logs/T1-28-util.log`, `logs/T1-28-proof-list.log`, `logs/T1-28-proof-apps.log`, `sheetF.png`, `sheetF2.png` | Exit **0** (`status=full`; the `[grid summary] composed mp4 → …` line is printed only on that status). 02:11:07 → 02:13, composed mp4 **960x480/33f/16fps** = two 480x480 cells side by side, both captioned (`cell A`, `cell B 17f`) — the 1x2 layout and the per-cell `spec.num_frames: 17` override both landed. `budget_cap_usd: 0.60` was **not crossed**, so the run exited 0 rather than 3; the exit-3 path is therefore *not* exercised by this cell, only the cap's presence in the plan (T0-09). Util during cell 0: **gpu=100.0%**, cpu=5.6 — real compute. **The cells do not share a warm pod, and that is deliberate, not a defect:** `_run_group` passes `no_reuse=True` for every plain `generate:` cell (`src/kinoforge/core/grid/executor.py:852`), so each cell boots its own Modal app and auto-destroys — pod survival is reserved for LoRA-swap-mode cells, which pass `--attach-pod` and `no_reuse=False` (`executor.py:415`). Two apps were created (`…__cell0` 02:11-02:12, `…__cell1` 02:12-02:13), each ~1 min. Frame-QA: **cell A pass** — coherent waterfall/meadow, glowing butterfly, over-the-shoulder smile, temporally stable. **cell B fails** — a hard horizontal seam across the lower third with a flat red-brown corduroy-textured band replacing the flower field, **present in every frame**. It is inside cell B's own frame (not a compose seam), so the composed artifact this cell exists to produce is half-defective. **Verdict reclassified PASS ⚠️ → FAIL on 2026-09-06 review:** the cell's acceptance criterion demanded an unqualified frame-QA pass on the composed mp4, and a whole-clip structural band is a wrong result, not a transient wobble — the same standard that made T0-07 a FAIL for a wrong-but-exit-0 plan. The defect did not recur in T1-29's 17-frame cell, so the *likely* cause is seed variance at 17 frames rather than a systematic grid defect, and **the `grid` machinery itself is sound** — spec load, per-cell cfg override, sequential groups, ffmpeg compose with captions, exit-code mapping and per-cell teardown all behaved (see the Tier 1d tally). **No fix commit is named and no follow-up is filed, and none is owed:** nothing in kinoforge is implicated — the command behaved and the render did not — so re-running the cell is the remedy, and the campaign's no-retry budget rule keeps it unrun. **Teardown proof from new processes:** `kinoforge list` both lines, `modal app list` both grid apps `stopped`/0 tasks. Logged as `successful-generations.md` §29, which carries a caveat banner recording this defect |
 | T1-29 | `kinoforge grid … --ephemeral` with `--out grid-eph.mp4` | WAN13B | FAIL | $0.05 | `logs/T1-29.log`, `logs/T1-29-proof-list.log`, `sheetG.png` | Exit **0** and the composed mp4 is correct (960x480/33f, both cells captioned, frame-QA **PASS** on both — cell A a strong backlit maroon-dress silhouette over a yellow flower field, cell B a clean teal-dress render with glowing pollen; no trace of T1-28's cell-B band). The ledger and the ephemeral index are both empty afterwards. **But `--ephemeral` is silently ignored.** The flag's help text says "pass-through to each underlying generate"; `_cmd_grid` (`src/kinoforge/cli/_commands.py:3612`) does `del ctx`, never reads `args.ephemeral`, and calls `run_grid(spec=…, output_dir=…, max_parallel_groups=…, out_path=…)` — the string `ephemeral` does not appear anywhere in `src/kinoforge/core/grid/`. The proof is on Modal's side: the two apps are named **`kinoforge-grid_20260906-022232_a61d55b2__cell0` / `__cell1`**, not the opaque `kinoforge-eph-<8hex>` shape that EM1's STRICT_POLICY requires, so the run id, the local timestamp and the cell index were all published to the provider. The clean ledger is an artefact of the `no_reuse=True` teardown described at T1-28, **not** of ephemeral mode — a plain non-ephemeral grid leaves exactly the same clean ledger. A user asking for ephemeral got a normal run with an identity-leaking app name and no warning. See follow-up F13 / **U11** |
 
 **Tier 1d tally:** 0 PASS, **2 FAIL** (T1-28, T1-29). Actual spend **$0.10** — four A10 apps, each
