@@ -180,8 +180,73 @@ def probe() -> dict[str, object]:
     return report
 
 
+_WRITE_SNIPPET = """
+import sys, tempfile, pathlib
+import numpy as np, imageio.v3 as iio, av
+from importlib.metadata import version
+d = pathlib.Path(tempfile.mkdtemp()) / "probe.mp4"
+vid = np.zeros((8, 480, 480, 3), dtype=np.uint8)
+vid[:, ::60, :, 0] = 255
+try:
+    iio.imwrite(str(d), vid, fps=16.0, plugin="pyav", codec="libx264")
+except Exception as exc:
+    print(f"RESULT av={version('av')} imageio={version('imageio')} "
+          f"FAIL {type(exc).__name__}: {exc}")
+else:
+    print(f"RESULT av={version('av')} imageio={version('imageio')} "
+          f"OK bytes={d.stat().st_size}")
+"""
+
+
+@app.function(timeout=1800)  # type: ignore[untyped-decorator]  # modal decorators are Any-typed
+def bisect_av(pins: list[str]) -> list[str]:
+    """Re-run the write with `av` pinned to each candidate, imageio held fixed.
+
+    Reuses the already-baked image and downgrades only ``av`` between attempts,
+    so ``av`` is the single variable. Each attempt runs the write in a fresh
+    subprocess because the pyav extension module cannot be reloaded in-process
+    after a version swap.
+
+    Args:
+        pins: pip requirement strings for ``av``, tried in order (e.g.
+            ``["av==15.1.0", "av==14.4.0"]``).
+
+    Returns:
+        One ``RESULT …`` line per pin, in the order tried.
+    """
+    import subprocess
+    import sys
+
+    lines: list[str] = []
+    for pin in pins:
+        inst = subprocess.run(  # noqa: S603 — fixed argv, no shell
+            [sys.executable, "-m", "pip", "install", "--quiet", pin],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if inst.returncode != 0:
+            lines.append(f"RESULT {pin} INSTALL-FAILED {inst.stderr.strip()[-300:]}")
+            continue
+        run = subprocess.run(  # noqa: S603 — fixed argv, no shell
+            [sys.executable, "-c", _WRITE_SNIPPET],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        out = run.stdout.strip() or run.stderr.strip()[-300:]
+        lines.append(f"{pin} -> {out}")
+        print(lines[-1])
+    return lines
+
+
 @app.local_entrypoint()  # type: ignore[untyped-decorator]  # modal decorator is Any-typed
 def main() -> None:
-    """Build the CPU image and print the probe report."""
+    """Build the CPU image, print the probe report, then bisect the `av` pin."""
     report = probe.remote()
     print(report)
+    print("=== av bisect (imageio held at the baked version) ===")
+    for line in bisect_av.remote(
+        ["av==15.1.0", "av==14.4.0", "av==13.1.0", "av==12.3.0"]
+    ):
+        print(line)
