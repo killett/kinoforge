@@ -447,7 +447,7 @@ Found by the Modal command-matrix campaign (plan
 `docs/superpowers/plans/2026-09-05-modal-command-matrix.md`, results
 `docs/modal-command-matrix.md`). Operator directive 2026-09-06: big issues land HERE as urgent
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
-suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`) and U5 is half-fixed (help text corrected in the same commit, wiring still open). Every other item is untouched.**
+suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`), U10 is fixed (`7d535503`, the interval-reporting half of it excepted), and U5 is half-fixed (help text corrected in `c08c3cce`, wiring still open). Every other item is untouched.**
 
 - **U1 — the warm-attach matcher is provider-blind (cross-provider attach risk).**
   `WarmAttachKey` (`src/kinoforge/core/interfaces.py:649`) carries base_model / engine /
@@ -627,23 +627,38 @@ suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`) and U5 is half-fix
   `kinoforge destroy --id eph-…` — which is the only thing that worked here (EM2 orphan path,
   exit 0, `destroyed orphan: eph-61ee7764`).
 
-- **U10 — the sweeper's own ledger row is rendered as a running instance and outlives the daemon.**
+- **U10 — FIXED in `7d535503` — the sweeper's own ledger row was rendered as a running instance and outlived the daemon.**
   `kinoforge sweeper start` writes `sweeper:<host>` with `provider=_sweeper` into the ledger.
   `kinoforge list` renders it inside `[instance overview]` in the same shape as a real pod
   (`sweeper:59be2fa1c7fc  age=0.1h  est<=$0.0000 …  provider=_sweeper  capability_key=<unknown>`),
-  and it is still present after `sweeper stop` exits 0.
+  and it was still present after `sweeper stop` exited 0.
   **Reproducer (live, T1-24):** `sweeper start`, then `sweeper stop`, then `kinoforge list` — the
-  row is there, and `No instances recorded in ledger.` is not printed. Clearing it needs
+  row is there, and `No instances recorded in ledger.` is not printed. Clearing it needed
   `kinoforge forget --id sweeper:<host>`.
-  **Suspected site:** wherever `sweeper start` records its liveness row, and `_cmd_list`'s
-  instance-overview filter, which does not exclude `provider=_sweeper`.
+  **Site:** `_cmd_sweeper_stop` (`src/kinoforge/cli/_commands.py`) — nothing ever removed the row.
   **Why urgent:** it breaks the project's own teardown-proof contract. Every live-smoke rule in
   `CLAUDE.md` and `live-constraints.md` says a teardown is proven when `kinoforge list` prints
   `[instance overview] No running instances.` AND `No instances recorded in ledger.` — after any
   sweeper has run, that proof can never be produced, so an operator either learns to ignore a line
   in the overview (the habit that hides a real pod) or believes a pod is alive that is not.
-  Secondary, same command: `sweeper status` and `sweeper metrics` report `interval_s` from the cfg
-  and ignore the `--interval-s` override the running daemon is actually using.
+  **Fix (`7d535503`, 2026-09-06):** `_cmd_sweeper_stop` now calls `ledger.forget(f"sweeper:{host}")`
+  on the branch where it confirms the daemon stopped (SIGTERM delivered, heartbeat tick frozen for
+  two polls). The **cause** was chosen over the symptom: the row is a liveness signal that outlived
+  its signaller, so it is removed once — rather than filtered at each of the two display sites
+  (`_print_instance_overview` and `_cmd_list`), which is two guards and still leaves a permanent
+  stale row for every other ledger reader. `src/kinoforge/core/grid/executor.py:875` already carried
+  a downstream `provider=_sweeper` line-filter workaround for exactly this row; it is now redundant
+  rather than load-bearing. The **timeout branch deliberately keeps the row** — a daemon that did
+  not stop is still alive, and erasing its liveness signal would make `sweeper status` report
+  `running=false` while it sweeps and leave the next `sweeper stop` no pid to signal. Two red/green
+  tests in `tests/cli/test_cmd_sweeper.py`: a real start/stop cycle must leave `Ledger.entries()`
+  empty (RED before the change), and a still-ticking daemon must keep its row (guards the
+  over-broad fix). `tests/cli/` 407 passed.
+  **STILL OPEN, same command, tracked here:** `sweeper status` and `sweeper metrics` report
+  `interval_s` from the cfg and ignore the `--interval-s` override the running daemon is actually
+  using, so the two commands that exist to observe the daemon disagree with it. Not part of the
+  U10 fix and not a one-guard change (the override is never persisted anywhere the observers can
+  read it).
 
 - **U11 — `kinoforge grid --ephemeral` is accepted and silently dropped, leaking run identity to
   the provider.**

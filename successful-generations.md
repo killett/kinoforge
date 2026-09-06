@@ -59,7 +59,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 26. `2026-07-12 01:08:08` — [Cross-CLI warm-reuse + HF Volume weight-cache on Modal (Wan 2.1 1.3B / A10, Milestone 5) — t2v](#26-2026-07-12-010808--cross-cli-warm-reuse--hf-volume-weight-cache-on-modal-wan-21-13b--a10-milestone-5--t2v)
 27. `2026-07-12 20:13:28` — [FlashVSR height-target upscale (scale=1080p → 4x+downscale) on Modal A100-80GB — upscale](#27-2026-07-12-201328--flashvsr-height-target-upscale-scale1080p--4xdownscale-on-modal-a100-80gb--upscale)
 28. `2026-09-06 01:20:36` — [`kinoforge batch` on Modal — 2-row manifest over one warm container (Wan 2.1 1.3B / A10) — t2v](#28-2026-09-06-012036--kinoforge-batch-on-modal--2-row-manifest-over-one-warm-container-wan-21-13b--a10--t2v)
-29. `2026-09-06 02:13:00` — [`kinoforge grid` on Modal — 1x2 composed grid from two auto-torn-down cells (Wan 2.1 1.3B / A10) — t2v](#29-2026-09-06-021300--kinoforge-grid-on-modal--1x2-composed-grid-from-two-auto-torn-down-cells-wan-21-13b--a10--t2v)
+29. `2026-09-06 02:13:00` — [`kinoforge grid` on Modal — 1x2 composed grid from two auto-torn-down cells (Wan 2.1 1.3B / A10) — t2v](#29-2026-09-06-021300--kinoforge-grid-on-modal--1x2-composed-grid-from-two-auto-torn-down-cells-wan-21-13b--a10--t2v) — **⚠️ see the caveat banner: cell B carries a whole-clip render defect (matrix T1-28 = FAIL)**
 
 ---
 
@@ -2916,6 +2916,20 @@ false-colour failure mode.
 
 ## 29. `2026-09-06 02:13:00` — `kinoforge grid` on Modal — 1x2 composed grid from two auto-torn-down cells (Wan 2.1 1.3B / A10) — t2v
 
+> **⚠️ CAVEAT — one of the two composed cells carries a disqualifying visual defect. This entry is
+> kept for its reproduction recipe, not as a quality reference.** Cell B (the 17-frame override)
+> has a hard horizontal seam across its lower third with a flat red-brown corduroy-textured band
+> replacing the flower field, **present in every frame of the clip**. On the 2026-09-06 matrix
+> review the corresponding cell **T1-28** in `docs/modal-command-matrix.md` was reclassified
+> **PASS ⚠️ → FAIL** on exactly this evidence: a persistent whole-clip structural artifact is a
+> wrong result, and the cell's acceptance criterion demanded an unqualified frame-QA pass.
+> **What is still true and worth keeping** is everything mechanical below — the grid-on-Modal
+> command shape, the per-cell `no_reuse=True` teardown design, the spec-outside-the-repo rule, the
+> hard-coded `pixi run kinoforge generate` cell argv, and the `--ephemeral` no-op warning. The
+> defect did not recur on the same 17-frame cell in the T1-29 re-run, so it reads as seed variance
+> at a low frame count rather than a grid or Modal defect. **Do not cite this section's output as a
+> quality baseline; do cite its recipe.**
+
 | Field | Value |
 |---|---|
 | **Stack triple** | `Modal / DiffusersEngine (Wan 2.1 T2V-1.3B) / Wan-AI/Wan2.1-T2V-1.3B-Diffusers` |
@@ -2967,7 +2981,7 @@ cells:
 
 ### Frame-QA verdict (mandatory visual review)
 
-**PASS ⚠️** — 4 frames extracted with `ffmpeg_frames_by_count` and stacked full-resolution as
+**FAIL** (cell A pass, cell B fail) — 4 frames extracted with `ffmpeg_frames_by_count` and stacked full-resolution as
 `/home/claudeuser/kinoforge-matrix/sheetF2.png`. **Cell A: PASS** — coherent alpine meadow, tall
 backlit waterfall, glowing butterfly, the prompt's over-the-shoulder smile developing across the
 clip, temporally stable, no false colour. **Cell B (17 frames): flagged.** A hard horizontal seam
@@ -2975,7 +2989,9 @@ runs across the lower third with a flat red-brown corduroy-textured band replaci
 field, present in every frame. It sits inside cell B's own 480x480 frame, so it is a generation
 artifact rather than a compose seam; the same 17-frame cell in the T1-29 re-run came out clean
 (`sheetG.png`), so it reads as seed variance at a low frame count, not a systematic 17-frame
-defect. Recorded as a warning rather than a pass, per the visual-QA rule.
+defect. **Recorded as a FAIL, not a warning** (reclassified 2026-09-06): the band is present in
+every frame of cell B, so the composed artifact is half-defective and the visual-QA rule's bar —
+"anything not clearly high quality" — is not met by a qualified pass.
 
 ### Reproduction recipe / deviations (read before re-firing)
 
