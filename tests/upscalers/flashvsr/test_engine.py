@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import types
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -12,6 +13,9 @@ from kinoforge.core.errors import NotYetImplementedError
 from kinoforge.core.interfaces import Artifact, Instance, UpscaleJob
 from kinoforge.core.scale_target import ScaleTarget
 from kinoforge.upscalers.flashvsr._engine import FlashVSREngine
+
+if TYPE_CHECKING:
+    from packaging.requirements import Requirement
 
 _DEFAULT_BSA_WHEEL_URL = (
     "https://github.com/killett/kinoforge-artifacts/releases/download/"
@@ -39,6 +43,16 @@ def _cfg(
             },
         }
     }
+
+
+def _as_requirement(token: str) -> Requirement | None:
+    """Parse a quoted pip token as a requirement, or None if it isn't one."""
+    from packaging.requirements import InvalidRequirement, Requirement
+
+    try:
+        return Requirement(token)
+    except InvalidRequirement:
+        return None
 
 
 def test_model_identity_shape() -> None:
@@ -162,6 +176,41 @@ def test_render_provision_threads_include_long_video_flag() -> None:
     rp_full = e.render_provision(_cfg(long_video=True))
     assert "--include-long-video 0" in rp_lite.script
     assert "--include-long-video 1" in rp_full.script
+
+
+def test_render_provision_pins_av_below_18() -> None:
+    """RED: the diffsynth runtime deps constrain ``av`` to exclude 18.x.
+
+    Bug caught: an unpinned ``"av"`` token resolves to av 18.1.0 at image
+    build, whose pyav mp4 writer raises "Cannot change width after codec is
+    open" from ``_runtime.py``'s ``iio.imwrite(..., plugin="pyav",
+    codec="libx264")`` — every FlashVSR upscale then dies at the writer with
+    no model or GPU involved. Bisected on a CPU-only Modal build 2026-09-06:
+    av 18.1.0 FAILS; 17.1.0, 16.1.0, 15.1.0 and 13.1.0 all PASS. The 17.1.0
+    boundary below also catches an over-tight pin that would exclude the
+    known-good versions.
+
+    The expected constraint comes from that bisect, not from the rendered
+    script: 18.1.0 must not satisfy it, 17.1.0 must.
+    """
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
+    script = FlashVSREngine().render_provision(_cfg()).script
+    specs = [
+        req
+        for tok in re.findall(r'"([^"]+)"', script)
+        if (req := _as_requirement(tok)) is not None and req.name == "av"
+    ]
+    assert len(specs) == 1, f"expected exactly one `av` requirement, got {specs}"
+    av = specs[0]
+    assert not av.specifier.contains(Version("18.1.0")), (
+        f"`{av}` still admits av 18.1.0 — the broken mp4 writer"
+    )
+    assert av.specifier.contains(Version("17.1.0")), (
+        f"`{av}` excludes av 17.1.0, a bisect-confirmed good version"
+    )
+    assert Requirement("av<18").name == "av"  # guards the parse above
 
 
 def test_render_provision_env_required_and_size() -> None:

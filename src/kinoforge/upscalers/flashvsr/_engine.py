@@ -163,7 +163,17 @@ class FlashVSREngine(PodHTTPClientMixin, UpscalerEngine):
                 '"safetensors==0.5.3" "transformers>=4.48,<5" '
                 '"accelerate==1.8.1" "peft==0.17.0" '
                 '"einops==0.8.1" "ftfy==6.3.1" "sentencepiece==0.2.0" '
-                '"imageio[ffmpeg,pyav]>=2.34" "av"\n',
+                # av<18: av 18.1.0's mp4 writer raises "Cannot change
+                # width after codec is open" the moment imageio's pyav
+                # plugin opens the output stream, so EVERY FlashVSR
+                # upscale dies at the writer (_runtime.py's
+                # iio.imwrite(..., plugin="pyav", codec="libx264")) with
+                # no model or GPU involved. Bisected on a CPU-only Modal
+                # build 2026-09-06: 18.1.0 FAILS; 17.1.0, 16.1.0, 15.1.0
+                # and 13.1.0 all PASS. Unpinned, pip takes 18.x and the
+                # next image rebuild breaks Modal, RunPod and SkyPilot
+                # alike — this provision is shared by all three.
+                '"imageio[ffmpeg,pyav]>=2.34" "av<18"\n',
                 "python -m kinoforge.upscalers.flashvsr._fetch_weights "
                 f"--bundle {bundle} --dest /workspace/models/flashvsr "
                 f"--include-long-video {long_video}\n",
