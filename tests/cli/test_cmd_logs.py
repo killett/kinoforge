@@ -134,3 +134,153 @@ def test_cmd_logs_custom_file_path(
     assert rc == 0
     req = urlopen.call_args.args[0]
     assert req.full_url == "https://podQ-8001.proxy.runpod.net/selfterm.log"
+
+
+class _FakeLedger:
+    """Minimal ledger stand-in — ``entries()`` is the only surface used."""
+
+    def __init__(self, entries: list[dict[str, object]]) -> None:
+        self._entries = entries
+
+    def entries(self) -> list[dict[str, object]]:
+        return self._entries
+
+
+class _FakeCtx:
+    """SessionContext stand-in exposing only ``ledger()``.
+
+    ``raises`` models the cloud-store failure mode (expired credentials),
+    where merely building the ledger throws.
+    """
+
+    def __init__(
+        self,
+        entries: list[dict[str, object]] | None = None,
+        *,
+        raises: Exception | None = None,
+    ) -> None:
+        self._ledger = _FakeLedger(entries or [])
+        self._raises = raises
+
+    def ledger(self) -> _FakeLedger:
+        if self._raises is not None:
+            raise self._raises
+        return self._ledger
+
+
+def test_cmd_logs_refuses_when_ledger_says_modal(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Bug caught: the handler discards the ledger and builds a RunPod proxy
+    hostname from any id, so on a Modal pod it fetches a host that never
+    existed and reports `HTTP 404 Not Found` — which the operator reads as
+    "this pod has no log" rather than "this command is RunPod-only", while a
+    live pod is still billing (matrix cell T1-04).
+
+    The refusal must name the provider, must not touch the network, and must
+    exit non-zero with no traceback.
+    """
+    from kinoforge.cli import _commands
+
+    ctx = _FakeCtx([{"id": "run-20260906-010255", "provider": "modal"}])
+    with patch("kinoforge.cli._commands.urllib.request.urlopen") as urlopen:
+        rc = _commands._cmd_logs(
+            _ns(id="run-20260906-010255", file="bootstrap.log", out=None),
+            ctx,  # type: ignore[arg-type]
+        )
+    assert rc == 2
+    urlopen.assert_not_called()
+    err = capsys.readouterr().err
+    assert "modal" in err
+    assert "run-20260906-010255" in err
+    assert "proxy.runpod.net" not in err
+    assert "Traceback" not in err
+
+
+def test_cmd_logs_refusal_does_not_write_out_file(tmp_path: Path) -> None:
+    """Bug caught: the provider guard lands after the write block, so a
+    refused fetch still creates the ``--out`` file. A zero-byte
+    ``server.log`` on disk reads to later forensics as "the pod produced no
+    output" — the opposite of what happened.
+    """
+    from kinoforge.cli import _commands
+
+    dest = tmp_path / "server.log"
+    ctx = _FakeCtx([{"id": "run-x", "provider": "modal"}])
+    with patch("kinoforge.cli._commands.urllib.request.urlopen") as urlopen:
+        rc = _commands._cmd_logs(
+            _ns(id="run-x", file="server.log", out=str(dest)),
+            ctx,  # type: ignore[arg-type]
+        )
+    assert rc == 2
+    urlopen.assert_not_called()
+    assert not dest.exists()
+
+
+def test_cmd_logs_runpod_ledger_entry_still_fetches(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Bug caught: an inverted or overbroad guard (wrong dict key, or
+    refusing whenever the id resolves at all) would refuse on RunPod too,
+    breaking the one provider whose port-8001 sidecar this command exists to
+    read.
+    """
+    from kinoforge.cli import _commands
+
+    ctx = _FakeCtx([{"id": "podrp", "provider": "runpod"}])
+    with patch(
+        "kinoforge.cli._commands.urllib.request.urlopen",
+        return_value=_fake_response(b"rp-body"),
+    ) as urlopen:
+        rc = _commands._cmd_logs(
+            _ns(id="podrp", file="bootstrap.log", out=None),
+            ctx,  # type: ignore[arg-type]
+        )
+    assert rc == 0
+    req = urlopen.call_args.args[0]
+    assert req.full_url == "https://podrp-8001.proxy.runpod.net/bootstrap.log"
+    assert capsys.readouterr().out == "rp-body"
+
+
+def test_cmd_logs_id_absent_from_ledger_falls_back_to_fetch() -> None:
+    """Bug caught: a guard that refuses whenever the ledger lookup misses
+    breaks the command's primary forensic use — fetching bootstrap.log from a
+    pod that ``destroy`` or ``forget`` has already removed from the ledger,
+    which is exactly when the operator most needs it.
+    """
+    from kinoforge.cli import _commands
+
+    ctx = _FakeCtx([{"id": "someone-else", "provider": "modal"}])
+    with patch(
+        "kinoforge.cli._commands.urllib.request.urlopen",
+        return_value=_fake_response(b"gone-pod-body"),
+    ) as urlopen:
+        rc = _commands._cmd_logs(
+            _ns(id="podgone", file="bootstrap.log", out=None),
+            ctx,  # type: ignore[arg-type]
+        )
+    assert rc == 0
+    req = urlopen.call_args.args[0]
+    assert req.full_url == "https://podgone-8001.proxy.runpod.net/bootstrap.log"
+
+
+def test_cmd_logs_ledger_unavailable_does_not_traceback() -> None:
+    """Bug caught: consulting the ledger unguarded turns an unrelated store
+    failure (expired cloud credentials) into a stack trace on a command that
+    never needed the store — the fetch is still perfectly possible from the id
+    alone, so an unreadable ledger must degrade to the RunPod path, not crash.
+    """
+    from kinoforge.cli import _commands
+
+    ctx = _FakeCtx(raises=RuntimeError("ExpiredToken: credentials rejected"))
+    with patch(
+        "kinoforge.cli._commands.urllib.request.urlopen",
+        return_value=_fake_response(b"degraded-body"),
+    ) as urlopen:
+        rc = _commands._cmd_logs(
+            _ns(id="podnl", file="bootstrap.log", out=None),
+            ctx,  # type: ignore[arg-type]
+        )
+    assert rc == 0
+    req = urlopen.call_args.args[0]
+    assert req.full_url == "https://podnl-8001.proxy.runpod.net/bootstrap.log"

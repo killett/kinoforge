@@ -370,9 +370,10 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         default=None,
         metavar="PATH",
         help=(
-            "path to a vault YAML file (outside the repo) holding the "
-            "positive prompt and optional LoRA references. Or set "
-            "KINOFORGE_VAULT."
+            "path to a vault YAML file (outside the repo) whose values are "
+            "registered as redaction tokens so they never reach a log or a "
+            "filename. It does NOT supply the prompt: --prompt is still "
+            "required and is the only prompt source. Or set KINOFORGE_VAULT."
         ),
     )
     parser.add_argument(

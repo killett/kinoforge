@@ -2493,6 +2493,46 @@ def _cmd_stop(args: argparse.Namespace, ctx: SessionContext) -> int:
 
 _LOG_SIDECAR_PORT = "8001"
 
+# The port-8001 sidecar http.server is a RunPod-shaped contract: the bootstrap
+# script starts it, and the only route to it is the RunPod proxy hostname
+# ``https://{pod}-8001.proxy.runpod.net``. That template accepts ANY id, so on
+# another provider it names a host that never existed and the fetch comes back
+# 404 — which reads as "this pod has no log" rather than "wrong provider"
+# (matrix cell T1-04, urgent item U4). Hence the guard below.
+_LOG_SIDECAR_PROVIDERS = frozenset({"runpod"})
+
+# Where to point the operator instead, per provider. Absent -> generic advice.
+_LOG_ALTERNATIVES = {
+    "modal": "modal app logs <app>  (or: kinoforge status --id {id})",
+}
+
+
+def _ledger_provider_for(instance_id: str, ctx: SessionContext) -> str | None:
+    """Return the ledger's ``provider`` for ``instance_id``, or None.
+
+    None means "the ledger cannot answer" — the id is absent (a destroyed or
+    ``forget``-ed pod, which is exactly when log forensics is most wanted) or
+    the store itself is unreachable (expired credentials). Callers treat that
+    as "no opinion" and fall through rather than refusing, so an unrelated
+    store failure never blocks a fetch that only ever needed the id.
+
+    Args:
+        instance_id: The instance id the operator passed.
+        ctx: Per-invocation session context.
+
+    Returns:
+        The provider name recorded in the ledger, or None when unknown.
+    """
+    try:
+        entries = ctx.ledger().entries()
+    except Exception:  # noqa: BLE001 — advisory lookup, never fatal
+        return None
+    entry = next((e for e in entries if e.get("id") == instance_id), None)
+    if entry is None:
+        return None
+    provider = entry.get("provider")
+    return str(provider) if provider else None
+
 
 def _cmd_logs(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Fetch a file served by the pod's port-8001 sidecar http.server.
@@ -2507,7 +2547,21 @@ def _cmd_logs(args: argparse.Namespace, ctx: SessionContext) -> int:
     without decoding so binary artifacts (frame samples, tensor dumps)
     pass through unchanged.
     """
-    del ctx  # ledger not consulted — proxy URL is deterministic from id
+    provider_name = _ledger_provider_for(args.id, ctx)
+    if provider_name is not None and provider_name not in _LOG_SIDECAR_PROVIDERS:
+        alt = _LOG_ALTERNATIVES.get(
+            provider_name, "read the log from the provider's own surface"
+        ).format(id=args.id)
+        print(
+            f"logs: unsupported on provider {provider_name!r} "
+            f"(instance {args.id!r}).\n"
+            f"  The port-8001 sidecar log is a RunPod-only path; "
+            f"fetching it here would name a host that never existed.\n"
+            f"  For {provider_name}:  {alt}",
+            file=sys.stderr,
+        )
+        return 2
+
     filename = getattr(args, "file", None) or "bootstrap.log"
     url = f"https://{args.id}-{_LOG_SIDECAR_PORT}.proxy.runpod.net/{filename}"
     req = urllib.request.Request(  # noqa: S310 — pod proxy URL only
