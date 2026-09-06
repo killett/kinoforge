@@ -238,3 +238,94 @@ def test_cmd_sweeper_start_installs_handlers_before_ledger_entry(
     assert first_signal < first_record, (
         f"handlers installed after ledger entry — SIGTERM race window: {order}"
     )
+
+
+# ---------------------------------------------------------------------------
+# stop — the liveness row must not outlive the daemon (U10)
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_sweeper_stop_leaves_ledger_clean(tmp_path: Path) -> None:
+    """A start → stop cycle must leave the ledger with zero entries.
+
+    Invariant: ``sweeper:<host>`` is the daemon's liveness signal, so it must
+    not outlive the daemon that published it.
+
+    Bug caught (U10, matrix cell T1-24, 2026-09-06): `_cmd_sweeper_stop`
+    returned 0 on the stable-tick path without removing the row, so
+    `Ledger.entries()` stayed non-empty and `kinoforge list` could never
+    print `No instances recorded in ledger.` after any sweeper had ever
+    run — clearing it required a manual `kinoforge forget --id sweeper:<host>`.
+    Also fails if a later change removes the row only on the branch where
+    the daemon happened to delete it itself.
+    """
+    ctx, cfg_path = _make_ctx(tmp_path)
+    host = socket.gethostname()
+    with (
+        patch("kinoforge.core.sweeper.SweeperLoop.start", lambda self: None),
+        patch("kinoforge.core.sweeper.SweeperLoop.stop", lambda self: None),
+        patch("threading.Event.wait", return_value=True),
+        patch("signal.signal"),
+    ):
+        assert (
+            _cmd_sweeper_start(_args(config=str(cfg_path), interval_s=None), ctx) == 0
+        )
+    assert ctx.ledger().read(f"sweeper:{host}") is not None, "precondition: row exists"
+
+    # Daemon is signalled and its heartbeat tick then stays frozen, which is
+    # the real stop handshake.  os.kill / time.sleep are the only boundaries
+    # mocked; the ledger is the real one on tmp_path.
+    with patch("os.kill"), patch("time.sleep", lambda _s: None):
+        rc = _cmd_sweeper_stop(_args(config=str(cfg_path)), ctx)
+
+    assert rc == 0
+    assert ctx.ledger().read(f"sweeper:{host}") is None, (
+        "sweeper liveness row outlived the daemon"
+    )
+    assert ctx.ledger().entries() == [], (
+        f"ledger not clean after stop: {ctx.ledger().entries()}"
+    )
+
+
+def test_cmd_sweeper_stop_keeps_liveness_row_when_daemon_will_not_die(
+    tmp_path: Path,
+) -> None:
+    """A daemon that keeps ticking past the deadline keeps its liveness row.
+
+    Bug caught: an over-broad U10 fix — `ledger.forget` unconditionally, or in
+    a `finally` — would erase the liveness row of a daemon that is still alive
+    and still sweeping.  `sweeper status` would then report `running=false`
+    for a running daemon, and the next `sweeper stop` would exit 1 with
+    "no sweeper running" with no pid left to signal.
+    """
+    ctx, cfg_path = _make_ctx(tmp_path)
+    host = socket.gethostname()
+    with (
+        patch("kinoforge.core.sweeper.SweeperLoop.start", lambda self: None),
+        patch("kinoforge.core.sweeper.SweeperLoop.stop", lambda self: None),
+        patch("threading.Event.wait", return_value=True),
+        patch("signal.signal"),
+    ):
+        assert (
+            _cmd_sweeper_start(_args(config=str(cfg_path), interval_s=None), ctx) == 0
+        )
+
+    ledger = ctx.ledger()
+    ticks = iter(range(1, 1000))
+    clock = iter([float(n) * 10.0 for n in range(1000)])
+
+    def _still_alive(_s: float) -> None:
+        # The daemon is alive: every poll interval it advances its tick.
+        ledger.touch(f"sweeper:{host}", heartbeat_thread_tick=float(next(ticks)))
+
+    with (
+        patch("os.kill"),
+        patch("time.sleep", _still_alive),
+        patch("time.monotonic", lambda: next(clock)),
+    ):
+        rc = _cmd_sweeper_stop(_args(config=str(cfg_path)), ctx)
+
+    assert rc == 2
+    assert ctx.ledger().read(f"sweeper:{host}") is not None, (
+        "erased a live daemon's liveness row on the timeout path"
+    )

@@ -3517,7 +3517,16 @@ def _cmd_sweeper_start(args: argparse.Namespace, ctx: SessionContext) -> int:
 
 
 def _cmd_sweeper_stop(args: argparse.Namespace, ctx: SessionContext) -> int:  # noqa: ARG001
-    """Layer W: send SIGTERM to the daemon owning this host's sweeper entry."""
+    """Layer W: stop this host's sweeper daemon and drop its ledger entry.
+
+    The ``sweeper:<host>`` ledger row is the daemon's liveness signal and is
+    dropped once the daemon is confirmed stopped; it is left in place if the
+    daemon does not stop within the deadline.
+
+    Returns:
+        0 once the daemon is confirmed stopped and its liveness row removed,
+        1 when no live sweeper entry could be signalled, 2 on timeout.
+    """
     import signal
     import socket
 
@@ -3556,6 +3565,16 @@ def _cmd_sweeper_stop(args: argparse.Namespace, ctx: SessionContext) -> int:  # 
         if tick == last_tick:
             stable_polls += 1
             if stable_polls >= 2:
+                # The daemon is confirmed gone, so drop its liveness row.
+                # `sweeper:<host>` is a readiness signal, not an instance:
+                # left behind it renders in `[instance overview]` like a pod
+                # and blocks `No instances recorded in ledger.` forever, so
+                # no teardown proof can ever be taken again on this host
+                # (U10 / matrix T1-24). Only this branch and the
+                # daemon-removed-it-itself branch above clear it — the
+                # timeout path below must NOT, because the daemon may still
+                # be alive and sweeping.
+                ledger.forget(f"sweeper:{host}")
                 return 0
         else:
             stable_polls = 0
