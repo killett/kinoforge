@@ -418,11 +418,18 @@ is *tighter* than the cfg's, which is the safe direction, but it is not the numb
 
 ## Follow-ups
 
-Filed from Tier 0. Each is larger than the "one function / one config key / one guard" bar
-the campaign's fix policy sets, so each is recorded rather than fixed. The two failures that
-*did* meet that bar were fixed in-session instead of filed: the `doctor` heartbeat ERROR
-(`c9d9b284`) and the `reap --format json` empty-ledger path (`3c7822b8`). Two more met it later:
-the `logs` provider guard and the `--vault` help text, both in `c08c3cce`.
+Filed from Tier 0. Each was larger than the "one function / one config key / one guard" bar
+the campaign's fix policy sets, so each was recorded rather than fixed at filing time. The two
+failures that *did* meet that bar were fixed in-session instead of filed: the `doctor` heartbeat
+ERROR (`c9d9b284`) and the `reap --format json` empty-ledger path (`3c7822b8`). Two more met it
+later: the `logs` provider guard and the `--vault` help text, both in `c08c3cce`.
+
+**Five entries have since been fixed, wholly or in part, and say so in place — read the header
+line of each before acting on its body.** Closed: **F5** (`c08c3cce`), **F6** (`9ae52274`),
+**F14** (`82ad084b`). Partly closed, with the still-open half named in the entry itself: **F7**
+(`c08c3cce` — help text corrected, vault → prompt wiring untouched) and **F12** (`7d535503` +
+`9ae52274` — the row no longer outlives the daemon, but `sweeper status` still misreports
+`interval_s`). Everything else below is open.
 
 **F1 — the ephemeral warm-reuse matcher is provider-blind.** `--dry-run-swap` on a
 Modal cfg (T0-07, T0-08) selected pod `i5y9um06fxkq83`, a **RunPod** pod whose
@@ -558,7 +565,11 @@ confirms the daemon stopped. The cause was fixed rather than the symptom: the ro
 signal that outlived its signaller, so it is deleted once, instead of being filtered at both
 display sites (`_print_instance_overview` and `_cmd_list` — two guards) while a permanently stale
 row stays visible to every other ledger reader. The timeout branch keeps the row on purpose: a
-daemon that did not stop is still alive. Two red/green tests in `tests/cli/test_cmd_sweeper.py`.
+daemon that did not stop is still alive. Hardened further in `9ae52274`: the forget branch now
+confirms the process is actually gone with `os.kill(pid, 0)` first, because a frozen
+`heartbeat_thread_tick` is not proof of death and dropping a live daemon's row strands it
+(`sweeper stop` then exits 1 with no pid to signal). Three red/green tests in
+`tests/cli/test_cmd_sweeper.py`.
 **Still open, same command, and U10 stays open for it:** `sweeper status` and `sweeper metrics`
 report `interval_s=60` from the cfg while the daemon is running at the `--interval-s 30` override,
 so the two commands that exist to observe the daemon disagree with it.
@@ -576,8 +587,8 @@ flag did nothing. Fix shape: thread `ephemeral` from `args` through `run_grid` i
 `_build_generate_cmd` as a `--ephemeral` argument on each cell's subprocess — or, if that is not
 wanted, reject the flag rather than accept it. Filed as **U11**.
 
-**F14 — FlashVSR's mp4 writer fails on every provider: `av` 18 broke it. DIAGNOSED; the fix is
-one string in shared code and is NOT applied.** Every Tier 2a upscale that reached the GPU died at
+**F14 — FlashVSR's mp4 writer failed on every provider: `av` 18 broke it. FIXED in `82ad084b`,
+proven live on Modal.** Every Tier 2a upscale that reached the GPU died at
 `iio.imwrite(str(out), video, fps=fps, plugin="pyav", codec="libx264")`
 (`src/kinoforge/upscalers/flashvsr/_runtime.py:416`), surfacing at the controller as
 `kinoforge.core.errors.UpscaleFailed: upscale job <id> failed on server: Cannot change width after
@@ -595,10 +606,22 @@ The unpinned requirement is **not in any cfg**. It is the last entry of the runt
 `FlashVSREngine.render_provision` (`src/kinoforge/upscalers/flashvsr/_engine.py:163`), which is
 rendered into **every** FlashVSR provision script on every provider — the four golden launch
 payloads that embed it cover Modal x4, Modal 1080p, SkyPilot/Lambda and SkyPilot/Vast, and RunPod
-renders the same body. **RunPod and SkyPilot are on the same fuse and will fail identically the
-next time their images are rebuilt**; they are green today only because they have not been. Not
-applied here: it re-snapshots four golden payloads and moves the boot payload for three providers,
-which is past the campaign's one-function fix bar. Filed as **U12**, which carries the full table.
+renders the same body. RunPod and SkyPilot were on the same fuse and would have failed
+identically the next time their images were rebuilt; they were green only because they had not
+been.
+
+**Applied in `82ad084b`** — `"av"` → `"av<18"`, one string, red/green with
+`test_render_provision_pins_av_below_18`. It moved **ten** goldens (2 modal, 5 runpod, 2 skypilot
+launch payloads plus the diffusers provision golden), which is the blast radius made visible, and
+is why it was initially deferred as past the campaign's one-function bar. **Proven live on Modal
+2026-09-06 for $0.64** at both scales — T2-01 published 1920×1920/77f and T2-03 1080×1080, both
+frame-QA clean, and the rebuilt image's build log reads `Successfully installed … av-17.1.0`.
+**RunPod and SkyPilot render the same line from the same function, so they carry the identical
+pin — their goldens moved in the same commit — but neither image was rebuilt or run, so they are
+inferred-safe, not demonstrated-safe.** One live FlashVSR boot on either would close that gap.
+**U12 closed.** The entry stays here because the diagnosis above is the reusable part: the
+reproducer (`tools/diagnose_flashvsr_writer_modal.py`) still runs for $0, and the bisect table is
+the record of which `av` versions are safe.
 
 **F15 — the CLI never exits after `UpscaleFailed`.** Once `submit_and_poll`
 (`src/kinoforge/engines/_pod_http.py:147`) raises, the traceback prints and the process stays
