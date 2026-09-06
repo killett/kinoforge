@@ -757,8 +757,9 @@ suspected site. **Status 2026-09-06 (updated after the `av` pin): U4 is fixed (`
 
   **PROVEN LIVE ON MODAL, 2026-09-06 09:39–10:09, $0.64.** The pin was worth confirming despite the
   earlier "do not spend an A100" note, because the $0 probe could only show that the *writer* call
-  works at `av` 17 — not that a real FlashVSR job end-to-end produces a good clip. Both previously
-  failing cells now pass:
+  works at `av` 17 — not that a real FlashVSR job end-to-end produces a good clip. The upscale in
+  both previously failing cells now succeeds (**their cell verdicts differ** — see below: T2-01 is
+  PASS, T2-03 stays FAIL because the same re-run reproduced U14):
 
   | cell | cfg | result |
   |---|---|---|
@@ -904,7 +905,7 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 
 **Modal command matrix CLOSED (2026-09-05/06, $3.25 of $20; FlashVSR re-proven 2026-09-06 after
 the `av` pin).** Every `kinoforge` subcommand run against the Modal provider, one verdict per cell:
-**57 cells — 32 PASS, 16 FAIL, 9 EXPECTED-REFUSAL, 0 pending**. Results and the operator-facing
+**57 cells — 31 PASS, 17 FAIL, 9 EXPECTED-REFUSAL, 0 pending**. Results and the operator-facing
 summary are at the TOP of `docs/modal-command-matrix.md`; defects are **U1–U15** in the URGENT
 ACTION ITEMS section above.
 
@@ -917,8 +918,11 @@ ACTION ITEMS section above.
   2 skypilot launch payloads + the diffusers provision golden — which is the blast radius made
   visible. **Live proof on Modal 2026-09-06 for $0.64:** T2-01 published 1920×1920/77f and T2-03
   published 1080×1080, both frame-QA clean with real detail synthesis and no false colour; the
-  rebuilt image logs `Successfully installed … av-17.1.0`. **RunPod and SkyPilot carry the same
-  one-line pin but were NOT re-run — inferred safe, not demonstrated safe.**
+  rebuilt image logs `Successfully installed … av-17.1.0`. **T2-01's cell is PASS; T2-03's is
+  FAIL** — its upscale worked, but the same re-run reproduced the warm-attach miss (U14) and
+  cold-booted a second $2.50/hr A100, and a cell whose own notes describe a live defect is a FAIL
+  (reclassified on the 2026-09-06 review). **RunPod and SkyPilot carry the same one-line pin but
+  were NOT re-run — inferred safe, not demonstrated safe.**
 - **Works:** t2v at both ends of the model range (Wan 2.1 1.3B on A10; Wan 2.2 **14B** on
   A100-80GB, T3-01 PASS at $1.15 for 27m37s), **FlashVSR upscale at 4x and at the 1080p height
   target (post-pin)**, warm re-attach in all three forms on the *generate* path, `batch`, `grid`
@@ -937,10 +941,19 @@ ACTION ITEMS section above.
 - **Fixed in-session, red/green:** `c9d9b284` (doctor), `3c7822b8` (reap --format json),
   `c08c3cce` (logs provider guard + vault help text), `7d535503` (sweeper stop now removes its own
   ledger row), `82ad084b` (`av<18` pin).
-- **Two corrections applied on review, both worth knowing:** T1-28 was carrying a `PASS ⚠️` whose
+- **Fixed on the final whole-branch review, red/green:** `9ae52274` — `sweeper stop` now confirms
+  the daemon is actually gone (`os.kill(pid, 0)`) before dropping its liveness row, so `7d535503`'s
+  row-forget can no longer erase a live-but-wedged daemon and strand it; `reap`'s verdict column
+  widened 18 → 28 to hold `HEARTBEAT_SUBSTRATE_MISSING` (**matrix follow-up F6, closed** — it had
+  been excused as "cosmetic" under a rule with no cosmetic exemption); `_LOG_ALTERNATIVES` is
+  substituted literally instead of `.format()`ed; and the `--vault` help regains the `vault.loras`
+  clause, which IS a real source via `resolve_active_lora_stack` (CLI > vault > cfg).
+- **Three corrections applied on review, all worth knowing:** T1-28 was carrying a `PASS ⚠️` whose
   own notes described a whole-clip render defect — reclassified FAIL, and the Verdict column is now
-  restricted to the four bare tokens because the glyph is what hid it. And **U13's suspected site
-  was wrong and has been retracted** (`submit_and_poll` starts no threads; every local thread is
+  restricted to the four bare tokens because the glyph is what hid it. **T2-03 was the same shape
+  relocated into Notes** — a PASS justified as "PASS on the cell's own subject" beside notes
+  recording a reproduced U14 and two $2.50/hr A100s on the clock — reclassified FAIL. And **U13's
+  suspected site was wrong and has been retracted** (`submit_and_poll` starts no threads; every local thread is
   daemon) — it now hedges the mechanism and names a $0 offline first step.
 - **Next action:** none required. If picking this up, the highest-value single move is the
   U14 + U15 pair (no warm reuse at all on the upscale path). One live RunPod or SkyPilot FlashVSR
