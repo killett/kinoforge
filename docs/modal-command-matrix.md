@@ -132,11 +132,25 @@ by hand instead of going through the one route (`deploy_session`) that is exerci
 
 | Cell | Command | Config | Verdict | Cost | Evidence | Notes |
 |------|---------|--------|---------|------|----------|-------|
-| T1-23 | `kinoforge --ephemeral generate -c CFG --mode t2v --prompt PROMPT` | WAN13B | PENDING | | | |
-| T1-24 | `kinoforge sweeper start -c CFG --interval-s 30` + `status` + `metrics` + `stop` | WAN13B | PENDING | | | |
-| T1-25 | `kinoforge --ephemeral generate …` again (second app) | WAN13B | PENDING | | | |
-| T1-26 | `kinoforge reap --include-orphans` then `--apply` | WAN13B | PENDING | | | |
-| T1-27 | `kinoforge --ephemeral --debug-show-secrets list` | WAN13B | PENDING | | | |
+| T1-23 | `kinoforge --ephemeral generate -c CFG --mode t2v --prompt PROMPT` | WAN13B | PASS | $0.03 | `logs/T1-23.log`, `logs/T1-23-util.log`, `sheetE.png` | Exit 0 in **78 s** (02:01:23 → 02:02:41; app deployed in ~1.4 s off the warm image). App named opaquely as the EM1 contract requires: `kinoforge-eph-61ee7764`. Every acceptance criterion met — `kinoforge list` prints `No instances recorded in ledger.`, `ephemeral-index.json` carries exactly one row (`id=eph-61ee7764`, `provider=modal`, `kinoforge_key=0aaf4ee6e6c0`, endpoint `…modal.run`), and the artifact exists **only** where `--ephemeral` allows: published to `output/20260906-020241_…mp4` while the `.kinoforge/run-20260906-020124/` store copy was deleted at exit (verified — the store path 404s afterwards). Frame-QA **PASS**: coherent alpine meadow, tall waterfall, yellow butterfly, subject enters and turns with the prompt's over-the-shoulder smile, temporally stable, no false colour. **Monitoring gap recorded, not a defect in this cell:** the index row's `created_at_local` is `02:02:41`, i.e. it is written when the run *finishes*; the util poller found no endpoint in either the ledger or the index at 02:01:23 and 02:02:08, so no utilisation sample exists for the generation itself and a crash mid-run would have left a billing app with no record anywhere. See follow-up F10 / **U8** |
+| T1-24 | `kinoforge sweeper start -c CFG --interval-s 30` + `status` + `metrics` + `stop` | WAN13B | FAIL | $0.06 | `logs/T1-24.log`, `logs/T1-24-status.log`, `logs/T1-24-metrics.log`, `logs/T1-24-stop.log` | Daemon started cleanly (`policy=['DEGRADED_REAP','GC_404','IDLE_REAP','OVERAGE_REAP','RESTART_LOOP_REAP','STALE_LEDGER','STALL_REAP'] include_orphans=False`), `status` and `metrics --prom` both exit 0 and render, `stop` exits 0 and the process is gone. **But it never reached `STALL_REAP` because it never saw the pod at all.** Run for ~3 min against a stall-tight cfg (`stall_window_s: 60`, `--interval-s 30`) with `eph-61ee7764` idle at `gpu=0.0 cpu=0.0` throughout (confirmed by a direct `/util` poll every 45 s): after 6 sweeps, `sweeps_total=6`, `destroys_total=0`, and **every** `deferred_*` counter also 0 — the sweeper classified zero entries per pass. It sweeps the ledger, which `--ephemeral` deliberately leaves empty, and `sweeper start` exposes **no `--include-orphans` flag** (`-c` and `--interval-s` are its only options), so the ephemeral index is unreachable from the daemon by construction. The "safety net for unsupervised runs" in `CLAUDE.md` therefore does not cover the one run shape that has no ledger row to fall back on. Two further defects on the same cell: `status`/`metrics` report `interval_s=60` (read from cfg) while the daemon is demonstrably running at the `--interval-s 30` override, and `sweeper start` writes a pseudo-instance row `sweeper:59be2fa1c7fc` (`provider=_sweeper`) that `kinoforge list` renders as a running instance and that **survives `sweeper stop`** — it had to be `forget`-ed by hand before the teardown proof could print its two required lines. See follow-ups F11 / **U9** and F12 / **U10** |
+| T1-25 | `kinoforge --ephemeral generate …` again (second app) | WAN13B | PASS | $0.02 | `logs/T1-25.log`, `sheetE.png` | Exit 0 in **40 s** (02:07:06 → 02:07:46). **No second app was created** — `warm-reuse: attached to eph-61ee7764`, so the matcher re-used the first ephemeral pod off its index row, which is the documented EM2 behaviour and not a defect; the cell's parenthetical "(second app)" assumed `--no-reuse` semantics the command does not carry. **The matcher selected the Modal row**, so U1 did not bite. Frame-QA **PASS**: the cleanest clip of the pair — magenta-dress subject, waterfall, golden wildflower field, glowing wisps, stable across all five frames. Artifact published to `output/20260906-020746_…mp4`; store copy removed at exit; ledger still empty |
+| T1-26 | `kinoforge reap --include-orphans` then `--apply` | WAN13B | FAIL | $0.02 | `logs/T1-26a.log`, `logs/T1-26b.log`, `logs/T1-26c.log`, `logs/T1-26d.log` | The bare form is a clean, deliberate refusal: exit **4**, `error: --include-orphans requires --apply (Layer V opt-in safety)`. The `--apply` form then **does** discover the ephemeral row that the daemon could not (`verdict=LIVE  id=eph-61ee7764  provider=modal`) — and destroys nothing: `acted on 0: 0 destroyed · 0 forgotten · 0 drift-skipped · 0 deferred · 0 failed`. Retried with `-c` pointing at the stall-tight cfg (`idle_timeout: 5m`, `stall_window_s: 60`) in case the first run was using `Lifecycle()` defaults: identical `LIVE`, identical `acted on 0`. Orphan rows carry no heartbeat and no last-used timestamp (`hb_age_s=-`, `sent_age_s=-`), so an ephemeral pod that is merely *reachable* is `LIVE` forever and no threshold can promote it to `IDLE_REAP` or `STALL_REAP`. Combined with T1-24 the practical result is that **no automatic mechanism reaps an idle ephemeral Modal pod** — this one billed for 7m16s and was only ever going to stop because a human typed a command. Teardown fell to the documented EM2 path: `kinoforge destroy --id eph-61ee7764` under `-e live-modal` → exit 0, `destroyed orphan: eph-61ee7764 (no ledger entry, provider=modal)`, and the index row is gone (`{"rows": []}`). See follow-up F11 / **U9** |
+| T1-27 | `kinoforge --ephemeral --debug-show-secrets list` | WAN13B | EXPECTED-REFUSAL | $0.00 | `logs/T1-27.log` | Exit 2, no traceback, and the message names the reason rather than the rule: `error: --ephemeral and --debug-show-secrets are mutually exclusive (the debug flag bypasses log redaction, which ephemeral requires).` Refused at argument parse, before any provider or credential is touched |
+
+**Tier 1c tally:** 2 PASS, 1 EXPECTED-REFUSAL, **2 FAIL** (T1-24, T1-26). Actual spend **$0.13** —
+one ephemeral A10 (`eph-61ee7764`) alive 02:01:23 → 02:08:39 (7m16s) carrying all five cells.
+**Teardown proof from new processes:** `kinoforge list` printed both required lines,
+`ephemeral-index.json` is `{"rows": []}`, and `modal app list` shows all four `kinoforge-*` apps
+`stopped` with 0 tasks. No entry was made in `successful-generations.md` — every generation in
+this tier was `--ephemeral`, which bars it.
+
+**The tier's second and third goals are not met.** Ephemeral generation itself is solid: opaque
+app naming, empty ledger, index row, store copy cleaned, warm re-attach across processes, and a
+clean mutual-exclusion guard. What does not work is *reaping* it. The sweeper daemon cannot see
+ephemeral rows at all and has no flag to make it, and `reap --include-orphans --apply` sees them
+but can only ever say `LIVE`. An `--ephemeral` run that loses its controller leaves a Modal pod
+that no automatic mechanism will ever stop.
 
 ### Tier 1d — grid
 
@@ -272,3 +286,36 @@ empty ledger while `modal app list` showed `ap-U8nQQQVqDECy3iTqpoKQ7j` `deployed
 container at $1.10/hr; recovery required a bare `modal app stop -y`. Fix shape: route `provision`
 through the same pre-launch-row contract as `deploy` (F12/ruling C1), and make the empty instance
 id an error rather than an app name. Filed as **U7**.
+
+**F10 — an `--ephemeral` run has no durable record until it has already finished.**
+`_record_cold_instance` calls `_ephemeral_index_add` (`src/kinoforge/cli/_commands.py:583`) only
+after the orchestrator returns, so the index row's `created_at_local` is the run's *completion*
+time. Observed at T1-23: the row for `eph-61ee7764` is stamped `02:02:41` for a run launched at
+`02:01:23`, and a poller reading both `.kinoforge/_lifecycle/ledger.json` and
+`ephemeral-index.json` found nothing at `02:01:23` or `02:02:08`. This is the F12 hole that ruling
+C1 closed for the ledger, still open on the ephemeral path: a controller killed mid-generation
+leaves a billing Modal app that neither state file names. Fix shape: write the index row before
+`create_instance` (the pre-launch contract `deploy` already implements) and age it out the same
+way. Filed as **U8**.
+
+**F11 — nothing automatic reaps an idle ephemeral pod.** Two halves, one consequence.
+`kinoforge sweeper start` sweeps the ledger only and exposes no `--include-orphans` flag, so the
+ephemeral index is unreachable from the daemon: at T1-24 six consecutive sweeps against an idle
+`gpu=0.0` pod classified zero entries (`sweeps_total=6`, `destroys_total=0`, every `deferred_*`
+counter 0). `kinoforge reap --include-orphans --apply` *does* read the index, but orphan rows
+carry no heartbeat and no last-used timestamp, so the verdict is `LIVE` while the pod answers at
+all — unchanged under a cfg with `idle_timeout: 5m` and `stall_window_s: 60` (T1-26). Between
+them, an `--ephemeral` pod whose controller dies bills until a human runs
+`kinoforge destroy --id eph-…`. Fix shape: give the daemon the orphan scan `reap` already has, and
+give index rows the timestamps the classifier needs. Filed as **U9**.
+
+**F12 — the sweeper's own bookkeeping row is displayed as a running instance and outlives the
+daemon.** `sweeper start` writes `sweeper:<host>` with `provider=_sweeper` into the ledger;
+`kinoforge list` renders it in `[instance overview]` exactly like a pod
+(`sweeper:59be2fa1c7fc  age=0.1h  est<=$0.0000`) and it is still there after `sweeper stop` exits
+0. That breaks the campaign's teardown-proof contract — `kinoforge list` cannot print
+`No instances recorded in ledger.` while a sweeper has ever run — and it had to be cleared with
+`kinoforge forget --id sweeper:59be2fa1c7fc` before Tier 1c's proof could be taken. Related, same
+cell: `sweeper status` and `sweeper metrics` report `interval_s=60` from the cfg while the daemon
+is running at the `--interval-s 30` override, so the two commands that exist to observe the daemon
+disagree with it. Filed as **U10**.

@@ -573,6 +573,65 @@ suspected site. **None of these is fixed.**
   because the matrix run happened to check `modal app list`; an operator following
   `kinoforge list` alone would have seen an empty ledger and walked away from a billing A10.
 
+- **U8 — an `--ephemeral` run is invisible to every state file until it has already finished.**
+  `_record_cold_instance` calls `_ephemeral_index_add` (`src/kinoforge/cli/_commands.py:583`)
+  only after the orchestrator returns, so the ephemeral index row is written at *completion*, not
+  before `create_instance`. `--ephemeral` writes no ledger row at all by design, so for the whole
+  duration of the run there is no durable record of the Modal app anywhere.
+  **Reproducer (live, T1-23):** launch
+  `pixi run -e live-modal kinoforge --ephemeral generate -c examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml
+  --mode t2v --prompt "$(cat examples/configs/prompts/field-realistic.txt)"` and, while it runs,
+  read `.kinoforge/_lifecycle/ephemeral-index.json` — it is `{"rows": []}` until the run ends, and
+  the row that eventually appears is stamped with the completion time (`created_at_local`
+  `02:02:41` for a run launched `02:01:23`).
+  **Suspected site:** `_record_cold_instance` / `_ephemeral_index_add`
+  (`src/kinoforge/cli/_commands.py:555-584, 1629`).
+  **Why urgent:** this is exactly the F12 hole that ruling C1 closed for the ledger, still open on
+  the ephemeral path. A Ctrl-C, an OOM, or a session death during a multi-minute ephemeral
+  generation leaves a billing Modal app that no kinoforge command and no state file can name — and
+  it also means a monitor cannot poll `/util` during the run, because the endpoint has not been
+  written down yet (this campaign could not sample utilisation for T1-23 for that reason).
+
+- **U9 — nothing automatic reaps an idle ephemeral Modal pod; the "safety net" does not cover the
+  one run shape that needs it.**
+  Two independent halves. (a) `kinoforge sweeper start` sweeps the **ledger** and exposes no
+  `--include-orphans` flag (`-c` and `--interval-s` are its only options), so the ephemeral index
+  is unreachable from the daemon by construction. (b) `kinoforge reap --include-orphans --apply`
+  *does* read the index, but orphan rows carry no heartbeat and no last-used timestamp
+  (`hb_age_s=-`, `sent_age_s=-`), so a pod that merely answers is `LIVE` and no threshold can
+  promote it to `IDLE_REAP` or `STALL_REAP`.
+  **Reproducer (live, T1-24 / T1-26):** leave an ephemeral pod idle at `gpu=0.0 cpu=0.0`, then
+  `pixi run -e live-modal kinoforge sweeper start -c <cfg with stall_window_s: 60> --interval-s 30`
+  — after six sweeps `sweeper status` reports `sweeps_total=6 destroys_total=0` with **every**
+  `deferred_*` counter also 0, i.e. zero entries were classified. Then
+  `pixi run -e live-modal kinoforge reap --include-orphans --apply -c <same cfg>` → `LIVE` and
+  `acted on 0`, unchanged with `idle_timeout: 5m`.
+  **Suspected site:** the sweeper's entry enumeration (ledger-only, `include_orphans=False` with
+  no CLI knob) and the orphan branch of the reap classifier, which has no timestamps to work with.
+  **Why urgent:** `CLAUDE.md` recommends `kinoforge sweeper start &` as the safety net for
+  unsupervised runs, and it is blind to precisely the runs that leave no ledger row. An
+  `--ephemeral` pod whose controller dies bills at the GPU rate until a human types
+  `kinoforge destroy --id eph-…` — which is the only thing that worked here (EM2 orphan path,
+  exit 0, `destroyed orphan: eph-61ee7764`).
+
+- **U10 — the sweeper's own ledger row is rendered as a running instance and outlives the daemon.**
+  `kinoforge sweeper start` writes `sweeper:<host>` with `provider=_sweeper` into the ledger.
+  `kinoforge list` renders it inside `[instance overview]` in the same shape as a real pod
+  (`sweeper:59be2fa1c7fc  age=0.1h  est<=$0.0000 …  provider=_sweeper  capability_key=<unknown>`),
+  and it is still present after `sweeper stop` exits 0.
+  **Reproducer (live, T1-24):** `sweeper start`, then `sweeper stop`, then `kinoforge list` — the
+  row is there, and `No instances recorded in ledger.` is not printed. Clearing it needs
+  `kinoforge forget --id sweeper:<host>`.
+  **Suspected site:** wherever `sweeper start` records its liveness row, and `_cmd_list`'s
+  instance-overview filter, which does not exclude `provider=_sweeper`.
+  **Why urgent:** it breaks the project's own teardown-proof contract. Every live-smoke rule in
+  `CLAUDE.md` and `live-constraints.md` says a teardown is proven when `kinoforge list` prints
+  `[instance overview] No running instances.` AND `No instances recorded in ledger.` — after any
+  sweeper has run, that proof can never be produced, so an operator either learns to ignore a line
+  in the overview (the habit that hides a real pod) or believes a pod is alive that is not.
+  Secondary, same command: `sweeper status` and `sweeper metrics` report `interval_s` from the cfg
+  and ignore the `--interval-s` override the running daemon is actually using.
+
 Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
 on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interval_s`
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
