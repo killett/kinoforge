@@ -51,11 +51,13 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 20. `2026-07-05 22:24:29` — [RIFE v4.26 frame interpolation (16fps→60fps) on RunPod RTX A4000 — interpolate](#20-2026-07-05-222429--rife-v426-frame-interpolation-16fps60fps-on-runpod-rtx-a4000--interpolate)
 21. `2026-07-08 01:33:54` — [FlashVSR upscale on Lambda A100 via SkyPilot ssh-tunnel (provider-internal HTTP seam) — upscale](#21-2026-07-08-013354--flashvsr-upscale-on-lambda-a100-via-skypilot-ssh-tunnel-provider-internal-http-seam--upscale)
 22. `2026-07-08 22:12:07` — [Diffusers WanPipeline Wan 2.1 T2V-1.3B on Modal serverless GPU (A10) — t2v](#22-2026-07-08-221207--diffusers-wanpipeline-wan-21-t2v-13b-on-modal-serverless-gpu-a10--t2v)
+    - See also: `2026-09-06 01:05:37` — Modal command matrix **Tier 1a** (`docs/modal-command-matrix.md`), one pod carrying 18 cells. Cold boot `run-20260906-010255` (A10, $1.10/hr): app deployed in **86.9 s**, first mp4 at **2 m 43 s** wall; then five more standard-prompt t2v generations off the same warm container — `warm-reuse: attached` via the matcher (40 s), `--instance-id` (50 s), `--force-attach --instance-id` (41 s), and two 2-row `kinoforge batch` runs (~37 s/clip, see §28). All 480×480/33f/16fps/2.06 s. Util probe caught **gpu=100 %** mid-generation, confirming real compute rather than wall-clock accrual. Frame-QA **PASS** on all eight standard-prompt clips (contact sheets `/home/claudeuser/kinoforge-matrix/sheetA.png`, `sheetB.png`): coherent alpine meadow + backlit waterfall, butterflies/wisps, stable camera push-in, no false colour; soft flag only on the `--instance-id` clip (hazier, blurred face — seed variance at 1.3B/480 px). Pod lifetime 01:04:22 → 01:25:14 (20 m 52 s), spend **$0.38**, teardown verified (`kinoforge list` both lines + `modal app list` state `stopped`, 0 tasks). Same tuple `(modal, DiffusersEngine, Wan-AI/Wan2.1-T2V-1.3B-Diffusers, t2v)`. NB the §27 util-poll regex gap is avoided here by resolving the `.modal.run` host from the ledger entry's `endpoints` field rather than regexing the TTY-wrapped run log.
 23. `2026-07-08 23:55:31` — [Diffusers WanPipeline Wan 2.2 T2V-A14B on Modal serverless GPU (A100-80GB) — t2v](#23-2026-07-08-235531--diffusers-wanpipeline-wan-22-t2v-a14b-on-modal-serverless-gpu-a100-80gb--t2v)
 24. `2026-07-10 23:52:23` — [FlashVSR v1.1 4x upscale on Modal A100-80GB via image-bake fast boot (Milestone 3) — upscale](#24-2026-07-10-235223--flashvsr-v11-4x-upscale-on-modal-a100-80gb-via-image-bake-fast-boot-milestone-3--upscale)
 25. `2026-07-11 17:59:51` — [RIFE v4.26 frame interpolation (16fps→60fps) on Modal T4 via image-bake fast boot (Milestone 4) — interpolate](#25-2026-07-11-175951--rife-v426-frame-interpolation-16fps60fps-on-modal-t4-via-image-bake-fast-boot-milestone-4--interpolate)
 26. `2026-07-12 01:08:08` — [Cross-CLI warm-reuse + HF Volume weight-cache on Modal (Wan 2.1 1.3B / A10, Milestone 5) — t2v](#26-2026-07-12-010808--cross-cli-warm-reuse--hf-volume-weight-cache-on-modal-wan-21-13b--a10-milestone-5--t2v)
 27. `2026-07-12 20:13:28` — [FlashVSR height-target upscale (scale=1080p → 4x+downscale) on Modal A100-80GB — upscale](#27-2026-07-12-201328--flashvsr-height-target-upscale-scale1080p--4xdownscale-on-modal-a100-80gb--upscale)
+28. `2026-09-06 01:20:36` — [`kinoforge batch` on Modal — 2-row manifest over one warm container (Wan 2.1 1.3B / A10) — t2v](#28-2026-09-06-012036--kinoforge-batch-on-modal--2-row-manifest-over-one-warm-container-wan-21-13b--a10--t2v)
 
 ---
 
@@ -2833,3 +2835,78 @@ pixi run -e live-modal kinoforge upscale \
 - **Height-target is controller-side, provider-agnostic.** No production code changed. The 1920→1080 lanczos downscale runs on the kinoforge controller after fetching the upscaled bytes over the `.modal.run` HTTP seam — identical to the RunPod path (§19). An offline guard (`tests/test_modal_config.py::test_flashvsr_1080p_config_is_height_target`) asserts the cfg parses to `ScaleTarget(kind="height", value=1080)` so a future copy-paste can't silently revert it to a factor.
 - **Util-poll gap (noted honestly):** the background `/util` monitor never captured a live sample — its URL regex `https://[a-z0-9-]+\.modal\.run` did not match Modal's `emmykillett--kinoforge-…` double-dash host (and the URL is TTY-wrapped across lines in the run log), and GPU-live inference was only ~2 min between 75 s poll ticks. No stall occurred (run exited 0, clean teardown); a future monitor must allow `--`/`_` in the host and de-wrap the log line. The dead-pod safety outcome was still satisfied structurally (short converged run, no pile-up).
 - **Teardown verified** post-run: log `--no-reuse: destroyed + forgot pod upscale-20260712-200409`; then `kinoforge list` → `[instance overview] No running instances.` + `No instances recorded in ledger.` together.
+
+
+## 28. `2026-09-06 01:20:36` — `kinoforge batch` on Modal — 2-row manifest over one warm container (Wan 2.1 1.3B / A10) — t2v
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `Modal / DiffusersEngine (Wan 2.1 T2V-1.3B) / Wan-AI/Wan2.1-T2V-1.3B-Diffusers` |
+| **Mode** | t2v (480×480, 33 frames, 16 fps) |
+| **New capability axis** | **`kinoforge batch` driven against Modal** — the batch command had never been exercised on this provider. A 2-row manifest runs end-to-end over a **single warm-attached container**: one `warm-reuse: attached`, zero deploy lines, two artifacts, a `_batch_summary.json`, and both streaming formats (`human` and `jsonl`). |
+| **First-success SHA** | `ae20a536` (working tree at Tier 1a; no production code changed for this axis — the cell exercised existing behaviour) |
+| **Date (local TZ)** | 2026-09-06 01:20:36 -0700 (PDT) |
+| **GPU** | Modal **A10** (24 GB), serverless, $1.10/hr — the same container as §22's Tier 1a cold boot (`run-20260906-010255`) |
+| **Runs** | 2 batch invocations × 2 manifest rows = 4 clips. Per-clip generation 36.2 / 36.7 / 36.8 / 36.5 s |
+| **Est. spend** | ~$0.05 (both batch runs, ~2 m 40 s of a $1.10/hr pod that was already warm) |
+| **Layer / phase** | Modal command matrix, Tier 1a cell **T1-13** — results `docs/modal-command-matrix.md`, plan `docs/superpowers/plans/2026-09-05-modal-command-matrix.md` |
+
+### Exact commands
+
+```bash
+# both runs attach to the already-warm pod from the Tier 1a cold boot
+pixi run -e live-modal kinoforge batch \
+  -c examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml \
+  --manifest /home/claudeuser/kinoforge-matrix/batch.yaml --concurrent 1
+
+pixi run -e live-modal kinoforge batch \
+  -c examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml \
+  --manifest /home/claudeuser/kinoforge-matrix/batch.yaml --concurrent 1 \
+  --stream-format jsonl
+```
+
+The manifest is two rows, each `prompt_file: /workspace/examples/configs/prompts/field-realistic.txt`,
+`mode: t2v`, with `run_id: matrix-a` / `matrix-b`.
+
+### Evidence
+
+| Run | Batch id | Artifacts | Streaming output |
+|---|---|---|---|
+| human format | `batch-20260906-011920` | `matrix-a/2800d474d83f5c1d.mp4` (36.2 s), `matrix-b/3574f50423480df5.mp4` (36.7 s) | `[batch-…] [1/matrix-a] OK 36.2s <uri>` per row, then a `summary:` table |
+| jsonl format | `batch-20260906-012043` | `matrix-a/cb62895cccee2b0f.mp4` (36.8 s), `matrix-b/a0999747ccf74408.mp4` (36.5 s) | one `entry_start` + one `entry_finish` per row (`status`, `duration_s`, `uri`), then a single `batch_summary` record listing both entries |
+
+Both runs logged `warm-reuse: attached to run-20260906-010255` once and **no** `Building image` /
+`App deployed` line. `_batch_summary.json` is written into the batch directory alongside the
+per-`run_id` subdirectories. All four clips ffprobe-verified 480×480 / 33 frames / 16 fps / 2.0625 s.
+
+### Frame-QA verdict (mandatory visual review)
+
+**PASS** — 5 frames per clip, tiled as `/home/claudeuser/kinoforge-matrix/sheetB.png`. All four are
+coherent alpine-meadow-and-waterfall renders with correct golden-hour backlight, glowing
+butterflies, and stable temporal motion; the two `matrix-a`/`matrix-b` pairs are visibly distinct
+from each other despite the identical prompt (independent seeds), which is the expected batch
+behaviour. ⚠️ **one soft flag:** `batch-20260906-012043/matrix-a` opens with two bloom-blown,
+overexposed frames before converging to a clean subject by frame 3 — a lens-flare/bloom artifact
+consistent with the prompt's "subtle lens flare", not corruption. Nothing resembling the §13/§14
+false-colour failure mode.
+
+### Reproduction recipe / deviations (read before re-firing)
+
+- **Batch inherits warm-reuse.** With no `--no-reuse`, `batch` performs one warm-attach for the
+  whole manifest rather than per row — the reason two rows cost ~75 s rather than two cold boots.
+  It also leaves the pod alive at the end, so a one-shot batch needs the same explicit teardown as
+  a one-shot `generate`.
+- **`--concurrent 1` was used deliberately.** Rows ran strictly sequentially (`matrix-a` finished
+  36.2 s before `matrix-b` started). Higher concurrency against a single container was not
+  exercised and should not be assumed safe.
+- **`--stream-format jsonl` is the machine-readable surface** and is well-formed: every record
+  carries `kind`, `batch_id`, `idx`, `run_id`, `ts`, and the finish records carry
+  `status`/`duration_s`/`uri`. The `batch_summary` record is emitted last and is a superset of
+  `_batch_summary.json`.
+- **Known adjacent defect, not exercised here:** `batch --dry-run-swap` never parses the manifest
+  (matrix follow-up **F2** / `PROGRESS.md` **U2**) — it exits 0 even for a manifest path that does
+  not exist. The live path above *does* read the manifest; only the dry-run preview is inert.
+- **Teardown verified** after the whole Tier 1a sequence: `kinoforge destroy --id
+  run-20260906-010255` → `destroyed`; then from new processes `kinoforge list` →
+  `[instance overview] No running instances.` + `No instances recorded in ledger.`, and
+  `modal app list` → the only `kinoforge-*` app in state `stopped` with 0 tasks.

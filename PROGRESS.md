@@ -476,6 +476,61 @@ suspected site. **None of these is fixed.**
   **Why urgent:** the one pre-flight check a batch has is inert, so a malformed or missing
   manifest is discovered only after the pod is up and billing.
 
+- **U3 — a Modal pod's endpoint URL is unreachable from any fresh process.**
+  The ledger entry for a live Modal pod carries
+  `endpoints={"8000": "https://...modal.run"}` (and `last_gpu_util_percent` etc.), but no read
+  path consults it. `ModalProvider.endpoints`
+  (`src/kinoforge/providers/modal/__init__.py:370`) reads the per-process `_deployments` dict and
+  falls back to `instance.endpoints`, while `get_instance()` builds the `Instance` from
+  `modal app list`, which returns no URL. The URL therefore survives only inside the process that
+  created the pod.
+  **Reproducer (live, T1-03 / T1-06):** with a live Modal pod in the ledger, from a new process —
+  `pixi run -e live-modal kinoforge status --id <id>` prints
+  `endpoints=unknown (no live endpoint)` (and no utilisation at all), and
+  `pixi run -e live-modal kinoforge pod lora ls <id>` exits 2 with
+  `pod lora ls: no endpoint URL for pod <id>`.
+  **Suspected site:** `ModalProvider.endpoints` / `get_instance`
+  (`src/kinoforge/providers/modal/__init__.py:370,417`), consumed by
+  `_render_endpoints_for_status` and the `ensure_endpoints` call at
+  `src/kinoforge/cli/_commands.py:2413`.
+  **Why urgent:** every out-of-process URL consumer is dead on Modal — `status`, `pod lora ls`,
+  and any operator or runbook that follows `live-constraints.md`, which explicitly says to
+  resolve the pod's `.modal.run` URL from `kinoforge status --id <id>`. The 2026-09-06 matrix run
+  had to read `.kinoforge/_lifecycle/ledger.json` directly to poll `/util` at all. Note
+  `_render_endpoints_for_status`'s docstring already defers this on purpose for RunPod/Modal;
+  what is new is the measured cost of the deferral. Cheap fix shape: fall back to the ledger
+  entry's `endpoints` map.
+
+- **U4 — `kinoforge logs` is hard-wired to the RunPod proxy and 404s on every other provider.**
+  `_cmd_logs` does `del ctx  # ledger not consulted — proxy URL is deterministic from id` and
+  builds `https://{id}-8001.proxy.runpod.net/{file}` with no provider check.
+  **Reproducer (live, T1-04):** against a live *Modal* pod,
+  `pixi run -e live-modal kinoforge logs --id <id>` exits 1 with
+  `error fetching https://<id>-8001.proxy.runpod.net/bootstrap.log: HTTP 404 Not Found`.
+  Same for `--file server.log --out <path>`; no output file is written.
+  **Suspected site:** `src/kinoforge/cli/_commands.py:2510-2512`.
+  **Why urgent:** the sidecar is legitimately RunPod-shaped, so being unsupported on Modal is
+  fine — but reporting it as a 404 against a fabricated hostname tells the operator "the pod has
+  no log" instead of "wrong provider", which is exactly the wrong thing to believe while
+  debugging a live pod that is still billing. Minimum fix: branch on the ledger entry's
+  `provider` and refuse cleanly.
+
+- **U5 — `--vault` cannot supply the prompt its own help text advertises.**
+  `kinoforge generate` requires `--prompt` at argparse even under `--vault`, and
+  `vault.positive_prompt` is referenced in exactly one place in the tree —
+  `register_vault_tokens` (`src/kinoforge/core/vault.py:228`), which registers it as a
+  *redaction token*. Nothing ever reads it as the generation prompt.
+  **Reproducer (live, T1-12):**
+  `pixi run -e live-modal kinoforge --vault <vault.yaml> generate -c <modal cfg> --mode t2v`
+  exits 2 with `error: the following arguments are required: --prompt`; adding `--prompt ""`
+  exits 1 with an uncaught `ValueError: prompt yielded zero non-empty segments` raised *after*
+  `warm-reuse: attached to <id>` — i.e. after the pod was acquired and billed.
+  **Suspected site:** the `generate` argparse definition plus prompt resolution
+  (`src/kinoforge/core/prompt_routing.py:resolve_prompt`), neither of which consults the vault.
+  **Why urgent:** `--vault`'s documented purpose ("holding the positive prompt") is unreachable,
+  so anyone keeping prompts out of the repo for privacy silently cannot. Secondary: the
+  empty-prompt path should fail before acquiring a pod, not after.
+
 Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
 on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interval_s`
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path

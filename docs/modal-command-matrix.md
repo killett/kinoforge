@@ -10,7 +10,7 @@ assorted commands without a record of which; this document is that record.
 **Spec:** `docs/superpowers/specs/2026-09-05-modal-command-matrix-design.md`
 **Logs:** `/home/claudeuser/kinoforge-matrix/logs/<cell id>.log` (operator-side, not tracked)
 
-**Spend so far: $0.00**
+**Spend so far: $0.38** (Tier 0 $0.00 + Tier 1a $0.38)
 
 **Verdicts.** `PASS` — behaved as expected. `FAIL` — a crash, a traceback, or a wrong result.
 `EXPECTED-REFUSAL` — refused cleanly and on purpose (not-found id, unsupported operation,
@@ -68,24 +68,44 @@ session — T0-02 (`c9d9b284`) and T0-12 (`3c7822b8`) — and those cells now pa
 
 | Cell | Command | Config | Verdict | Cost | Evidence | Notes |
 |------|---------|--------|---------|------|----------|-------|
-| T1-01 | `kinoforge generate -c CFG --mode t2v --prompt PROMPT` | WAN13B | PENDING | | | |
-| T1-02 | `kinoforge list` | WAN13B | PENDING | | | |
-| T1-03 | `kinoforge status --id ID` | WAN13B | PENDING | | | |
-| T1-04 | `kinoforge logs --id ID` and `--file server.log --out <path>` | WAN13B | PENDING | | | |
-| T1-05 | `kinoforge cost` / `--json` / `--no-cache` | WAN13B | PENDING | | | |
-| T1-06 | `kinoforge pod lora ls ID` | WAN13B | PENDING | | | |
-| T1-07 | `kinoforge reap` and `reap --format json --id ID` | WAN13B | PENDING | | | |
-| T1-08 | `kinoforge sweeper status` with no daemon | WAN13B | PENDING | | | |
-| T1-09 | `kinoforge generate -c CFG --mode t2v --prompt PROMPT` (second process) | WAN13B | PENDING | | | |
-| T1-10 | same + `--instance-id ID` | WAN13B | PENDING | | | |
-| T1-11 | same + `--force-attach --instance-id ID` | WAN13B | PENDING | | | |
-| T1-12 | `kinoforge --vault vault.yaml generate -c CFG --mode t2v` | WAN13B | PENDING | | | |
-| T1-13 | `kinoforge batch -c CFG --manifest batch.yaml --concurrent 1` then `--stream-format jsonl` | WAN13B | PENDING | | | |
-| T1-14 | `kinoforge generate … --run-id matrix-runid --output-dir <dir>` and `--no-output-dir` | WAN13B | PENDING | | | |
-| T1-15 | `kinoforge stop --id ID` | WAN13B | PENDING | | | |
-| T1-16 | `kinoforge destroy --id ID` then `kinoforge list` + Modal app list | WAN13B | PENDING | | | |
-| T1-17 | `kinoforge forget --id ID` after destroy | WAN13B | PENDING | | | |
-| T1-18 | `kinoforge gc --config CFG` | WAN13B | PENDING | | | |
+| T1-01 | `kinoforge generate -c CFG --mode t2v --prompt PROMPT` | WAN13B | PASS | $0.05 | `logs/T1-01.log`, `sheetA.png` | Cold boot, exit 0. App deployed in **86.9s**; `generate completed` at 01:05:37, **2m43s** wall from launch. Instance `run-20260906-010255` (A10, $1.10/hr), pod survived as designed (warm-reuse default). Util during generation: **gpu=100%**, cpu=5.9%, mem=0.5% — the pod was genuinely working. mp4 480x480/33f/16fps/2.06s. Frame-QA **PASS**: coherent alpine meadow + waterfall, correct golden-hour backlight, butterflies/wisps present, temporally stable, no false colour |
+| T1-02 | `kinoforge list` | WAN13B | PASS | $0.00 | `logs/T1-02.log` | Exit 0. Pod listed twice as designed — the age/spend line (`age=0.2h est<=$0.1899`) and the identity line `provider=modal capability_key=0aaf4ee6e6c0` |
+| T1-03 | `kinoforge status --id ID` | WAN13B | FAIL | $0.00 | `logs/T1-03.log` | Exit 0 and the state block is right (`provider_status=ready`, `cost_rate_usd_per_hr=1.1000`, `accrued_spend_usd=0.1901`, `verdict=HEARTBEAT_SUBSTRATE_MISSING`, stale-heartbeat advisory — all correct for Modal). **But `endpoints=unknown (no live endpoint)` is a wrong result**: the same ledger entry the command just read carries `endpoints={'8000': 'https://...modal.run'}` plus `last_gpu_util_percent`/`last_cpu_percent`. Neither the endpoint nor the util is rendered, so the cell's stated purpose (state + endpoints + util) is two-thirds unmet — and `live-constraints.md` tells the operator to get the pod URL from exactly this command. Root cause shared with T1-06; see follow-up F4 / **U3** |
+| T1-04 | `kinoforge logs --id ID` and `--file server.log --out <path>` | WAN13B | FAIL | $0.00 | `logs/T1-04a.log`, `logs/T1-04b.log` | Exit 1 on both forms, and **not** a clean 'unsupported on modal': it fetched `https://run-20260906-010255-8001.**proxy.runpod.net**/bootstrap.log` for a *Modal* pod and reported `HTTP 404 Not Found`. `_cmd_logs` (`src/kinoforge/cli/_commands.py:2510-2512`) does `del ctx  # ledger not consulted` and hard-codes the RunPod proxy template with no provider check, so on Modal it fabricates a hostname that never existed. A 404 reads as 'the pod has no such log' rather than 'this command is RunPod-only'. No `--out` file written. See follow-up F5 / **U4** |
+| T1-05 | `kinoforge cost` / `--json` / `--no-cache` | WAN13B | PASS | $0.00 | `logs/T1-05a.log`, `logs/T1-05b.log`, `logs/T1-05c.log` | All three exit 0. Modal burn rate visible and correct: `Burn rate: $1.10/hr`, per-provider row `modal: $1.10/hr spend $0.21 balance N/A [LIVE=1]`. `--json` emits the stable schema incl. `heartbeat_partial_truth: [modal]`; `--no-cache` re-reads and agrees. `balance N/A` is expected — no Modal balance adapter (documented absent at T0-13) |
+| T1-06 | `kinoforge pod lora ls ID` | WAN13B | FAIL | $0.00 | `logs/T1-06.log` | Exit 2, `pod lora ls: no endpoint URL for pod run-20260906-010255`. Not an empty inventory and not a clean 'unsupported' — the endpoint URL **is** in the ledger row. `provider.ensure_endpoints()` (the 'repairing door', `_commands.py:2413`) returns empty on Modal because `ModalProvider.endpoints` reads the per-process `_deployments` dict and falls back to `instance.endpoints`, which `get_instance()` builds from `modal app list` without any URL. Same root cause as T1-03; see follow-up F4 / **U3** |
+| T1-07 | `kinoforge reap` and `reap --format json --id ID` | WAN13B | PASS | $0.00 | `logs/T1-07a.log`, `logs/T1-07b.log` | Both exit 0 and classify the pod LIVE without destroying it: `HEARTBEAT_SUBSTRATE_MISSING`, `1 entries classified — pass --apply to act on default policy`. `--format json --id` emits `{"type": "header", "entries": 1}` then the verdict object with `provider: modal` (the T0-12 fix holds on a non-empty ledger). Pod confirmed still alive afterwards. **Cosmetic defect:** the human table's verdict column is too narrow for the longest verdict, so it renders `HEARTBEAT_SUBSTRATE_MISSINGrun-20260906-010255` with no separator; see follow-up F6 |
+| T1-08 | `kinoforge sweeper status` with no daemon | WAN13B | PASS | $0.00 | `logs/T1-08.log` | Exit 0 with `running=false`, `pid=none`, `sweeps_total=0`, `errors_total=0`. Requires `-c/--config` (as recorded at T0-15) |
+| T1-09 | `kinoforge generate -c CFG --mode t2v --prompt PROMPT` (second process) | WAN13B | PASS | $0.02 | `logs/T1-09.log`, `sheetA.png` | Exit 0 in **40s** total. `warm-reuse: attached to run-20260906-010255` — no deploy line, so the matcher re-used the warm pod. **The matcher selected the Modal pod**, i.e. U1 did not bite (the index held only Modal rows after the operator's 2026-09-06 clear). Frame-QA **PASS**: coherent, prompt-adherent, stable |
+| T1-10 | same + `--instance-id ID` | WAN13B | PASS | $0.02 | `logs/T1-10.log`, `sheetA.png` | Exit 0 in 50s, explicit attach, no deploy. Frame-QA **PASS with a soft flag**: content is coherent and prompt-adherent but noticeably hazier/more overexposed than its siblings, with a blurred face — seed variance at 1.3B/480px, not corruption |
+| T1-11 | same + `--force-attach --instance-id ID` | WAN13B | PASS | $0.02 | `logs/T1-11.log`, `sheetA.png` | Exit 0 in 41s, attached bypassing the matcher, no deploy. Frame-QA **PASS**: the strongest clip of the set — clean subject, correct butterflies, stable camera push-in |
+| T1-12 | `kinoforge --vault vault.yaml generate -c CFG --mode t2v` | WAN13B | FAIL | $0.01 | `logs/T1-12.log`, `logs/T1-12b.log` | Two-part failure. **(a)** Without `--prompt`: exit 2, `error: the following arguments are required: --prompt` — argparse still mandates it, so the vault can never *be* the prompt source. **(b)** Per the brief, retried with `--prompt ""`: exit 1 with an **uncaught traceback** (`ValueError: prompt yielded zero non-empty segments`) raised *after* `warm-reuse: attached`, i.e. it acquired and billed the pod before failing. Diagnosis: `vault.positive_prompt` is referenced in exactly one place in the tree — `register_vault_tokens` (`src/kinoforge/core/vault.py:228`), which only registers it as a *redaction token*. It is never wired into prompt resolution, so the `--vault` help text ('holding the positive prompt') describes a capability `generate` does not have. See follow-up F7 / **U5** |
+| T1-13 | `kinoforge batch -c CFG --manifest batch.yaml --concurrent 1` then `--stream-format jsonl` | WAN13B | PASS | $0.05 | `logs/T1-13a.log`, `logs/T1-13b.log`, `sheetB.png` | Both runs exit 0. **One attach, no deploy** (`warm-reuse: attached to run-20260906-010255`), two artifacts each, `_batch_summary.json` written to the batch dir. Human format streams `[1/matrix-a] OK 36.2s <uri>` + a summary table; `--stream-format jsonl` emits well-formed `entry_start` / `entry_finish` / `batch_summary` records with per-entry `status`, `duration_s`, `uri`. Frame-QA **PASS** on all four clips; minor flag on `T1-13b/matrix-a`, whose first two frames are bloom-blown before converging |
+| T1-14 | `kinoforge generate ... --run-id matrix-runid --output-dir <dir>` and `--no-output-dir` | WAN13B | PASS | $0.04 | `logs/T1-14a.log`, `logs/T1-14b.log`, `logs/T1-14c.log`, `sheetC.png` | All three exit 0 and placement honours every flag. `--run-id matrix-runid` -> `.kinoforge/matrix-runid/d1921fdc15369a32.mp4`. `--output-dir` -> `output published: /home/claudeuser/kinoforge-matrix/out/20260906-012353_diffusers_Wan2.1-T2V-1.3B-Diffuser_x.mp4` (both flags **do** exist on `generate`; the truncated usage line in T1-12's argparse error is not the full flag list). `--no-output-dir` -> no publish line, clip only in the store. **Two caveats, recorded not hidden:** the `--output-dir`/`--no-output-dir` probes used `--prompt "x"` rather than the standard prompt, so their clips are abstract colour fields — degenerate-by-construction, uninformative as a quality signal though free of corruption; and the `--run-id` artifact was consumed by the T1-18 `gc --run matrix-runid` probe before frames could be pulled. Quality evidence for this pod rests on the eight standard-prompt clips in `sheetA.png`/`sheetB.png` |
+| T1-15 | `kinoforge stop --id ID` | WAN13B | EXPECTED-REFUSAL | $0.00 | `logs/T1-15.log` | Exit 1, no traceback, exactly the by-design refusal: `modal cannot pause billing; instances are either running or destroyed.` followed by the actionable `To tear it down: kinoforge destroy --id run-20260906-010255`. Pod confirmed still alive after (T1-16 destroyed it) |
+| T1-16 | `kinoforge destroy --id ID` then `kinoforge list` + Modal app list | WAN13B | PASS | $0.00 | `logs/T1-16.log`, `logs/T1-16-proof-list.log`, `logs/T1-16-proof-apps.log` | Exit 0, `destroyed: run-20260906-010255` at 01:25:14 (pod lifetime 01:04:22 -> 01:25:14 = **20m52s**). **Teardown proof from new processes:** `kinoforge list` prints both required lines (`[instance overview] No running instances.` AND `No instances recorded in ledger.`); `modal app list` shows the single `kinoforge-*` app in state **`stopped`** with **0 tasks**. Nothing left running |
+| T1-17 | `kinoforge forget --id ID` after destroy | WAN13B | EXPECTED-REFUSAL | $0.00 | `logs/T1-17.log` | Exit 1, `instance 'run-20260906-010255' not found in ledger`, no traceback — correct, because `destroy` already removed the entry |
+| T1-18 | `kinoforge gc --config CFG` | WAN13B | PASS | $0.00 | `logs/T1-18.log`, `logs/T1-18b.log` | Exit 0. Bare `gc --config` prints `gc: nothing to do (specify --run <id>)` even though the store now holds real artifacts — `--run` is required to act, matching T0-14 on the empty store. Exercised for real with `--run matrix-runid`: exit 0, `gc: removed 1 artifact(s)`, and the run directory is empty afterwards, so collection genuinely works |
+
+**Tier 1a tally:** 12 PASS, 2 EXPECTED-REFUSAL, **4 FAIL** (T1-03, T1-04, T1-06, T1-12).
+Actual spend **$0.38** — one A10 pod at $1.10/hr alive 01:04:22 -> 01:25:14 (20m52s) on
+2026-09-06, carrying all 18 cells. Nothing was fixed in-session: each of the four failures is
+larger than the campaign's one-function / one-config-key / one-guard bar, so all four are filed
+below and, per the operator directive, as urgent items **U3 / U4 / U5** in `PROGRESS.md`.
+
+Three of the four collapse into two root causes worth stating plainly: **the Modal pod's URL is
+unreachable from any fresh process** (T1-03, T1-06 — the ledger has it, no read path consults it),
+and **`logs` is RunPod-only by construction** (T1-04). The fourth (T1-12) is an advertised
+`--vault` capability that was never wired up. Cold boot, warm attach (all three forms), batch,
+artifact placement and teardown all worked exactly as designed.
+
+### Tier 1a utilisation readings (the health signal, per `live-constraints.md`)
+
+Polled at 30-75s throughout. `gpu_util_percent=100.0, cpu=5.9, mem=0.5` at 01:05:24, mid-generation
+— the pod was genuinely computing, not merely accruing cost. Readings of `gpu=0.0` at 01:06:39
+onward are the **idle warm pod between cells**, with no generation in flight, so they are not the
+stall signature the rule targets. No cell ever showed GPU 0% while a generation was running, and
+no capture/destroy/fail-fast escalation was needed.
 
 ### Tier 1b — deploy-first lifecycle
 
@@ -181,3 +201,40 @@ warns that the provider cannot enforce `max_lifetime`, `job_timeout` or a wire-l
 ceiling is Modal's `@app.function(timeout=boot_timeout)`. Correct and already surfaced by
 `doctor`, but it means the cfg-level budget knobs on the Modal cfgs are decorative. Worth
 stating in `docs/lifecycle.md` so the next operator does not trust them.
+
+**F4 — a Modal pod's endpoint URL is unreachable from a fresh process.** `kinoforge status`
+renders `endpoints=unknown (no live endpoint)` (T1-03) and `kinoforge pod lora ls` exits 2 with
+`no endpoint URL for pod <id>` (T1-06), for a pod whose ledger entry holds
+`endpoints={'8000': 'https://...modal.run'}`. `ModalProvider.endpoints`
+(`src/kinoforge/providers/modal/__init__.py:370`) reads the per-process `_deployments` dict and
+falls back to `instance.endpoints`; `get_instance()` builds the `Instance` from `modal app list`,
+which returns no URL. So the URL survives only in the process that created the pod, and in the
+ledger nobody reads. `_render_endpoints_for_status`'s docstring already anticipates this and
+defers it deliberately for RunPod/Modal — but the consequence is now measured: the campaign's own
+`live-constraints.md` instructs the operator to get the pod URL from `kinoforge status`, and that
+does not work. This task had to read `.kinoforge/_lifecycle/ledger.json` directly to poll `/util`.
+Fix shape: have the provider (or `_cmd_status` / `ensure_endpoints`) fall back to the ledger
+entry's `endpoints` map. Filed as **U3**.
+
+**F5 — `kinoforge logs` is hard-wired to the RunPod proxy.** `_cmd_logs`
+(`src/kinoforge/cli/_commands.py:2510-2512`) carries the comment `del ctx  # ledger not consulted
+— proxy URL is deterministic from id` and builds
+`https://{id}-8001.proxy.runpod.net/{file}` unconditionally. On Modal (T1-04) this invents a
+hostname that has never existed and surfaces `HTTP 404 Not Found`, which an operator reads as
+"the pod has no log" rather than "this command does not work on this provider". The sidecar is a
+RunPod-shaped thing, so being unsupported on Modal is legitimate — presenting it as a 404 is not.
+Minimum fix: branch on the ledger entry's `provider` and refuse cleanly. Filed as **U4**.
+
+**F6 — `reap`'s human table under-pads the verdict column.** With the longest verdict string the
+column runs into the id: `HEARTBEAT_SUBSTRATE_MISSINGrun-20260906-010255` (T1-07). Cosmetic — the
+JSON format is unaffected and the classification is correct — but it makes the default output
+unparseable by eye at exactly the moment an operator is deciding whether to reap.
+
+**F7 — `--vault` cannot supply the prompt it advertises.** `kinoforge generate` requires
+`--prompt` at argparse even when `--vault` is given, and `--prompt ""` dies with an uncaught
+`ValueError: prompt yielded zero non-empty segments` *after* the pod has been attached and billed
+(T1-12). `vault.positive_prompt` appears exactly once in the tree — `register_vault_tokens`
+(`src/kinoforge/core/vault.py:228`), which registers it for redaction only. Nothing ever reads it
+as the prompt. Either wire vault -> prompt resolution and make `--prompt` conditionally optional,
+or correct the `--vault` help text, which today promises a vault "holding the positive prompt".
+Independently, the empty-prompt path should fail before acquiring a pod, not after. Filed as **U5**.
