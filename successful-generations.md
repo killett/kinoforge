@@ -58,6 +58,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 26. `2026-07-12 01:08:08` — [Cross-CLI warm-reuse + HF Volume weight-cache on Modal (Wan 2.1 1.3B / A10, Milestone 5) — t2v](#26-2026-07-12-010808--cross-cli-warm-reuse--hf-volume-weight-cache-on-modal-wan-21-13b--a10-milestone-5--t2v)
 27. `2026-07-12 20:13:28` — [FlashVSR height-target upscale (scale=1080p → 4x+downscale) on Modal A100-80GB — upscale](#27-2026-07-12-201328--flashvsr-height-target-upscale-scale1080p--4xdownscale-on-modal-a100-80gb--upscale)
 28. `2026-09-06 01:20:36` — [`kinoforge batch` on Modal — 2-row manifest over one warm container (Wan 2.1 1.3B / A10) — t2v](#28-2026-09-06-012036--kinoforge-batch-on-modal--2-row-manifest-over-one-warm-container-wan-21-13b--a10--t2v)
+29. `2026-09-06 02:13:00` — [`kinoforge grid` on Modal — 1x2 composed grid from two auto-torn-down cells (Wan 2.1 1.3B / A10) — t2v](#29-2026-09-06-021300--kinoforge-grid-on-modal--1x2-composed-grid-from-two-auto-torn-down-cells-wan-21-13b--a10--t2v)
 
 ---
 
@@ -2910,3 +2911,90 @@ false-colour failure mode.
   run-20260906-010255` → `destroyed`; then from new processes `kinoforge list` →
   `[instance overview] No running instances.` + `No instances recorded in ledger.`, and
   `modal app list` → the only `kinoforge-*` app in state `stopped` with 0 tasks.
+
+
+## 29. `2026-09-06 02:13:00` — `kinoforge grid` on Modal — 1x2 composed grid from two auto-torn-down cells (Wan 2.1 1.3B / A10) — t2v
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `Modal / DiffusersEngine (Wan 2.1 T2V-1.3B) / Wan-AI/Wan2.1-T2V-1.3B-Diffusers` |
+| **Mode** | t2v (480x480, 33 frames, 16 fps per cell; composed 960x480) |
+| **New capability axis** | **`kinoforge grid` driven against Modal** — the grid command had never been exercised on this provider. A 1x2 spec with a per-cell `spec.num_frames` override runs two `generate` subprocesses sequentially under `--max-parallel-groups 1`, each on its **own** Modal app that auto-destroys, then composes one captioned mp4 with ffmpeg. |
+| **First-success SHA** | `391c1a11` (working tree at Tier 1d; no production code changed for this axis — the cell exercised existing behaviour) |
+| **Date (local TZ)** | 2026-09-06 02:13:00 -0700 (PDT) |
+| **GPU** | Modal **A10** (24 GB), serverless, $1.10/hr — two apps, `kinoforge-grid_20260906-021108_10e69e6e__cell0` (02:11-02:12) and `__cell1` (02:12-02:13) |
+| **Runs** | 1 grid invocation x 2 cells; whole run 02:11:07 -> 02:13, roughly one minute of billed GPU per cell |
+| **Est. spend** | ~$0.05 |
+| **Layer / phase** | Modal command matrix, Tier 1d cell **T1-28** — results `docs/modal-command-matrix.md`, plan `docs/superpowers/plans/2026-09-05-modal-command-matrix.md` |
+
+### Exact commands
+
+```bash
+pixi run -e live-modal kinoforge grid \
+  --spec /home/claudeuser/kinoforge-matrix/grid.yaml \
+  --out /home/claudeuser/kinoforge-matrix/grid.mp4 \
+  --max-parallel-groups 1
+```
+
+The spec lives outside the repo (the loader refuses an in-repo path) and is:
+
+```yaml
+title: "Modal matrix — Wan 2.1 1.3B 1x2"
+layout: "1x2"
+budget_cap_usd: 0.60
+cells:
+  - generate:
+      config: /workspace/examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml
+    caption: "cell A"
+  - generate:
+      config: /workspace/examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml
+      overrides:
+        spec.num_frames: 17
+    caption: "cell B 17f"
+```
+
+### Evidence
+
+| Item | Value |
+|---|---|
+| Exit code | **0** (`GridResult.status="full"`; `[grid summary] composed mp4 → …` is printed only on that status) |
+| Composed mp4 | `/home/claudeuser/kinoforge-matrix/grid.mp4`, 553,268 B, ffprobe **960x480 / 33 frames / 16 fps** |
+| Layout | two 480x480 cells side by side, each with its caption drawn top-centre (`cell A`, `cell B 17f`) |
+| Per-cell apps | `…__cell0` created 02:11 stopped 02:12; `…__cell1` created 02:12 stopped 02:13 |
+| Utilisation | `gpu_util_percent=100.0, cpu=5.6, mem=0.5` sampled on cell 0 mid-generation |
+| Budget | `budget_cap_usd: 0.60` not crossed, so exit 3 was not reached and that path remains unproven |
+
+### Frame-QA verdict (mandatory visual review)
+
+**PASS ⚠️** — 4 frames extracted with `ffmpeg_frames_by_count` and stacked full-resolution as
+`/home/claudeuser/kinoforge-matrix/sheetF2.png`. **Cell A: PASS** — coherent alpine meadow, tall
+backlit waterfall, glowing butterfly, the prompt's over-the-shoulder smile developing across the
+clip, temporally stable, no false colour. **Cell B (17 frames): flagged.** A hard horizontal seam
+runs across the lower third with a flat red-brown corduroy-textured band replacing the flower
+field, present in every frame. It sits inside cell B's own 480x480 frame, so it is a generation
+artifact rather than a compose seam; the same 17-frame cell in the T1-29 re-run came out clean
+(`sheetG.png`), so it reads as seed variance at a low frame count, not a systematic 17-frame
+defect. Recorded as a warning rather than a pass, per the visual-QA rule.
+
+### Reproduction recipe / deviations (read before re-firing)
+
+- **Grid cells do NOT share a warm pod, by design.** `_run_group` passes `no_reuse=True` for every
+  plain `generate:` cell (`src/kinoforge/core/grid/executor.py:852`), so each cell boots its own
+  Modal app and tears it down at the end. Pod survival is reserved for **LoRA-swap-mode** cells,
+  which go through `_build_swap_generate_cmd` with `no_reuse=False` and `--attach-pod`
+  (`executor.py:415`). Budget a cold boot per cell, not one shared boot — cheap here only because
+  the Modal image was already baked (~1.4 s deploy).
+- **The cell subprocess argv is hard-coded to `pixi run kinoforge generate`**
+  (`executor.py:277-289`) — the **default** env, with no `-e live-modal`. It works because the
+  Modal provider drives the Python SDK rather than the `modal` binary, but it means the grid cannot
+  be pointed at a different pixi env, and a cell that needed the binary (e.g. an orphan probe)
+  would not have it.
+- **The spec must live outside the repo.** `GridSpec.load` refuses an in-repo path
+  (`GridSpecUnderRepoError`) because specs may carry prompts and LoRA refs. It also warns on mode
+  644 and recommends `chmod 600`.
+- **`--ephemeral` on `grid` does nothing.** See matrix follow-up **F13** / `PROGRESS.md` **U11**:
+  the flag is accepted and dropped, and the cells are published to Modal under their real run id.
+  Do not rely on it for privacy.
+- **Teardown verified** after the run from new processes: `kinoforge list` →
+  `[instance overview] No running instances.` + `No instances recorded in ledger.`;
+  `ephemeral-index.json` → `{"rows": []}`; `modal app list` → both grid apps `stopped` with 0 tasks.

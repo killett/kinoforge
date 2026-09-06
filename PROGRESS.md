@@ -632,6 +632,26 @@ suspected site. **None of these is fixed.**
   Secondary, same command: `sweeper status` and `sweeper metrics` report `interval_s` from the cfg
   and ignore the `--interval-s` override the running daemon is actually using.
 
+- **U11 — `kinoforge grid --ephemeral` is accepted and silently dropped, leaking run identity to
+  the provider.**
+  The `grid` parser declares `--ephemeral` with the help text "pass-through to each underlying
+  generate". `_cmd_grid` (`src/kinoforge/cli/_commands.py:3612`) does `del ctx`, never reads
+  `args.ephemeral`, and calls `run_grid(spec=…, output_dir=…, max_parallel_groups=…,
+  out_path=…)`; the string `ephemeral` appears nowhere in `src/kinoforge/core/grid/`.
+  **Reproducer (live, T1-29):**
+  `pixi run -e live-modal kinoforge grid --spec <spec outside the repo> --out <path>
+  --max-parallel-groups 1 --ephemeral` exits 0, and `modal app list` then shows the cells as
+  `kinoforge-grid_<local timestamp>_<hash>__cell0` / `__cell1` rather than the opaque
+  `kinoforge-eph-<8hex>` name EM1's STRICT_POLICY requires.
+  **Suspected site:** `_cmd_grid` and `run_grid` / `_build_generate_cmd`
+  (`src/kinoforge/core/grid/executor.py:239-291`), which builds each cell's argv and would be the
+  place to append `--ephemeral`.
+  **Why urgent:** the flag exists for privacy — `--ephemeral` is what keeps a run id, a local
+  timestamp and a workload shape off a third-party provider's app list. Here all three were
+  published, and nothing in the output says so: the ledger is empty afterwards, but that is the
+  per-cell `no_reuse=True` teardown (`executor.py:852`), which a plain non-ephemeral grid produces
+  identically. A user who asked for ephemeral has no way to tell they did not get it.
+
 Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
 on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interval_s`
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path

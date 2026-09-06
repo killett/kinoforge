@@ -10,7 +10,7 @@ assorted commands without a record of which; this document is that record.
 **Spec:** `docs/superpowers/specs/2026-09-05-modal-command-matrix-design.md`
 **Logs:** `/home/claudeuser/kinoforge-matrix/logs/<cell id>.log` (operator-side, not tracked)
 
-**Spend so far: $0.38** (Tier 0 $0.00 + Tier 1a $0.38)
+**Spend so far: $0.89** (Tier 0 $0.00 + Tier 1a $0.38 + Tier 1b $0.28 + Tier 1c $0.13 + Tier 1d $0.10)
 
 **Verdicts.** `PASS` — behaved as expected. `FAIL` — a crash, a traceback, or a wrong result.
 `EXPECTED-REFUSAL` — refused cleanly and on purpose (not-found id, unsupported operation,
@@ -156,8 +156,19 @@ that no automatic mechanism will ever stop.
 
 | Cell | Command | Config | Verdict | Cost | Evidence | Notes |
 |------|---------|--------|---------|------|----------|-------|
-| T1-28 | `kinoforge grid --spec grid.yaml --out grid.mp4 --max-parallel-groups 1` | WAN13B | PENDING | | | |
-| T1-29 | `kinoforge grid … --ephemeral` with `--out grid-eph.mp4` | WAN13B | PENDING | | | |
+| T1-28 | `kinoforge grid --spec grid.yaml --out grid.mp4 --max-parallel-groups 1` | WAN13B | PASS ⚠️ | $0.05 | `logs/T1-28.log`, `logs/T1-28-util.log`, `logs/T1-28-proof-list.log`, `logs/T1-28-proof-apps.log`, `sheetF.png`, `sheetF2.png` | Exit **0** (`status=full`; the `[grid summary] composed mp4 → …` line is printed only on that status). 02:11:07 → 02:13, composed mp4 **960x480/33f/16fps** = two 480x480 cells side by side, both captioned (`cell A`, `cell B 17f`) — the 1x2 layout and the per-cell `spec.num_frames: 17` override both landed. `budget_cap_usd: 0.60` was **not crossed**, so the run exited 0 rather than 3; the exit-3 path is therefore *not* exercised by this cell, only the cap's presence in the plan (T0-09). Util during cell 0: **gpu=100.0%**, cpu=5.6 — real compute. **The cells do not share a warm pod, and that is deliberate, not a defect:** `_run_group` passes `no_reuse=True` for every plain `generate:` cell (`src/kinoforge/core/grid/executor.py:852`), so each cell boots its own Modal app and auto-destroys — pod survival is reserved for LoRA-swap-mode cells, which pass `--attach-pod` and `no_reuse=False` (`executor.py:415`). Two apps were created (`…__cell0` 02:11-02:12, `…__cell1` 02:12-02:13), each ~1 min. Frame-QA: **cell A PASS** — coherent waterfall/meadow, glowing butterfly, over-the-shoulder smile, temporally stable. **cell B ⚠️** — a hard horizontal seam across the lower third with a flat red-brown corduroy-textured band replacing the flower field, present in every frame. It is inside cell B's own frame (not a compose seam) and did not recur in T1-29's 17-frame cell, so it reads as seed variance at 17 frames rather than a systematic defect — but it is a visible artifact and is flagged rather than passed silently. **Teardown proof from new processes:** `kinoforge list` both lines, `modal app list` both grid apps `stopped`/0 tasks. Logged as `successful-generations.md` §29 |
+| T1-29 | `kinoforge grid … --ephemeral` with `--out grid-eph.mp4` | WAN13B | FAIL | $0.05 | `logs/T1-29.log`, `logs/T1-29-proof-list.log`, `sheetG.png` | Exit **0** and the composed mp4 is correct (960x480/33f, both cells captioned, frame-QA **PASS** on both — cell A a strong backlit maroon-dress silhouette over a yellow flower field, cell B a clean teal-dress render with glowing pollen; no trace of T1-28's cell-B band). The ledger and the ephemeral index are both empty afterwards. **But `--ephemeral` is silently ignored.** The flag's help text says "pass-through to each underlying generate"; `_cmd_grid` (`src/kinoforge/cli/_commands.py:3612`) does `del ctx`, never reads `args.ephemeral`, and calls `run_grid(spec=…, output_dir=…, max_parallel_groups=…, out_path=…)` — the string `ephemeral` does not appear anywhere in `src/kinoforge/core/grid/`. The proof is on Modal's side: the two apps are named **`kinoforge-grid_20260906-022232_a61d55b2__cell0` / `__cell1`**, not the opaque `kinoforge-eph-<8hex>` shape that EM1's STRICT_POLICY requires, so the run id, the local timestamp and the cell index were all published to the provider. The clean ledger is an artefact of the `no_reuse=True` teardown described at T1-28, **not** of ephemeral mode — a plain non-ephemeral grid leaves exactly the same clean ledger. A user asking for ephemeral got a normal run with an identity-leaking app name and no warning. See follow-up F13 / **U11** |
+
+**Tier 1d tally:** 1 PASS ⚠️, **1 FAIL** (T1-29). Actual spend **$0.10** — four A10 apps, each alive
+about a minute (02:11-02:13 and 02:22-02:25). `kinoforge grid` itself works on Modal: spec load,
+per-cell cfg overrides, sequential group execution under `--max-parallel-groups 1`, ffmpeg compose
+with captions, correct exit-code mapping, and automatic per-cell teardown. What does not work is
+its `--ephemeral` flag, which is accepted and dropped.
+
+**Teardown proof (Tier 1d, from new processes):** `kinoforge list` →
+`[instance overview] No running instances.` + `No instances recorded in ledger.`;
+`ephemeral-index.json` → `{"rows": []}`; `modal app list` → all eight `kinoforge-*` apps of the
+2026-09-06 session in state `stopped` with **0 tasks**.
 
 ---
 
@@ -319,3 +330,16 @@ daemon.** `sweeper start` writes `sweeper:<host>` with `provider=_sweeper` into 
 cell: `sweeper status` and `sweeper metrics` report `interval_s=60` from the cfg while the daemon
 is running at the `--interval-s 30` override, so the two commands that exist to observe the daemon
 disagree with it. Filed as **U10**.
+
+
+**F13 — `kinoforge grid --ephemeral` is accepted and silently dropped.** The flag is declared on
+the `grid` parser with the help text "pass-through to each underlying generate", but `_cmd_grid`
+(`src/kinoforge/cli/_commands.py:3612`) never reads `args.ephemeral` and `run_grid` has no such
+parameter — `ephemeral` appears nowhere in `src/kinoforge/core/grid/`. Confirmed live at T1-29:
+the Modal apps came out as `kinoforge-grid_20260906-022232_a61d55b2__cell0` / `__cell1` instead of
+the opaque `kinoforge-eph-<8hex>` name EM1's STRICT_POLICY mandates, publishing the run id, the
+local timestamp and the cell index to the provider. The empty ledger afterwards is produced by the
+per-cell `no_reuse=True` teardown, not by ephemeral mode, so there is no observable signal that the
+flag did nothing. Fix shape: thread `ephemeral` from `args` through `run_grid` into
+`_build_generate_cmd` as a `--ephemeral` argument on each cell's subprocess — or, if that is not
+wanted, reject the flag rather than accept it. Filed as **U11**.
