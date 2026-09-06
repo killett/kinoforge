@@ -143,13 +143,22 @@ def test_modal_example_config_declares_heartbeat_interval(cfg_path: Path) -> Non
     """Every shipped Modal example cfg satisfies HeartbeatIntervalRequiredCheck.
 
     These cfgs leave ``compute.warm_reuse_auto_attach`` at its ``True``
-    default, so the HeartbeatLoop only starts when
-    ``compute.lifecycle.heartbeat_interval_s`` is set. Bug caught: the cfg
-    omits the key, so ``kinoforge doctor -c <cfg>`` exits 1 and — worse —
-    every "warm" re-run silently classifies HEARTBEAT_UNKNOWN and cold-creates
-    a second instance, paying the full boot cost twice. Asserted through the
-    production check object rather than a raw key lookup so the test tracks
-    whatever doctor actually enforces.
+    default, so ``HeartbeatIntervalRequiredCheck`` applies and demands
+    ``compute.lifecycle.heartbeat_interval_s`` on the file as shipped. Bug
+    caught: the cfg omits the key, so ``kinoforge doctor -c <cfg>`` exits 1 —
+    the operator's first command on a fresh cfg reports the cfg unfit.
+
+    That is the whole defect, and the reason it has to be asserted through
+    ``_parse_cfg_raw``: ``load_config``'s auto-fix pass supplies
+    ``heartbeat_interval_s=30`` in memory, so at RUNTIME the omission is
+    invisible — the HeartbeatLoop starts and warm-attach behaves identically
+    with and without the key in the file (verified against the merge-base
+    YAML). Only ``doctor``, which parses the file without that pass, can see
+    it. Do NOT read this check as a warm-attach or cold-boot fix: the
+    cold-boot-instead-of-warm-attach miss recorded as U14 is the
+    provider-blind matcher, an unrelated site. Asserted through the production
+    check object rather than a raw key lookup so the test tracks whatever
+    doctor actually enforces.
     """
     # doctor parses the file WITHOUT load_config's auto-fix pass, so the
     # assertion has to see the raw cfg the operator actually shipped.

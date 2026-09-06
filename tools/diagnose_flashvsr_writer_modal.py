@@ -30,8 +30,13 @@ constraint set in the same sequence:
   3. the cfg's ``engine.diffusers.pip`` list from
      ``examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml``, verbatim.
   4. the provision script's runtime-deps line from
-     ``upscalers/flashvsr/_engine.py`` — the line that installs
-     ``imageio[ffmpeg,pyav]>=2.34`` and a **completely unpinned** ``av``.
+     ``upscalers/flashvsr/_engine.py`` **as it stood before the fix** — the
+     line that installs ``imageio[ffmpeg,pyav]>=2.34`` and a **completely
+     unpinned** ``av``. That copy is deliberately frozen pre-pin and no
+     longer matches ``_engine.py``, which now says ``av<18`` (``82ad084b``):
+     this module's job is to reproduce the BREAK and bisect it, so tracking
+     the pin would make it resolve ``av`` 17 and report success on every run.
+     Re-sync it only to re-diagnose a NEW writer failure.
 
 Deliberately NOT reproduced: the BSA wheel and the FlashVSR git install. Both
 go in under ``pip install --no-deps``, so neither can constrain the resolution
@@ -71,7 +76,9 @@ _CFG_PIP = (
 )
 
 # --- layer 4: upscalers/flashvsr/_engine.py runtime-deps line ----------------
-# Verbatim. Note the last two entries: the pyav extra, and a bare unpinned `av`.
+# Frozen pre-pin, NOT verbatim: `_engine.py` now says `av<18` (`82ad084b`).
+# Note the last two entries: the pyav extra, and the bare unpinned `av` whose
+# resolution to 18.1.0 is exactly what this probe exists to reproduce.
 _PROVISION_PIP = (
     "modelscope",
     "safetensors==0.5.3",
