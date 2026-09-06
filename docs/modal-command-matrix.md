@@ -451,11 +451,15 @@ which is past the campaign's one-function fix bar. Filed as **U12**, which carri
 (`src/kinoforge/engines/_pod_http.py:147`) raises, the traceback prints and the process stays
 alive indefinitely — T2-01 was still running 16 minutes later and had to be `kill -9`ed, and
 T2-05b behaved the same. The pod is **not** leaked (T2-05b proved `--no-reuse` destroys it even
-on the failure path, verified as 0 non-stopped `kinoforge-*` apps while the CLI was still hung),
-so the hang is in the post-teardown unwind — a non-daemon thread (heartbeat or util poller) that
-is never joined on the error path. Still serious: an operator who trusts the process to exit will
-sit on a dead run, and in CI it is a job that hangs until the runner's own timeout. Filed as
-**U13**.
+on the failure path, verified as 0 non-stopped `kinoforge-*` apps while the CLI was still hung).
+**The originally-recorded cause — "a non-daemon heartbeat or util-poller thread never joined on
+the error path" — is wrong and was retracted on 2026-09-06:** `submit_and_poll` starts no threads
+at all, `HeartbeatLoop`'s thread is `daemon=True`, every other local thread site is daemon too,
+and there is no util-poller thread in the CLI process. The holder is unidentified; **U13** now
+carries the ruled-out facts, three labelled hypotheses, and a $0 offline first step
+(`threading.enumerate()` + `faulthandler.dump_traceback_later` under a stubbed failing engine).
+Still serious: an operator who trusts the process to exit will sit on a dead run, and in CI it is
+a job that hangs until the runner's own timeout. Filed as **U13**.
 
 **F16 — warm-attach cold-booted a second A100 despite an identical capability key on a live
 pod.** At T2-03 the VSR1080 cfg resolved to capability key `7afe34198cc9` — the *same* key T2-01's

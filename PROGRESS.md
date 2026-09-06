@@ -758,14 +758,45 @@ suspected site. **Status 2026-09-06: U4 is fixed (`c08c3cce`), U10 is fixed (`7d
   minutes after its exception and had to be `kill -9`ed; T2-05b did the same.
   **Reproducer (live, T2-01 / T2-05b):** any failing `kinoforge upscale` (see U12's command) —
   the traceback appears, then the shell never gets its prompt back.
-  **Suspected site:** the error path out of `submit_and_poll`
+  **Not a pod leak:** T2-05b confirmed `--no-reuse` destroys the pod even on the failure path
+  (0 non-stopped `kinoforge-*` apps while the CLI still hung).
+
+  **Suspected site: UNKNOWN. The original filing named one and it is WRONG — do not start there.**
+  As first written this item blamed "the error path out of `submit_and_poll`
   (`src/kinoforge/engines/_pod_http.py:147`), which unwinds without joining the non-daemon
-  heartbeat / util-poller threads the orchestrator started.
-  **Why urgent:** it is *not* a pod leak — T2-05b confirmed `--no-reuse` destroys the pod even on
-  the failure path (0 non-stopped `kinoforge-*` apps while the CLI still hung) — but an operator
-  who reads a hung process as "still working" will leave it, and any CI or scripted use hangs
-  until an outer timeout fires. It also makes the failure *look* like the money leak it is not,
-  which costs the operator a panic and a manual `modal app list` every time.
+  heartbeat / util-poller threads the orchestrator started." Checked directly on 2026-09-06, that
+  mechanism is ruled out on every count:
+  - `submit_and_poll` **creates no threads at all** — it is a synchronous `while True` poll loop
+    over `retry_proxy_call` / `interpoll_wait`. There is nothing there to join.
+  - `HeartbeatLoop`'s thread is **`daemon=True`** (`src/kinoforge/core/heartbeat_loop.py:194-197`,
+    and its module docstring says so at line 18), so it cannot hold the interpreter open.
+  - **Every** other thread the local process starts is daemon too: `core/sweeper.py:205-208`,
+    `core/pool.py:67-76`, `core/pool.py:479-481`, `providers/skypilot/__init__.py:1525-1526`.
+  - There is **no util-poller thread** in the local process; this campaign polled `/util` from a
+    separate script precisely because the CLI does not.
+
+  **Candidate mechanisms, explicitly labelled as hypotheses (the U12 treatment — none of these is
+  a diagnosis, and the next session should measure before it edits):**
+  (a) `concurrent.futures` defaults its workers to `daemon=False` on Python 3.13 and joins them at
+  interpreter shutdown through `threading._register_atexit`, so a **plain** `ThreadPoolExecutor`
+  hangs exit regardless of the daemon flag. `core/pool.py`'s `_DaemonThreadPoolExecutor` exists to
+  work around exactly that, but `core/downloader.py:368` and `core/batch.py:689` construct the
+  **stdlib** executor directly — worth checking whether the upscale path reaches either.
+  (b) a non-daemon thread or event loop inside a third-party client (the `modal` SDK, `httpx`,
+  `urllib3`) that is never closed on the exception path.
+  (c) a `with`-block or context manager whose `__exit__` blocks on a queue or a `shutdown(wait=True)`
+  that never receives its sentinel once the job errored.
+  **First step, and it is cheap and offline:** reproduce with a stubbed engine that raises
+  `UpscaleFailed`, then dump `threading.enumerate()` plus `faulthandler.dump_traceback_later` at
+  the hang. That names the holder in one run and costs nothing — no pod required.
+
+  **Why it was filed rather than fixed at the one-guard bar:** the holder is not identified, so
+  there is no single guard to write — and the two obvious blind fixes (making every executor
+  daemon, or calling `os._exit` on the error path) each change process-shutdown semantics for every
+  command, not just `upscale`, which is well past a one-function change.
+  **Why urgent:** an operator who reads a hung process as "still working" will leave it, and any CI
+  or scripted use hangs until an outer timeout fires. It also makes the failure *look* like the
+  money leak it is not, which costs the operator a panic and a manual `modal app list` every time.
 
 - **U14 — warm-attach cold-booted a second $2.50/hr A100 while an idle pod with the identical
   capability key was live.**
