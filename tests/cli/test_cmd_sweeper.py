@@ -272,10 +272,16 @@ def test_cmd_sweeper_stop_leaves_ledger_clean(tmp_path: Path) -> None:
         )
     assert ctx.ledger().read(f"sweeper:{host}") is not None, "precondition: row exists"
 
-    # Daemon is signalled and its heartbeat tick then stays frozen, which is
-    # the real stop handshake.  os.kill / time.sleep are the only boundaries
-    # mocked; the ledger is the real one on tmp_path.
-    with patch("os.kill"), patch("time.sleep", lambda _s: None):
+    # Daemon is signalled, exits, and its heartbeat tick then stays frozen,
+    # which is the real stop handshake.  os.kill / time.sleep are the only
+    # boundaries mocked; the ledger is the real one on tmp_path.  The kill
+    # stub models an actually-dead process: SIGTERM lands on the still-live
+    # daemon, and the signal-0 liveness probe that follows finds it gone.
+    def _kill_then_gone(_pid: int, sig: int) -> None:
+        if sig == 0:
+            raise ProcessLookupError
+
+    with patch("os.kill", _kill_then_gone), patch("time.sleep", lambda _s: None):
         rc = _cmd_sweeper_stop(_args(config=str(cfg_path)), ctx)
 
     assert rc == 0
@@ -328,4 +334,58 @@ def test_cmd_sweeper_stop_keeps_liveness_row_when_daemon_will_not_die(
     assert rc == 2
     assert ctx.ledger().read(f"sweeper:{host}") is not None, (
         "erased a live daemon's liveness row on the timeout path"
+    )
+
+
+def test_cmd_sweeper_stop_keeps_row_when_signalled_daemon_survives(
+    tmp_path: Path,
+) -> None:
+    """A frozen tick is not proof of death: a live daemon keeps its row.
+
+    Invariant: ``sweeper:<host>`` is dropped only once the daemon process is
+    confirmed gone — ``os.kill(pid, 0)`` raising ``ProcessLookupError`` — not
+    merely because ``heartbeat_thread_tick`` stopped advancing.
+
+    Bug caught (F4, 2026-09-06 review): `_cmd_sweeper_stop` read two
+    consecutive identical ticks as "daemon confirmed gone" and forgot the row.
+    A daemon whose tick thread wedges, or which blocks/ignores SIGTERM, then
+    loses its liveness row while still running and still sweeping — after
+    which `sweeper stop` exits 1 with "no sweeper running" and no pid left to
+    signal, and `sweeper status` reports a running daemon dead. That is
+    unrecoverable without a manual kill, so it is not cosmetic.
+
+    Distinct from ``…_when_daemon_will_not_die``: there the daemon keeps
+    ticking, so the stale-tick branch is never reached at all. Here the branch
+    IS reached, and only the liveness probe stops it from erasing the row.
+    """
+    ctx, cfg_path = _make_ctx(tmp_path)
+    host = socket.gethostname()
+    with (
+        patch("kinoforge.core.sweeper.SweeperLoop.start", lambda self: None),
+        patch("kinoforge.core.sweeper.SweeperLoop.stop", lambda self: None),
+        patch("threading.Event.wait", return_value=True),
+        patch("signal.signal"),
+    ):
+        assert (
+            _cmd_sweeper_start(_args(config=str(cfg_path), interval_s=None), ctx) == 0
+        )
+    assert ctx.ledger().read(f"sweeper:{host}") is not None, "precondition: row exists"
+
+    clock = iter([float(n) * 10.0 for n in range(1000)])
+
+    def _kill_alive(_pid: int, _sig: int) -> None:
+        # Signal delivery succeeds for both SIGTERM and the sig-0 probe: the
+        # process exists throughout. Its tick never advances again.
+        return None
+
+    with (
+        patch("os.kill", _kill_alive),
+        patch("time.sleep", lambda _s: None),
+        patch("time.monotonic", lambda: next(clock)),
+    ):
+        rc = _cmd_sweeper_stop(_args(config=str(cfg_path)), ctx)
+
+    assert rc == 2, "a daemon that outlived SIGTERM must not report a clean stop"
+    assert ctx.ledger().read(f"sweeper:{host}") is not None, (
+        "erased the liveness row of a daemon that is still alive"
     )

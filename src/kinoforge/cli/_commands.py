@@ -2502,6 +2502,9 @@ _LOG_SIDECAR_PORT = "8001"
 _LOG_SIDECAR_PROVIDERS = frozenset({"runpod"})
 
 # Where to point the operator instead, per provider. Absent -> generic advice.
+# Operator-facing text, not a format string: `{id}` is substituted literally
+# by the caller. Entries may therefore contain braces (a JSON snippet, a shell
+# expansion) without raising inside the refusal path they exist to explain.
 _LOG_ALTERNATIVES = {
     "modal": "modal app logs <app>  (or: kinoforge status --id {id})",
 }
@@ -2551,7 +2554,7 @@ def _cmd_logs(args: argparse.Namespace, ctx: SessionContext) -> int:
     if provider_name is not None and provider_name not in _LOG_SIDECAR_PROVIDERS:
         alt = _LOG_ALTERNATIVES.get(
             provider_name, "read the log from the provider's own surface"
-        ).format(id=args.id)
+        ).replace("{id}", args.id)
         print(
             f"logs: unsupported on provider {provider_name!r} "
             f"(instance {args.id!r}).\n"
@@ -2828,7 +2831,7 @@ def _emit_reap_human(report: SweepReport, applied: bool, include_orphans: bool) 
         print("reap: no entries to classify")
         return
     print(
-        f"{'verdict':<18}{'id':<22}{'provider':<10}{'age_h':>7}"
+        f"{'verdict':<28}{'id':<22}{'provider':<10}{'age_h':>7}"
         f"{'hb_age_s':>10}{'sent_age_s':>12}"
     )
     now = time.time()
@@ -2845,7 +2848,7 @@ def _emit_reap_human(report: SweepReport, applied: bool, include_orphans: bool) 
         tick = entry.get("heartbeat_thread_tick")
         sent_str = f"{(now - float(tick)):.0f}" if tick is not None else "-"
         print(
-            f"{verdict.value:<18}{eid:<22}{str(provider):<10}"
+            f"{verdict.value:<28}{eid:<22}{str(provider):<10}"
             f"{age_str:>7}{hb_str:>10}{sent_str:>12}"
         )
     print()
@@ -3564,16 +3567,22 @@ def _cmd_sweeper_stop(args: argparse.Namespace, ctx: SessionContext) -> int:  # 
         tick = entry.get("heartbeat_thread_tick", 0.0)
         if tick == last_tick:
             stable_polls += 1
-            if stable_polls >= 2:
-                # The daemon is confirmed gone, so drop its liveness row.
-                # `sweeper:<host>` is a readiness signal, not an instance:
-                # left behind it renders in `[instance overview]` like a pod
-                # and blocks `No instances recorded in ledger.` forever, so
-                # no teardown proof can ever be taken again on this host
-                # (U10 / matrix T1-24). Only this branch and the
-                # daemon-removed-it-itself branch above clear it — the
-                # timeout path below must NOT, because the daemon may still
-                # be alive and sweeping.
+            if stable_polls >= 2 and _pid_is_gone(pid_int):
+                # A frozen tick alone is NOT proof of death — a wedged tick
+                # thread, or a daemon that blocks SIGTERM, freezes it too — so
+                # the signal-0 probe above has to confirm the process is gone
+                # before the row goes. Dropping it under a live daemon is
+                # unrecoverable: `sweeper stop` then exits 1 with no pid to
+                # signal and `sweeper status` calls a running daemon dead.
+                #
+                # Once death IS confirmed, the row must go. `sweeper:<host>`
+                # is a readiness signal, not an instance: left behind it
+                # renders in `[instance overview]` like a pod and blocks
+                # `No instances recorded in ledger.` forever, so no teardown
+                # proof can ever be taken again on this host (U10 / matrix
+                # T1-24). Only this branch and the daemon-removed-it-itself
+                # branch above clear it — the timeout path below must NOT,
+                # because the daemon may still be alive and sweeping.
                 ledger.forget(f"sweeper:{host}")
                 return 0
         else:
@@ -3581,6 +3590,30 @@ def _cmd_sweeper_stop(args: argparse.Namespace, ctx: SessionContext) -> int:  # 
             last_tick = tick
     sys.stderr.write(f"sweeper on host={host} did not stop within 30s\n")
     return 2
+
+
+def _pid_is_gone(pid: int) -> bool:
+    """Return True only when ``pid`` is confirmed to name no live process.
+
+    Uses the signal-0 probe: it performs the permission and existence checks
+    of a real signal delivery without delivering one.
+
+    Args:
+        pid: The process id recorded on the sweeper's liveness row.
+
+    Returns:
+        True if the process does not exist. False if it does, and also if the
+        answer is unknowable (``PermissionError`` — the pid exists but belongs
+        to another user), because the caller uses this to authorise deleting
+        state and must never do so on a maybe.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    return False
 
 
 def _cmd_sweeper_status(args: argparse.Namespace, ctx: SessionContext) -> int:

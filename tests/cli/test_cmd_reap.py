@@ -550,3 +550,49 @@ def test_reap_empty_ledger_human_keeps_the_sentence(
 
     assert code == 0
     assert "reap: ledger empty (nothing to do)" in capsys.readouterr().out
+
+
+def test_emit_reap_human_separates_the_longest_verdict_from_the_id(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Every Verdict renders inside its column, so the id stays a separate word.
+
+    Bug caught (matrix T1-07 / T1-22, follow-up F6): the verdict field was
+    padded to 18 while ``HEARTBEAT_SUBSTRATE_MISSING`` is 27 characters, so
+    the longest verdict overflowed and the row printed
+    ``HEARTBEAT_SUBSTRATE_MISSINGrun-20260906-010255`` — no separator, and the
+    id unreadable at exactly the moment an operator is deciding whether to
+    reap. The required width is derived from the enum, not from the format
+    string, so adding a Verdict member longer than the column fails here too.
+
+    Both the header and the data row are checked at the same offset: a fix
+    that widened only one of them would leave the table misaligned.
+    """
+    from kinoforge.cli._commands import _emit_reap_human
+    from kinoforge.core.reaper import Verdict
+    from kinoforge.core.reaper_actor import SweepReport
+
+    longest = max(Verdict, key=lambda v: len(v.value))
+    assert longest.value == "HEARTBEAT_SUBSTRATE_MISSING", (
+        "fixture assumption changed: update the expected longest verdict"
+    )
+    eid = "run-20260906-010255"
+    report = SweepReport(
+        snapshot={
+            eid: ({"id": eid, "provider": "modal", "created_at": 0.0}, longest),
+        },
+        actions=[],
+    )
+
+    _emit_reap_human(report, applied=False, include_orphans=False)
+
+    lines = capsys.readouterr().out.splitlines()
+    header = next(ln for ln in lines if ln.startswith("verdict"))
+    row = next(ln for ln in lines if ln.startswith(longest.value))
+
+    assert row[len(longest.value)] == " ", (
+        f"verdict column too narrow for {longest.value!r}: {row!r}"
+    )
+    assert row.index(eid) == header.index("id"), (
+        f"id column misaligned with its header: row={row!r} header={header!r}"
+    )
