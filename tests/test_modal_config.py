@@ -2,11 +2,14 @@
 
 from pathlib import Path
 
+import pytest
+
 from kinoforge._adapters import build_provider_for
-from kinoforge.core.config import load_config
+from kinoforge.core.config import _parse_cfg_raw, load_config
 from kinoforge.core.scale_target import ScaleTarget
 from kinoforge.providers.modal import ModalProvider
 from kinoforge.providers.modal._catalog import modal_offers
+from kinoforge.validation.checks.heartbeat import HeartbeatIntervalRequiredCheck
 
 CFG = Path("examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml")
 CFG_A14B = Path("examples/configs/modal-diffusers-wan-2_2-14b-t2v.yaml")
@@ -122,3 +125,50 @@ def test_flashvsr_1080p_config_is_modal_flashvsr_upscale_only():
     assert cfg.engine.diffusers.upscale_only is True
     assert cfg.upscale.flashvsr is not None
     assert "cp313" in cfg.upscale.flashvsr.bsa_wheel_url
+
+
+CFG_RIFE = Path("examples/configs/modal-diffusers-rife-60fps-interpolate.yaml")
+
+MODAL_EXAMPLE_CONFIGS = [
+    CFG,
+    CFG_A14B,
+    CFG_FLASHVSR,
+    CFG_FLASHVSR_1080P,
+    CFG_RIFE,
+]
+
+
+@pytest.mark.parametrize("cfg_path", MODAL_EXAMPLE_CONFIGS, ids=lambda p: p.stem)
+def test_modal_example_config_declares_heartbeat_interval(cfg_path: Path) -> None:
+    """Every shipped Modal example cfg satisfies HeartbeatIntervalRequiredCheck.
+
+    These cfgs leave ``compute.warm_reuse_auto_attach`` at its ``True``
+    default, so the HeartbeatLoop only starts when
+    ``compute.lifecycle.heartbeat_interval_s`` is set. Bug caught: the cfg
+    omits the key, so ``kinoforge doctor -c <cfg>`` exits 1 and — worse —
+    every "warm" re-run silently classifies HEARTBEAT_UNKNOWN and cold-creates
+    a second instance, paying the full boot cost twice. Asserted through the
+    production check object rather than a raw key lookup so the test tracks
+    whatever doctor actually enforces.
+    """
+    # doctor parses the file WITHOUT load_config's auto-fix pass, so the
+    # assertion has to see the raw cfg the operator actually shipped.
+    cfg = _parse_cfg_raw(cfg_path.read_text(encoding="utf-8"), yaml_path=cfg_path)
+    check = HeartbeatIntervalRequiredCheck()
+
+    assert check.applies_to(cfg) is True, (
+        f"{cfg_path.name}: warm-reuse check unexpectedly skipped — "
+        "warm_reuse_auto_attach or the lifecycle block changed"
+    )
+    result = check.run(cfg)
+    assert result.passed, f"{cfg_path.name}: {result.message}"
+
+    assert cfg.compute is not None
+    assert cfg.compute.lifecycle is not None
+    interval = cfg.compute.lifecycle.heartbeat_interval_s
+    assert interval is not None
+    assert 0 < interval <= 60, (
+        f"{cfg_path.name}: heartbeat_interval_s={interval} is outside the "
+        "0-60s band every other example cfg uses; a slower beat lets the "
+        "sweeper's staleness window expire between ticks"
+    )

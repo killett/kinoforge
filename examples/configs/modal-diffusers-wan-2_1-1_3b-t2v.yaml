@@ -60,6 +60,7 @@ compute:
       - "A100-40GB"
     disk_gb: 40
   lifecycle:
+    heartbeat_interval_s: 30  # required when warm_reuse_auto_attach=true (default)
     idle_timeout: 5m
     job_timeout: 10m
     time_buffer: 2m

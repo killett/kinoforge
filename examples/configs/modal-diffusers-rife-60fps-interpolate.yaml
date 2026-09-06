@@ -58,6 +58,7 @@ compute:
       - "L4"
       - "A10"
   lifecycle:
+    heartbeat_interval_s: 30  # required when warm_reuse_auto_attach=true (default)
     boot_timeout: 30m
     idle_timeout: 20m
     job_timeout: 12m

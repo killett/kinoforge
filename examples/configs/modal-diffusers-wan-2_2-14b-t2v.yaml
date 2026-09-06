@@ -59,6 +59,7 @@ compute:
       - "H100"
     disk_gb: 150
   lifecycle:
+    heartbeat_interval_s: 30  # required when warm_reuse_auto_attach=true (default)
     # ~63GB HF snapshot download dominates cold boot (~25-30m observed on RunPod).
     idle_timeout: 60m
     job_timeout: 15m

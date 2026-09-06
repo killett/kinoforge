@@ -80,6 +80,7 @@ compute:
       - "A100-80GB"
       - "H100"
   lifecycle:
+    heartbeat_interval_s: 30  # required when warm_reuse_auto_attach=true (default)
     # BSA wheel fetch+install ~60s; FlashVSR pip+weights ~5min; first-call setup.
     # 45m mirrors M2 and gives wide headroom over the ~8min happy path.
     idle_timeout: 30m
