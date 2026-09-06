@@ -193,11 +193,29 @@ its `--ephemeral` flag, which is accepted and dropped.
 
 | Cell | Command | Config | Verdict | Cost | Evidence | Notes |
 |------|---------|--------|---------|------|----------|-------|
-| T2-01 | `kinoforge upscale -c VSRX4 --video FIX` | VSRX4 | PENDING | | | |
-| T2-02 | `kinoforge upscale -c VSRX4 --video FIX --scale 1080p --attach-pod ID` | VSRX4 | PENDING | | | |
-| T2-03 | `kinoforge upscale -c VSR1080 --video FIX` | VSR1080 | PENDING | | | |
-| T2-04 | `kinoforge destroy --id ID` + proof | VSRX4 | PENDING | | | |
-| T2-05 | `kinoforge --ephemeral upscale -c VSRX4 --video FIX --scale 1080p --no-reuse` + proof | VSRX4 | PENDING | | | |
+| T2-01 | `kinoforge upscale -c VSRX4 --video FIX` | VSRX4 | FAIL | $0.32 | `logs/T2-01.log`, `logs/T2-01.util.log` | **Boot and compute fine; the job dies at the mp4 encode.** Cold boot succeeded: image bake + `✓ App deployed in 538.837s` (8m59s — the slowest boot in the campaign, as expected for A100 + FlashVSR, and well inside `boot_timeout: 45m`). Instance `upscale-20260906-023846` (A100-80GB, $2.50/hr). **Util proves real compute**, not wall-clock accrual: `gpu_util_percent=100.0, cpu=6.1, mem=1.0` at 02:48:28. Then the job failed server-side: `kinoforge.core.errors.UpscaleFailed: upscale job u-44451cdebe... failed on server: Cannot change width after codec is open.` — a PyAV/imageio encoder error raised writing the upscaled clip, at `_pod_http.py:147`. **No artifact was produced, so no frame QA was possible and the cell cannot be PASS.** Reproduced identically at T2-03 and T2-05b (3/3), so it is deterministic, not a flake. This exact path was live-green on 2026-07-10 (§24), so it reads as environment drift in the freshly-baked image (`imageio[ffmpeg]>=2.34` is unpinned and pulls whatever `av` it likes) rather than a code regression — **but that is a hypothesis, not a diagnosis: no version was captured off the pod before teardown.** Larger than the one-guard bar. **Second defect in the same cell:** after the exception the CLI **never exited** — still running 16 minutes later with the pod up, killed manually. See follow-ups F14 / F15 and **U12** / **U13** |
+| T2-02 | `kinoforge upscale -c VSRX4 --video FIX --scale 1080p --attach-pod ID` | VSRX4 | EXPECTED-REFUSAL | $0.00 | `logs/T2-02.log` | Exit 2, no traceback, refused at argument validation *before* touching the pod: `error: --scale 1080p deferred to a later session; use --scale Nx for v1`. A deliberate guard — the height-target path is a **cfg** key (`upscale.scale: 1080p`, the VSR1080 cfg, live-green as §27), not a CLI flag, and the CLI says so plainly. Correct behaviour, but note what it costs the matrix: because the refusal fires before attach, **this cell never exercised `--attach-pod`**, so warm-attach on the `upscale` path is left unproven here (T2-03 covers the matcher instead, and fails). The brief's efficiency plan — T2-02 warm-attaching to T2-01's pod rather than paying a second A100 boot — could not run as written |
+| T2-03 | `kinoforge upscale -c VSR1080 --video FIX` | VSR1080 | FAIL | $0.08 | `logs/T2-03.log` | **Two findings, both negative.** (a) **It did not warm-attach.** T2-01's pod `upscale-20260906-023846` was alive and idle at 0% GPU when this launched, and the run log shows this cfg resolving to the **same capability key `7afe34198cc9`** — yet the matcher cold-booted a *second* A100 app, `upscale-20260906-025335`, putting two $2.50/hr cards on the clock at once. Deploy took only `1.477s` because the image was now cached, so the answer to the brief's "attach or cold boot?" is **cold boot, despite an identical key on a live pod**. See follow-up F16 / **U14**. (b) It then died at exactly the same encode: `UpscaleFailed: upscale job u-c11cfbd94d... failed on server: Cannot change width after codec is open.` No artifact, no frame QA |
+| T2-04 | `kinoforge destroy --id ID` + proof | VSRX4 | PASS | $0.00 | `logs/T2-04-proof-list.log`, `logs/T2-04-proof-apps.log` | Exit 0 on both pods — `destroyed: upscale-20260906-023846` and `destroyed: upscale-20260906-025335` at 02:55:3x. **Teardown proof from a new process after the orchestrator exited:** `kinoforge list` prints both required lines (`[instance overview] No running instances.` AND `No instances recorded in ledger.`), and a `modal app list` scan counts **0 non-stopped `kinoforge-*` apps**. Both A100s off the clock |
+| T2-05 | `kinoforge --ephemeral upscale -c VSRX4 --video FIX --scale 1080p --no-reuse` + proof | VSRX4 | EXPECTED-REFUSAL | $0.00 | `logs/T2-05.log` | Exit 2, identical guard to T2-02: `error: --scale 1080p deferred to a later session; use --scale Nx for v1`, raised before any pod work, so the cell cost nothing and started nothing. The `--ephemeral` and `--no-reuse` flags were never reached |
+| T2-05b | same, **without** `--scale 1080p` (added so the cell tested something) | VSRX4 | FAIL | $0.10 | `logs/T2-05b.log` | Added because T2-05 as written refuses before doing anything, leaving the ephemeral + `--no-reuse` teardown path — the money-critical half of the cell — untested. Result: the upscale died at the same encoder (3/3, `u-0814ca0238...`), **but the teardown behaved correctly under failure**, which is the reassuring finding here: `--no-reuse` destroyed the pod even though the job raised, verified from a new process as **0 non-stopped `kinoforge-*` apps** while the CLI was still hung. So the hang of F15 / U13 is in the **post-teardown unwind**, not before the destroy — it does not leak a pod. Recorded FAIL on the generation, not on the teardown |
+
+**Tier 2a tally (6 cells):** 1 PASS, 2 EXPECTED-REFUSAL, **3 FAIL** (T2-01, T2-03, T2-05b).
+Actual spend **~$0.50** across three A100-80GB containers at $2.50/hr — `upscale-20260906-023846`
+(02:47:57 → 02:55:35, 7m38s, $0.32), `upscale-20260906-025335` (02:53:46 → 02:55:42, ~2m, $0.08)
+and the T2-05b ephemeral pod (~2.5m, $0.10). Modal's image **build** time is billed on the
+builder, not on the A100, so the 8m59s first boot is not 8m59s of A100; the per-cell figures above
+are container time. The two pods that overlapped did so because T2-03 refused to warm-attach.
+
+**FlashVSR upscale on Modal is currently non-functional**, so no `successful-generations.md`
+See-also line is added under §24 or §27 — there was no successful generation to record. Every one
+of the three real attempts reached the GPU, computed (gpu=100%), and then lost the result at the
+container's video-writer. The failure is deterministic and identical across two different cfgs
+(VSRX4 and VSR1080) and both the warm-reuse and `--ephemeral --no-reuse` routes, which rules out
+the cfg and the lifecycle route and points squarely at the baked image. **Nothing here was fixed
+in-session:** an unpinned dependency in a baked container image is not a one-guard fix, and each
+verification attempt costs a fresh A100 boot. Filed as **U12** (encoder), **U13** (post-failure
+hang) and **U14** (warm-attach miss).
 
 ### Tier 2b — RIFE interpolate on T4
 
