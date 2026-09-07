@@ -334,16 +334,16 @@ The classification half is real either way: orphan rows carry no heartbeat and n
 - Modify: `PROGRESS.md`, `docs/modal-command-matrix.md`
 
 **Acceptance Criteria:**
-- [ ] Every item this plan closed says FIXED with its commit; every item it did not close still says open.
-- [ ] The urgent-section preamble and index reflect the new state — the campaign repeatedly caught stale "still open" text beside shipped fixes, so re-read the whole section, not only the entries you touched.
-- [ ] The matrix summary states which defects are now closed and what the live proof cost.
-- [ ] `pixi run pre-commit run --all-files` green and the full suite passes.
+- [x] Every item this plan closed says FIXED with its commit; every item it did not close still says open.
+- [x] The urgent-section preamble and index reflect the new state — the campaign repeatedly caught stale "still open" text beside shipped fixes, so re-read the whole section, not only the entries you touched.
+- [x] The matrix summary states which defects are now closed and what the live proof cost.
+- [x] `pixi run pre-commit run --all-files` green and the full suite passes.
 
 **Verify:** `pixi run pytest -q` → all pass, and `rg -n "U7|U8|U9|U14|U15" PROGRESS.md` shows each with a current status
 
 **Steps:**
 
-- [ ] **Step 1: Re-read the entire urgent-actions section** for stale claims, not only the entries this plan touched.
-- [ ] **Step 2: Update the matrix summary** with what closed and the actual spend.
-- [ ] **Step 3: `pixi run pre-commit run --all-files` and `pixi run pytest -q`.**
-- [ ] **Step 4: Commit** `docs: record the four money leaks closed`.
+- [x] **Step 1: Re-read the entire urgent-actions section** for stale claims, not only the entries this plan touched.
+- [x] **Step 2: Update the matrix summary** with what closed and the actual spend.
+- [x] **Step 3: `pixi run pre-commit run --all-files` and `pixi run pytest -q`.**
+- [x] **Step 4: Commit** `docs: record the four money leaks closed`.

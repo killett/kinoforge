@@ -64,7 +64,7 @@
     {
       "id": 7,
       "subject": "Task 7: close the record",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** The urgent-items list and the matrix tell the truth about what is now fixed.\n\n**Files:**\n- Modify: `PROGRESS.md`, `docs/modal-command-matrix.md`\n\n**Acceptance Criteria:**\n- [ ] Every item this plan closed says FIXED with its commit; every item it did not close still says open.\n- [ ] The urgent-section preamble and index reflect the new state \u2014 the campaign repeatedly caught stale \"still open\" text beside shipped fixes, so re-read the whole section, not only the entries you touched.\n- [ ] The matrix summary states which defects are now closed and what the live proof cost.\n- [ ] `pixi run pre-commit run --all-files` green and the full suite passes.\n\n**Verify:** `pixi run pytest -q` \u2192 all pass, and `rg -n \"U7|U8|U9|U14|U15\" PROGRESS.md` shows each with a current status\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"docs/modal-command-matrix.md\"], \"verifyCommand\": \"pixi run pytest -q\", \"acceptanceCriteria\": [\"Every item this plan closed says FIXED with its commit; every item it did not close still says open.\", \"The urgent-section preamble and index reflect the new state \\u2014 the campaign repeatedly caught stale \\\"still open\\\" text beside shipped fixes, so re-read the whole section, not only the entries you touched.\", \"The matrix summary states which defects are now closed and what the live proof cost.\", \"`pixi run pre-commit run --all-files` green and the full suite passes.\"], \"modelTier\": \"standard\", \"liveSpend\": false}\n```",
       "blockedBy": [
         6
