@@ -510,8 +510,9 @@ per-item entries below.
   `_render_endpoints_for_status` and the `ensure_endpoints` call at
   `src/kinoforge/cli/_commands.py:2413`.
   **Why urgent:** every out-of-process URL consumer is dead on Modal — `status`, `pod lora ls`,
-  and any operator or runbook that follows `live-constraints.md`, which explicitly says to
-  resolve the pod's `.modal.run` URL from `kinoforge status --id <id>`. The 2026-09-06 matrix run
+  and any operator or runbook that follows the matrix campaign plan's Global Constraints block
+  (`docs/superpowers/plans/2026-09-05-modal-command-matrix.md`), which explicitly says to
+  "resolve the pod URL from `kinoforge status --id <id>` (it prints the endpoints)". The 2026-09-06 matrix run
   had to read `.kinoforge/_lifecycle/ledger.json` directly to poll `/util` at all. Note
   `_render_endpoints_for_status`'s docstring already defers this on purpose for RunPod/Modal;
   what is new is the measured cost of the deferral. Cheap fix shape: fall back to the ledger
@@ -829,7 +830,8 @@ per-item entries below.
   `kinoforge forget --id sweeper:<host>`.
   **Site:** `_cmd_sweeper_stop` (`src/kinoforge/cli/_commands.py`) — nothing ever removed the row.
   **Why urgent:** it breaks the project's own teardown-proof contract. Every live-smoke rule in
-  `CLAUDE.md` and `live-constraints.md` says a teardown is proven when `kinoforge list` prints
+  `CLAUDE.md` and in the matrix campaign plan's Global Constraints block says a teardown is
+  proven when `kinoforge list` prints
   `[instance overview] No running instances.` AND `No instances recorded in ledger.` — after any
   sweeper has run, that proof can never be produced, so an operator either learns to ignore a line
   in the overview (the habit that hides a real pod) or believes a pod is alive that is not.
@@ -861,9 +863,12 @@ per-item entries below.
   same id rather than replacing it (the overview briefly showed two `sweeper:59be2fa1c7fc` lines);
   one `forget` cleared both. Neither is re-opened here — recorded so the next reader knows the
   fix's edge.
-  **Doc note:** this entry cites `live-constraints.md` as a rules file. **No such file exists in
-  the repo** (checked by name and by grep, 2026-09-07). The live rules live in `CLAUDE.md` and in
-  the `## Global Constraints` block of the relevant plan under `docs/superpowers/plans/`.
+  **Doc note (RESOLVED 2026-09-07, Task 7):** this entry used to cite `live-constraints.md` as a
+  rules file. **No such file exists in the repo** — it lived only in a scratch workspace that has
+  since been deleted. The live rules live in `CLAUDE.md` and in the `## Global Constraints` block
+  of the relevant plan under `docs/superpowers/plans/`. All nine citations of the phantom file
+  (six in the shipped `docs/modal-command-matrix.md`, three here) now name the real source and
+  inline the rule being cited, so no reader is sent to a file they cannot open.
 
 - **U11 — `kinoforge grid --ephemeral` is accepted and silently dropped, leaking run identity to
   the provider.**
