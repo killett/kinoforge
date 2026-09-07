@@ -447,7 +447,41 @@ Found by the Modal command-matrix campaign (plan
 `docs/superpowers/plans/2026-09-05-modal-command-matrix.md`, results
 `docs/modal-command-matrix.md`). Operator directive 2026-09-06: big issues land HERE as urgent
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
-suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offline (`8191bd1b`) and awaits a live Modal re-run, U4 is fixed (`c08c3cce`), U10 is fixed (`7d535503`, the interval-reporting half of it excepted), U5 is half-fixed (help text corrected in `c08c3cce`, wiring still open), and **U12 is CLOSED** — the `av<18` pin landed in `82ad084b` and was proven live on Modal at 1920x1920 and 1080x1080 with clean frame QA for $0.64. RunPod and SkyPilot carry the same one-line pin (their goldens moved in that commit) but were **not** re-run, so they are inferred-safe, not demonstrated-safe. **U15 is fixed offline (`ccd4c5e7`) and awaits a live Modal re-run of T2-02** — `--attach-pod` now merges the ledger's `endpoints` alongside its `tags`, so a healthy pod whose endpoint only the ledger holds attaches instead of being refused; at the time that was written U14 still cold-booted a duplicate, so the escape hatch worked but the automatic path did not — **U14 is now fixed and live-proven too (`49394b1d`, 2026-09-07); both halves of the upscale warm-reuse path work.** Every other item is untouched.**
+suspected site.
+
+**STATUS INDEX (rebuilt 2026-09-07, Task 7 — this is the current state; the paragraphs below it are
+the campaign's running commentary and are dated, not authoritative).** Twenty-two items, U1-U22.
+**Eight are fixed** (U4, U7, U8, U9, U12, U14, U15, U20), **two are partly fixed** (U5, U10),
+**twelve are open** (U1, U2, U3, U6, U11, U13, U16, U17, U18, U19, U21, U22).
+
+| Item | State | Detail |
+|---|---|---|
+| U1 | OPEN | warm-attach matcher is provider-blind; untouched |
+| U2 | OPEN | `batch --dry-run-swap` never parses the manifest; untouched |
+| U3 | OPEN | a Modal pod's endpoint URL is unreachable from a fresh process. Re-checked after `ccd4c5e7` and still open — that fix is confined to `_resolve_attach_pod` |
+| U4 | FIXED | `c08c3cce` — `logs` refuses cleanly off RunPod instead of 404ing a fabricated host |
+| U5 | PARTLY FIXED | `c08c3cce` corrected the help text; wiring `vault.positive_prompt` into prompt resolution is still open, and so is failing an empty prompt BEFORE a pod is billed |
+| U6 | OPEN | `kinoforge deploy` renders no provision; dead on Modal, books a portless pod on RunPod |
+| U7 | FIXED, LIVE-PROVEN IN PART | `8191bd1b`; three SIGKILLed provisions each left a durable row naming the app (2026-09-07, $0.00). NOT proven: `destroy --id` on a mid-create app (**U17**). NOT covered at all: teardown when the readiness poll or the weight download fails (**U21**) |
+| U8 | FIXED ON MODAL, LIVE-PROVEN | `9d34d008` + `8403a71c`; index row readable 2.5 s into a live run, pod still reapable after SIGKILL (~$0.06). RunPod half stays PARTIAL under **U16** and is NOT upgraded by the Modal proof |
+| U9 | FIXED, LIVE-PROVEN | `e582bd0f`; the daemon reaped an idle ephemeral pod at `age=119s idle on probe gpu_util=0.0% cpu=0.0%` (~$0.03). Two boundaries, both filed rather than hidden: a mid-boot row has `endpoints: {}` so the probe returns nulls and the pod stays LIVE (U3's blast radius), and the predicate acts on ONE probe sample (**U22**) |
+| U10 | FIXED ON THE GRACEFUL PATH | `7d535503`, hardened by `9ae52274`. A daemon that is SIGKILLed still strands its row, and `sweeper status` / `metrics` still ignore the `--interval-s` override. Both recorded in the entry; neither re-opened |
+| U11 | OPEN | `grid --ephemeral` is accepted and silently dropped |
+| U12 | CLOSED | `82ad084b` — `av<18`. Live-proven on Modal for $0.64. RunPod and SkyPilot ride the same one-line pin but were never re-run: inferred safe, not demonstrated safe |
+| U13 | OPEN | the CLI hangs after `UpscaleFailed`. Holder unidentified; the original suspected site was retracted. A $0 offline first step is written into the entry |
+| U14 | FIXED, LIVE-PROVEN | `49394b1d`, with a review-caught regression corrected in `b00a53d1`. A second upscale attached to the warm A100 with no `✓ App deployed` ($0.12). The vocabulary gap the correction sidesteps is **U19** |
+| U15 | FIXED, LIVE-PROVEN | `ccd4c5e7`; a fresh process attached to a warm pod via `generate --attach-pod` in 38 s with no cold boot (~$0.07). **T2-02's own `upscale` cell has still not been re-run** — the fix is provider- and command-agnostic, so that is inference, not demonstration |
+| U16 | OPEN | the ephemeral launch row is only a PARTIAL handle on RunPod (good name, unusable id). Spun out of U8 |
+| U17 | OPEN | `destroy --id` cannot reap a Modal app killed mid-deploy; only `modal app stop <app_id>` can. Found by U7's live proof |
+| U18 | OPEN | `kinoforge reap` short-circuits on an empty ledger and never reaches `sweep()`, so `--include-orphans` is unreachable for exactly the `--ephemeral` case. Found by U8's live proof |
+| U19 | OPEN | the in-pod capability vocabulary has no term for interpolation. Not a duplicate boot today — the U14 carve-out prevents one — but the `/health` refinement is absent on the interpolate path |
+| U20 | FIXED | `e582bd0f` — the truncated sweeper thresholds dict. Filed retroactively 2026-09-07: it was WIDER than the ephemeral defect it was found under |
+| U21 | OPEN | `provision` has no destroy-on-error path. Filed 2026-09-07 |
+| U22 | OPEN | the ephemeral orphan reap acts on a single probe sample. Filed 2026-09-07 |
+
+**Live proof cost for the whole money-leak campaign: $0.82** — $0.16 for the four fixes' own live
+cells (Task 5, Modal A10), $0.12 for U14's re-proof and $0.54 to reproduce and diagnose it
+(A100-80GB, Task 6). No cell was left running; every teardown was proven from a fresh process.
 
 **Status update 2026-09-07 (Task 5 — live proof of the four money-leak fixes on Modal A10, total
 spend ~$0.16 of a ~$0.60 budget).** **U15 HELD** (a fresh process attached to a warm pod, no cold
@@ -1107,7 +1141,7 @@ per-item entries below.
   is still refused with `stage-mismatch`. That is the conservative-on-ignorance behaviour the gate
   was written for, and it costs nothing in the observed flow — the pod that a warm scan finds has
   by definition already completed a run. Worth revisiting only if a boot-then-attach pattern appears.
-  **Correction, fix round 1 (`ea3b6f1a`-class change, caught in review — not by me).** The first cut
+  **Correction, fix round 1 (`b00a53d1`, caught in review — not by me).** The first cut
   of this fix delegated to `capability_key().stages` wholesale, and the task report claimed that
   "adds no new failure mode". **That claim was wrong and review disproved it.** The key also appends
   `"interpolate"`, so the shipped `examples/configs/modal-diffusers-rife-60fps-interpolate.yaml`
@@ -1121,9 +1155,15 @@ per-item entries below.
   the reusable part:** replacing a narrow local derivation with a delegation widens the input
   domain, and the diff shows only the deletion — not the stages the delegate emits that the local
   version never could. The check that would have caught it is a sweep of every shipped config
-  comparing old and new output; it is now run, and across all of `examples/configs` the only
-  remaining changes are the eight upscale-only cfgs correctly dropping their phantom `t2v`
-  requirement, on Modal, RunPod and SkyPilot alike.
+  comparing old and new output. **That sweep is now a committed test, not a claim in prose** —
+  `tests/cli/test_shipped_cfg_want_stages_sweep.py` (Task 7, 2026-09-07). It loads all 48
+  kinoforge cfgs under `examples/configs` (the other 11 YAMLs there are grid specs and batch
+  manifests, a different schema) and asserts three things: that no shipped cfg demands a `/health`
+  capability the in-pod server has no vocabulary for; that the set of cfgs the delegation changed
+  is exactly the **eight** upscale-only ones — `modal-`/`runpod-`/`skypilot-*-upscale.yaml` — each
+  correctly dropping its phantom `t2v`; and a load-count floor so a `load_config` regression cannot
+  make the sweep pass vacuously. Verified adversarially: deleting `"interpolate"` from
+  `_HEALTH_UNGATEABLE_STAGES` fails two of the three and names both RIFE cfgs.
 
 - **U15 — FIXED in `ccd4c5e7`, LIVE-PROVEN on Modal 2026-09-07 —
   `--attach-pod` cannot attach to a healthy pod whose endpoint the ledger is holding.**
@@ -1183,6 +1223,19 @@ per-item entries below.
   on the bare instance; neither reads `entry["endpoints"]`, and
   `_render_endpoints_for_status`'s own docstring names that rehydration as deferred, out-of-scope
   work. **U3 stays open.**
+  **Deliberate divergence, recorded so it is not "harmonised" away (2026-09-07, Task 7).**
+  `_resolve_attach_pod` does NOT copy `_resolve_warm_endpoints`'s final `return live or recorded` —
+  the fallback to the recorded endpoint map when the provider hands back an empty one. It seeds the
+  recorded map and then refuses if `ensure_endpoints` still returns nothing. That asymmetry is the
+  point, not an oversight: `ensure_endpoints` is the repairing door, so a provider that returns
+  empty has said it cannot establish anything live, and on SkyPilot the recorded endpoint is
+  routinely a `127.0.0.1:<port>` tunnel that died with the process that opened it. Handing an
+  engine a dead URL is the F11 failure the S5 pure-read / `ensure_endpoints` split exists to
+  prevent — it converts a clean $0 refusal into a booked pod plus a connection error.
+  `_resolve_warm_endpoints` can afford the fallback because the matcher only offers candidates that
+  already passed the liveness chain; `--attach-pod` is an operator naming a pod by hand with no
+  such evidence behind it. The same reasoning is now a comment at the refusal site in
+  `src/kinoforge/cli/_commands.py`, so the code and this entry cannot drift apart.
   **Why it matters:** `--attach-pod` is the explicit escape hatch from U14. With the matcher
   cold-booting duplicate A100s and the explicit override refusing to attach, there is currently **no
   way at all** to run a second upscale on an existing pod — every upscale costs a fresh boot. The two
@@ -1346,6 +1399,125 @@ per-item entries below.
   boot a RIFE pod, run a second `kinoforge interpolate` against it, and show the attach with no
   `✓ App deployed`. RIFE runs on a T4, so the proof is cheap (T2-06/T2-07 cost $0.03 each).
   **Discovered by:** review of U14's fix round 1, 2026-09-07.
+
+- **U20 — FIXED in `e582bd0f` — the sweeper daemon dropped four of its eight thresholds, so
+  `STALL_REAP` and `RESTART_LOOP_REAP` were unreachable from `sweeper start` for EVERY pod, not
+  only ephemeral ones.**
+  Filed retroactively 2026-09-07 (Task 7). The mechanism was found and fixed under U9 and is
+  described inside that entry, but it was left as a clause in a FIXED item — and the claim is much
+  larger than the defect it was found under. U9 is about ephemeral pods; this is about all of them.
+  **Symptom.** `_cmd_sweeper_start` built its `thresholds` dict inline with **four** keys —
+  `idle_timeout_s`, `max_lifetime_s`, `heartbeat_interval_s`, `grace_after_session_s` — and dropped
+  `stall_window_s`, `stall_gpu_threshold`, `stall_cpu_threshold` and `restart_loop_window_s`, all
+  four of which `_cmd_reap` passes. `classify` reads `thresholds.get("stall_window_s")` → `None`,
+  and both the stall and the restart-loop branches are gated behind it. So for the whole life of
+  `kinoforge sweeper start`, the daemon `CLAUDE.md` recommends as the unsupervised-run safety net
+  **could never reap a stalled or restart-looping pod at all** — a ledger-backed RunPod pod whose
+  worker died at 0% GPU included. The SIGHUP reload handler rebuilt the same four-key dict, so a
+  config reload could not recover it either. Whatever the operator's YAML said about
+  `stall_window_s` never reached the classifier.
+  **Why it looked smaller than it was.** It surfaced as "the sweeper never reached `STALL_REAP` on
+  an ephemeral pod" (matrix cell T1-24), which reads as an ephemeral-index plumbing gap — and U9's
+  filed mechanism said exactly that, wrongly. The truncation is upstream of the ephemeral/ledger
+  split entirely.
+  **Reproducer ($0, offline).**
+  ```
+  pixi run python -c "
+  from kinoforge.core.config import load_config, sweeper_thresholds_from_cfg
+  cfg = load_config('examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml')
+  t = sweeper_thresholds_from_cfg(cfg)
+  print(sorted(t))          # every gate classify reads
+  print('stall_window_s' in t)   # False on the pre-fix four-key dict
+  "
+  ```
+  **Fix (`e582bd0f`).** `sweeper_thresholds_from_cfg` (`src/kinoforge/core/config.py`) is now the
+  single source of truth for the daemon's threshold set, used by `sweeper start`, by its SIGHUP
+  reload and by `kinoforge reap`, and it carries every gate `classify` reads. Five tests in
+  `tests/core/test_config.py` and five in `tests/cli/test_cmd_sweeper.py`.
+  **What is NOT proven.** The live cell that exercised this was an ephemeral pod (U9's proof). No
+  live run has shown the daemon reaping a stalled LEDGER-BACKED pod, which is the wider half of
+  what this entry claims was broken. The offline tests cover it; a live run does not.
+  **Discovered by:** Task 4 of the money-leaks plan; filed as its own item on the Task 7 record
+  sweep, 2026-09-07.
+
+- **U21 — `kinoforge provision` has no destroy-on-error path: a create that succeeds followed by a
+  readiness poll or a weight download that fails leaves the pod running, and nothing tears it
+  down.**
+  **Symptom.** `_cmd_provision` (`src/kinoforge/cli/_commands.py`) books the instance, writes the
+  real ledger row, collapses the provisional one — and then runs two unguarded phases:
+  ```
+  while instance.status != "ready":
+      time.sleep(2.0)
+      refreshed = provider.get_instance(instance.id)   # may raise
+      instance = _dc.replace(instance, status=refreshed.status)
+  ...
+  provision(engine=engine, cfg=cfg, instance=instance, ...)   # may raise
+  ```
+  Neither is inside a `try`. Any raise from `get_instance`, from the weight download, or from the
+  provisioner propagates out of the command with the pod alive and billing. Note also that the
+  readiness loop has **no timeout and no iteration cap** — a pod that never reaches `ready` spins
+  forever at two seconds a turn, which is the same money leak with no exception at all.
+  **This is not the U7 leak, and U7's fix does not cover it.** U7 was "nothing can SEE the pod";
+  that is closed — the row is written pre-create and the pod is visible to `list`, `destroy` and
+  the sweeper. This is "nothing tears the pod DOWN", which U7 never claimed. The money protection
+  therefore holds and cleanup is manual, which is a real but much smaller cost.
+  **Reproducer ($0, offline — no pod, no spend).** The absence is structural, so read it off the
+  source: everything after the provisional-row collapse is outside any `try`.
+  ```
+  pixi run python -c "
+  import kinoforge.cli._commands as C, inspect
+  tail = inspect.getsource(C._cmd_provision).rsplit('_collapse_provisional_row', 1)[1]
+  assert 'try:' not in tail and 'except' not in tail
+  print('unguarded after the create:'); print(tail.strip()[:400])
+  "
+  ```
+  For the live shape: `pixi run -e live-modal kinoforge provision -c
+  examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml` and interrupt the network during the
+  weight download. The app stays `deployed` with `tasks=1`; `kinoforge list` names it, and
+  `kinoforge destroy --id <id>` reaps it — by hand.
+  **Shape of the fix (not attempted).** Wrap the post-create phases in a `try` whose `except`
+  destroys the instance before re-raising, with the same ruling-C1 care the create already has: a
+  destroy that itself fails must leave the row in place, not swallow the handle. Bound the
+  readiness loop by `lifecycle.max_lifetime_s` (or a dedicated boot cap) and raise
+  `ProvisionFailed` naming the instance when it expires. `deploy_session` already owns a teardown
+  path worth mirroring rather than inventing a second one — the same argument that shaped U7's fix.
+  **Discovered by:** review of the U7 fix, carried into the Task 7 record sweep, 2026-09-07.
+
+- **U22 — the ephemeral orphan reap destroys on a SINGLE probe sample, unlike every other
+  utilisation-driven verdict in the reaper.**
+  **Symptom.** `_ephemeral_orphan_predicate` (`src/kinoforge/core/reaper.py`) reads
+  `entry["gpu_util_pct"]` and `entry["cpu_pct"]` — the CURRENT tick's readings — and returns
+  `ORPHAN_REAP` if both sit below their thresholds and the row is past the age gate. Its sibling
+  `_ephemeral_stall_predicate`, twenty lines below, requires **N consecutive** samples over
+  `stall_window_s` via `stall_history` before it will call a pod stalled. `CLAUDE.md`'s own live
+  rule is the three-consecutive-sample form ("GPU 0% for >=3 consecutive probes"). The orphan rule
+  is the one place that acts on one reading.
+  **What that buys and what it costs.** Two guards make it a reasonable first cut and they are
+  deliberate: the one-hour `ephemeral_orphan_age_s` floor (a Wan A14B cold boot sits at 0% GPU for
+  ~25 min and is nowhere near it) and the requirement that GPU **and** CPU both read idle. But a
+  genuinely busy pod sampled between two compute-light steps — a VAE decode boundary, an ffmpeg
+  mux, a model swap, an artifact upload — past the age gate is reapable on that one unlucky tick,
+  and the reap destroys the pod and takes the work with it. `ORPHAN_REAP` is deliberately outside
+  `DEFAULT_APPLY_POLICY`, so this needs `include_orphans` to bite; that is a mitigation, not a fix.
+  **Reproducer ($0, offline).** Feed the predicate a two-hour-old row reading idle and it returns
+  True on the FIRST call. There is no history argument to give it, which is the finding — compare
+  the signature with `_ephemeral_stall_predicate`'s, which takes `stall_history`.
+  ```
+  pixi run python -c "
+  from kinoforge.core.reaper import _ephemeral_orphan_predicate as pred
+  import inspect
+  entry = {'probe_state': 'ok', 'gpu_util_pct': 0.0, 'cpu_pct': 0.0}
+  th = {'ephemeral_orphan_age_s': 3600.0, 'stall_gpu_threshold': 5.0, 'stall_cpu_threshold': 20.0}
+  print('reaps on sample 1:', pred(entry, th, 7200.0))          # True
+  print('params:', list(inspect.signature(pred).parameters))     # no stall_history
+  "
+  ```
+  **Shape of the fix (not attempted).** Give the orphan branch the `stall_history` deque
+  `_ephemeral_stall_predicate` already threads through `_classify_ephemeral`, and require the same
+  N-consecutive-low-sample evidence before `ORPHAN_REAP`. The age gate stays as the outer guard.
+  This is a change to a destroy path, so it wants its own red/green pair plus a live re-proof of
+  the U9 cell before it is trusted.
+  **Discovered by:** review of the U9 fix, carried into the Task 7 record sweep, 2026-09-07.
 
 Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
 on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interval_s`
