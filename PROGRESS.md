@@ -450,9 +450,9 @@ items, not only in the matrix follow-up list. Each carries the symptom, the repr
 suspected site.
 
 **STATUS INDEX (rebuilt 2026-09-07, Task 7 — this is the current state; the paragraphs below it are
-the campaign's running commentary and are dated, not authoritative).** Twenty-two items, U1-U22.
-**Eight are fixed** (U4, U7, U8, U9, U12, U14, U15, U20), **two are partly fixed** (U5, U10),
-**twelve are open** (U1, U2, U3, U6, U11, U13, U16, U17, U18, U19, U21, U22).
+the campaign's running commentary and are dated, not authoritative).** Twenty-three items,
+U1-U23. **Eight are fixed** (U4, U7, U8, U9, U12, U14, U15, U20), **two are partly fixed**
+(U5, U10), **thirteen are open** (U1, U2, U3, U6, U11, U13, U16, U17, U18, U19, U21, U22, U23).
 
 | Item | State | Detail |
 |---|---|---|
@@ -478,6 +478,7 @@ the campaign's running commentary and are dated, not authoritative).** Twenty-tw
 | U20 | FIXED | `e582bd0f` — the truncated sweeper thresholds dict. Filed retroactively 2026-09-07: it was WIDER than the ephemeral defect it was found under |
 | U21 | OPEN | `provision` has no destroy-on-error path. Filed 2026-09-07 |
 | U22 | OPEN | the ephemeral orphan reap acts on a single probe sample. Filed 2026-09-07 |
+| U23 | OPEN | `kinoforge --ephemeral batch` writes no index row at all — the U8 hole, one command over. Pre-existing, not a regression. Filed 2026-09-07 |
 
 **Live proof cost for the whole money-leak campaign: $0.82** — $0.16 for the four fixes' own live
 cells (Task 5, Modal A10), $0.12 for U14's re-proof and $0.54 to reproduce and diagnose it
@@ -712,6 +713,18 @@ per-item entries below.
   because U9's age-based reaping depends on it and the old semantics under-counted every pod's
   lifetime by its whole boot window. Per ruling C1 a raise KEEPS the row for the classifier to age
   out. Warm-attach reserves nothing. `upscale` and `interpolate` get the same treatment.
+  **Fix round 2 (`725ce781`, final-review follow-up 2026-09-07) — the row had to survive a
+  concurrent sweeper.** `_classify_ephemeral` returned `GC_404` on the first
+  `probe_state == "not_found"` with no grace at all, and `GC_404` sits inside
+  `DEFAULT_APPLY_POLICY` — so a `kinoforge sweeper` daemon ticking during the run REMOVED the
+  pre-create row this item exists to write. The window is not the second it looks: the row is
+  keyed by the resource NAME, `probe_runtime` asks by pod id, and on RunPod those differ, so
+  `not_found` is the only answer possible until `_ephemeral_index_add` rewrites the row after the
+  generate returns — i.e. the whole run. A row with **no endpoints** (nothing has ever confirmed it
+  names a live resource) is now graced for 1800 s, the same value and asymmetry as
+  `cli/_reconcile._LAUNCHING_GRACE_S`; a row that DOES carry endpoints is still collected on the
+  first `not_found`. Offline red/green in `tests/core/test_reaper_orphans.py` and
+  `tests/core/test_classify_ephemeral.py`; NOT re-proven live.
   **Fix round 1 (`8403a71c`) — three defects that decided whether the row is USABLE:**
   1. The row was keyed on the client-side `run_id`, by parallel with Task 1's ledger row. That
      parallel does not carry — Task 1's row is only ever written under the DEFAULT policy, so it
@@ -1020,8 +1033,10 @@ per-item entries below.
   **PROVEN LIVE ON MODAL, 2026-09-06 09:39–10:09, $0.64.** The pin was worth confirming despite the
   earlier "do not spend an A100" note, because the $0 probe could only show that the *writer* call
   works at `av` 17 — not that a real FlashVSR job end-to-end produces a good clip. The upscale in
-  both previously failing cells now succeeds (**their cell verdicts differ** — see below: T2-01 is
-  PASS, T2-03 stays FAIL because the same re-run reproduced U14):
+  both previously failing cells now succeeds (**their cell verdicts differed AS OF THIS DATE** —
+  see below: T2-01 is PASS, T2-03 stays FAIL because the same re-run reproduced U14. T2-03 flipped
+  to PASS on 2026-09-07 when U14 was fixed; the RESUME SNAPSHOT and
+  `docs/modal-command-matrix.md` carry the current verdicts):
 
   | cell | cfg | result |
   |---|---|---|
@@ -1537,6 +1552,49 @@ per-item entries below.
   the U9 cell before it is trusted.
   **Discovered by:** review of the U9 fix, carried into the Task 7 record sweep, 2026-09-07.
 
+- **U23 — `kinoforge --ephemeral batch` leaves NO durable record of the pod it books.**
+  **Symptom.** `_cmd_batch` (`src/kinoforge/cli/_commands.py`) cold-creates through
+  `batch_generate` -> `deploy_session` and never reserves a launch row: it calls neither
+  `_ephemeral_launch_row_reserve` (before the create) nor `_ephemeral_index_add` (after it), and
+  nothing inside `core/batch.py` or the orchestrator writes an `EphemeralIndex` row either. Under
+  `--ephemeral` the ledger write is suppressed by STRICT_POLICY and lives only in
+  `session.in_memory_ledger`, so for the WHOLE batch — and after it — the pod exists in no state
+  file on disk. This is exactly the hole **U8** closed for `generate` (and, in the same fix, for
+  `upscale` and `interpolate`); `batch` was not part of that fix and is not covered by **U11**,
+  which is the different defect of `grid` accepting `--ephemeral` and silently dropping it.
+  **It is PRE-EXISTING, not a regression** of the money-leak branch: the branch added the
+  pre-create row to three commands and left this one where it was.
+  **Why urgent.** A batch is the LONGEST-running kinoforge command there is — a manifest of N
+  entries on one pod — so it has the widest window in which a Ctrl-C, an OOM or a session death
+  strands a billing GPU that no kinoforge command can name. It also means a monitor cannot poll
+  `/util` during the run (no endpoint is written down), which is the same secondary cost U8
+  recorded. `kinoforge list` shows nothing, `kinoforge reap` has nothing to classify, and recovery
+  is a raw `modal app stop` / RunPod console visit.
+  **Reproducer (offline, $0 — no pod needed).** The absence is structural, so grep proves it:
+  ```
+  pixi run python -c "
+  import inspect
+  from kinoforge.cli import _commands
+  from kinoforge.core import batch
+  src = inspect.getsource(_commands._cmd_batch) + inspect.getsource(batch.batch_generate)
+  for name in ('_ephemeral_launch_row_reserve', '_ephemeral_index_add', 'EphemeralIndex'):
+      print(name, name in src)      # all three print False
+  "
+  ```
+  **Live shape (costs money — not run).** `pixi run -e live-modal kinoforge --ephemeral batch
+  -c examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml --manifest <manifest>` and, while it
+  runs, read `.kinoforge/_lifecycle/ephemeral-index.json` — it stays `{"rows": []}` for the whole
+  batch and after it, where the same cfg under `generate` now shows a row 2.5 s in.
+  **Shape of the fix (not attempted).** `_cmd_batch` should mint a run id and call
+  `_ephemeral_launch_row_reserve` before `batch_generate`, exactly as `_cmd_generate` does, and
+  settle the row afterwards. The obstacle worth naming: `batch_generate` returns a `BatchResult`
+  and does NOT hand the CLI the instance it created, so the post-create update
+  (`_ephemeral_index_add`, which rewrites the row under the provider-side id) has nothing to work
+  with — closing this properly means returning the instance, or moving the settle inside
+  `batch_generate`. `grid` (U11) has the same absence behind a different symptom, so the two are
+  worth fixing together.
+  **Discovered by:** the final whole-branch review of `fix/modal-money-leaks`, 2026-09-07.
+
 Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
 on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interval_s`
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
@@ -1611,11 +1669,13 @@ ACTION ITEMS section above — read its STATUS INDEX first.
   2 skypilot launch payloads + the diffusers provision golden — which is the blast radius made
   visible. **Live proof on Modal 2026-09-06 for $0.64:** T2-01 published 1920×1920/77f and T2-03
   published 1080×1080, both frame-QA clean with real detail synthesis and no false colour; the
-  rebuilt image logs `Successfully installed … av-17.1.0`. **T2-01's cell is PASS; T2-03's is
-  FAIL** — its upscale worked, but the same re-run reproduced the warm-attach miss (U14) and
-  cold-booted a second $2.50/hr A100, and a cell whose own notes describe a live defect is a FAIL
-  (reclassified on the 2026-09-06 review). **RunPod and SkyPilot carry the same one-line pin but
-  were NOT re-run — inferred safe, not demonstrated safe.**
+  rebuilt image logs `Successfully installed … av-17.1.0`. **Both cells are PASS.** T2-01 passed on
+  the 2026-09-06 re-run; T2-03 was FAIL until 2026-09-07 — its upscale worked, but the same re-run
+  reproduced the warm-attach miss (U14) and cold-booted a second $2.50/hr A100, and a cell whose
+  own notes describe a live defect is a FAIL — and flipped to PASS once U14 was fixed in
+  `49394b1d` and the attach proven live. That is the flip the 32/16/9 tally above already counts.
+  **RunPod and SkyPilot carry the same one-line pin but were NOT re-run — inferred safe, not
+  demonstrated safe.**
 - **Works:** t2v at both ends of the model range (Wan 2.1 1.3B on A10; Wan 2.2 **14B** on
   A100-80GB, T3-01 PASS at $1.15 for 27m37s), **FlashVSR upscale at 4x and at the 1080p height
   target (post-pin)**, warm re-attach in all three forms on the *generate* path, `batch`, `grid`
