@@ -1774,7 +1774,7 @@ def _scan_warm_candidates(
             index_only_ids.add(ie["id"])
 
     skipped: list[tuple[str, str]] = []
-    matches = []
+    matches: list[dict[str, Any]] = []
     for e in entries:
         eid = str(e["id"])
         # Coarse-filter rejects are recorded the same way validation-stage
@@ -2275,6 +2275,21 @@ def _resolve_attach_pod(
         )
         return (None, 1)
     if not live.endpoints:
+        # DELIBERATE DIVERGENCE from `_resolve_warm_endpoints` — do not
+        # "harmonise" the two. That function ends `return live or recorded`:
+        # when the provider hands back an empty map it falls back to the
+        # recorded one. This door refuses instead, and the asymmetry is the
+        # point. `ensure_endpoints` is the repairing door; a provider that
+        # cannot establish anything live has said so, and on SkyPilot the
+        # recorded endpoint is frequently a `127.0.0.1:<port>` tunnel that
+        # died with the process that opened it. Handing an engine a dead URL
+        # is exactly the F11 failure the S5 pure-read / ensure split exists to
+        # prevent — it turns a clean refusal at $0 into a booked pod plus a
+        # connection error. `_resolve_warm_endpoints` can afford the fallback
+        # because the matcher only ever offers candidates that already passed
+        # the liveness chain; `--attach-pod` is an operator naming a pod by
+        # hand, with no such evidence behind it.
+        #
         # Report the field that was checked. The previous message cited the
         # ledger's TAG keys as evidence about a missing ENDPOINT — a
         # different field entirely, and the reason the live diagnosis of
