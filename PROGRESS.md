@@ -447,7 +447,7 @@ Found by the Modal command-matrix campaign (plan
 `docs/superpowers/plans/2026-09-05-modal-command-matrix.md`, results
 `docs/modal-command-matrix.md`). Operator directive 2026-09-06: big issues land HERE as urgent
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
-suspected site. **Status 2026-09-06 (updated after the `av` pin): U4 is fixed (`c08c3cce`), U10 is fixed (`7d535503`, the interval-reporting half of it excepted), U5 is half-fixed (help text corrected in `c08c3cce`, wiring still open), and **U12 is CLOSED** — the `av<18` pin landed in `82ad084b` and was proven live on Modal at 1920x1920 and 1080x1080 with clean frame QA for $0.64. RunPod and SkyPilot carry the same one-line pin (their goldens moved in that commit) but were **not** re-run, so they are inferred-safe, not demonstrated-safe. **U15 is new** (`--attach-pod` refuses a healthy pod whose endpoint the ledger holds) and, together with U14, currently leaves no way to run a second upscale on an existing pod. Every other item is untouched.**
+suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offline (`8191bd1b`) and awaits a live Modal re-run, U4 is fixed (`c08c3cce`), U10 is fixed (`7d535503`, the interval-reporting half of it excepted), U5 is half-fixed (help text corrected in `c08c3cce`, wiring still open), and **U12 is CLOSED** — the `av<18` pin landed in `82ad084b` and was proven live on Modal at 1920x1920 and 1080x1080 with clean frame QA for $0.64. RunPod and SkyPilot carry the same one-line pin (their goldens moved in that commit) but were **not** re-run, so they are inferred-safe, not demonstrated-safe. **U15 is new** (`--attach-pod` refuses a healthy pod whose endpoint the ledger holds) and, together with U14, currently leaves no way to run a second upscale on an existing pod. Every other item is untouched.**
 
 - **U1 — the warm-attach matcher is provider-blind (cross-provider attach risk).**
   `WarmAttachKey` (`src/kinoforge/core/interfaces.py:649`) carries base_model / engine /
@@ -566,25 +566,37 @@ suspected site. **Status 2026-09-06 (updated after the `av` pin): U4 is fixed (`
   `kinoforge list` showed `kinoforge-deploy-20260906-013616-45da4a provider=modal` during boot and
   the row survived the raise.
 
-- **U7 — `kinoforge provision` books a live instance that no kinoforge command can see or destroy.**
-  `_cmd_provision` (`src/kinoforge/cli/_commands.py:255`) calls `provider.create_instance(spec)`
-  directly and writes **nothing to the ledger** — no pre-launch provisional row, no real row after.
-  It also never checks whether an instance for this capability key already exists, so it is an
-  unconditional second create, not the "re-provision / already provisioned" the command name
-  implies. On Modal the instance id comes back empty, so the app is named `kinoforge-` (bare
-  prefix) and the CLI prints `provisioned: instance=''` — the id needed to reap it does not exist.
+- **U7 — FIXED in `8191bd1b` (offline; a live Modal re-run still owes the proof) — `kinoforge
+  provision` booked a live instance that no kinoforge command could see or destroy.**
+  `_cmd_provision` called `provider.create_instance(spec)` directly and wrote **nothing to the
+  ledger** — no pre-launch provisional row, no real row after. It also never checked whether an
+  instance for this capability key already existed, so it was an unconditional second create, not
+  the "re-provision / already provisioned" the command name implies. On Modal the instance id came
+  back empty, so the app was named `kinoforge-` (bare prefix) and the CLI printed
+  `provisioned: instance=''` — the id needed to reap it did not exist.
   **Reproducer (live, T1-20):**
   `pixi run -e live-modal kinoforge provision -c examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml`
   → `provisioned: instance=''`; `kinoforge list` → `No instances recorded in ledger.`; `modal app
   list` → `ap-U8nQQQVqDECy3iTqpoKQ7j` `kinoforge-` `deployed` **1 task**. Recovery required a bare
   `modal app stop -y <app id>`.
-  **Suspected site:** `_cmd_provision`'s hand-rolled `InstanceSpec` + `create_instance` (no
-  `ctx.store()` write anywhere in the function), and whatever drops the id on the Modal create
-  return.
-  **Why urgent:** this is the exact failure mode F12 and ruling C1 were built to close, still open
+  **Why it was urgent:** the exact failure mode F12 and ruling C1 were built to close, still open
   on one command. It cost **$0.13 of unrecoverable spend** on 2026-09-06 and was found only
   because the matrix run happened to check `modal app list`; an operator following
   `kinoforge list` alone would have seen an empty ledger and walked away from a billing A10.
+  **Fix (`8191bd1b`, Task 1 of `docs/superpowers/plans/2026-09-06-modal-money-leaks.md`):**
+  `provision` now reuses `deploy`'s mechanism rather than growing a second one —
+  `_record_provisional_row` writes the same `kf_launch_phase=launching` row BEFORE
+  `create_instance`; `_nothing_booked_error_types` splits the failure per ruling C1 (only a
+  provably-nothing-booked error forgets the row, every other raise keeps it for
+  `cli/_reconcile._adopt_or_age_out`); the success path records the real row first and then
+  collapses the provisional one. An empty instance id is a non-zero exit naming the run id, with
+  the launching row deliberately left in place as the operator's only handle. The hand-rolled
+  `InstanceSpec` is replaced by `build_instance_spec`, so the row carries `kinoforge_key` — which
+  is what the new refusal matches on when an instance for this key is already recorded — and the
+  resource is named from a `kinoforge-provision-*` run id the reconciler can adopt by.
+  Ten tests in `tests/cli/test_cmd_provision.py`; full non-live suite 5181 passed.
+  **Still owed:** a live Modal `provision` run proving the row lands and the id-less create is
+  refused end-to-end (Task 8 of the same plan). Fixed offline only.
 
 - **U8 — an `--ephemeral` run is invisible to every state file until it has already finished.**
   `_record_cold_instance` calls `_ephemeral_index_add` (`src/kinoforge/cli/_commands.py:583`)
