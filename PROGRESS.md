@@ -566,7 +566,8 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   `kinoforge list` showed `kinoforge-deploy-20260906-013616-45da4a provider=modal` during boot and
   the row survived the raise.
 
-- **U7 — FIXED in `8191bd1b` (offline; a live Modal re-run still owes the proof) — `kinoforge
+- **U7 — FIXED in `8191bd1b`, LIVE-PROVEN IN PART on Modal 2026-09-07 (the row holds; `destroy
+  --id` does not reap a mid-create app — see U17) — `kinoforge
   provision` booked a live instance that no kinoforge command could see or destroy.**
   `_cmd_provision` called `provider.create_instance(spec)` directly and wrote **nothing to the
   ledger** — no pre-launch provisional row, no real row after. It also never checked whether an
@@ -595,8 +596,22 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   is what the new refusal matches on when an instance for this key is already recorded — and the
   resource is named from a `kinoforge-provision-*` run id the reconciler can adopt by.
   Ten tests in `tests/cli/test_cmd_provision.py`; full non-live suite 5181 passed.
-  **Still owed:** a live Modal `provision` run proving the row lands and the id-less create is
-  refused end-to-end (Task 8 of the same plan). Fixed offline only.
+  **Live proof 2026-09-07 (Task 5, Modal A10, $0.00 — no container ever started):** three
+  `provision` runs SIGKILLed as a process group (a crash, not a Ctrl-C), ledger polled at 50 ms.
+  Material timing fact: Modal deploys an already-built image in **~1.4 s**, so the create window
+  is seconds wide, not the ~90 s a cold boot suggests. (a) Kill 4.4 s *after* `create_instance`
+  returned: the real row survived, a fresh `kinoforge list` named
+  `kinoforge-provision-20260907-000607-de8004` with its endpoint, `destroy --id` reaped it, and
+  `modal app list` went to `stopped`. (b) Kill 1.17 s in, genuinely pre-create: the
+  `kf_launch_phase=launching` row was on disk before Modal had the request. (c) Kill 1.0 s
+  *inside* `create_instance` — the window U7 exists for: only the launching row existed, Modal had
+  already committed app `kinoforge-kinoforge-provision-20260907-000832-70d75b` (`initializing...`,
+  `tasks=0`), and a fresh `kinoforge list` named it from that row alone. **The durability half of
+  U7 therefore holds live, on all three kill points**, against a pre-fix baseline that recorded
+  nothing at any point.
+  **What did NOT hold:** in case (c) `kinoforge destroy --id` could not reap the app — see the new
+  item **U17**. The stated pre-fix recovery ("required a raw `modal app stop`") is therefore still
+  the recovery for a mid-create kill, by app id rather than by name.
 
 - **U8 — FIXED on Modal, PARTIAL on RunPod, in `9d34d008` + `8403a71c` (offline; a live Modal
   re-run still owes the proof; the RunPod residual is filed as U16) — an
@@ -1103,6 +1118,39 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   booting RunPod pod from a phantom — so it may reap-classify a live, billing pod as GC_404. On
   Modal, the provider every defect in this campaign was found on, neither is true any more.
   **Discovered by:** re-review of Task 3 fix round 1, 2026-09-06.
+
+- **U17 — `kinoforge destroy --id` cannot reap a Modal app that was killed mid-deploy; only the
+  raw `modal app stop <app_id>` can.**
+  Found by the U7 live proof (Task 5, 2026-09-07) — the fix's durable row worked exactly as
+  designed and then handed the operator an id the destroy path could not use.
+  **Symptom.** SIGKILL `kinoforge provision` 1.0 s into `create_instance`. Modal has already
+  committed the app; `modal app list --json` shows
+  `kinoforge-kinoforge-provision-20260907-000832-70d75b` in state `initializing...` with
+  `tasks=0`, and it stays there (three polls over ~60 s — it does not self-resolve). The
+  U7 pre-create row names it and `kinoforge list` surfaces it from a fresh process. But:
+  `pixi run -e live-modal kinoforge destroy --id kinoforge-provision-20260907-000832-70d75b`
+  → `No App with name 'kinoforge-kinoforge-provision-20260907-000832-70d75b' found in the 'main'
+  environment.` followed by an unhandled
+  `subprocess.CalledProcessError: Command '['modal', 'app', 'stop', <name>, '--yes']' returned
+  non-zero exit status 1`.
+  **Cause.** Modal registers an app's NAME only when the deploy completes. An app whose deploying
+  client died is addressable solely by its `app_id`. `ModalProvider.destroy_instance`
+  (`src/kinoforge/providers/modal/__init__.py:452`) builds `kinoforge-<run_id>` and hands it to
+  `default_stop` (`src/kinoforge/providers/modal/_app.py:195`), which shells
+  `modal app stop <name> --yes` under `check=True`.
+  **Verified recovery.** `modal app stop ap-UieraQfT1GhxX3v4etyrEA --yes` → rc 0, app `stopped`.
+  The app id is in `modal app list --json`.
+  **Why it matters.** It is narrow in dollars — the orphan has `tasks=0`, so no GPU container and
+  no GPU billing — but it is exactly the recovery U7 was written to end. The stated pre-U7
+  recovery ("required a bare `modal app stop`") survives verbatim for the one kill window U7's
+  pre-create row exists for. Two failures compound it: `check=True` turns a diagnosable provider
+  error into a traceback, and the operator has no in-CLI way to learn the `app_id`.
+  **Shape of the fix (not attempted — the live proof was told to report, not retrofit).** Same
+  shape U16 names for RunPod: resolve the identifier the provider actually accepts. Look the app
+  up in `modal app list --json` (by `description == kinoforge-<run_id>`), stop it by `app_id`,
+  fall back to the name, and replace the bare `check=True` with a handled error that prints the
+  app id it found.
+  **Discovered by:** Task 5 live proof of U7, 2026-09-07.
 
 Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
 on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interval_s`
