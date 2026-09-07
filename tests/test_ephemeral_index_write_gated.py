@@ -1,6 +1,16 @@
-"""AST invariant: every EphemeralIndex.add(...) is gated on EphemeralSession.current().
+"""AST invariant: every EphemeralIndex.add(...) sits behind an ephemeral gate.
 
 Models pattern after tests/test_no_unredacted_writes.py.
+
+Two spellings count as a gate:
+
+* ``EphemeralSession.current()`` — the original test, "is a session active".
+* ``policy.ledger_record`` — the STRICTER gate spec A2 introduced, and the one
+  ``core/lifecycle.py`` already uses for ledger writes. It is the correct one:
+  ``cli/_main`` wraps EVERY dispatch in a session and ``__enter__`` activates
+  regardless of ``enabled``, so "a session is active" is true on ordinary runs
+  too. A write gated on ``not session.policy.ledger_record`` fires only where
+  the run has no ledger row, which is exactly what the index is for.
 
 Exemption tag (line-level comment on the offending call):
   ``# kinoforge:ephemeral-index-write-exempt`` — opt out for a specific call.
@@ -48,14 +58,18 @@ def _is_add_call_on_ephemeral_index(node: ast.AST) -> bool:
     return False
 
 
+#: Condition fragments that count as an ephemeral gate. See module docstring.
+_GATE_MARKERS = ("EphemeralSession.current()", "policy.ledger_record")
+
+
 def _enclosing_if_mentions_session_current(tree: ast.AST, target: ast.Call) -> bool:
-    """Walk parent chain; return True iff any enclosing `if` mentions EphemeralSession.current()."""
+    """Walk parent chain; True iff an enclosing `if` names an ephemeral gate."""
     for parent in ast.walk(tree):
         if isinstance(parent, ast.If):
             for child in ast.walk(parent):
                 if child is target:
                     cond_src = ast.unparse(parent.test)
-                    if "EphemeralSession.current()" in cond_src:
+                    if any(marker in cond_src for marker in _GATE_MARKERS):
                         return True
     return False
 
@@ -63,9 +77,9 @@ def _enclosing_if_mentions_session_current(tree: ast.AST, target: ast.Call) -> b
 def test_every_ephemeral_index_add_is_session_gated() -> None:
     """Bug: ungated add() leaks index rows into non-ephemeral runs.
 
-    Failure means a code path now writes the discovery seam without
-    checking EphemeralSession.current() — violates the visibility
-    contract that the index is the ephemeral-only discovery seam.
+    Failure means a code path now writes the discovery seam without checking
+    either ephemeral gate — violates the visibility contract that the index is
+    the ephemeral-only discovery seam.
     """
     violations: list[str] = []
     for path in _all_py_files():
@@ -86,8 +100,9 @@ def test_every_ephemeral_index_add_is_session_gated() -> None:
             if not _enclosing_if_mentions_session_current(tree, node):
                 violations.append(
                     f"{path.relative_to(SRC.parent)}:{node.lineno}: "
-                    f"EphemeralIndex.add() outside `if EphemeralSession.current() is not None:` "
-                    f"branch. {REFERENCE}."
+                    f"EphemeralIndex.add() outside an ephemeral gate "
+                    f"(`EphemeralSession.current()` or `policy.ledger_record`). "
+                    f"{REFERENCE}."
                 )
 
     assert not violations, "\n".join(violations)

@@ -8,7 +8,6 @@ and subprocess touchpoints sit behind injected callables for offline testing.
 
 from __future__ import annotations
 
-import secrets
 import time
 from collections.abc import Callable, Mapping
 from datetime import datetime
@@ -257,16 +256,22 @@ class ModalProvider(ComputeProvider):
 
         # Ephemeral runs must not leak the subcommand/timestamp-bearing
         # run_id into the app name: `modal app stop` only STOPS an app, and
-        # stopped apps linger in `modal app list` forever. Mirror RunPod's
-        # pod_name_includes_alias handling (runpod/__init__.py:814-821)
-        # with an opaque token. The opaque id becomes the Instance.id so
-        # ledger (memory-only), ephemeral-index, destroy and probe all key
-        # off one consistent identifier.
+        # stopped apps linger in `modal app list` forever. The opaque id
+        # becomes the Instance.id so ledger (memory-only), ephemeral-index,
+        # destroy and probe all key off one consistent identifier.
+        #
+        # Spec A2 — the token is minted by the SESSION, not here. Minting it
+        # inside create_instance meant the name did not exist until the create
+        # was already in flight, so the pre-create ephemeral-index row (the
+        # only durable trace an --ephemeral run leaves) could not name the app
+        # it was protecting. `resource_name` returns spec.run_id unchanged
+        # under the default policy, so the non-ephemeral shape is untouched.
         _eph = EphemeralSession.current()
-        if _eph is not None and not _eph.policy.pod_name_includes_alias:
-            app_run_id = f"eph-{secrets.token_hex(4)}"
-        else:
-            app_run_id = spec.run_id
+        app_run_id = (
+            _eph.resource_name(spec.run_id, self.name)
+            if _eph is not None
+            else spec.run_id
+        )
 
         volume_mount = spec.volume_mount or "/cache/hf"
         env = dict(spec.env)

@@ -661,6 +661,37 @@ def _record_provisional_row(
     return run_id
 
 
+def _mark_destroy_unconfirmed(pod_id: str) -> None:
+    """Record on the active EphemeralSession that *pod_id* may still exist.
+
+    Spec A2. The ``--no-reuse`` teardown below catches ``TeardownError``, logs
+    the recovery hint and returns normally — the return tuple is already fixed
+    by then — so a caller has no way to distinguish a clean teardown from a
+    failed one. ``cli/_commands`` reads this mark before it releases the
+    ephemeral index row, which on an ``--ephemeral`` run is the pod's ONLY
+    durable trace: releasing it after a failed destroy deletes the last record
+    of a resource that is still billing.
+
+    No-op without an active session (nothing reads the mark on that path, and
+    the ledger row survives a failed destroy for the same purpose). Never
+    raises — a bookkeeping fault must not escape a teardown handler.
+
+    Args:
+        pod_id: The instance id whose destroy did not confirm.
+    """
+    try:
+        session = EphemeralSession.current()
+        if session is not None:
+            session.mark_destroy_unconfirmed(pod_id)
+    except Exception:  # noqa: BLE001 — must not escape the teardown handler
+        _log.warning(
+            "could not record the unconfirmed destroy of %s; a surviving pod "
+            "may lose its last durable trace",
+            pod_id,
+            exc_info=True,
+        )
+
+
 def _mint_deploy_run_id(now: float | None = None, *, kind: str = "deploy") -> str:
     """Return a fresh client-side run id for a one-shot ``deploy()``.
 
@@ -2177,6 +2208,7 @@ def deploy_session(
                     Ledger(store=store).forget(instance.id)
                     _log.info("--no-reuse: destroyed + forgot pod %s", instance.id)
             except TeardownError as destroy_exc:
+                _mark_destroy_unconfirmed(instance.id)
                 _log.error(
                     "--no-reuse destroy failed for %s: %s "
                     "(use `kinoforge reap --apply` to recover)",
@@ -2184,6 +2216,7 @@ def deploy_session(
                     destroy_exc,
                 )
             except Exception as destroy_exc:  # noqa: BLE001
+                _mark_destroy_unconfirmed(instance.id)
                 _log.error(
                     "--no-reuse destroy raised unexpected for %s: %s",
                     instance.id,

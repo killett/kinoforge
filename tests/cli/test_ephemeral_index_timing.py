@@ -142,20 +142,24 @@ class _CreateWindow:
         returns: Instance | None,
         raises: BaseException | None = None,
         dwell_s: float = 0.05,
+        teardown_fails: bool = False,
     ) -> None:
         self._cfg_path = cfg_path
         self._state_dir = state_dir
         self._returns = returns
         self._raises = raises
         self._dwell_s = dwell_s
+        self._teardown_fails = teardown_fails
         self.calls = 0
         self.entered_at: datetime | None = None
         self.read_at_entry: list[EphemeralIndexRow] = []
+        self.session: EphemeralSession | None = None
 
     def __call__(self, cfg: Any, request: Any, **kw: Any) -> tuple[Artifact, Any]:
         del cfg, request, kw
         self.calls += 1
         self.entered_at = datetime.now()
+        self.session = EphemeralSession.current()
         self.read_at_entry = _index_rows(self._cfg_path, self._state_dir)
         # A real create is multi-minute. 50 ms is enough that an ISO stamp
         # taken after this returns is unambiguously later than one taken
@@ -163,6 +167,14 @@ class _CreateWindow:
         time.sleep(self._dwell_s)
         if self._raises is not None:
             raise self._raises
+        if self._teardown_fails and self._returns is not None:
+            # What `deploy_session`'s `finally` does when `destroy_confirmed`
+            # raises `TeardownError`: it logs, swallows, records that the pod
+            # may still exist, and returns normally. The CLI cannot tell the
+            # difference any other way.
+            session = EphemeralSession.current()
+            if session is not None:
+                session.mark_destroy_unconfirmed(self._returns.id)
         return (Artifact(uri="file:///out.mp4", sha256="ab", size=1), self._returns)
 
 
@@ -179,16 +191,32 @@ def _drive(
     window: _CreateWindow,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    ephemeral: bool = True,
+    session: str = "strict",
     no_reuse: bool = False,
 ) -> int:
-    """Run one ``kinoforge generate`` invocation against *window*."""
+    """Run one ``kinoforge generate`` invocation against *window*.
+
+    ``session`` picks the ambient :class:`EphemeralSession`: ``"strict"`` is
+    ``--ephemeral``, ``"default"`` is an ordinary run (``_main.py`` wraps EVERY
+    dispatch in a session, so this — not ``"none"`` — is the ordinary shape),
+    and ``"none"`` is a direct handler call with no session at all.
+    """
     _install(monkeypatch, window)
     ctx = _ctx_for(cfg_path, state_dir)
-    if not ephemeral:
+    if session == "none":
         return _cmd_generate(_make_args(no_reuse=no_reuse), ctx)
-    with EphemeralSession(enabled=True):
+    with EphemeralSession(enabled=session == "strict"):
         return _cmd_generate(_make_args(no_reuse=no_reuse), ctx)
+
+
+def _expected_row_id(window: _CreateWindow) -> str:
+    """The provider-side name the launch row must be keyed by.
+
+    Read off the session the run actually used, so a controller that reserves
+    one name and a provider that mints another cannot both pass.
+    """
+    assert window.session is not None
+    return window.session.resource_name(_RUN_ID, "local")
 
 
 # ---------------------------------------------------------------------------
@@ -220,9 +248,9 @@ def test_ephemeral_row_exists_before_create_returns(
         "about to book, and no endpoint for a monitor to poll"
     )
     row = window.read_at_entry[0]
-    assert row.id == _RUN_ID, (
-        "the pre-create row must be keyed by the client-side run id, which is "
-        f"what the provider names the resource with; got {row.id!r}"
+    assert row.id == _expected_row_id(window), (
+        "the pre-create row must be keyed by the name the provider will give "
+        f"the resource; got {row.id!r}"
     )
     cfg = _ctx_for(cfg_path, state_dir).cfg
     assert cfg is not None
@@ -243,11 +271,41 @@ def test_no_row_is_written_outside_an_ephemeral_session(
     cfg_path, state_dir = _write_cfg(tmp_path)
     window = _CreateWindow(cfg_path, state_dir, returns=_cold_instance())
 
-    rc = _drive(cfg_path, state_dir, window, monkeypatch, ephemeral=False)
+    rc = _drive(cfg_path, state_dir, window, monkeypatch, session="none")
 
     assert rc == 0
     assert window.read_at_entry == []
     assert _index_rows(cfg_path, state_dir) == []
+
+
+def test_no_launch_row_is_reserved_under_the_default_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An ordinary run must not reserve a launch row.
+
+    Bug caught: gating on ``EphemeralSession.current() is not None``, which is
+    true for EVERY run — ``_main.py`` wraps every dispatch in a session and
+    ``__enter__`` activates regardless of ``enabled``. An ordinary cold create
+    would then leave a launch row with empty endpoints that the matcher is
+    eligible to pick (it filters only on ``status != "degraded"``, and
+    ``to_entry_dict`` never sets ``status``) before the ledger's own
+    provisional row is guaranteed visible — a new race on a run shape that had
+    no such exposure. The correct gate is the one ``core/lifecycle.py`` already
+    uses for ledger writes: ``not session.policy.ledger_record``.
+    """
+    cfg_path, state_dir = _write_cfg(tmp_path)
+    window = _CreateWindow(cfg_path, state_dir, returns=_cold_instance())
+
+    rc = _drive(cfg_path, state_dir, window, monkeypatch, session="default")
+
+    assert rc == 0
+    assert window.session is not None, "the run must have had a session at all"
+    assert window.session.policy.ledger_record is True
+    assert window.read_at_entry == [], (
+        "an ordinary run reserved a launch row; the index is the "
+        "ephemeral-only discovery seam and the ledger is this run's durable "
+        "trace"
+    )
 
 
 def test_no_row_is_written_when_the_run_attaches_to_a_warm_pod(
@@ -393,11 +451,46 @@ def test_the_launch_row_is_dropped_when_no_reuse_destroys_the_pod(
     rc = _drive(cfg_path, state_dir, window, monkeypatch, no_reuse=True)
 
     assert rc == 0
-    assert [r.id for r in window.read_at_entry] == [_RUN_ID], (
+    assert [r.id for r in window.read_at_entry] == [_expected_row_id(window)], (
         "a one-shot run is the case most likely to be interrupted; it must "
         "still be nameable while it is in flight"
     )
     assert _index_rows(cfg_path, state_dir) == []
+
+
+def test_the_launch_row_survives_a_no_reuse_teardown_that_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Release on CONFIRMED destruction, not on the flag having been passed.
+
+    Bug caught: releasing whenever ``--no-reuse`` was set. ``deploy_session``'s
+    teardown runs in a ``finally`` that catches ``TeardownError``, logs "use
+    `kinoforge reap --apply` to recover" and never re-raises — the return tuple
+    is already fixed by then. So a FAILED teardown returns rc=0 and the CLI
+    deletes the last durable trace of a pod that is still billing, which is
+    exactly the window this task exists to close.
+
+    The surviving row must also be upgraded to the provider-side id and
+    endpoints, because that is what the operator now needs to reap it by hand.
+    """
+    cfg_path, state_dir = _write_cfg(tmp_path)
+    window = _CreateWindow(
+        cfg_path, state_dir, returns=_cold_instance(), teardown_fails=True
+    )
+
+    rc = _drive(cfg_path, state_dir, window, monkeypatch, no_reuse=True)
+
+    assert rc == 0
+    rows = _index_rows(cfg_path, state_dir)
+    assert [r.id for r in rows] == [_POD_ID], (
+        "the destroy was never confirmed, so the pod may still be billing — "
+        f"expected one row naming it, got {[r.id for r in rows]}"
+    )
+    assert rows[0].endpoints == _POD_ENDPOINTS
+    assert rows[0].created_at_local == window.read_at_entry[0].created_at_local, (
+        "the surviving row must keep the launch stamp, or its age reads as "
+        "the moment the teardown failed rather than the pod's real birth"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -424,7 +517,7 @@ def test_ephemeral_row_survives_a_create_that_raises(
         _drive(cfg_path, state_dir, window, monkeypatch)
 
     rows = _index_rows(cfg_path, state_dir)
-    assert [r.id for r in rows] == [_RUN_ID], (
+    assert [r.id for r in rows] == [_expected_row_id(window)], (
         f"expected the launch row to survive the raise, got {[r.id for r in rows]}"
     )
     assert rows[0].endpoints == {}

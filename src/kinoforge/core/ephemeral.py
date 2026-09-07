@@ -16,6 +16,8 @@ two with-blocks racing in different threads is not a supported pattern.
 
 from __future__ import annotations
 
+import secrets
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -76,6 +78,18 @@ STRICT_POLICY = EphemeralPolicy(
     pod_name_includes_alias=False,
     force_debug_show_secrets_off=True,
 )
+
+
+#: Provider-side name prefixes for the opaque ephemeral resource name. The
+#: shapes are the ones each provider minted for itself before spec A2 moved the
+#: mint controller-side, and they are load-bearing beyond cosmetics: Modal's
+#: opaque name IS the ``Instance.id``, and ``providers/modal`` derives the app
+#: name ``kinoforge-<name>`` from it, which ``probe_runtime`` matches on.
+_RESOURCE_NAME_PREFIXES: dict[str, str] = {
+    "modal": "eph-",
+    "runpod": "kinoforge-",
+}
+_RESOURCE_NAME_PREFIX_DEFAULT = "kinoforge-"
 
 
 EPHEMERAL_CAPABILITIES: dict[tuple[str, str | None], bool] = {
@@ -141,11 +155,100 @@ class EphemeralSession:
         self._registered_stores: list[tuple[ArtifactStore, str]] = []
         self._prev: EphemeralSession | None = None
         self._entered = False
+        # Spec A2 — one opaque token per launch, minted on first ask and
+        # shared by the controller (which writes the pre-create index row)
+        # and the provider (which names the resource). ConcurrentPool workers
+        # see the same session, so the memo is locked.
+        self._resource_tokens: dict[str, str] = {}
+        self._resource_lock = threading.Lock()
+        # Spec A2 — pods whose ``--no-reuse`` teardown did NOT confirm. The
+        # orchestrator swallows TeardownError by design; this is the only
+        # channel telling the CLI the pod may still be billing.
+        self._destroy_unconfirmed: set[str] = set()
 
     @classmethod
     def current(cls) -> EphemeralSession | None:
         """Return the active session for this process, or ``None``."""
         return cls._active
+
+    def resource_name(self, run_id: str, provider: str) -> str:
+        """Return the provider-side NAME this launch's resource will carry.
+
+        Spec A2. Under ``policy.pod_name_includes_alias`` (the default) the
+        name is simply ``run_id`` — every log line, teardown message, warm
+        attach key and ``cli/_reconcile._adopt_launching_row`` match already
+        names a resource by it.
+
+        Under ``--ephemeral``'s STRICT_POLICY the run id must never reach the
+        provider (it carries the subcommand and a local timestamp, and a
+        stopped Modal app lingers in ``modal app list`` forever), so the name
+        is an opaque random token. Both providers used to mint that token
+        themselves INSIDE ``create_instance``, which meant the name did not
+        exist until the create was already in flight — and the pre-create
+        index row, whose whole purpose is to be a handle on a resource that is
+        already billing, could not name it. Minting here instead lets the
+        controller reserve the row under the name the provider will use, while
+        preserving exactly what STRICT_POLICY guarantees: a random token with
+        no alias in it.
+
+        Minted once per ``run_id`` and memoised, so the controller and the
+        provider always agree; the prefix is applied per provider, so asking
+        on behalf of a second provider does not re-roll the token.
+
+        Args:
+            run_id: The client-side run id for this launch. An EMPTY run id is
+                never memoised — a shared name is not a handle, so each ask
+                gets a fresh token.
+            provider: Provider kind (``"modal"``, ``"runpod"``, ...). An
+                unknown provider gets the default prefix rather than raising:
+                adding a provider is a naming-cosmetics decision, not a crash
+                on the ephemeral path.
+
+        Returns:
+            The provider-side resource name.
+        """
+        if self.policy.pod_name_includes_alias:
+            return run_id
+        prefix = _RESOURCE_NAME_PREFIXES.get(provider, _RESOURCE_NAME_PREFIX_DEFAULT)
+        if not run_id:
+            return f"{prefix}{secrets.token_hex(4)}"
+        with self._resource_lock:
+            token = self._resource_tokens.get(run_id)
+            if token is None:
+                token = secrets.token_hex(4)
+                self._resource_tokens[run_id] = token
+        return f"{prefix}{token}"
+
+    def mark_destroy_unconfirmed(self, pod_id: str) -> None:
+        """Record that *pod_id*'s teardown did not confirm the resource is gone.
+
+        Spec A2. ``deploy_session``'s ``--no-reuse`` teardown catches
+        ``TeardownError``, logs "use ``kinoforge reap --apply`` to recover" and
+        returns normally — the return tuple is already fixed by then — so the
+        CLI cannot otherwise tell a clean teardown from a failed one and would
+        release the last durable trace of a live pod.
+
+        Args:
+            pod_id: The instance id whose destroy did not confirm.
+        """
+        self._destroy_unconfirmed.add(pod_id)
+
+    def destroy_was_confirmed(self, pod_id: str) -> bool:
+        """Return whether *pod_id* is known to be gone.
+
+        Optimistic by design: only a teardown that actually failed marks a pod,
+        so a pod nothing ever tried to destroy reads as confirmed. Callers use
+        this to decide whether it is safe to drop a durable record, and the
+        only unsafe direction is claiming a live pod is gone.
+
+        Args:
+            pod_id: The instance id to check.
+
+        Returns:
+            ``False`` only when :meth:`mark_destroy_unconfirmed` was called for
+            this id.
+        """
+        return pod_id not in self._destroy_unconfirmed
 
     def register_store(self, store: ArtifactStore, run_id: str) -> None:
         """Queue a (store, run_id) pair for cleanup on ``__exit__`` (Task 15)."""

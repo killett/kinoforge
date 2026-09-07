@@ -28,7 +28,6 @@ import base64
 import gzip
 import json
 import logging
-import secrets
 import sys
 import time
 import urllib.error
@@ -1059,11 +1058,20 @@ class RunPodProvider(ComputeProvider):
         # Under ephemeral mode, suppress the alias-laden run_id from the
         # provider-visible pod name and stamp ``kinoforge-ephemeral=true``
         # on the Instance tags. Default mode is unchanged.
+        #
+        # Spec A2 — the opaque token is minted by the SESSION, not here, so the
+        # controller can write the pre-create ephemeral-index row under the name
+        # RunPod will actually give the pod. That NAME is the only thing tying
+        # the row to what an operator sees in the console (RunPod returns its
+        # own id), and it is what ``cli/_reconcile._adopt_launching_row``
+        # matches ``tags["name"]`` against. ``resource_name`` returns
+        # ``spec.run_id`` unchanged under the default policy.
         _eph = EphemeralSession.current()
-        if _eph is not None and not _eph.policy.pod_name_includes_alias:
-            pod_name = f"kinoforge-{secrets.token_hex(4)}"
-        else:
-            pod_name = spec.run_id or "kinoforge-pod"
+        pod_name = (
+            _eph.resource_name(spec.run_id, self.name)
+            if _eph is not None
+            else spec.run_id
+        ) or "kinoforge-pod"
         body = self._build_create_pod_body(
             spec,
             gpu_type_id=gpu_type_id,
@@ -1381,11 +1389,13 @@ class RunPodProvider(ComputeProvider):
         Returns:
             Instance with ``status="ready"`` (serverless is ready immediately).
         """
+        # Spec A2 — session-minted opaque name; see ``_create_pod``.
         _eph = EphemeralSession.current()
-        if _eph is not None and not _eph.policy.pod_name_includes_alias:
-            endpoint_name = f"kinoforge-{secrets.token_hex(4)}"
-        else:
-            endpoint_name = spec.run_id or "kinoforge-serverless"
+        endpoint_name = (
+            _eph.resource_name(spec.run_id, self.name)
+            if _eph is not None
+            else spec.run_id
+        ) or "kinoforge-serverless"
         body: dict[str, Any] = {
             "query": _CREATE_SERVERLESS_MUTATION,
             "variables": {

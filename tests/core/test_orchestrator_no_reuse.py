@@ -10,6 +10,7 @@ import pytest
 import kinoforge.engines.fake  # noqa: F401
 import kinoforge.providers.local  # noqa: F401
 import kinoforge.sources.http  # noqa: F401
+from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import TeardownError
 from kinoforge.core.interfaces import Instance, InstanceSpec
 from kinoforge.core.lifecycle import Ledger
@@ -306,3 +307,71 @@ def test_single_false_default_does_not_destroy(tmp_path: Path) -> None:
     ):
         pass
     assert provider.destroyed_ids == []
+
+
+# ---------------------------------------------------------------------------
+# Spec A2 fix round 1: an unconfirmed destroy must be visible to the CLI.
+# ---------------------------------------------------------------------------
+
+
+def test_failed_no_reuse_destroy_is_recorded_on_the_ephemeral_session(
+    tmp_path: Path,
+) -> None:
+    """The swallowed ``TeardownError`` must leave a trace the caller can read.
+
+    Bug caught: the teardown logs "use `kinoforge reap --apply` to recover",
+    swallows the error and returns normally, and the return tuple is already
+    fixed by then — so ``_cmd_generate`` cannot tell a clean ``--no-reuse``
+    teardown from a failed one. It then releases the ephemeral index row, which
+    is the last durable trace of a pod that is still billing. The mark on the
+    session is the only channel between the two, and it must be set for exactly
+    the pod that survived.
+    """
+    cfg = _compute_cfg_hb(heartbeat_interval_s=30.0)
+    store = LocalArtifactStore(tmp_path)
+    engine = _make_engine()
+    _seed_profile_cache(store, cfg)
+    factory = _SpyFactory()
+    provider = _DestroyTrackingProvider(fail_destroy_with=TeardownError("transient"))
+
+    with EphemeralSession(enabled=True) as session:
+        with deploy_session(
+            cfg,
+            store=store,
+            provider=provider,
+            engine=engine,
+            heartbeat_loop_factory=factory,
+            single=True,
+        ):
+            pass
+        pod_id = provider.created[0].id
+        assert session.destroy_was_confirmed(pod_id) is False, (
+            f"the destroy of {pod_id} raised TeardownError and was swallowed, "
+            "but the session still reports it confirmed — the CLI will delete "
+            "the last record of a live pod"
+        )
+        assert session.destroy_was_confirmed("some-other-pod") is True
+
+
+def test_successful_no_reuse_destroy_leaves_the_session_clean(tmp_path: Path) -> None:
+    """Bug caught: marking every ``--no-reuse`` teardown unconfirmed, which
+    would keep an index row for a pod that is definitively gone and send the
+    next ``--ephemeral`` run's matcher at a corpse."""
+    cfg = _compute_cfg_hb(heartbeat_interval_s=30.0)
+    store = LocalArtifactStore(tmp_path)
+    engine = _make_engine()
+    _seed_profile_cache(store, cfg)
+    factory = _SpyFactory()
+    provider = _DestroyTrackingProvider()
+
+    with EphemeralSession(enabled=True) as session:
+        with deploy_session(
+            cfg,
+            store=store,
+            provider=provider,
+            engine=engine,
+            heartbeat_loop_factory=factory,
+            single=True,
+        ):
+            pass
+        assert session.destroy_was_confirmed(provider.created[0].id) is True

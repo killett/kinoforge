@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from types import FrameType
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, runtime_checkable
 
 import kinoforge._adapters  # noqa: F401 — triggers self-registrations
 from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
@@ -845,7 +845,7 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     # row, so it goes in BEFORE the orchestrator can commit money. A cold
     # create is all that books anything: a warm attach re-uses a pod that is
     # already indexed.
-    launch_stamp = (
+    launch = (
         _ephemeral_launch_row_reserve(ctx, cfg, run_id) if instance is None else None
     )
 
@@ -877,8 +877,8 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
             ctx,
             cfg,
             returned_instance,
-            created_at_local=launch_stamp,
-            supersedes=run_id,
+            created_at_local=launch.created_at_local if launch else None,
+            supersedes=launch.id if launch else None,
         )
         if emit_record_path is not None:
             _write_provision_record(
@@ -887,12 +887,11 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
                 warm_attach_key=cfg_wak,
             )
     else:
-        # Nothing survives this run — either --no-reuse tore the pod down or
-        # the path booked no compute at all — so the launch row would name a
-        # resource that no longer exists. Only reachable when the run RETURNED;
-        # a raise keeps the row (ruling C1).
-        if launch_stamp is not None:
-            _ephemeral_launch_row_release(ctx, run_id)
+        # Nothing is meant to survive this run — either --no-reuse tore the pod
+        # down or the path booked no compute at all. Only reachable when the
+        # run RETURNED; a raise keeps the row (ruling C1). The release itself
+        # is conditional on the destroy having been CONFIRMED.
+        _settle_unused_launch_row(ctx, cfg, launch, returned_instance)
 
     print(f"generated: uri={artifact.uri!r}")
     return 0
@@ -1007,7 +1006,7 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     # Spec A2 — same pre-create reservation as _cmd_generate; see
     # _ephemeral_launch_row_reserve.
-    launch_stamp = (
+    launch = (
         _ephemeral_launch_row_reserve(ctx, cfg, run_id) if instance is None else None
     )
 
@@ -1031,11 +1030,11 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
             ctx,
             cfg,
             returned_instance,
-            created_at_local=launch_stamp,
-            supersedes=run_id,
+            created_at_local=launch.created_at_local if launch else None,
+            supersedes=launch.id if launch else None,
         )
-    elif launch_stamp is not None:
-        _ephemeral_launch_row_release(ctx, run_id)
+    else:
+        _settle_unused_launch_row(ctx, cfg, launch, returned_instance)
 
     print(f"upscaled: uri={artifact.uri!r}")
     return 0
@@ -1122,7 +1121,7 @@ def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     # Spec A2 — same pre-create reservation as _cmd_generate; see
     # _ephemeral_launch_row_reserve.
-    launch_stamp = (
+    launch = (
         _ephemeral_launch_row_reserve(ctx, cfg, run_id) if instance is None else None
     )
 
@@ -1148,11 +1147,11 @@ def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
             ctx,
             cfg,
             returned_instance,
-            created_at_local=launch_stamp,
-            supersedes=run_id,
+            created_at_local=launch.created_at_local if launch else None,
+            supersedes=launch.id if launch else None,
         )
-    elif launch_stamp is not None:
-        _ephemeral_launch_row_release(ctx, run_id)
+    else:
+        _settle_unused_launch_row(ctx, cfg, launch, returned_instance)
     print(f"interpolated: uri={artifact.uri!r}")
     return 0
 
@@ -1868,10 +1867,46 @@ def _cfg_warm_attach_key(cfg: Config) -> str:
     ).derive()
 
 
+class _LaunchRow(NamedTuple):
+    """The pre-create ephemeral index row this invocation reserved.
+
+    Attributes:
+        id: The provider-side resource NAME the row is keyed by — the same
+            string the provider will give the resource, reserved from the
+            session before the create (see
+            :meth:`~kinoforge.core.ephemeral.EphemeralSession.resource_name`).
+        created_at_local: The launch stamp, carried onto whatever row
+            eventually replaces this one so age is measured from the launch.
+    """
+
+    id: str
+    created_at_local: str
+
+
+def _ephemeral_strict_session() -> EphemeralSession | None:
+    """Return the active session, but only when it suppresses ledger writes.
+
+    ``EphemeralSession.current()`` is NOT the right gate for an index write:
+    ``cli/_main`` wraps EVERY dispatch in a session and ``__enter__`` activates
+    regardless of ``enabled``, so that test is true on ordinary runs too. The
+    ephemeral index is the discovery seam for runs that have no ledger row, and
+    the condition for that is ``policy.ledger_record`` being off — the same
+    gate ``core/lifecycle.py`` uses to decide whether a ledger write goes to
+    disk or to ``session.in_memory_ledger``.
+
+    Returns:
+        The active session when it is ledger-suppressing, else ``None``.
+    """
+    session = EphemeralSession.current()
+    if session is None or session.policy.ledger_record:
+        return None
+    return session
+
+
 def _ephemeral_launch_row_reserve(
     ctx: SessionContext, cfg: Config, run_id: str
-) -> str | None:
-    """Write the PRE-create ephemeral index row and return its launch stamp.
+) -> _LaunchRow | None:
+    """Write the PRE-create ephemeral index row and return what it holds.
 
     Spec A2 (2026-09-06). An ``--ephemeral`` run deliberately writes no
     durable ledger row, so the ephemeral index is its ONLY durable trace.
@@ -1882,17 +1917,22 @@ def _ephemeral_launch_row_reserve(
     endpoint because the endpoint had not been written down. A run launched
     02:01:23 produced a row stamped 02:02:41.
 
-    The row is keyed by the CLIENT-side ``run_id``, which is the only id that
-    exists before ``create_instance`` returns, and which is what the provider
-    names the resource with (the pod NAME on RunPod, the app run id on Modal)
-    — the same key
-    :func:`~kinoforge.core.orchestrator._record_provisional_row` uses for the
-    ledger's pre-launch row. :func:`_ephemeral_index_add` later replaces it
-    with a row keyed by the provider-side id, carrying this stamp forward.
+    The row is keyed by the provider-side resource NAME, reserved from the
+    session via
+    :meth:`~kinoforge.core.ephemeral.EphemeralSession.resource_name`. That is
+    NOT the ``run_id``: under STRICT_POLICY (which ``--ephemeral`` always
+    binds) ``pod_name_includes_alias`` is off, and the run id is discarded —
+    both providers name the resource with an opaque token instead. Keying the
+    row on the run id would therefore name nothing at all: ``kinoforge destroy
+    --id`` would miss it, it would be absent from the provider console, and
+    ``reaper_actor``'s probe would report "not found" indistinguishably from a
+    dead phantom. Reserving the name here is what makes the row a handle.
+    :func:`_ephemeral_index_add` later replaces it with a row keyed by the
+    provider-side id, carrying this stamp forward.
 
-    No-op when no ``EphemeralSession`` is active (the index is the
-    ephemeral-mode structure; an ordinary run's durable trace is the ledger)
-    or when the cfg has no ``compute`` block (a hosted engine books no pod).
+    No-op when the run is not ledger-suppressing (see
+    :func:`_ephemeral_strict_session`) or when the cfg has no ``compute``
+    block (a hosted engine books no pod).
 
     Never raises: bookkeeping must not fail a run that would otherwise
     succeed. A fault forfeits the protection for this run only, and is
@@ -1904,70 +1944,130 @@ def _ephemeral_launch_row_reserve(
         run_id: The client-side run id for this launch.
 
     Returns:
-        The ISO-format local-TZ launch stamp written onto the row, to be
-        handed back to :func:`_ephemeral_index_add` /
-        :func:`_stamp_cold_created_instance`; ``None`` when nothing was
-        written.
+        The reserved :class:`_LaunchRow`, or ``None`` when nothing was written.
     """
     from kinoforge.core.warm_reuse.ephemeral_index import (
         EphemeralIndex,
         EphemeralIndexRow,
     )
 
-    if EphemeralSession.current() is None or cfg.compute is None or not run_id:
-        return None
-    stamp = datetime.now().isoformat()
-    try:
-        EphemeralIndex(store=ctx.store()).add(
-            EphemeralIndexRow(
-                id=run_id,
-                warm_attach_key=_cfg_warm_attach_key(cfg),
-                kinoforge_key=cfg.capability_key().derive()[:12],
-                # Nothing is knowable here: the provider has not been called,
-                # so there is no proxy URL to record. The post-create update
-                # fills these in.
-                endpoints={},
-                provider=cfg.compute.provider,
-                created_at_local=stamp,
+    session = EphemeralSession.current()
+    if (
+        session is not None
+        and not session.policy.ledger_record
+        and cfg.compute is not None
+        and run_id
+    ):
+        row_id = session.resource_name(run_id, cfg.compute.provider)
+        stamp = datetime.now().isoformat()
+        try:
+            EphemeralIndex(store=ctx.store()).add(
+                EphemeralIndexRow(
+                    id=row_id,
+                    warm_attach_key=_cfg_warm_attach_key(cfg),
+                    kinoforge_key=cfg.capability_key().derive()[:12],
+                    # Nothing is knowable here: the provider has not been
+                    # called, so there is no proxy URL to record. The
+                    # post-create update fills these in.
+                    endpoints={},
+                    provider=cfg.compute.provider,
+                    created_at_local=stamp,
+                )
             )
-        )
-    except Exception:  # noqa: BLE001 — index fault must not block a launch
-        logger.warning(
-            "ephemeral index: pre-create row for %r failed; this run has no "
-            "durable name until it completes",
-            run_id,
-            exc_info=True,
-        )
-        return None
-    return stamp
+        except Exception:  # noqa: BLE001 — index fault must not block a launch
+            logger.warning(
+                "ephemeral index: pre-create row for %r failed; this run has "
+                "no durable name until it completes",
+                row_id,
+                exc_info=True,
+            )
+            return None
+        return _LaunchRow(id=row_id, created_at_local=stamp)
+    return None
 
 
-def _ephemeral_launch_row_release(ctx: SessionContext, run_id: str | None) -> None:
+def _ephemeral_launch_row_release(ctx: SessionContext, row_id: str | None) -> None:
     """Drop a pre-create launch row for a run that leaves no pod behind.
 
-    Called ONLY on paths that prove no pod survives this run: ``--no-reuse``
-    (the orchestrator destroyed it) and a hosted/compute-less run that
-    returned no instance at all. A raise is NOT one of those paths — ruling
-    C1 keeps the row for the classifier to age out, because a raise is not
-    evidence the provider booked nothing.
+    Called ONLY where no resource survives: a run that returned no instance at
+    all, or a ``--no-reuse`` teardown whose destroy was CONFIRMED. A raise is
+    not one of those (ruling C1 keeps the row for the classifier to age out),
+    and neither is ``--no-reuse`` on its own — ``deploy_session``'s teardown
+    swallows ``TeardownError`` and returns normally, so the flag having been
+    passed is not evidence the pod is gone. See
+    :func:`_settle_unused_launch_row`.
 
     Args:
         ctx: The current SessionContext (carries the ArtifactStore).
-        run_id: The launch row id to drop; ``None`` is a no-op.
+        row_id: The launch row id to drop; ``None`` is a no-op.
     """
     from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
 
-    if run_id is None:
+    if row_id is None:
         return
     try:
-        EphemeralIndex(store=ctx.store()).remove(run_id)
+        EphemeralIndex(store=ctx.store()).remove(row_id)
     except Exception:  # noqa: BLE001 — a stale row is reaped by the sweeper
         logger.warning(
             "ephemeral index: could not drop the launch row %r; the sweeper "
             "will age it out",
-            run_id,
+            row_id,
             exc_info=True,
         )
+
+
+def _settle_unused_launch_row(
+    ctx: SessionContext,
+    cfg: Config,
+    launch: _LaunchRow | None,
+    returned_instance: Instance | None,
+) -> None:
+    """Resolve the launch row on a path where no pod is meant to survive.
+
+    Reached when the run finished but nothing will be warm-reused: either it
+    booked no compute at all, or ``--no-reuse`` tore the pod down. The row is
+    released ONLY when that is actually true.
+
+    ``deploy_session``'s ``--no-reuse`` teardown runs inside a ``finally`` that
+    catches ``TeardownError``, logs "use ``kinoforge reap --apply`` to recover"
+    and never re-raises, with the return tuple already fixed — so a FAILED
+    teardown returns rc=0 and looks exactly like a clean one from here.
+    Releasing on the flag alone would delete the last durable trace of a pod
+    that is still billing, which is the window this whole change exists to
+    close. The orchestrator marks such a pod on the session
+    (``mark_destroy_unconfirmed``); an unconfirmed destroy upgrades the row to
+    the real instance id and endpoints instead, because that is what the
+    operator now needs to reap it by hand.
+
+    Args:
+        ctx: The current SessionContext.
+        cfg: Loaded config for this run.
+        launch: The reserved launch row, or ``None`` when none was reserved.
+        returned_instance: What the orchestrator returned, or ``None``.
+    """
+    if launch is None:
+        return
+    session = _ephemeral_strict_session()
+    if (
+        returned_instance is not None
+        and session is not None
+        and not session.destroy_was_confirmed(returned_instance.id)
+    ):
+        _ephemeral_index_add(
+            ctx,
+            cfg,
+            returned_instance,
+            created_at_local=launch.created_at_local,
+            supersedes=launch.id,
+        )
+        logger.warning(
+            "ephemeral index: keeping a row for %s — its teardown never "
+            "confirmed, so it may still be billing. Run `kinoforge reap "
+            "--apply` to recover.",
+            returned_instance.id,
+        )
+        return
+    _ephemeral_launch_row_release(ctx, launch.id)
 
 
 def _ephemeral_index_add(
