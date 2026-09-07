@@ -2790,15 +2790,22 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
 def _cfg_want_stages(cfg: Config) -> tuple[str, ...]:
     """Return pipeline stages this cfg will exercise on the pod.
 
-    Mirrors :meth:`Config.capability_key` stages derivation: pure-t2v
-    cfgs return ``()`` (no preflight refinement needed; the cap_key
-    pre-filter already gates on pipeline identity); upscale-attached
-    cfgs return ``("t2v", "upscale")``. Drives the matcher's
-    /health-aware refusal of half-failed pods.
+    Delegates to :meth:`Config.capability_key`'s own stages derivation
+    rather than re-deriving it: pure-t2v cfgs yield ``()`` (no preflight
+    refinement needed; the cap_key pre-filter already gates on pipeline
+    identity), generate-plus-upscale cfgs yield ``("t2v", "upscale")``,
+    and ``upscale_only`` cfgs yield ``("upscale",)``. Drives the
+    matcher's /health-aware refusal of half-failed pods.
+
+    U14: this used to re-derive the tuple locally as ``("t2v",
+    "upscale")`` for *any* cfg carrying an upscale block, which disagreed
+    with the key for ``upscale_only`` cfgs. Such a pod never loads a Wan
+    pipeline, so its /health honestly reports ``["upload", "upscale"]``,
+    the subset check failed, and an idle $2.50/hr A100 was rejected with
+    ``stage-mismatch`` while a duplicate was cold-booted beside it. The
+    two derivations gate the same match, so only one of them may exist.
     """
-    if getattr(cfg, "upscale", None) is not None:
-        return ("t2v", "upscale")
-    return ()
+    return tuple(cfg.capability_key().stages)
 
 
 def _health_preflight_ok(

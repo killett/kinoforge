@@ -164,3 +164,41 @@ class TestCfgWantStages:
             }
         )
         assert _cfg_want_stages(cfg) == ("t2v", "upscale")
+
+    def test_upscale_only_cfg_requires_only_the_upscale_stage(self) -> None:
+        # Bug caught (U14): the helper demanded "t2v" from ANY cfg carrying
+        # an upscale block, including one whose engine declares
+        # `upscale_only: true` and lists no base model. Such a pod never
+        # loads a Wan pipeline, so its /health advertises
+        # ["upload", "upscale"] and the subset check fails — the matcher
+        # refuses an idle A100 with `stage-mismatch` and cold-boots a
+        # duplicate at $2.50/hr. `capability_key()` already derives
+        # stages=("upscale",) for this exact cfg, so the two disagreed.
+        from kinoforge.cli._commands import _cfg_want_stages
+        from kinoforge.core.config import Config
+
+        cfg = Config.model_validate(
+            {
+                "engine": {
+                    "kind": "diffusers",
+                    "precision": "bfloat16",
+                    "diffusers": {
+                        "image": "python:3.13-slim",
+                        "upscale_only": True,
+                    },
+                },
+                "models": [],
+                "compute": {"provider": "modal", "image": "python:3.13-slim"},
+                "upscale": {
+                    "engine": "flashvsr",
+                    "scale": "4x",
+                    "flashvsr": {
+                        "weights_bundle": "hf:JunhaoZhuang/FlashVSR-v1.1",
+                        "precision": "bfloat16",
+                    },
+                },
+            }
+        )
+        assert _cfg_want_stages(cfg) == ("upscale",)
+        # And it must not drift from the key that gates the same match.
+        assert _cfg_want_stages(cfg) == cfg.capability_key().stages

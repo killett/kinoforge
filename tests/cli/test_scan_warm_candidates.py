@@ -73,6 +73,11 @@ class _FakeCfg:
         cap_hash = self._cap_hash
 
         class _CapKey:
+            # Mirrors the real CapabilityKey: `_cfg_want_stages` reads
+            # `.stages` off it, and a double without the field would make
+            # the /health stage gate untestable here.
+            stages: tuple[str, ...] = ()
+
             def derive(self) -> str:
                 return cap_hash
 
@@ -525,3 +530,149 @@ def test_probe_lock_held_returns_False_when_unheld(tmp_path: Any) -> None:
     """Bug: probe returning True on unheld lock would skip every candidate."""
     store = LocalArtifactStore(tmp_path)
     assert _probe_lock_held(store, "test-key") is False
+
+
+# ---------------------------------------------------------------------------
+# T14 /health stage gate — U14 regression
+# ---------------------------------------------------------------------------
+
+
+def _upscale_only_cfg() -> Any:
+    """A real Config shaped like modal-diffusers-flashvsr-*-upscale.yaml."""
+    from kinoforge.core.config import Config
+
+    return Config.model_validate(
+        {
+            "engine": {
+                "kind": "diffusers",
+                "precision": "bfloat16",
+                "diffusers": {"image": "python:3.13-slim", "upscale_only": True},
+            },
+            "models": [],
+            "compute": {
+                "provider": "modal",
+                "image": "python:3.13-slim",
+                "lifecycle": {"heartbeat_interval_s": 30, "budget": 2.0},
+            },
+            "upscale": {
+                "engine": "flashvsr",
+                "scale": "4x",
+                "flashvsr": {
+                    "weights_bundle": "hf:JunhaoZhuang/FlashVSR-v1.1",
+                    "precision": "bfloat16",
+                },
+            },
+        }
+    )
+
+
+def _t2v_plus_upscale_cfg() -> Any:
+    """A real Config that genuinely needs BOTH stages on the pod."""
+    from kinoforge.core.config import Config
+
+    return Config.model_validate(
+        {
+            "engine": {
+                "kind": "diffusers",
+                "precision": "bfloat16",
+                "diffusers": {"image": "python:3.13-slim"},
+            },
+            "models": [
+                {
+                    "kind": "base",
+                    "ref": "hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers",
+                    "target": "diffusion_models",
+                }
+            ],
+            "compute": {
+                "provider": "modal",
+                "image": "python:3.13-slim",
+                "lifecycle": {"heartbeat_interval_s": 30, "budget": 2.0},
+            },
+            "upscale": {
+                "engine": "flashvsr",
+                "scale": "4x",
+                "flashvsr": {
+                    "weights_bundle": "hf:JunhaoZhuang/FlashVSR-v1.1",
+                    "precision": "bfloat16",
+                },
+            },
+        }
+    )
+
+
+def _seed_live_upscale_pod(ctx: Any, cfg: Any) -> str:
+    """Seed a LIVE ledger row for a warm pod matching ``cfg``'s key."""
+    eid = "pod-1"
+    entry = _make_entry(
+        eid=eid,
+        provider="modal",
+        cap_key=cfg.capability_key().derive()[:12],
+    )
+    entry["endpoints"] = {"8000": "https://pod-1.example.invalid"}
+    fake = cast(_FakeCtx, ctx)
+    fake.seed(entry)
+    # _resolve_warm_instance re-reads the row by id; the shared fake's
+    # ledger is a MagicMock whose default read() would shadow the seed.
+    fake.ledger().read = lambda iid: entry if iid == eid else None
+    return eid
+
+
+def test_upscale_only_cfg_attaches_to_pod_advertising_only_upscale(
+    tmp_path: Any,
+    patched_registry: dict[str, Any],
+    fixed_clock: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U14: an upscale-only cfg must attach to an upscale-only pod.
+
+    Bug caught: ``_cfg_want_stages`` demanded ``("t2v", "upscale")`` from
+    every cfg carrying an upscale block, so a pod booted from an
+    ``upscale_only: true`` cfg — whose /health legitimately advertises
+    ``["upload", "upscale"]`` because no Wan pipeline is ever loaded — was
+    rejected with ``stage-mismatch`` and a second $2.50/hr A100 was
+    cold-booted beside the idle one. Observed live 2026-09-07:
+    ``warm-reuse: scanned 1, 0 attachable (reasons: 1 stage-mismatch)``.
+    """
+    ctx = _make_ctx(tmp_path)
+    cfg = _upscale_only_cfg()
+    eid = _seed_live_upscale_pod(ctx, cfg)
+    monkeypatch.setattr(
+        "kinoforge.cli._commands._http_get_json",
+        lambda url: {"capabilities": ["upload", "upscale"]},
+    )
+
+    instance, report = _scan_warm_candidates(ctx, cfg)
+
+    assert report.skipped == []
+    assert report.attached == eid
+    assert instance is not None
+    assert instance.id == eid
+
+
+def test_t2v_plus_upscale_cfg_still_refuses_an_upscale_only_pod(
+    tmp_path: Any,
+    patched_registry: dict[str, Any],
+    fixed_clock: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate must survive the U14 fix, not be deleted by it.
+
+    Bug caught: relaxing ``_cfg_want_stages`` to ``("upscale",)`` for
+    every upscale cfg would let a cfg that really does run t2v attach to
+    a pod with no Wan pipeline loaded, and the generate stage would fail
+    on the pod after the attach instead of cold-booting a correct one.
+    """
+    ctx = _make_ctx(tmp_path)
+    cfg = _t2v_plus_upscale_cfg()
+    eid = _seed_live_upscale_pod(ctx, cfg)
+    monkeypatch.setattr(
+        "kinoforge.cli._commands._http_get_json",
+        lambda url: {"capabilities": ["upload", "upscale"]},
+    )
+
+    instance, report = _scan_warm_candidates(ctx, cfg)
+
+    assert instance is None
+    assert report.attached is None
+    assert report.skipped == [(eid, "stage-mismatch")]
