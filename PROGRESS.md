@@ -447,7 +447,7 @@ Found by the Modal command-matrix campaign (plan
 `docs/superpowers/plans/2026-09-05-modal-command-matrix.md`, results
 `docs/modal-command-matrix.md`). Operator directive 2026-09-06: big issues land HERE as urgent
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
-suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offline (`8191bd1b`) and awaits a live Modal re-run, U4 is fixed (`c08c3cce`), U10 is fixed (`7d535503`, the interval-reporting half of it excepted), U5 is half-fixed (help text corrected in `c08c3cce`, wiring still open), and **U12 is CLOSED** — the `av<18` pin landed in `82ad084b` and was proven live on Modal at 1920x1920 and 1080x1080 with clean frame QA for $0.64. RunPod and SkyPilot carry the same one-line pin (their goldens moved in that commit) but were **not** re-run, so they are inferred-safe, not demonstrated-safe. **U15 is fixed offline (`ccd4c5e7`) and awaits a live Modal re-run of T2-02** — `--attach-pod` now merges the ledger's `endpoints` alongside its `tags`, so a healthy pod whose endpoint only the ledger holds attaches instead of being refused; until U14 is fixed too, the matcher still cold-boots a duplicate, so the escape hatch works but the automatic path does not. Every other item is untouched.**
+suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offline (`8191bd1b`) and awaits a live Modal re-run, U4 is fixed (`c08c3cce`), U10 is fixed (`7d535503`, the interval-reporting half of it excepted), U5 is half-fixed (help text corrected in `c08c3cce`, wiring still open), and **U12 is CLOSED** — the `av<18` pin landed in `82ad084b` and was proven live on Modal at 1920x1920 and 1080x1080 with clean frame QA for $0.64. RunPod and SkyPilot carry the same one-line pin (their goldens moved in that commit) but were **not** re-run, so they are inferred-safe, not demonstrated-safe. **U15 is fixed offline (`ccd4c5e7`) and awaits a live Modal re-run of T2-02** — `--attach-pod` now merges the ledger's `endpoints` alongside its `tags`, so a healthy pod whose endpoint only the ledger holds attaches instead of being refused; at the time that was written U14 still cold-booted a duplicate, so the escape hatch worked but the automatic path did not — **U14 is now fixed and live-proven too (`49394b1d`, 2026-09-07); both halves of the upscale warm-reuse path work.** Every other item is untouched.**
 
 **Status update 2026-09-07 (Task 5 — live proof of the four money-leak fixes on Modal A10, total
 spend ~$0.16 of a ~$0.60 budget).** **U15 HELD** (a fresh process attached to a warm pod, no cold
@@ -1044,31 +1044,64 @@ per-item entries below.
   or scripted use hangs until an outer timeout fires. It also makes the failure *look* like the
   money leak it is not, which costs the operator a panic and a manual `modal app list` every time.
 
-- **U14 — warm-attach cold-booted a second $2.50/hr A100 while an idle pod with the identical
-  capability key was live.**
-  **Symptom:** with `upscale-20260906-023846` (A100-80GB) up and idle at 0% GPU, a second upscale
-  resolving to the **same capability key `7afe34198cc9`** did not attach — it deployed a fresh app
-  `upscale-20260906-025335`, so two A100s billed concurrently.
-  **Reproduced verbatim 2026-09-06 (post-`av<18` re-run):** with `upscale-20260906-093919` warm and
-  idle at 0% GPU, the same VSR1080 command again cold-booted a second app,
-  `upscale-20260906-100335` (`✓ App deployed in 1.700s` — fast only because the image was cached).
-  Two passes, two duplicate A100s: this is a deterministic matcher defect, not a race.
-  **Reproducer (live, T2-03):** leave a pod up from
-  `kinoforge upscale -c examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml --video <fix>`
-  (no `--no-reuse`), then run
-  `pixi run -e live-modal kinoforge upscale
-  --config examples/configs/modal-diffusers-flashvsr-1080p-upscale.yaml --video <fix>`
-  — the run log shows the same key and a fresh `✓ App deployed`.
-  **Suspected site:** `find_warm_attach_candidate`
-  (`src/kinoforge/core/warm_reuse/matcher.py`) and the `EphemeralIndex` lookups it consults. The
-  two cfgs differ only in `upscale.scale` (`4x` vs `1080p`), which the key does not distinguish,
-  so key equality was **not** the discriminator — whatever rejected the candidate sits past the
-  key comparison, and nothing in the output says what it was.
-  **Why urgent:** this is F1/U1's failure mode inverted — the matcher is provider-blind *and*
-  unreliable at recognising its own live pods — and on A100-class hardware a silent miss doubles
-  the burn rate with no warning. It is also **undiagnosable without spending again**: the match
-  site logs no reject reason, so establishing why costs another cold boot. Logging the reason is
-  the cheap first fix, ahead of the matcher change itself.
+- **U14 — FIXED in `49394b1d`, LIVE-PROVEN on Modal 2026-09-07 — warm-attach cold-booted a
+  second $2.50/hr A100 while an idle pod with the identical capability key was live.**
+  **Symptom (as filed):** with `upscale-20260906-023846` (A100-80GB) up and idle at 0% GPU, a
+  second upscale resolving to the **same capability key `7afe34198cc9`** did not attach — it
+  deployed a fresh app `upscale-20260906-025335`, so two A100s billed concurrently. Reproduced
+  verbatim on the post-`av<18` re-run (`upscale-20260906-093919` warm, `upscale-20260906-100335`
+  cold-booted beside it): two passes, two duplicate A100s, a deterministic matcher defect.
+  **The suspected site was wrong, and Task 0 is what showed it.** The filed hypothesis pointed at
+  `find_warm_attach_candidate` (`core/warm_reuse/matcher.py`) and the `EphemeralIndex` lookups —
+  neither is on the `kinoforge upscale` path at all. With Task 0's reason-reporting in place
+  (`e0759f9f`, `1c2c4795`) the diagnosis cost one log line instead of an investigation. Captured
+  live 2026-09-07 00:56:11 with `upscale-20260907-004328` warm and idle at 0% GPU, verbatim:
+
+      warm-reuse: scanned 1, 0 attachable (reasons: 1 stage-mismatch) — cold create
+
+  and that same pod's `/health`, read seconds later:
+
+      {"ready":true,"model":"Wan-AI/Wan2.2-T2V-A14B-Diffusers",
+       "models":[{"name":"flashvsr-wan21-bfloat16","on_device":"cuda","ready":true}],
+       "capabilities":["upload","upscale"]}
+
+  **Real cause — two derivations of the same thing, disagreeing.** The T14 `/health` pre-flight in
+  `_scan_warm_candidates` (`cli/_commands.py`) asks `_cfg_want_stages(cfg)` what the pod must be
+  able to do, then refuses any candidate whose advertised `capabilities` is not a superset.
+  `_cfg_want_stages` re-derived that tuple locally as `("t2v", "upscale")` for **any** cfg carrying
+  an `upscale:` block — while `Config.capability_key()` derives `("upscale",)` for the same cfg when
+  `engine.diffusers.upscale_only` is set. Both FlashVSR cfgs are `upscale_only: true` with
+  `models: []`, so the pod deliberately never loads a Wan pipeline and its `/health` honestly reports
+  no `t2v`. The subset check therefore could never pass: **an upscale-only Modal pod was structurally
+  unattachable by its own cfg**, on the first attempt and every attempt after. `upscale.scale`
+  (`4x` vs `1080p`) was never involved — the same miss happens with two copies of one cfg.
+  **Fix (`49394b1d`):** `_cfg_want_stages` now delegates to `cfg.capability_key().stages` instead of
+  re-deriving it, so the two cannot drift again — its docstring had claimed to mirror that derivation
+  since it was written. The gate itself is unchanged: a cfg that really does run t2v still refuses a
+  pod with no Wan pipeline loaded. Red/green in `tests/test_warm_matcher_health_preflight.py` (the
+  `_cfg_want_stages` unit case) and `tests/cli/test_scan_warm_candidates.py` (a scan-level pair: the
+  upscale-only cfg must attach to a pod advertising `["upload","upscale"]`, and a t2v+upscale cfg
+  must still be refused with `stage-mismatch` so the fix cannot be "delete the gate"). 2 RED → GREEN;
+  `tests/cli` + `tests/core` + `tests/integration` 547 passed, `tests/core` + `tests/engines`
+  2506 passed.
+  **Live proof 2026-09-07 (Modal A100-80GB, pod alive 01:13:23–01:16:20 = 3.0 min, $0.12).**
+  `kinoforge upscale -c …flashvsr-x4-upscale.yaml` cold-booted `upscale-20260907-011323` and
+  published a 1920×1920/77f clip; the second command, `…flashvsr-1080p-upscale.yaml` against the same
+  fixture from a fresh process, logged **`warm-reuse: attached to upscale-20260907-011323`**, exited
+  0, and published a 1080×1080 clip — with **zero `✓ App deployed` and zero `✓ Created objects`
+  lines in its log** (grep count 0). GPU read 100% mid-attach, on the one pod. One A100 did both
+  runs; before the fix this was two. Frame QA **PASS** on both outputs (backlit alpine meadow +
+  waterfall, natural colour, temporally coherent, no false colour). Teardown proven from a new
+  process: `kinoforge list` printed both required lines and `modal app list` showed no non-stopped
+  `kinoforge-*` app.
+  **Cost of the whole task: $0.66** — $0.54 to reproduce and diagnose (the reproducer's second run
+  was killed the instant it logged the reason, so no duplicate A100 was ever booked; most of that
+  $0.54 was avoidable idle time while the first pod sat warm) and $0.12 for the live re-proof.
+  **Residual, deliberately not fixed here:** a pod that has booted but never yet run an upscale
+  advertises only `["upload"]` (the FlashVSR runtime registers into `_LOADED` on first use), so it
+  is still refused with `stage-mismatch`. That is the conservative-on-ignorance behaviour the gate
+  was written for, and it costs nothing in the observed flow — the pod that a warm scan finds has
+  by definition already completed a run. Worth revisiting only if a boot-then-attach pattern appears.
 
 - **U15 — FIXED in `ccd4c5e7`, LIVE-PROVEN on Modal 2026-09-07 —
   `--attach-pod` cannot attach to a healthy pod whose endpoint the ledger is holding.**
@@ -1287,16 +1320,19 @@ ACTION ITEMS section above.
 - **Does not work:** `deploy` and `provision` (U6/U7 — the second leaked $0.13 on a pod no
   kinoforge command could see), a pod's endpoint URL from any fresh process (U3), automatic reaping
   of ephemeral pods (U9), `grid --ephemeral` (U11), `--vault` prompts (U5), the warm-attach matcher
-  (U1/U14 — U14 reproduced verbatim on 2026-09-06, putting two $2.50/hr A100s on the clock in both
-  passes), ~~`--attach-pod` on a healthy pod whose endpoint the ledger holds~~ (**U15 — fixed offline in `ccd4c5e7`, live proof still owed**),
+  (U1/~~U14~~ — U14 reproduced verbatim on 2026-09-06, putting two $2.50/hr A100s on the clock in
+  both passes; **fixed and live-proven 2026-09-07 in `49394b1d`**), ~~`--attach-pod` on a healthy pod whose endpoint the ledger holds~~ (**U15 — fixed offline in `ccd4c5e7`, live proof still owed**),
   `batch --dry-run-swap`'s manifest (U2), ephemeral index timing (U8), and CLI exit after
   `UpscaleFailed` (U13 — now known to be failure-path only; both post-fix upscales exited cleanly).
-- **Warm reuse on the upscale path is currently impossible.** U14 makes the matcher cold-boot a
-  duplicate A100, and U15 makes the explicit `--attach-pod` override refuse. Together they mean
-  every upscale pays a fresh boot. That pair is the highest-value next fix.
-  **Half of it is now fixed offline:** `ccd4c5e7` makes `--attach-pod` merge the ledger's
-  `endpoints`, so the explicit escape hatch should work — **offline-proven only; no live Modal run
-  has attached yet**. U14 (the matcher) is untouched, so the automatic path still cold-boots.
+- **~~Warm reuse on the upscale path is currently impossible.~~ Fixed 2026-09-07.** As found:
+  U14 made the matcher cold-boot a duplicate A100, and U15 made the explicit `--attach-pod`
+  override refuse. Together they meant every upscale paid a fresh boot — the highest-value fix
+  on the list, and both halves have now landed.
+  **Both halves are now fixed and live-proven.** `ccd4c5e7` makes `--attach-pod` merge the ledger's
+  `endpoints` (live-proven 2026-09-07, U15), and `49394b1d` makes the automatic matcher's `/health`
+  stage gate derive its required stages from the capability key, so an upscale-only pod is no longer
+  structurally unattachable (live-proven 2026-09-07, U14 — a second upscale attached to the warm
+  A100 with no `✓ App deployed`). Warm reuse on the upscale path works.
 - **Fixed in-session, red/green:** `c9d9b284` (doctor), `3c7822b8` (reap --format json),
   `c08c3cce` (logs provider guard + vault help text), `7d535503` (sweeper stop now removes its own
   ledger row), `82ad084b` (`av<18` pin).
