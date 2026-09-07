@@ -613,9 +613,9 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   item **U17**. The stated pre-fix recovery ("required a raw `modal app stop`") is therefore still
   the recovery for a mid-create kill, by app id rather than by name.
 
-- **U8 — FIXED on Modal, PARTIAL on RunPod, in `9d34d008` + `8403a71c` (offline; a live Modal
-  re-run still owes the proof; the RunPod residual is filed as U16) — an
-  `--ephemeral` run is invisible to every state file until it has already finished.**
+- **U8 — FIXED on Modal (LIVE-PROVEN 2026-09-07), PARTIAL on RunPod, in `9d34d008` + `8403a71c`
+  — the RunPod half stays PARTIAL and is filed as U16; the Modal proof below does NOT upgrade it —
+  an `--ephemeral` run is invisible to every state file until it has already finished.**
   `_stamp_cold_created_instance` calls `_ephemeral_index_add` (`src/kinoforge/cli/_commands.py:583`)
   only after the orchestrator returns, so the ephemeral index row is written at *completion*, not
   before `create_instance`. `--ephemeral` writes no ledger row at all by design, so for the whole
@@ -681,10 +681,33 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   `kinoforge destroy --id` and the sweeper's probe still reports "not found". That residual, and
   the related `run_id`-keyed ledger pre-launch row, are filed as **U16** — not as prose here,
   because a real open defect buried in a FIXED entry is an invisible one.
-  **Still owed:** a live Modal `--ephemeral generate` proving the row is readable from a second
-  process while the run is in flight, carrying launch time and the endpoint a monitor can poll, and
-  keyed by a name that resolves on the provider side (Task 8 of the same plan). Fixed offline only
-  — **not closed**.
+  **Live proof 2026-09-07 (Task 5, Modal A10, ~$0.06 for 3.2 min of container).**
+  `kinoforge --ephemeral generate -c examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml
+  --mode t2v --prompt "$(cat examples/configs/prompts/field-realistic.txt)" --no-reuse`, launched
+  as a child process group with `.kinoforge/_lifecycle/ephemeral-index.json` polled every 0.5 s
+  from the parent. **At t+2.5 s, with the run still in flight**, the file read:
+  `{"rows": [{"id": "eph-b8aa04a1", "warm_attach_key": "11d1…111b", "kinoforge_key":
+  "0aaf4ee6e6c0", "endpoints": {}, "provider": "modal", "created_at_local":
+  "2026-09-07T00:13:53.105530"}]}` — where it read `{"rows": []}` for the whole run before the fix.
+  The stamp is LAUNCH time, verified against the run's own first log line (`00:13:53,105`), not
+  completion. The id resolves on the provider side: Modal deployed the app as
+  **`kinoforge-eph-b8aa04a1`**. The controller was then SIGKILLed (process group, no `finally`)
+  at t+47.3 s with the container up (`modal app list` → `deployed`, `tasks=1`). From a FRESH
+  process the pod was still nameable and reapable: `kinoforge destroy --id eph-b8aa04a1` →
+  `destroyed orphan: eph-b8aa04a1 (no ledger entry, provider=modal)`; teardown verified
+  (`kinoforge list` both lines, index back to `{"rows": []}`, app `stopped` / `tasks=0`).
+  **Three limits the proof exposed, none of them a regression:**
+  1. `kinoforge list` does NOT surface an ephemeral orphan. Under STRICT_POLICY the ledger is
+     in-memory, so `list` prints both "no instances" lines while a Modal container is billing. The
+     index file is the only durable trace, and nothing renders it.
+  2. `kinoforge reap` cannot see one either — see the new item **U18**.
+  3. A row reserved pre-create and never updated carries `endpoints: {}`, so
+     `reaper_actor._probe_with_cache` has nothing to hand `note_endpoints` and Modal's
+     `probe_runtime` returns `gpu_util_pct=None, cpu_pct=None`. Verified by running the daemon's
+     own `sweep()` over this exact state with a 30 s orphan-age gate: verdict **LIVE**,
+     `probe_state=ok`, both util fields `null`. So a mid-boot kill — the very shape U8 protects —
+     produces a row the U9 reaper can never act on. That is U3's blast radius, recorded here
+     against U9's live cell as well.
 
 - **U9 — FIXED in `e582bd0f` (offline; a live daemon reap still owes the proof) — nothing automatic
   reaps an idle ephemeral Modal pod; the "safety net" does not cover the one run shape that needs
@@ -1151,6 +1174,27 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   fall back to the name, and replace the bare `check=True` with a handled error that prints the
   app id it found.
   **Discovered by:** Task 5 live proof of U7, 2026-09-07.
+
+- **U18 — `kinoforge reap` returns "ledger empty (nothing to do)" while an ephemeral orphan is
+  billing; the one-shot reap never reaches `sweep()`.**
+  Found by the U8 live proof (Task 5, 2026-09-07).
+  **Symptom.** With a live Modal ephemeral pod and a populated
+  `.kinoforge/_lifecycle/ephemeral-index.json`, `pixi run -e live-modal kinoforge reap
+  --format json` printed `{"type": "header", "entries": 0}` — and `--format human` prints
+  `reap: ledger empty (nothing to do)`.
+  **Cause.** `_cmd_reap` (`src/kinoforge/cli/_commands.py:3264`) short-circuits on
+  `if not ledger.entries():` and returns BEFORE calling `sweep()`. An `--ephemeral` run writes no
+  ledger row by design, so its orphan lives only in the `EphemeralIndex` — which is unioned into
+  the sweep inside `reaper_actor.sweep()`, on the far side of the guard that never lets it run.
+  **Why it matters.** `_cmd_reap`'s own threshold block carries the comment "Spec C1 — one-shot
+  `kinoforge reap --include-orphans` gets the same age+idle backstop the daemon does". It does
+  not: for the empty-ledger case, which is exactly the `--ephemeral` case, the flag is
+  unreachable. Worse, the message actively misleads — "nothing to do" is printed over a running
+  pod.
+  **Shape of the fix.** Gate on the UNION, not on the ledger: short-circuit only when
+  `ledger.entries()` and `EphemeralIndex(store).rows()` are both empty, and word the message for
+  whichever is non-empty.
+  **Discovered by:** Task 5 live proof of U8, 2026-09-07.
 
 Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
 on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interval_s`
