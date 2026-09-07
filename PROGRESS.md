@@ -598,7 +598,7 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   **Still owed:** a live Modal `provision` run proving the row lands and the id-less create is
   refused end-to-end (Task 8 of the same plan). Fixed offline only.
 
-- **U8 — FIXED in `9d34d008` (offline; a live Modal re-run still owes the proof) — an
+- **U8 — FIXED in `9d34d008` + `8403a71c` (offline; a live Modal re-run still owes the proof) — an
   `--ephemeral` run is invisible to every state file until it has already finished.**
   `_stamp_cold_created_instance` calls `_ephemeral_index_add` (`src/kinoforge/cli/_commands.py:583`)
   only after the orchestrator returns, so the ephemeral index row is written at *completion*, not
@@ -619,23 +619,62 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   written down yet (this campaign could not sample utilisation for T1-23 for that reason).
   **Fix (`9d34d008`, Task 3 of `docs/superpowers/plans/2026-09-06-modal-money-leaks.md`):** a new
   `_ephemeral_launch_row_reserve` writes the index row BEFORE the orchestrator is entered — and so
-  before `create_instance` — keyed by the client-side `run_id`, the only id that exists at that
-  point and the name the provider gives the resource. It reuses the shape Task 1 established for
-  the ledger's pre-launch row rather than growing a second mechanism. `_ephemeral_index_add`
-  became an *update* of that row: the real row (provider-side id + endpoints) is written first and
-  the launch row dropped after, mirroring `_collapse_provisional_row`, so no window exists in which
-  a kill leaves the pod with zero rows or a success leaves two. **`created_at_local` now means
-  LAUNCH time, not completion time** — the field's docstring in
-  `src/kinoforge/core/warm_reuse/ephemeral_index.py` states that contract, because U9's age-based
-  reaping depends on it and the old semantics under-counted every pod's lifetime by its whole boot
-  window. Per ruling C1 a raise KEEPS the row for the classifier to age out; only the two paths
-  that prove no pod survives release it (`--no-reuse`, which tore it down, and a run that returned
-  no instance). Warm-attach reserves nothing. `upscale` and `interpolate` get the same treatment.
-  Seven tests in `tests/cli/test_ephemeral_index_timing.py`, four of them RED before the change;
-  `tests/cli` 428 passed, `tests/core` + `tests/integration` 1815 passed.
+  before `create_instance`. `_ephemeral_index_add` became an *update* of that row: the real row
+  (provider-side id + endpoints) is written first and the launch row dropped after, mirroring
+  `_collapse_provisional_row`, so no window exists in which a kill leaves the pod with zero rows or
+  a success leaves two. **`created_at_local` now means LAUNCH time, not completion time** — the
+  field's docstring in `src/kinoforge/core/warm_reuse/ephemeral_index.py` states that contract,
+  because U9's age-based reaping depends on it and the old semantics under-counted every pod's
+  lifetime by its whole boot window. Per ruling C1 a raise KEEPS the row for the classifier to age
+  out. Warm-attach reserves nothing. `upscale` and `interpolate` get the same treatment.
+  **Fix round 1 (`8403a71c`) — three defects that decided whether the row is USABLE:**
+  1. The row was keyed on the client-side `run_id`, by parallel with Task 1's ledger row. That
+     parallel does not carry — Task 1's row is only ever written under the DEFAULT policy, so it
+     never meets the branch that matters. `--ephemeral` binds STRICT_POLICY, whose
+     `pod_name_includes_alias=False` made both providers DISCARD `run_id` and mint their own
+     `secrets.token_hex(4)` *inside* `create_instance`, so the row's id named nothing for the whole
+     window it protects. The mint moved controller-side onto
+     `EphemeralSession.resource_name(run_id, provider)`: one opaque token per LAUNCH (per session
+     would collide across `--ephemeral batch` cells), memoised so controller and provider agree,
+     provider prefix kept byte-identical, `run_id` returned unchanged under the default policy. A
+     **third minting site the review never named — `RunPodProvider._create_serverless`** — had the
+     identical `if not policy.pod_name_includes_alias: token_hex(4)` shape and is converted with
+     the other two; `secrets` is now unused in both provider modules, which is the cheap signal
+     that no fourth site was missed.
+  2. The `--no-reuse` release fired on the FLAG, not on the destroy. That teardown lives in a
+     `finally` that catches `TeardownError`, logs "use `kinoforge reap --apply` to recover" and
+     never re-raises, with the return tuple already fixed — so a failed teardown returns rc=0 and
+     the release deleted the last durable trace of a live pod. The teardown now marks the pod on
+     the session; the CLI releases only on a confirmed destroy, and an unconfirmed one upgrades the
+     row to the real id + endpoints instead.
+  3. The gate was `EphemeralSession.current() is not None`, true for EVERY run — `cli/_main` wraps
+     every dispatch and `__enter__` activates regardless of `enabled` — so ordinary cold creates
+     were reserving matcher-eligible rows. It is now `not session.policy.ledger_record`, the gate
+     `core/lifecycle.py` already uses. `tests/test_ephemeral_index_write_gated.py`'s AST invariant
+     demanded the literal `EphemeralSession.current()` and would have rejected the stricter gate;
+     it was broadened to accept either spelling rather than silenced with its exemption tag.
+  Seven tests in `tests/cli/test_ephemeral_index_timing.py` (four RED first), 15 more across
+  `tests/core/test_ephemeral_resource_name.py`,
+  `tests/providers/test_ephemeral_controller_minted_name.py` and
+  `tests/core/test_orchestrator_no_reuse.py` (all RED first; the teardown pair drives the real
+  `deploy_session` finally, not a stub). Full offline suite 5222 passed, 29 skipped, 6 xfailed.
+  **Carry-ins for the final task (not defects — accepted narrowings that must not be rediscovered
+  the expensive way):**
+  - On **RunPod the reserved string is the pod NAME, not an id `kinoforge destroy --id` accepts** —
+    RunPod mints its own id at create time. It is a provider-console and
+    `_reconcile._adopt_launching_row` (`tags["name"]`) handle, not a CLI one. On Modal the opaque
+    name IS the `Instance.id`, so there the row is a full handle. Recovery for a stranded RunPod
+    ephemeral pod is still console-or-`reap`, never `destroy --id <row id>`.
+  - The **ledger's own pre-launch row (Task 1) is still keyed on `run_id`**, so
+    `cli/_reconcile.py`'s "under `pod_name_includes_alias=False` an ephemeral launching row can
+    never be matched and is aged out instead" note **still stands for that row**. Only the
+    ephemeral INDEX row is fixed here. Routing the ledger row through the same
+    `session.resource_name` seam is a separable follow-up and would close the last case where
+    "aged out" does not imply "no pod existed".
   **Still owed:** a live Modal `--ephemeral generate` proving the row is readable from a second
-  process while the run is in flight, carrying launch time and the endpoint a monitor can poll
-  (Task 8 of the same plan). Fixed offline only — **not closed**.
+  process while the run is in flight, carrying launch time and the endpoint a monitor can poll, and
+  keyed by a name that resolves on the provider side (Task 8 of the same plan). Fixed offline only
+  — **not closed**.
 
 - **U9 — FIXED in `e582bd0f` (offline; a live daemon reap still owes the proof) — nothing automatic
   reaps an idle ephemeral Modal pod; the "safety net" does not cover the one run shape that needs
