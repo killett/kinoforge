@@ -637,8 +637,9 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   process while the run is in flight, carrying launch time and the endpoint a monitor can poll
   (Task 8 of the same plan). Fixed offline only — **not closed**.
 
-- **U9 — nothing automatic reaps an idle ephemeral Modal pod; the "safety net" does not cover the
-  one run shape that needs it.**
+- **U9 — FIXED in `e582bd0f` (offline; a live daemon reap still owes the proof) — nothing automatic
+  reaps an idle ephemeral Modal pod; the "safety net" does not cover the one run shape that needs
+  it.**
   Two independent halves. (a) `kinoforge sweeper start` sweeps the **ledger** and exposes no
   `--include-orphans` flag (`-c` and `--interval-s` are its only options), so the ephemeral index
   is unreachable from the daemon by construction. (b) `kinoforge reap --include-orphans --apply`
@@ -658,6 +659,59 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   `--ephemeral` pod whose controller dies bills at the GPU rate until a human types
   `kinoforge destroy --id eph-…` — which is the only thing that worked here (EM2 orphan path,
   exit 0, `destroyed orphan: eph-61ee7764`).
+  **Half (a) as filed is WRONG — established before any code was written (Task 4 Step 1).**
+  `sweep()` enumerates `EphemeralIndex(store).rows()` **unconditionally**
+  (`src/kinoforge/core/reaper_actor.py:498-521`); there is no `include_orphans` gate on that path
+  and never was. The daemon always reached the index. `cfg.sweeper.include_orphans` does exactly
+  one thing — it adds `ORPHAN_REAP` to `Policy.act_verdicts` — and `_classify_ephemeral` could
+  never *return* `ORPHAN_REAP`, so the flag was inert on the ephemeral path rather than the path
+  being unreachable. The evidence was misread too: "every `deferred_*` counter also 0, i.e. zero
+  entries were classified" does not follow — those counters tally only `HEARTBEAT_*` /
+  `SKIP_NO_PROBE` / `PROBE_FAILED`, and a `LIVE` verdict increments nothing, so all-zero counters
+  are exactly what a correctly-enumerated, `LIVE`-classified ephemeral pod produces.
+  **Read this before hunting for missing plumbing: there is none to add.** The enumeration everyone
+  assumed was absent has been there the whole time; what was missing was a verdict the ephemeral
+  branch could reach and the thresholds the daemon was dropping. This is the FOURTH filed defect in
+  this project whose stated mechanism did not survive contact with the code, which is why the plan
+  put an investigation step ahead of implementation.
+  **The real cause of T1-24:** `_cmd_sweeper_start` built its `thresholds` dict inline with **four
+  keys** (`idle_timeout_s`, `max_lifetime_s`, `heartbeat_interval_s`, `grace_after_session_s`) and
+  dropped `stall_window_s`, `stall_gpu_threshold`, `stall_cpu_threshold` and
+  `restart_loop_window_s` — which `_cmd_reap` passes. `_classify_ephemeral` reads
+  `thresholds.get("stall_window_s")` → `None` → `0.0` → `LIVE`. The operator's `stall_window_s: 60`
+  never reached the daemon, so `STALL_REAP` was unreachable from `sweeper start` whatever the YAML
+  said, and the SIGHUP handler rebuilt the same four-key dict. This also made `STALL_REAP` and
+  `RESTART_LOOP_REAP` unreachable from the daemon for **ledger-backed** pods — wider than the
+  ephemeral case, and not separately filed.
+  **Fix (`e582bd0f`, Task 4 of `docs/superpowers/plans/2026-09-06-modal-money-leaks.md`):**
+  half (b) is the real defect and is closed by a new age+idle verdict.
+  `_ephemeral_orphan_predicate` (`src/kinoforge/core/reaper.py`) returns `ORPHAN_REAP` only when
+  the row is **strictly older than `lifecycle.ephemeral_orphan_age_s`** (new, default 3600 s)
+  **AND** idle on the current probe — GPU below `stall_gpu_threshold` **and** CPU below
+  `stall_cpu_threshold`. Age alone never reaps (a four-hour render is not a leak) and idleness
+  alone never reaps (a Wan A14B cold boot sits at 0% GPU for ~25 min fetching 70 GB). Age comes
+  from the index row's `created_at_local`, which U8/`9d34d008` made mean LAUNCH time, so it
+  includes the whole boot. Conservative on ignorance throughout: `probe_state != "ok"`,
+  a missing/null/non-numeric reading, or an unset gate all decline to reap — `None` is never read
+  as `0`. `_classify_ephemeral` was restructured to probe-guards → `OVERAGE_REAP` → `STALL_REAP`
+  → `ORPHAN_REAP` → `LIVE`, STALL first because it carries N-sample evidence and is inside
+  `DEFAULT_APPLY_POLICY`; `ORPHAN_REAP` deliberately is **not**, so classification is always on but
+  destroying stays opt-in. `act_on_verdict` now attaches
+  `ephemeral orphan: age=<N>s idle on probe gpu_util=<g>% cpu=<c>%` to the `ActionResult.reason`
+  and logs it at WARNING before the destroy, so a reap that took someone's work is reviewable.
+  The enumeration half became what Step 1 showed it was — discoverability plus a plumbing bug:
+  new `kinoforge sweeper start --include-orphans` (unioned with, never substituted for, the YAML
+  flag) and a new `sweeper_thresholds_from_cfg` in `core/config.py` that is now the single source
+  of truth for the daemon's threshold set, used by both `sweeper start` and its SIGHUP reload, and
+  carrying every gate `classify` reads. `kinoforge reap` gained the one new key too. Kill switch:
+  `lifecycle.ephemeral_orphan_reap_enabled: false`. Documented in `docs/lifecycle.md`.
+  Thirteen tests in `tests/core/test_reaper_orphans.py` (5 RED before the change, including all
+  three of old+idle→reap / old+busy→live / young+idle→live and the end-to-end `sweep()` destroy),
+  five in `tests/core/test_config.py` and five in `tests/cli/test_cmd_sweeper.py` (3 RED). Fake
+  clock + fake `RuntimeProbe` throughout — no live pod.
+  **Still owed:** a live run proving a daemon with `--include-orphans` reaps an idle ephemeral pod
+  past the age gate, with the reason line in the log and `kinoforge list` clean afterwards. Fixed
+  offline only — **not closed**.
 
 - **U10 — FIXED in `7d535503` — the sweeper's own ledger row was rendered as a running instance and outlived the daemon.**
   `kinoforge sweeper start` writes `sweeper:<host>` with `provider=_sweeper` into the ledger.
