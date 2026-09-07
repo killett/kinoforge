@@ -449,6 +449,22 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offline (`8191bd1b`) and awaits a live Modal re-run, U4 is fixed (`c08c3cce`), U10 is fixed (`7d535503`, the interval-reporting half of it excepted), U5 is half-fixed (help text corrected in `c08c3cce`, wiring still open), and **U12 is CLOSED** — the `av<18` pin landed in `82ad084b` and was proven live on Modal at 1920x1920 and 1080x1080 with clean frame QA for $0.64. RunPod and SkyPilot carry the same one-line pin (their goldens moved in that commit) but were **not** re-run, so they are inferred-safe, not demonstrated-safe. **U15 is fixed offline (`ccd4c5e7`) and awaits a live Modal re-run of T2-02** — `--attach-pod` now merges the ledger's `endpoints` alongside its `tags`, so a healthy pod whose endpoint only the ledger holds attaches instead of being refused; until U14 is fixed too, the matcher still cold-boots a duplicate, so the escape hatch works but the automatic path does not. Every other item is untouched.**
 
+**Status update 2026-09-07 (Task 5 — live proof of the four money-leak fixes on Modal A10, total
+spend ~$0.16 of a ~$0.60 budget).** **U15 HELD** (a fresh process attached to a warm pod, no cold
+boot). **U9 HELD** on the shape it was written for (the daemon reaped an idle ephemeral pod and
+named the age and the utilisation it saw). **U8 HELD on Modal** (the index row was readable 2.5 s
+into a live run, with a launch-time stamp and a provider-resolvable name, and the pod stayed
+reapable after a SIGKILL) — the **RunPod half stays PARTIAL under U16 and is NOT upgraded by this**.
+**U7 HELD IN PART**: the durable row held at all three kill points, but `kinoforge destroy --id`
+cannot reap a Modal app killed mid-deploy, which is the one window the pre-create row exists for.
+Three new items came out of the cells: **U17** (destroy by app name fails on a mid-deploy app),
+**U18** (`kinoforge reap` never reaches `sweep()` on an empty ledger, so its `--include-orphans`
+backstop is unreachable for exactly the `--ephemeral` case), and a recorded boundary on U9 — a row
+abandoned MID-BOOT carries `endpoints: {}`, which starves the util probe the reaper needs, so the
+daemon covers a pod abandoned after a generation but not one abandoned during its boot. Full
+evidence in `.superpowers/sdd/2026-09-06-modal-money-leaks/task-5-report.md` (untracked) and in the
+per-item entries below.
+
 - **U1 — the warm-attach matcher is provider-blind (cross-provider attach risk).**
   `WarmAttachKey` (`src/kinoforge/core/interfaces.py:649`) carries base_model / engine /
   precision / stages / upscaler only — no provider — and

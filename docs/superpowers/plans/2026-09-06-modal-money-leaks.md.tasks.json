@@ -46,7 +46,7 @@
     {
       "id": 5,
       "subject": "Task 5: live proof of Tasks 1-4 on A10 (~$0.60)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Prove each fix against the real provider, including a deliberate mid-run kill, because offline green is what let the wrong cause get filed.\n\n**Files:**\n- Modify: `docs/modal-command-matrix.md` (the affected rows), `PROGRESS.md` (the affected urgent items)\n\n**Acceptance Criteria:**\n- [ ] **A1 proof:** run `provision`, kill the process mid-create, then from a NEW process confirm the row names the pod and `kinoforge destroy --id <id>` reaps it. Before the fix this required a raw `modal app stop`.\n- [ ] **A2 proof:** launch an ephemeral generate, read `.kinoforge/_lifecycle/ephemeral-index.json` **while it is still running** and confirm a row naming the pod with a launch-time stamp, then kill the controller and confirm the pod is nameable and reapable.\n- [ ] **B1 proof:** from a fresh process, `--attach-pod` a warm pod and have it attach.\n- [ ] **C1 proof:** leave an ephemeral pod idle and confirm the daemon reaps it, with the reap naming the age and utilisation it saw.\n- [ ] Teardown proof after every cell, from a fresh process. No pod alive at the end.\n- [ ] Actual spend recorded per cell.\n\n**Verify:** `pixi run -e live-modal kinoforge list` \u2192 both \"no instances\" lines, and the Modal app list shows no running `kinoforge-*` app\n\n```json:metadata\n{\"files\": [\"docs/modal-command-matrix.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run -e live-modal kinoforge list\", \"acceptanceCriteria\": [\"**A1 proof:** run `provision`, kill the process mid-create, then from a NEW process confirm the row names the pod and `kinoforge destroy --id <id>` reaps it. Before the fix this required a raw `modal app stop`.\", \"**A2 proof:** launch an ephemeral generate, read `.kinoforge/_lifecycle/ephemeral-index.json` **while it is still running** and confirm a row naming the pod with a launch-time stamp, then kill the controller and confirm the pod is nameable and reapable.\", \"**B1 proof:** from a fresh process, `--attach-pod` a warm pod and have it attach.\", \"**C1 proof:** leave an ephemeral pod idle and confirm the daemon reaps it, with the reap naming the age and utilisation it saw.\", \"Teardown proof after every cell, from a fresh process. No pod alive at the end.\", \"Actual spend recorded per cell.\"], \"modelTier\": \"frontier\", \"liveSpend\": true}\n```",
       "blockedBy": [
         4
@@ -71,5 +71,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-07T00:02:21"
+  "lastUpdated": "2026-09-07T00:33:17.696849"
 }
