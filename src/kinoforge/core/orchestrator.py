@@ -661,7 +661,7 @@ def _record_provisional_row(
     return run_id
 
 
-def _mint_deploy_run_id(now: float | None = None) -> str:
+def _mint_deploy_run_id(now: float | None = None, *, kind: str = "deploy") -> str:
     """Return a fresh client-side run id for a one-shot ``deploy()``.
 
     ``deploy`` takes no ``run_id`` from its caller the way ``deploy_session``
@@ -684,6 +684,12 @@ def _mint_deploy_run_id(now: float | None = None) -> str:
 
     Args:
         now: Epoch seconds (injected for testability). Defaults to now.
+        kind: The command minting the id. It rides into the provider-side
+            resource NAME, so an operator reading ``kinoforge list`` (or the
+            provider's own dashboard) can tell which command booked the thing
+            they are looking at. ``kinoforge provision`` passes ``"provision"``;
+            a ``kinoforge-deploy-*`` app booked by ``provision`` would send the
+            operator looking for a deploy that never ran.
 
     Returns:
         e.g. ``"kinoforge-deploy-20260904-141233-9f3ac1"``.
@@ -691,7 +697,7 @@ def _mint_deploy_run_id(now: float | None = None) -> str:
     stamp = datetime.fromtimestamp(time.time() if now is None else now).strftime(
         "%Y%m%d-%H%M%S"
     )
-    return f"kinoforge-deploy-{stamp}-{uuid.uuid4().hex[:6]}"
+    return f"kinoforge-{kind}-{stamp}-{uuid.uuid4().hex[:6]}"
 
 
 def _forget_provisional_row(

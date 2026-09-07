@@ -252,15 +252,73 @@ def _cmd_deploy(args: argparse.Namespace, ctx: SessionContext) -> int:
     return 0
 
 
+def _recorded_instance_for_key(
+    ledger: Any,  # noqa: ANN401 — Ledger, or any object exposing entries()
+    key_hash: str,
+) -> dict[str, Any] | None:
+    """Return the recorded row for capability key *key_hash*, or ``None``.
+
+    ``kinoforge_key`` is the tag :func:`~kinoforge.core.spec_builder.build_instance_spec`
+    stamps on every launch and the one warm-reuse already matches on, so this
+    asks the same question the matcher asks — without its health probe, pod
+    lock, or attach machinery, none of which a refusal needs.
+
+    Pre-launch ``kf_launch_phase=launching`` rows never match: they are written
+    with no caller tags, so they carry no ``kinoforge_key`` at all. That is what
+    stops this function seeing the row the very same invocation is about to
+    write, and it means an in-flight provision does not block a retry after a
+    crash — the reconciler owns those rows.
+
+    Never raises: a ledger fault must not be the thing that stops an operator
+    provisioning. A fault degrades to "no existing instance", which is the
+    pre-fix behaviour and is recoverable; refusing every launch on a transient
+    store error is not.
+
+    Args:
+        ledger: The ledger to read.
+        key_hash: The 12-hex capability-key abbreviation to match.
+
+    Returns:
+        The first matching entry dict, or ``None``.
+    """
+    try:
+        entries = ledger.entries()
+    except Exception:  # noqa: BLE001 — a store fault must not block provisioning
+        logger.warning(
+            "could not read the ledger to check for an existing instance; "
+            "provision will proceed and may double-book",
+            exc_info=True,
+        )
+        return None
+    for entry in entries:
+        row: dict[str, Any] = entry
+        tags = row.get("tags") or {}
+        if tags.get("kinoforge_key") == key_hash:
+            return row
+    return None
+
+
 def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``provision`` subcommand.
+
+    Books one instance for *cfg*'s capability key and runs the engine's
+    provisioner against it. Two refusals sit ahead of the create, both of them
+    the 2026-09-06 Modal incident's lessons:
+
+    * an instance for this capability key is already recorded — ``provision``
+      names it and books nothing;
+    * the create returned an instance with an empty id — there is no handle to
+      reap it by, so it is an error rather than a printed ``instance=''``.
 
     Args:
         args: Parsed CLI arguments.
         ctx: Per-invocation session context.
 
     Returns:
-        Exit code (0 on success, non-zero on error).
+        Exit code: 0 on success, 1 for an unknown adapter, an already-recorded
+        instance, or an id-less create. Exceptions from ``create_instance``
+        propagate; the pre-launch row they leave behind is deliberate
+        (ruling C1).
     """
     if ctx.cfg is None:
         raise RuntimeError("_cmd_provision requires --config")
@@ -280,6 +338,47 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
         print(f"error: unknown adapter — {exc}", file=sys.stderr)
         return 1
 
+    # --- durability, before anything is booked -----------------------------
+    # ``provision`` used to touch neither ctx.ledger() nor ctx.store(): it
+    # created an instance and printed its id. On Modal (2026-09-06) the create
+    # returned an EMPTY id, so the running app — named with a bare
+    # ``kinoforge-`` prefix — appeared in no ledger, `kinoforge list` showed an
+    # empty overview, and $0.13 burned until the provider's own dashboard gave
+    # it away. Recovery needed a raw ``modal app stop``.
+    #
+    # The fix reuses ``deploy``'s mechanism verbatim rather than inventing a
+    # second one: the same pre-launch ``kf_launch_phase=launching`` row, the
+    # same ruling-C1 failure split, the same collapse — so
+    # ``cli/_reconcile._adopt_or_age_out`` resolves a provision that died
+    # mid-create with no provision-specific knowledge at all.
+    from kinoforge.core.orchestrator import (
+        _collapse_provisional_row,
+        _forget_provisional_row,
+        _key_hash,
+        _mint_deploy_run_id,
+        _nothing_booked_error_types,
+        _record_provisional_row,
+        _record_real_row,
+    )
+
+    lifecycle = cfg.lifecycle()
+    key_hash = _key_hash(cfg.capability_key())
+    ledger = ctx.ledger()
+    already = _recorded_instance_for_key(ledger, key_hash)
+    if already is not None:
+        # The command is named for RE-provisioning, but it was an unconditional
+        # second create: run it twice against one config and the second call
+        # booked (and billed for) a duplicate GPU with no warning.
+        print(
+            f"error: an instance for this capability key ({key_hash}) is "
+            f"already recorded: {already['id']} "
+            f"(provider={already.get('provider', 'unknown')}). "
+            "provision would book a second one. Reuse it, or destroy it first: "
+            f"kinoforge destroy --id {already['id']}",
+            file=sys.stderr,
+        )
+        return 1
+
     instance = None
     if provider is not None:
         # compute-seam S4: no enumeration here. find_offers left the ABC — only
@@ -290,8 +389,8 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
         # that error, and on skypilot it could not run at all.
         import dataclasses as _dc
 
-        from kinoforge.core.interfaces import InstanceSpec
         from kinoforge.core.orchestrator import _cfg_dict
+        from kinoforge.core.spec_builder import build_instance_spec
 
         # Thread the engine's rendered payload like deploy_session does.
         # The legacy bare spec (image+offer+lifecycle only) booted pods
@@ -300,7 +399,7 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
         # no endpoints` AFTER money was committed (pod forewgeluuy9qh,
         # 2026-07-03).
         cfg_dict = _cfg_dict(cfg)
-        cfg_dict["lifecycle"] = _dc.asdict(cfg.lifecycle())
+        cfg_dict["lifecycle"] = _dc.asdict(lifecycle)
         rendered = engine.render_provision(cfg_dict)
         from kinoforge.core.credentials import EnvCredentialProvider as _ECP
 
@@ -310,19 +409,68 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
             for var in rendered.env_required
             if (value := _creds.get(var)) is not None
         }
-        spec = InstanceSpec(
-            image=rendered.image or (cfg.compute.image if cfg.compute else ""),
-            ports=tuple(rendered.ports),
-            lifecycle=cfg.lifecycle(),
+        # build_instance_spec, not a hand-rolled InstanceSpec: the hand-rolled
+        # one carried no tags and no run_id, so the row this function now writes
+        # would have had no capability key for the refusal above to match on,
+        # and the provider would have named the resource from its own fallback
+        # constant instead of a run id the reconciler can adopt by.
+        run_id = _mint_deploy_run_id(kind="provision")
+        spec = build_instance_spec(
+            cfg=cfg,
+            rendered=rendered,
+            engine_name=engine.name,
+            key_hash=key_hash,
+            image=cfg.compute.image if cfg.compute is not None else "",
+            lifecycle=lifecycle,
             env=rendered_env,
-            setup_steps=tuple(rendered.setup_steps),
-            launch=rendered.launch,
-            placement=cfg.placement(),
-            backend_options=(
-                cfg.compute.backend_options if cfg.compute is not None else {}
-            ),
+            run_id=run_id,
         )
-        instance = provider.create_instance(spec)
+        provisional_id = _record_provisional_row(
+            ledger=ledger,
+            run_id=run_id,
+            provider_name=getattr(provider, "name", "unknown"),
+            tags={},
+            max_age_s=int(lifecycle.max_lifetime_s),
+            now=time.time(),
+        )
+        # Read BEFORE the create so a fault in the declaration cannot land
+        # inside the failure path itself.
+        nothing_was_booked = _nothing_booked_error_types(provider)
+        try:
+            instance = provider.create_instance(spec)
+        except nothing_was_booked:
+            # These, and only these, prove no resource exists. Keeping the row
+            # here would leave a phantom whose est_spend inflates on wall-clock
+            # forever (cli/_reconcile's "$210 phantom pod").
+            _forget_provisional_row(ledger, provisional_id)
+            raise
+        # Every other exception KEEPS the row (ruling C1): a raise is not
+        # evidence the provider booked nothing — a timeout or a Ctrl-C lands
+        # here while the provider's API server goes on creating the resource —
+        # and cli/_reconcile._adopt_or_age_out resolves it by name afterwards.
+
+        if not instance.id:
+            # An id-less instance is not a record. Recording a real row keyed by
+            # '' would name a pod it cannot reap, and printing
+            # `provisioned: instance=''` with exit 0 (the Modal behaviour) tells
+            # the operator a lie. The launching row stays: its id IS the name the
+            # provider was asked to use, so it is the only handle left.
+            print(
+                f"error: {getattr(provider, 'name', 'provider')} returned an "
+                f"instance with an empty id for run {run_id!r}; nothing can be "
+                "reaped by id. The resource may be running under that run id — "
+                "check the provider console and destroy it there.",
+                file=sys.stderr,
+            )
+            return 1
+
+        # Order is load-bearing and mirrors ``deploy``: the REAL row is written
+        # first, so no window exists in which a kill loses both rows, and the
+        # collapse removes the provisional one only because the real one is
+        # there to survive it.
+        _record_real_row(ledger, instance, lifecycle=lifecycle)
+        _collapse_provisional_row(ledger, provisional_id, instance.id)
+
         while instance.status != "ready":
             time.sleep(2.0)
             # Status-only refresh — get_instance strips endpoints/tags
