@@ -28,7 +28,7 @@
     {
       "id": 3,
       "subject": "Task 3: the ephemeral index row is written before `create_instance` (spec A2)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** An ephemeral run is nameable from the moment it starts billing, not from the moment it finishes.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_commands.py` (`_stamp_cold_created_instance` at 536, its `_ephemeral_index_add` call at ~583, the helper itself at ~1629, and the sibling call site at ~936)\n- Test: `tests/cli/test_ephemeral_index_timing.py` (create)\n\n**Acceptance Criteria:**\n- [ ] A row naming the pod exists before `create_instance` returns control to the caller, carrying the id and whatever endpoints are known at that point.\n- [ ] `created_at_local` is launch time, not completion time.\n- [ ] When endpoints only become known after create, the row is updated rather than duplicated \u2014 one row per pod.\n- [ ] A create that raises leaves the row for the classifier to age out, consistent with Task 1 and ruling C1.\n\n**Verify:** `pixi run pytest tests/cli/test_ephemeral_index_timing.py -v` \u2192 all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/cli/test_ephemeral_index_timing.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_ephemeral_index_timing.py -v\", \"acceptanceCriteria\": [\"A row naming the pod exists before `create_instance` returns control to the caller, carrying the id and whatever endpoints are known at that point.\", \"`created_at_local` is launch time, not completion time.\", \"When endpoints only become known after create, the row is updated rather than duplicated \\u2014 one row per pod.\", \"A create that raises leaves the row for the classifier to age out, consistent with Task 1 and ruling C1.\"], \"modelTier\": \"standard\", \"liveSpend\": false}\n```",
       "blockedBy": [
         2
@@ -71,5 +71,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-06T23:57:14"
+  "lastUpdated": "2026-09-07T00:02:21"
 }
