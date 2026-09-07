@@ -598,8 +598,9 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   **Still owed:** a live Modal `provision` run proving the row lands and the id-less create is
   refused end-to-end (Task 8 of the same plan). Fixed offline only.
 
-- **U8 — an `--ephemeral` run is invisible to every state file until it has already finished.**
-  `_record_cold_instance` calls `_ephemeral_index_add` (`src/kinoforge/cli/_commands.py:583`)
+- **U8 — FIXED in `9d34d008` (offline; a live Modal re-run still owes the proof) — an
+  `--ephemeral` run is invisible to every state file until it has already finished.**
+  `_stamp_cold_created_instance` calls `_ephemeral_index_add` (`src/kinoforge/cli/_commands.py:583`)
   only after the orchestrator returns, so the ephemeral index row is written at *completion*, not
   before `create_instance`. `--ephemeral` writes no ledger row at all by design, so for the whole
   duration of the run there is no durable record of the Modal app anywhere.
@@ -609,13 +610,32 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   read `.kinoforge/_lifecycle/ephemeral-index.json` — it is `{"rows": []}` until the run ends, and
   the row that eventually appears is stamped with the completion time (`created_at_local`
   `02:02:41` for a run launched `02:01:23`).
-  **Suspected site:** `_record_cold_instance` / `_ephemeral_index_add`
-  (`src/kinoforge/cli/_commands.py:555-584, 1629`).
+  **Site (confirmed; the filing's `_record_cold_instance` is a name that does not exist):**
+  `_stamp_cold_created_instance` / `_ephemeral_index_add` in `src/kinoforge/cli/_commands.py`.
   **Why urgent:** this is exactly the F12 hole that ruling C1 closed for the ledger, still open on
   the ephemeral path. A Ctrl-C, an OOM, or a session death during a multi-minute ephemeral
   generation leaves a billing Modal app that no kinoforge command and no state file can name — and
   it also means a monitor cannot poll `/util` during the run, because the endpoint has not been
   written down yet (this campaign could not sample utilisation for T1-23 for that reason).
+  **Fix (`9d34d008`, Task 3 of `docs/superpowers/plans/2026-09-06-modal-money-leaks.md`):** a new
+  `_ephemeral_launch_row_reserve` writes the index row BEFORE the orchestrator is entered — and so
+  before `create_instance` — keyed by the client-side `run_id`, the only id that exists at that
+  point and the name the provider gives the resource. It reuses the shape Task 1 established for
+  the ledger's pre-launch row rather than growing a second mechanism. `_ephemeral_index_add`
+  became an *update* of that row: the real row (provider-side id + endpoints) is written first and
+  the launch row dropped after, mirroring `_collapse_provisional_row`, so no window exists in which
+  a kill leaves the pod with zero rows or a success leaves two. **`created_at_local` now means
+  LAUNCH time, not completion time** — the field's docstring in
+  `src/kinoforge/core/warm_reuse/ephemeral_index.py` states that contract, because U9's age-based
+  reaping depends on it and the old semantics under-counted every pod's lifetime by its whole boot
+  window. Per ruling C1 a raise KEEPS the row for the classifier to age out; only the two paths
+  that prove no pod survives release it (`--no-reuse`, which tore it down, and a run that returned
+  no instance). Warm-attach reserves nothing. `upscale` and `interpolate` get the same treatment.
+  Seven tests in `tests/cli/test_ephemeral_index_timing.py`, four of them RED before the change;
+  `tests/cli` 428 passed, `tests/core` + `tests/integration` 1815 passed.
+  **Still owed:** a live Modal `--ephemeral generate` proving the row is readable from a second
+  process while the run is in flight, carrying launch time and the endpoint a monitor can poll
+  (Task 8 of the same plan). Fixed offline only — **not closed**.
 
 - **U9 — nothing automatic reaps an idle ephemeral Modal pod; the "safety net" does not cover the
   one run shape that needs it.**
