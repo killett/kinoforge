@@ -37,7 +37,7 @@
     {
       "id": 4,
       "subject": "Task 4: the sweeper covers ephemeral pods (spec C1)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** `kinoforge sweeper start` actually reaps an idle ephemeral pod, so the safety net `CLAUDE.md` recommends is true.\n\n**Files:**\n- Modify: `src/kinoforge/core/reaper.py` (orphan classification), `src/kinoforge/cli/_main.py` (sweeper flags) and/or `src/kinoforge/core/config.py` \u2014 **which of these is decided by Step 1**\n- Test: `tests/core/test_reaper_orphans.py` (create), `tests/cli/test_cmd_sweeper.py` (extend)\n\n**Acceptance Criteria:**\n- [ ] Step 1's finding is recorded in the task report: does `cfg.sweeper.include_orphans` already reach the daemon's enumeration?\n- [ ] An orphan row that is old enough AND idle on GPU classifies as reapable.\n- [ ] An orphan that is old but NOT idle classifies as live and is not reaped.\n- [ ] An orphan that is idle but young classifies as live and is not reaped.\n- [ ] The reap decision states the age and the utilisation it observed.\n- [ ] The daemon can reach the index \u2014 via config if that already works, otherwise via a new flag.\n\n**Verify:** `pixi run pytest tests/core/test_reaper_orphans.py tests/cli/test_cmd_sweeper.py -v` \u2192 all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/reaper.py\", \"src/kinoforge/cli/_main.py\", \"src/kinoforge/core/config.py\", \"tests/core/test_reaper_orphans.py\", \"tests/cli/test_cmd_sweeper.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_reaper_orphans.py tests/cli/test_cmd_sweeper.py -v\", \"acceptanceCriteria\": [\"Step 1's finding is recorded in the task report: does `cfg.sweeper.include_orphans` already reach the daemon's enumeration?\", \"An orphan row that is old enough AND idle on GPU classifies as reapable.\", \"An orphan that is old but NOT idle classifies as live and is not reaped.\", \"An orphan that is idle but young classifies as live and is not reaped.\", \"The reap decision states the age and the utilisation it observed.\", \"The daemon can reach the index \\u2014 via config if that already works, otherwise via a new flag.\"], \"modelTier\": \"standard\", \"liveSpend\": false}\n```",
       "blockedBy": [
         3
@@ -71,5 +71,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-06T22:30:29"
+  "lastUpdated": "2026-09-06T23:57:14"
 }
