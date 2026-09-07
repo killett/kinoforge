@@ -709,7 +709,8 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
      produces a row the U9 reaper can never act on. That is U3's blast radius, recorded here
      against U9's live cell as well.
 
-- **U9 — FIXED in `e582bd0f` (offline; a live daemon reap still owes the proof) — nothing automatic
+- **U9 — FIXED in `e582bd0f`, LIVE-PROVEN on Modal 2026-09-07 (a pod abandoned after a successful
+  generation; a pod abandoned mid-boot is still not covered — see the boundary below) — nothing automatic
   reaps an idle ephemeral Modal pod; the "safety net" does not cover the one run shape that needs
   it.**
   Two independent halves. (a) `kinoforge sweeper start` sweeps the **ledger** and exposes no
@@ -781,9 +782,26 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   three of old+idle→reap / old+busy→live / young+idle→live and the end-to-end `sweep()` destroy),
   five in `tests/core/test_config.py` and five in `tests/cli/test_cmd_sweeper.py` (3 RED). Fake
   clock + fake `RuntimeProbe` throughout — no live pod.
-  **Still owed:** a live run proving a daemon with `--include-orphans` reaps an idle ephemeral pod
-  past the age gate, with the reason line in the log and `kinoforge list` clean afterwards. Fixed
-  offline only — **not closed**.
+  **Live proof 2026-09-07 (Task 5, Modal A10, ~$0.03 of the shared ephemeral pod's life).** An
+  ephemeral `generate` was run to completion WITHOUT `--no-reuse`, so the pod stayed warm and its
+  index row carried the provider-side id and endpoints: `eph-64dac102`, `created_at_local
+  2026-09-07T00:22:56.517667` (launch time, carried verbatim through the post-create update — the
+  U8 contract holding in practice). With the pod idle (`/util` → `gpu=0.0% cpu=1.1%`),
+  `kinoforge sweeper start -c <cfg with ephemeral_orphan_age_s: 60, interval_s: 20>
+  --include-orphans` was started. **Second tick, 2 s in, at WARNING:**
+  `reaping eph-64dac102 — ephemeral orphan: age=119s idle on probe gpu_util=0.0% cpu=0.0%` — the
+  reason names both the age and the utilisation it observed, as specified. The pod was destroyed
+  (`modal app list` → `kinoforge-eph-64dac102` `stopped` / `tasks=0`), the index row released
+  (`{"rows": []}`), and the daemon's own row recorded `sweeps_total: 6, destroys_total: 1,
+  errors_total: 0`. **U9 holds live on the shape it was written for.**
+  **Boundary the same cell established.** The reap works only when the index row carries
+  `endpoints`. A row reserved pre-create and never updated — the mid-boot-kill shape U8 protects —
+  has `endpoints: {}`, so `reaper_actor._probe_with_cache` cannot prime `note_endpoints`, Modal's
+  `probe_runtime` returns `gpu_util_pct=None, cpu_pct=None`, and the daemon's own `sweep()` (run
+  directly over that exact state with a 30 s age gate) returned **LIVE**. So the daemon covers an
+  ephemeral pod abandoned after a successful generation, and does NOT cover one abandoned during
+  its boot. That is U3's blast radius, not a flaw in the U9 predicate, and the predicate's
+  conservative-on-ignorance rule is what makes it safe rather than wrong.
 
 - **U10 — FIXED in `7d535503` — the sweeper's own ledger row was rendered as a running instance and outlived the daemon.**
   `kinoforge sweeper start` writes `sweeper:<host>` with `provider=_sweeper` into the ledger.
@@ -817,6 +835,19 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   using, so the two commands that exist to observe the daemon disagree with it. Not part of the
   U10 fix and not a one-guard change (the override is never persisted anywhere the observers can
   read it).
+  **Live check 2026-09-07 (Task 5, incidental to the U9 cell).** The graceful path HOLDS: `sweeper
+  start` then `kinoforge sweeper stop` left `{"entries": []}` and `kinoforge list` printed both
+  "no instances" lines. **The fix is confined to that path, though** — a daemon SIGKILLed earlier
+  in the same cell left `sweeper:59be2fa1c7fc` behind, and a fresh `kinoforge list` rendered it in
+  `[instance overview]` exactly as the original filing describes. So any non-graceful death
+  (crash, OOM, container restart, `kill -9`) still reproduces U10 in full until the next `sweeper
+  stop`. Also observed: the next `sweeper start` on the same host APPENDS a second row under the
+  same id rather than replacing it (the overview briefly showed two `sweeper:59be2fa1c7fc` lines);
+  one `forget` cleared both. Neither is re-opened here — recorded so the next reader knows the
+  fix's edge.
+  **Doc note:** this entry cites `live-constraints.md` as a rules file. **No such file exists in
+  the repo** (checked by name and by grep, 2026-09-07). The live rules live in `CLAUDE.md` and in
+  the `## Global Constraints` block of the relevant plan under `docs/superpowers/plans/`.
 
 - **U11 — `kinoforge grid --ephemeral` is accepted and silently dropped, leaking run identity to
   the provider.**
@@ -1023,7 +1054,7 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   site logs no reject reason, so establishing why costs another cold boot. Logging the reason is
   the cheap first fix, ahead of the matcher change itself.
 
-- **U15 — FIXED in `ccd4c5e7` (offline; a live Modal re-run still owes the proof) —
+- **U15 — FIXED in `ccd4c5e7`, LIVE-PROVEN on Modal 2026-09-07 —
   `--attach-pod` cannot attach to a healthy pod whose endpoint the ledger is holding.**
   **Symptom:** `kinoforge upscale … --attach-pod <id>` exits **1** with
   `pod <id> has no endpoints after ledger tag merge (ledger tag keys=['kinoforge_engine',
@@ -1061,8 +1092,17 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   Red/green in `tests/cli/test_resolve_attach_pod.py` (4 tests: ledger endpoints reach the
   provider, live-wins-on-collision, the tag merge survives, the earned refusal names endpoints and
   not tags) — 4/4 RED before the change, 4/4 GREEN after, `tests/cli` 421 passed,
-  `tests/core` + `tests/providers` 2324 passed. **Offline-proven only — the live Modal re-run of
-  T2-02 still owes the proof.**
+  `tests/core` + `tests/providers` 2324 passed.
+  **Live proof 2026-09-07 (Task 5, Modal A10, pod alive 00:18:39-00:22:35 = 3.9 min, ~$0.07).**
+  A warm pod was booted with a plain `kinoforge generate` (no `--no-reuse`), leaving ledger row
+  `run-20260907-001839` with `endpoints.8000` set. From a FRESH process —
+  `ModalProvider._deployments` empty, which is exactly the state that made the pre-fix refusal
+  fire — `kinoforge generate -c <same cfg> --mode t2v --prompt "$(cat
+  examples/configs/prompts/field-realistic.txt)" --attach-pod run-20260907-001839` **attached**:
+  rc=0, generation 00:21:39 -> 00:22:17 (38 s), **no `✓ App deployed` and no `✓ Created objects`
+  anywhere in the log** (grep-verified — no cold boot, no duplicate app), and no refusal message.
+  Frame QA PASS on the attach output (480x480/33f/16fps/2.06 s, coherent alpine meadow + backlit
+  waterfall, temporally stable, no false colour). **U15 holds live.**
   **Relationship to U3:** same underlying shape — the endpoint URL is in the ledger and no read path
   consults it — but a different site. U3 is about `status` / `pod lora ls` failing to *report* the
   URL; U15 is about the attach path failing to *use* it. Fixing one will not obviously fix the other.
