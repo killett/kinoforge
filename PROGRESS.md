@@ -1524,13 +1524,65 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-09-06 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-07 — read this, then STOP; below is history)
+
+**Modal money leaks CLOSED (2026-09-07, branch `fix/modal-money-leaks`, $0.82 of live proof).**
+Plan `docs/superpowers/plans/2026-09-06-modal-money-leaks.md`, 8 tasks, all committed. The four
+items on the command-matrix list that could cost money while an operator watched the wrong thing
+are fixed, and each was proven live on Modal rather than offline:
+
+| Item | Fix | What the live cell showed | Cost |
+|---|---|---|---|
+| **U7** — `provision` booked a pod no kinoforge command could see (it had leaked $0.13) | `8191bd1b` | Three SIGKILLed provisions, one of them 1.0 s INSIDE `create_instance`; every kill left a durable row naming the app | $0.00 |
+| **U8** — an `--ephemeral` run was invisible to every state file until it finished | `9d34d008` + `8403a71c` | Index row readable 2.5 s into a live run naming app `kinoforge-eph-b8aa04a1`; still reapable from a fresh process after SIGKILL | ~$0.06 |
+| **U9** — nothing automatically reaped an idle ephemeral pod | `e582bd0f` | The daemon reaped `eph-64dac102` at `age=119s idle on probe gpu_util=0.0% cpu=0.0%` | ~$0.03 |
+| **U15** — `--attach-pod` refused a healthy pod whose endpoint only the ledger held | `ccd4c5e7` | A fresh process attached to warm pod `run-20260907-001839` in 38 s, no `✓ App deployed` | ~$0.07 |
+| **U14** — the warm-attach matcher cold-booted a duplicate A100 | `49394b1d`, review-corrected in `b00a53d1` | A second upscale attached to the warm A100 and published a 1080² clip; one pod did both runs | $0.12 + $0.54 to diagnose |
+
+**Read the STATUS INDEX at the top of the URGENT ACTION ITEMS section, not this table, for current
+state.** It covers all twenty-two items: eight fixed, two partly fixed, twelve open.
+
+**Six items came out of the proofs and are open** — U16 (the ephemeral launch row is only a partial
+handle on RunPod), U17 (`destroy --id` cannot reap a Modal app killed mid-deploy), U18 (`reap`
+short-circuits on an empty ledger, so `--include-orphans` is unreachable for exactly the
+`--ephemeral` case), U19 (no in-pod capability term for interpolation), U21 (`provision` has no
+destroy-on-error path), U22 (the ephemeral orphan reap acts on one probe sample). **U20** was filed
+retroactively and is fixed: the truncated `_cmd_sweeper_start` thresholds dict made `STALL_REAP`
+and `RESTART_LOOP_REAP` unreachable from the daemon for **every** pod, ledger-backed ones included
+— much wider than the ephemeral defect it was found under, and it had been left as a clause inside
+a FIXED entry.
+
+**One deliberate asymmetry, recorded so it is not "harmonised" away.** `_resolve_attach_pod` does
+NOT copy `_resolve_warm_endpoints`'s `return live or recorded` fallback. `ensure_endpoints` is the
+repairing door, so a provider returning empty has said it cannot establish anything live; on
+SkyPilot the recorded endpoint is routinely a `127.0.0.1:<port>` tunnel that died with the process
+that opened it, and handing an engine a dead URL is the F11 failure the S5 pure-read / ensure split
+exists to prevent. The matcher can afford the fallback because its candidates already passed the
+liveness chain; `--attach-pod` is an operator naming a pod by hand. Reasoning is at the code site
+and in the U15 entry.
+
+**Record repairs done in the same pass (Task 7), because this project keeps getting caught by
+these.** (1) `PROGRESS.md` had been **duplicated** by `b00a53d1` — 7,900 lines of stale copy
+appended after the real content, so anything below line 7,940 contradicted the current record.
+Truncated in `14cbbd46` after verifying the tail was a strict subset of the head. (2) The U14 entry
+cited commit `ea3b6f1a`, **which does not exist**; the real one is `b00a53d1`. (3)
+`live-constraints.md` was cited **nine times** across the shipped matrix and this file as a rules
+document; **it never existed in the repo** — it was a scratch file in a deleted operator workspace.
+Every citation now names the plan's `## Global Constraints` block and quotes the rule inline. (4)
+The U14 entry's enumerated claim that a sweep of `examples/configs` showed exactly eight changed
+cfgs is now a committed test (`tests/cli/test_shipped_cfg_want_stages_sweep.py`) rather than prose
+a reader cannot check.
+
+**Next action:** none required from this campaign. If picking it up, the cheapest remaining wins
+are U18 (a one-guard change: gate `reap`'s short-circuit on the UNION of ledger and index, not the
+ledger alone) and U21 (wrap `provision`'s post-create phases in a destroy-on-error `try`).
 
 **Modal command matrix CLOSED (2026-09-05/06, $3.25 of $20; FlashVSR re-proven 2026-09-06 after
 the `av` pin).** Every `kinoforge` subcommand run against the Modal provider, one verdict per cell:
-**57 cells — 31 PASS, 17 FAIL, 9 EXPECTED-REFUSAL, 0 pending**. Results and the operator-facing
-summary are at the TOP of `docs/modal-command-matrix.md`; defects are **U1–U15** in the URGENT
-ACTION ITEMS section above.
+**57 cells — 32 PASS, 16 FAIL, 9 EXPECTED-REFUSAL, 0 pending** (T2-03 moved FAIL → PASS when U14
+was fixed; the earlier 31/17 split was never updated for it). Results and the operator-facing
+summary are at the TOP of `docs/modal-command-matrix.md`; defects are **U1–U22** in the URGENT
+ACTION ITEMS section above — read its STATUS INDEX first.
 
 - **Headline defect FIXED — `av<18` pinned in `82ad084b` and proven live.** `av` 18 broke the
   FlashVSR mp4 writer on every provider (upscale computed on the GPU, then died at
@@ -1584,10 +1636,10 @@ ACTION ITEMS section above.
   recording a reproduced U14 and two $2.50/hr A100s on the clock — reclassified FAIL. And **U13's
   suspected site was wrong and has been retracted** (`submit_and_poll` starts no threads; every local thread is
   daemon) — it now hedges the mechanism and names a $0 offline first step.
-- **Next action:** none required. If picking this up, the highest-value single move is the
-  U14 + U15 pair (no warm reuse at all on the upscale path). One live RunPod or SkyPilot FlashVSR
-  boot would also convert the `av<18` pin from inferred-safe to demonstrated-safe on those two
-  providers.
+- **Next action:** none required. The U14 + U15 pair this line used to name as the
+  highest-value move is **done** — both fixed and live-proven 2026-09-07; see the money-leaks
+  snapshot above. One live RunPod or SkyPilot FlashVSR boot would still convert the `av<18` pin
+  from inferred-safe to demonstrated-safe on those two providers.
 
 **CI back to green — macOS `setsid` (2026-09-05, one commit).** The `Test (macos-latest)` leg had
 failed on every push since 2026-08-18 (8-run streak; Ubuntu green throughout): the five

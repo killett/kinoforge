@@ -539,8 +539,9 @@ config-schema and CLI changes that require operator action on upgrade.
 
 **Modal command matrix** ([docs/modal-command-matrix.md](docs/modal-command-matrix.md)) — every
 `kinoforge` subcommand run against the Modal provider with one verdict per cell: what works, what
-does not, what was fixed, and what is filed. Read its summary section before running anything on
-Modal.
+does not, what was fixed, and what is filed. Its summary also records the follow-up campaign that
+closed the four defects capable of leaving a GPU billing unattended, and the live proof each one
+cost. Read that summary before running anything on Modal.
 
 **Roadmap** ([docs/roadmap.md](docs/roadmap.md)) — planned engines, providers, and capability axes
 for upcoming releases.
