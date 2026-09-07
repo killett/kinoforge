@@ -794,6 +794,15 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         metavar="N",
         help="override cfg.sweeper.interval_s for this run",
     )
+    p_sweeper_start.add_argument(
+        "--include-orphans",
+        action="store_true",
+        help=(
+            "act on ORPHAN_REAP: tear down an --ephemeral pod once it is "
+            "older than lifecycle.ephemeral_orphan_age_s AND idle on the "
+            "util probe. Unions with cfg.sweeper.include_orphans"
+        ),
+    )
 
     p_sweeper_stop = sw_sub.add_parser(
         "stop", help="SIGTERM the daemon owning sweeper:<host>"

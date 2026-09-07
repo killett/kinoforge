@@ -237,6 +237,15 @@ kinoforge sweeper status   # human or --json output
 kinoforge sweeper metrics  # --prom textfile-collector target
 ```
 
+`start` flags:
+
+```
+-c / --config PATH     required
+--interval-s N         override cfg.sweeper.interval_s for this run
+--include-orphans      act on ORPHAN_REAP (see below); unions with
+                       cfg.sweeper.include_orphans
+```
+
 YAML block (additive to existing config; defaults are safe):
 
 ```yaml
@@ -246,6 +255,47 @@ sweeper:
   force_forget: false      # extend default policy with UNROUTABLE
   host: null               # null → socket.gethostname()
 ```
+
+### Covering `--ephemeral` pods (spec C1)
+
+A `--ephemeral` run writes **no ledger row** by design, so nothing about
+it can go heartbeat-stale and, before this landed, only a human typing
+`kinoforge destroy` ever ended one. The sweeper enumerates the
+`EphemeralIndex` on every pass regardless of any flag, and classifies
+those rows on a heartbeat-free tree. Two of its verdicts end an idle
+ephemeral pod:
+
+- **`STALL_REAP`** — N consecutive samples below both util thresholds
+  (`stall_window_s` / `heartbeat_interval_s`). Inside the default apply
+  policy, so `--apply` acts on it. Needs sample history, so it only fires
+  in the daemon, not in one-shot `kinoforge reap`.
+- **`ORPHAN_REAP`** — the age+idle backstop. Fires when the pod is
+  **strictly older than `ephemeral_orphan_age_s`** *and* idle on the
+  current probe (GPU below `stall_gpu_threshold` **and** CPU below
+  `stall_cpu_threshold`). Age alone never reaps — a four-hour render is
+  not a leak — and idleness alone never reaps, because a Wan A14B cold
+  boot sits at 0% GPU for ~25 minutes fetching weights. Acting on it is
+  **opt-in**: `--include-orphans` or `sweeper.include_orphans: true`.
+
+Age is measured from the index row's `created_at_local`, which is stamped
+immediately *before* `create_instance`, so it includes the whole cold
+boot. A missing GPU or CPU reading is never read as idle — an
+unobservable pod is left alone.
+
+The destroy records the evidence: the `ActionResult.reason` and a WARNING
+log line name the age and both utilisation readings that justified it.
+
+```yaml
+compute:
+  lifecycle:
+    ephemeral_orphan_reap_enabled: true   # false = kill switch
+    ephemeral_orphan_age_s: 3600          # must also be idle to reap
+```
+
+Note the same shape as the other util-aware verdicts: with **no**
+`compute.lifecycle` block at all, `stall_window_s`,
+`restart_loop_window_s` and `ephemeral_orphan_age_s` are all `None` and
+the corresponding verdicts never fire.
 
 Operator postures:
 

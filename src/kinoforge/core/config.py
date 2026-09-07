@@ -118,6 +118,19 @@ class LifecycleConfig(BaseModel):
     restart_loop_reap_enabled: bool = True
     restart_loop_window_s: float = 180.0
     restart_loop_uptime_threshold_s: float = 90.0
+    # Spec C1 — the ``--ephemeral`` backstop. An ephemeral run writes no
+    # ledger row, so no heartbeat can go stale and nothing but a human ever
+    # tore the pod down. An EphemeralIndex row is reaped only when it is
+    # older than ``ephemeral_orphan_age_s`` AND idle on the current util
+    # probe (below ``stall_gpu_threshold`` and ``stall_cpu_threshold``);
+    # age alone never reaps and idleness alone never reaps. 3600 s is
+    # deliberately generous: the longest legitimate boot-plus-render cycle
+    # observed in this repo is the Wan A14B path at ~40 min (~25 min of it
+    # a 70 GB weight fetch at 0% GPU), so the gate sits ~50% past the worst
+    # known honest cycle. Acting on the resulting ORPHAN_REAP still requires
+    # the operator's ``include_orphans`` opt-in.
+    ephemeral_orphan_reap_enabled: bool = True
+    ephemeral_orphan_age_s: float = 3600.0
     # LoRA-flexible warm-reuse — staleness threshold for the matcher's
     # pod-side free-disk + inventory snapshot. ``0`` disables the
     # stale-check entirely (matcher trusts the ledger snapshot
@@ -239,6 +252,20 @@ class LifecycleConfig(BaseModel):
         """Reject negative restart_loop_uptime_threshold_s at load time (C27)."""
         if v < 0:
             raise ValueError(f"restart_loop_uptime_threshold_s must be >= 0; got {v}")
+        return v
+
+    @field_validator("ephemeral_orphan_age_s")
+    @classmethod
+    def _validate_ephemeral_orphan_age_non_negative(cls, v: float) -> float:
+        """Reject a negative ephemeral orphan age gate at load time (C1).
+
+        A negative gate satisfies ``age_s > gate`` for every pod the instant
+        it is seen, which would turn the age+idle backstop into "destroy
+        every idle ephemeral pod immediately". Use
+        ``ephemeral_orphan_reap_enabled: false`` to switch the feature off.
+        """
+        if v < 0:
+            raise ValueError(f"ephemeral_orphan_age_s must be >= 0; got {v}")
         return v
 
 
@@ -1589,6 +1616,9 @@ class Config(BaseModel):
             ),
             restart_loop_uptime_threshold_s=lc.restart_loop_uptime_threshold_s,
             lora_swap_re_probe_after_s=lc.lora_swap_re_probe_after_s,
+            ephemeral_orphan_age_s=(
+                lc.ephemeral_orphan_age_s if lc.ephemeral_orphan_reap_enabled else None
+            ),
         )
 
     def placement(self) -> InterfacePlacement:
@@ -1824,7 +1854,7 @@ def _parse_cfg_raw(text: str, *, yaml_path: Path | None = None) -> Config:
         raise ConfigError(str(exc)) from exc
 
 
-def sweeper_policy_from_cfg(cfg: Config) -> Policy:
+def sweeper_policy_from_cfg(cfg: Config, *, include_orphans: bool = False) -> Policy:
     """Build the Layer W daemon's Policy from cfg.sweeper.
 
     Starts with Layer V :data:`DEFAULT_APPLY_POLICY` (IDLE_REAP,
@@ -1833,13 +1863,60 @@ def sweeper_policy_from_cfg(cfg: Config) -> Policy:
 
     Args:
         cfg: Loaded :class:`Config`; ``cfg.sweeper`` is consulted.
+        include_orphans: ``kinoforge sweeper start --include-orphans``.
+            **Unioned with**, never substituted for, ``cfg.sweeper``'s own
+            flag — a config that opts in stays opted in when the flag is
+            absent. The flag exists because the opt-in was reachable only
+            from YAML, which made the ``--ephemeral`` backstop invisible to
+            an operator following ``CLAUDE.md``'s "run
+            ``kinoforge sweeper start &``" advice.
 
     Returns:
         :class:`Policy` with the resulting frozenset.
     """
     act = set(DEFAULT_APPLY_POLICY.act_verdicts)
-    if cfg.sweeper.include_orphans:
+    if cfg.sweeper.include_orphans or include_orphans:
         act.add(Verdict.ORPHAN_REAP)
     if cfg.sweeper.force_forget:
         act.add(Verdict.UNROUTABLE)
     return Policy(act_verdicts=frozenset(act))
+
+
+def sweeper_thresholds_from_cfg(cfg: Config) -> dict[str, Any]:
+    """Build the threshold kwargs the Layer W daemon forwards to ``classify``.
+
+    Single source of truth for the daemon's threshold set, shared by
+    ``kinoforge sweeper start`` and its SIGHUP reload handler.
+
+    Exists because those two sites used to inline a **four-key** dict —
+    ``idle_timeout_s`` / ``max_lifetime_s`` / ``heartbeat_interval_s`` /
+    ``grace_after_session_s`` — while ``kinoforge reap`` passed the full
+    set. Every util-aware verdict (STALL_REAP, RESTART_LOOP_REAP and the
+    spec-C1 ephemeral ORPHAN_REAP) reads a key that dict omitted, so those
+    verdicts were unreachable from the daemon no matter what the operator
+    put in YAML. Confirmed live on 2026-09-06 (matrix cell T1-24): a config
+    with ``stall_window_s: 60`` swept an idle ephemeral pod six times and
+    classified it LIVE every pass.
+
+    Args:
+        cfg: Loaded :class:`Config`; ``cfg.lifecycle()`` is consulted.
+
+    Returns:
+        Keyword mapping accepted verbatim by
+        :func:`kinoforge.core.reaper.classify`.
+    """
+    lc = cfg.lifecycle()
+    return {
+        "idle_timeout_s": float(lc.idle_timeout_s),
+        "max_lifetime_s": float(lc.max_lifetime_s),
+        "heartbeat_interval_s": (
+            float(lc.heartbeat_interval_s) if lc.heartbeat_interval_s else None
+        ),
+        "grace_after_session_s": float(lc.grace_after_session_s),
+        "stall_window_s": lc.stall_window_s,
+        "stall_gpu_threshold": lc.stall_gpu_threshold,
+        "stall_cpu_threshold": lc.stall_cpu_threshold,
+        "restart_loop_window_s": lc.restart_loop_window_s,
+        "restart_loop_uptime_threshold_s": lc.restart_loop_uptime_threshold_s,
+        "ephemeral_orphan_age_s": lc.ephemeral_orphan_age_s,
+    }

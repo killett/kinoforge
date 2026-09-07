@@ -150,6 +150,11 @@ class Lifecycle:
     # LoRA-flexible warm-reuse: staleness threshold for the matcher's
     # pod-side free-disk + inventory snapshot. 0 disables the stale check.
     lora_swap_re_probe_after_s: float = 300.0
+    # Spec C1 — age gate for the ``--ephemeral`` orphan backstop. None (the
+    # default here, so no existing caller changes behaviour) is the kill
+    # switch; Config.lifecycle() maps it from
+    # compute.lifecycle.ephemeral_orphan_age_s when the feature is enabled.
+    ephemeral_orphan_age_s: float | None = None
 
 
 @dataclass(frozen=True)

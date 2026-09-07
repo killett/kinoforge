@@ -389,3 +389,158 @@ def test_cmd_sweeper_stop_keeps_row_when_signalled_daemon_survives(
     assert ctx.ledger().read(f"sweeper:{host}") is not None, (
         "erased the liveness row of a daemon that is still alive"
     )
+
+
+# ---------------------------------------------------------------------------
+# Spec C1 — the daemon must reach ephemeral pods
+# ---------------------------------------------------------------------------
+
+
+#: A cfg carrying an explicit ``compute.lifecycle`` block — the shape a real
+#: operator config has (``budget`` is a required field there).
+_CFG_WITH_LIFECYCLE = (
+    "compute:\n"
+    "  provider: local\n"
+    "  image: dummy\n"
+    "  lifecycle:\n"
+    "    budget: 10\n"
+    "    stall_window_s: 60\n"
+    "engine:\n"
+    "  kind: fake\n"
+    "  precision: fp16\n"
+    "models:\n"
+    "  - ref: hf:org/m\n"
+    "    kind: base\n"
+    "    target: checkpoints\n"
+)
+
+
+def _start_and_capture_loop_kwargs(
+    tmp_path: Path,
+    *,
+    sweeper_block: str = "",
+    cfg_text: str | None = None,
+    **arg_overrides: object,
+) -> dict[str, object]:
+    """Run `sweeper start` to completion, returning the SweeperLoop kwargs."""
+    from kinoforge.core.sweeper import SweeperLoop
+
+    if cfg_text is None:
+        ctx, cfg_path = _make_ctx(tmp_path, sweeper_block=sweeper_block)
+    else:
+        cfg_path = tmp_path / "cfg.yaml"
+        cfg_path.write_text(cfg_text + sweeper_block)
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(exist_ok=True)
+        ctx = SessionContext.from_args(state_dir=state_dir, cfg_path=cfg_path)
+    captured: dict[str, object] = {}
+    real_init = SweeperLoop.__init__
+
+    def _capturing_init(self: SweeperLoop, **kwargs: object) -> None:
+        captured.update(kwargs)
+        real_init(self, **kwargs)  # type: ignore[arg-type]
+
+    with (
+        patch.object(SweeperLoop, "__init__", _capturing_init),
+        patch("kinoforge.core.sweeper.SweeperLoop.start", lambda self: None),
+        patch("kinoforge.core.sweeper.SweeperLoop.stop", lambda self: None),
+        patch("threading.Event.wait", return_value=True),
+        patch("signal.signal"),
+    ):
+        rc = _cmd_sweeper_start(
+            _args(config=str(cfg_path), interval_s=None, **arg_overrides), ctx
+        )
+    assert rc == 0
+    return captured
+
+
+def test_sweeper_start_forwards_the_util_aware_thresholds(tmp_path: Path) -> None:
+    """The daemon's thresholds carry every gate `classify` reads.
+
+    Bug caught (live T1-24, 2026-09-06): `_cmd_sweeper_start` inlined a
+    four-key thresholds dict, so `stall_window_s`, the restart-loop window
+    and the spec-C1 ephemeral age gate never reached `classify`. The daemon
+    swept an idle ephemeral pod six times and returned LIVE every pass —
+    while `kinoforge reap`, which passes the full set, could fire the same
+    verdicts fine.
+    """
+    captured = _start_and_capture_loop_kwargs(tmp_path, cfg_text=_CFG_WITH_LIFECYCLE)
+    thresholds = captured["thresholds"]
+    assert isinstance(thresholds, dict)
+    for key in (
+        "stall_window_s",
+        "stall_gpu_threshold",
+        "stall_cpu_threshold",
+        "restart_loop_window_s",
+        "ephemeral_orphan_age_s",
+    ):
+        assert key in thresholds, f"daemon dropped {key} — verdict unreachable"
+    # The operator's YAML must survive the trip, not just the key names: this
+    # is the exact value T1-24 set and the daemon never saw.
+    assert thresholds["stall_window_s"] == 60.0
+    assert thresholds["ephemeral_orphan_age_s"] == 3600.0
+    assert thresholds["restart_loop_window_s"] == 180.0
+
+
+def test_sweeper_start_include_orphans_flag_arms_orphan_reap(tmp_path: Path) -> None:
+    """`--include-orphans` puts ORPHAN_REAP in the daemon's act set.
+
+    Bug caught: the opt-in was reachable only from YAML, so an operator who
+    followed CLAUDE.md's "run `kinoforge sweeper start &`" got a daemon that
+    classified idle ephemeral pods correctly and then acted on nothing.
+    """
+    from kinoforge.core.reaper import Policy, Verdict
+
+    captured = _start_and_capture_loop_kwargs(tmp_path, include_orphans=True)
+    policy = captured["policy"]
+    assert isinstance(policy, Policy)
+    assert Verdict.ORPHAN_REAP in policy.act_verdicts
+
+
+def test_sweeper_start_without_the_flag_leaves_orphan_reap_out(tmp_path: Path) -> None:
+    """No flag, no YAML opt-in → ORPHAN_REAP is not acted on.
+
+    Bug caught: arming orphan reaping by default would make every existing
+    `sweeper start` begin destroying ephemeral pods without the operator
+    asking for it.
+    """
+    from kinoforge.core.reaper import Policy, Verdict
+
+    captured = _start_and_capture_loop_kwargs(tmp_path)
+    policy = captured["policy"]
+    assert isinstance(policy, Policy)
+    assert Verdict.ORPHAN_REAP not in policy.act_verdicts
+
+
+def test_sweeper_start_cfg_opt_in_survives_absent_flag(tmp_path: Path) -> None:
+    """`sweeper.include_orphans: true` still arms ORPHAN_REAP with no flag.
+
+    Bug caught: wiring the CLI flag as an assignment rather than a union
+    would silently disable an operator's existing YAML opt-in.
+    """
+    from kinoforge.core.reaper import Policy, Verdict
+
+    captured = _start_and_capture_loop_kwargs(
+        tmp_path, sweeper_block="sweeper:\n  include_orphans: true\n"
+    )
+    policy = captured["policy"]
+    assert isinstance(policy, Policy)
+    assert Verdict.ORPHAN_REAP in policy.act_verdicts
+
+
+def test_parser_exposes_include_orphans_on_sweeper_start(tmp_path: Path) -> None:
+    """`kinoforge sweeper start --include-orphans` parses to args.include_orphans.
+
+    Bug caught: the flag documented in `docs/lifecycle.md` not existing on
+    the parser — argparse exits 2 and the operator's safety net never runs.
+    """
+    from kinoforge.cli._main import _build_parser
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        ["sweeper", "start", "-c", str(tmp_path / "cfg.yaml"), "--include-orphans"]
+    )
+    assert args.include_orphans is True
+
+    plain = parser.parse_args(["sweeper", "start", "-c", str(tmp_path / "cfg.yaml")])
+    assert plain.include_orphans is False

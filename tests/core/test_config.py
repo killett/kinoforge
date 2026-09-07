@@ -2011,3 +2011,138 @@ def test_skypilot_lambda_flashvsr_cfg_loads() -> None:
     check = _sky.SkyPilotCloudPinSupportedCheck()
     assert check.applies_to(cfg)
     assert check.run(cfg).passed is True
+
+
+# ---------------------------------------------------------------------------
+# Spec C1 — the sweeper daemon's threshold bridge
+# ---------------------------------------------------------------------------
+
+
+def _c1_cfg(**lifecycle_overrides: object) -> object:
+    """Minimal Config with a compute.lifecycle block for the C1 bridge tests."""
+    from kinoforge.core.config import (
+        ComputeConfig,
+        Config,
+        EngineConfig,
+        LifecycleConfig,
+        ModelEntry,
+        SweeperConfig,
+    )
+
+    return Config(
+        compute=ComputeConfig(
+            provider="local",
+            image="x",
+            lifecycle=LifecycleConfig(budget=10.0, **lifecycle_overrides),  # type: ignore[arg-type]
+        ),
+        engine=EngineConfig(kind="fake", precision="fp16"),
+        models=[ModelEntry(ref="hf:org/m", kind="base", target="checkpoints")],
+        sweeper=SweeperConfig(),
+    )
+
+
+def test_sweeper_thresholds_carry_every_gate_classify_reads() -> None:
+    """The daemon's threshold bridge forwards the util-aware gates, not just 4 keys.
+
+    Bug caught (live T1-24, 2026-09-06): `_cmd_sweeper_start` built a
+    four-key dict (idle/max_lifetime/heartbeat/grace) and dropped
+    `stall_window_s` and friends, so an operator who set `stall_window_s: 60`
+    watched the daemon return LIVE on an idle pod for every sweep — the
+    util-aware verdicts were unreachable in the daemon while `kinoforge reap`
+    (which passes them) could fire them fine.
+    """
+    from kinoforge.core.config import sweeper_thresholds_from_cfg
+
+    cfg = _c1_cfg(stall_window_s=60.0, ephemeral_orphan_age_s=1800.0)
+    th = sweeper_thresholds_from_cfg(cfg)  # type: ignore[arg-type]
+
+    assert th["stall_window_s"] == 60.0
+    assert th["ephemeral_orphan_age_s"] == 1800.0
+    assert th["stall_gpu_threshold"] == 5.0
+    assert th["stall_cpu_threshold"] == 20.0
+    assert th["restart_loop_window_s"] == 180.0
+    assert th["max_lifetime_s"] == 5 * 3600.0
+
+
+def test_sweeper_thresholds_accepted_by_classify() -> None:
+    """Every key the bridge emits must be a `classify` keyword.
+
+    Bug caught: a bridge key that classify does not accept raises TypeError
+    inside `_tick_once`, which swallows it — the daemon would then sweep
+    forever, incrementing only `errors_total`, and reap nothing at all.
+    """
+    from kinoforge.core.config import sweeper_thresholds_from_cfg
+    from kinoforge.core.reaper import Verdict, classify
+
+    th = sweeper_thresholds_from_cfg(_c1_cfg())  # type: ignore[arg-type]
+    entry = {"id": "i-1", "provider": "local", "created_at": 0.0}
+    assert classify(entry, set(), 100.0, **th) == Verdict.STALE_LEDGER
+
+
+def test_sweeper_thresholds_orphan_gate_is_none_when_disabled() -> None:
+    """`ephemeral_orphan_reap_enabled: false` reaches classify as None.
+
+    Bug caught: forwarding the raw seconds regardless of the enable flag
+    would leave the kill switch inert — an operator who switched the
+    backstop off would still get ephemeral pods destroyed.
+    """
+    from kinoforge.core.config import sweeper_thresholds_from_cfg
+
+    th = sweeper_thresholds_from_cfg(
+        _c1_cfg(ephemeral_orphan_reap_enabled=False)  # type: ignore[arg-type]
+    )
+    assert th["ephemeral_orphan_age_s"] is None
+
+
+def test_negative_ephemeral_orphan_age_rejected_at_load(tmp_path: Path) -> None:
+    """A negative age gate is rejected at YAML load, not at reap time.
+
+    Bug caught: a negative gate makes `age_s > gate` true for every pod the
+    instant it is seen, turning the backstop into "destroy every idle
+    ephemeral pod immediately".
+    """
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(
+        "compute:\n"
+        "  provider: local\n"
+        "  image: dummy\n"
+        "  lifecycle:\n"
+        "    budget: 10\n"
+        "    ephemeral_orphan_age_s: -1\n"
+        "engine:\n"
+        "  kind: fake\n"
+        "  precision: fp16\n"
+        "models:\n"
+        "  - ref: hf:org/m\n"
+        "    kind: base\n"
+        "    target: checkpoints\n"
+    )
+    with pytest.raises(ConfigError, match="ephemeral_orphan_age_s must be >= 0"):
+        load_config(cfg_path)
+
+
+def test_sweeper_policy_cli_include_orphans_unions_with_cfg() -> None:
+    """The CLI flag adds ORPHAN_REAP; it never subtracts the cfg opt-in.
+
+    Bug caught: wiring the flag as an assignment rather than a union would
+    make `sweeper start` without `--include-orphans` silently ignore an
+    operator's `sweeper.include_orphans: true` in YAML.
+    """
+    from kinoforge.core.config import SweeperConfig, sweeper_policy_from_cfg
+    from kinoforge.core.reaper import Verdict
+
+    base = _c1_cfg()
+
+    assert Verdict.ORPHAN_REAP not in sweeper_policy_from_cfg(base).act_verdicts  # type: ignore[arg-type]
+    assert (
+        Verdict.ORPHAN_REAP
+        in sweeper_policy_from_cfg(base, include_orphans=True).act_verdicts  # type: ignore[arg-type]
+    )
+
+    from_cfg = base.model_copy(  # type: ignore[attr-defined]
+        update={"sweeper": SweeperConfig(include_orphans=True)}
+    )
+    assert (
+        Verdict.ORPHAN_REAP
+        in sweeper_policy_from_cfg(from_cfg, include_orphans=False).act_verdicts
+    )

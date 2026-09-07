@@ -252,6 +252,149 @@ def _restart_loop_reap_predicate(
     return counter_i * heartbeat_interval_s >= effective_window
 
 
+def _num(value: Any) -> float | None:  # noqa: ANN401 — reads untyped entry dicts
+    """Coerce a probe reading to float; ``None`` when absent or unusable.
+
+    Args:
+        value: A ``gpu_util_pct`` / ``cpu_pct`` reading off a synthesised
+            ephemeral entry. Providers report ``None`` when the field is
+            simply not available (RunPod returns a null GPU array during
+            early boot).
+
+    Returns:
+        The float value, or ``None`` when it is missing or not numeric.
+        ``None`` means "not observed" — never "zero".
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def ephemeral_orphan_reason(entry: Mapping[str, Any], now: float) -> str:
+    """Describe the evidence behind an ephemeral ORPHAN_REAP.
+
+    A destroy that records only the verdict is unreviewable — the operator
+    whose render vanished cannot tell whether the daemon observed an idle
+    GPU or guessed. This string is attached to the
+    :class:`~kinoforge.core.reaper_actor.ActionResult` and logged at WARNING
+    before the destroy, so the age and the utilisation that justified it
+    survive in the record.
+
+    Args:
+        entry: The synthesised ephemeral entry that was classified.
+        now: Wall-clock seconds at the moment of the decision.
+
+    Returns:
+        A one-line reason naming the pod's age in seconds and the GPU/CPU
+        readings observed, e.g. ``"ephemeral orphan: age=7200s idle on
+        probe gpu_util=0.0% cpu=1.5%"``. Unobserved readings render as
+        ``unknown`` rather than ``0``.
+    """
+    age = now - float(entry.get("created_at", now))
+    gpu = _num(entry.get("gpu_util_pct"))
+    cpu = _num(entry.get("cpu_pct"))
+    gpu_s = "unknown" if gpu is None else f"{gpu:.1f}%"
+    cpu_s = "unknown" if cpu is None else f"{cpu:.1f}%"
+    return (
+        f"ephemeral orphan: age={age:.0f}s idle on probe gpu_util={gpu_s} cpu={cpu_s}"
+    )
+
+
+def _ephemeral_orphan_predicate(
+    entry: Mapping[str, Any],
+    thresholds: Mapping[str, Any],
+    age_s: float,
+) -> bool:
+    """Return True iff an ephemeral row is old enough AND idle (spec C1).
+
+    Both halves are required, and neither is sufficient:
+
+    * **Age alone must never reap.** A four-hour render is not a leak; a
+      pure TTL would destroy the operator's work.
+    * **Idleness alone must never reap.** A Wan A14B cold boot spends ~25
+      of its ~30 minutes at 0% GPU fetching 70 GB of weights.
+
+    Conservative on ignorance throughout: a missing threshold, a missing
+    reading, or a non-numeric reading all return False. "Not observed" is
+    never read as "idle".
+
+    Args:
+        entry: Synthesised ephemeral entry; must carry ``probe_state``
+            ``"ok"`` for any reap to be considered.
+        thresholds: Threshold mapping. ``ephemeral_orphan_age_s`` is the
+            age gate (``None`` = kill switch, the default); idleness is
+            measured against ``stall_gpu_threshold`` /
+            ``stall_cpu_threshold``, the same definition of a "low-util
+            sample" the STALL_REAP path uses.
+        age_s: ``now - created_at``, where ``created_at`` came from the
+            index row's ``created_at_local`` — the pod's BIRTH time, so
+            this age includes the whole cold boot (spec A2).
+
+    Returns:
+        True when the pod is strictly older than the age gate and both the
+        GPU and the CPU reading sit below their idle thresholds.
+    """
+    if entry.get("probe_state") != "ok":
+        return False
+    age_gate = _num(thresholds.get("ephemeral_orphan_age_s"))
+    if age_gate is None or age_gate <= 0.0:
+        return False
+    if age_s <= age_gate:
+        return False
+    gpu = _num(entry.get("gpu_util_pct"))
+    cpu = _num(entry.get("cpu_pct"))
+    if gpu is None or cpu is None:
+        return False
+    gpu_thresh = float(thresholds.get("stall_gpu_threshold") or 0.0)
+    cpu_thresh = float(thresholds.get("stall_cpu_threshold") or 0.0)
+    return gpu < gpu_thresh and cpu < cpu_thresh
+
+
+def _ephemeral_stall_predicate(
+    entry: Mapping[str, Any],
+    thresholds: Mapping[str, Any],
+    *,
+    stall_history: Mapping[str, deque[tuple[float, float]]] | None,
+) -> bool:
+    """Return True iff N consecutive samples sit below both util thresholds.
+
+    Extracted verbatim from the previous inline body of
+    :func:`_classify_ephemeral` so the orphan rule can be evaluated after
+    it without being stranded behind its early returns.
+
+    Args:
+        entry: Synthesised ephemeral entry.
+        thresholds: Reads ``stall_window_s`` (``0``/absent = off),
+            ``heartbeat_interval_s``, ``stall_gpu_threshold`` and
+            ``stall_cpu_threshold``.
+        stall_history: Per-pod deque of ``(gpu_util_pct, cpu_pct)`` samples
+            owned by ``SweeperLoop``. ``None`` (``kinoforge reap`` one-shot
+            mode) disables STALL_REAP entirely.
+
+    Returns:
+        True when the history holds at least
+        ``ceil(stall_window_s / heartbeat_interval_s)`` samples and every
+        one of the most recent that many is below both thresholds.
+    """
+    if stall_history is None:
+        return False
+    stall_window_s = float(thresholds.get("stall_window_s") or 0.0)
+    interval_s = float(thresholds.get("heartbeat_interval_s") or 30.0)
+    if stall_window_s <= 0.0:
+        return False
+    required = max(1, math.ceil(stall_window_s / interval_s))
+    history = stall_history.get(str(entry["id"]))
+    if history is None or len(history) < required:
+        return False
+    gpu_thresh = float(thresholds.get("stall_gpu_threshold") or 0.0)
+    cpu_thresh = float(thresholds.get("stall_cpu_threshold") or 0.0)
+    recent = list(history)[-required:]
+    return all(g < gpu_thresh and c < cpu_thresh for (g, c) in recent)
+
+
 def _classify_ephemeral(
     entry: Mapping[str, Any],
     thresholds: Mapping[str, Any],
@@ -266,9 +409,10 @@ def _classify_ephemeral(
       2. probe_state == "no_substrate" → SKIP_NO_PROBE
       3. probe_state == "failed"        → PROBE_FAILED
       4. now - created_at > max_lifetime_s → OVERAGE_REAP
-      5. stall_history is None (one-shot CLI) → LIVE (STALL skipped)
-      6. N consecutive samples below gpu+cpu thresholds → STALL_REAP
-         (N = ceil(stall_window_s / heartbeat_interval_s))
+      5. N consecutive samples below gpu+cpu thresholds → STALL_REAP
+         (N = ceil(stall_window_s / heartbeat_interval_s); skipped when
+         ``stall_history`` is None, i.e. one-shot CLI)
+      6. old enough AND idle on this tick's probe → ORPHAN_REAP (spec C1)
       7. else → LIVE
 
     NEVER reads heartbeat keys (last_heartbeat, heartbeat_thread_tick,
@@ -278,7 +422,8 @@ def _classify_ephemeral(
         entry: Synthetic ephemeral entry from ``_synthesize_ephemeral_entry``.
         thresholds: Threshold mapping; only ``max_lifetime_s``,
             ``stall_window_s``, ``stall_gpu_threshold``,
-            ``stall_cpu_threshold``, ``heartbeat_interval_s`` are read.
+            ``stall_cpu_threshold``, ``heartbeat_interval_s`` and
+            ``ephemeral_orphan_age_s`` are read.
         now: Wall-clock now (seconds, float).
         stall_history: Per-pod deque of ``(gpu_util_pct, cpu_pct)`` samples,
             owned by ``SweeperLoop``. ``None`` from ``kinoforge reap``
@@ -286,7 +431,7 @@ def _classify_ephemeral(
 
     Returns:
         One of GC_404, SKIP_NO_PROBE, PROBE_FAILED, OVERAGE_REAP,
-        STALL_REAP, LIVE.
+        STALL_REAP, ORPHAN_REAP, LIVE.
     """
     probe_state = entry.get("probe_state")
     if probe_state == "not_found":
@@ -297,27 +442,24 @@ def _classify_ephemeral(
         return Verdict.PROBE_FAILED
 
     created_at = float(entry.get("created_at", 0.0))
+    age_s = now - created_at
     max_lifetime_s = float(thresholds["max_lifetime_s"])
-    if now - created_at > max_lifetime_s:
+    if age_s > max_lifetime_s:
         return Verdict.OVERAGE_REAP
 
-    if stall_history is None:
-        return Verdict.LIVE
-
-    stall_window_s = float(thresholds.get("stall_window_s") or 0.0)
-    interval_s = float(thresholds.get("heartbeat_interval_s") or 30.0)
-    if stall_window_s <= 0.0:
-        return Verdict.LIVE
-    required = max(1, math.ceil(stall_window_s / interval_s))
-    pod_id = str(entry["id"])
-    history = stall_history.get(pod_id)
-    if history is None or len(history) < required:
-        return Verdict.LIVE
-    gpu_thresh = float(thresholds.get("stall_gpu_threshold") or 0.0)
-    cpu_thresh = float(thresholds.get("stall_cpu_threshold") or 0.0)
-    recent = list(history)[-required:]
-    if all(g < gpu_thresh and c < cpu_thresh for (g, c) in recent):
+    # STALL_REAP is evaluated first because it carries the stronger evidence
+    # (N consecutive low-util samples, not one probe) and it is inside
+    # DEFAULT_APPLY_POLICY, so it acts without an operator opt-in.
+    if _ephemeral_stall_predicate(entry, thresholds, stall_history=stall_history):
         return Verdict.STALL_REAP
+
+    # Spec C1 — the age+util backstop for ``--ephemeral`` pods, which write no
+    # ledger row and therefore have no heartbeat to go stale. Opt-in at the
+    # policy level (ORPHAN_REAP is not in DEFAULT_APPLY_POLICY), and reachable
+    # in one-shot mode too — unlike STALL_REAP it needs no sample history.
+    if _ephemeral_orphan_predicate(entry, thresholds, age_s):
+        return Verdict.ORPHAN_REAP
+
     return Verdict.LIVE
 
 
@@ -336,6 +478,7 @@ def classify(
     restart_loop_window_s: float | None = None,
     restart_loop_uptime_threshold_s: float = 90.0,
     stall_history: Mapping[str, deque[tuple[float, float]]] | None = None,
+    ephemeral_orphan_age_s: float | None = None,
 ) -> Verdict:
     """Classify a single ledger entry against the current world state.
 
@@ -374,6 +517,14 @@ def classify(
             branch (``entry["kinoforge_ephemeral"] is True``). ``None``
             (default + ``kinoforge reap`` one-shot mode) skips STALL_REAP
             in the ephemeral branch.
+        ephemeral_orphan_age_s: Spec C1 age gate for the ``--ephemeral``
+            backstop. Only consulted on the ephemeral branch. ``None``
+            (the default) is the kill switch — no ORPHAN_REAP can fire
+            from an index row. When set, an ephemeral row is reaped only
+            when it is strictly older than this AND idle on the current
+            probe (below ``stall_gpu_threshold`` and
+            ``stall_cpu_threshold``). Age alone never reaps and idleness
+            alone never reaps; see :func:`_ephemeral_orphan_predicate`.
 
     Returns:
         One of the seven non-UNROUTABLE Verdict values:
@@ -396,6 +547,7 @@ def classify(
                 "stall_gpu_threshold": stall_gpu_threshold,
                 "stall_cpu_threshold": stall_cpu_threshold,
                 "heartbeat_interval_s": heartbeat_interval_s,
+                "ephemeral_orphan_age_s": ephemeral_orphan_age_s,
             },
             now,
             stall_history=stall_history,

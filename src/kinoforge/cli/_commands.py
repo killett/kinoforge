@@ -3183,6 +3183,9 @@ def _cmd_reap(args: argparse.Namespace, ctx: SessionContext) -> int:
         "stall_cpu_threshold": lifecycle.stall_cpu_threshold,
         "restart_loop_window_s": lifecycle.restart_loop_window_s,
         "restart_loop_uptime_threshold_s": lifecycle.restart_loop_uptime_threshold_s,
+        # Spec C1 — one-shot `kinoforge reap --include-orphans` gets the same
+        # age+idle backstop the daemon does.
+        "ephemeral_orphan_age_s": lifecycle.ephemeral_orphan_age_s,
     }
 
     policy = policy_from_cli_flags(
@@ -3795,7 +3798,11 @@ def _cmd_sweeper_start(args: argparse.Namespace, ctx: SessionContext) -> int:
     import threading
 
     from kinoforge.core import registry
-    from kinoforge.core.config import load_config, sweeper_policy_from_cfg
+    from kinoforge.core.config import (
+        load_config,
+        sweeper_policy_from_cfg,
+        sweeper_thresholds_from_cfg,
+    )
     from kinoforge.core.sweeper import SweeperLoop, _SweeperStats
 
     cfg = ctx.cfg
@@ -3808,16 +3815,11 @@ def _cmd_sweeper_start(args: argparse.Namespace, ctx: SessionContext) -> int:
     if interval_s <= 0:
         logger.error("invalid interval_s=%s", interval_s)
         return 2
-    policy = sweeper_policy_from_cfg(cfg)
-    lc = cfg.lifecycle()
-    thresholds = {
-        "idle_timeout_s": float(lc.idle_timeout_s),
-        "max_lifetime_s": float(lc.max_lifetime_s),
-        "heartbeat_interval_s": (
-            float(lc.heartbeat_interval_s) if lc.heartbeat_interval_s else None
-        ),
-        "grace_after_session_s": float(lc.grace_after_session_s),
-    }
+    cli_include_orphans = bool(getattr(args, "include_orphans", False))
+    policy = sweeper_policy_from_cfg(cfg, include_orphans=cli_include_orphans)
+    # Spec C1: the full threshold set, not the four keys this used to inline —
+    # every util-aware verdict reads a key that dict omitted.
+    thresholds = sweeper_thresholds_from_cfg(cfg)
     ledger = ctx.ledger()
     store = ctx.store()
 
@@ -3828,7 +3830,7 @@ def _cmd_sweeper_start(args: argparse.Namespace, ctx: SessionContext) -> int:
         host,
         interval_s,
         sorted(v.value for v in policy.act_verdicts),
-        cfg.sweeper.include_orphans,
+        cfg.sweeper.include_orphans or cli_include_orphans,
         cfg.sweeper.force_forget,
         pid,
     )
@@ -3883,18 +3885,10 @@ def _cmd_sweeper_start(args: argparse.Namespace, ctx: SessionContext) -> int:
         except Exception as exc:  # noqa: BLE001
             logger.warning("SIGHUP: cfg reload failed: %s", exc)
             return
-        new_policy = sweeper_policy_from_cfg(new_cfg)
-        new_lc = new_cfg.lifecycle()
-        new_thresholds = {
-            "idle_timeout_s": float(new_lc.idle_timeout_s),
-            "max_lifetime_s": float(new_lc.max_lifetime_s),
-            "heartbeat_interval_s": (
-                float(new_lc.heartbeat_interval_s)
-                if new_lc.heartbeat_interval_s
-                else None
-            ),
-            "grace_after_session_s": float(new_lc.grace_after_session_s),
-        }
+        new_policy = sweeper_policy_from_cfg(
+            new_cfg, include_orphans=cli_include_orphans
+        )
+        new_thresholds = sweeper_thresholds_from_cfg(new_cfg)
         loop.reload(
             policy=new_policy,
             thresholds=new_thresholds,

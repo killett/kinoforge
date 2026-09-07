@@ -18,7 +18,13 @@ from typing import TYPE_CHECKING, Any
 from kinoforge.core.clock import Clock
 from kinoforge.core.errors import TeardownError
 from kinoforge.core.lifecycle import Ledger, destroy_confirmed
-from kinoforge.core.reaper import Policy, Verdict, classify, partition
+from kinoforge.core.reaper import (
+    Policy,
+    Verdict,
+    classify,
+    ephemeral_orphan_reason,
+    partition,
+)
 from kinoforge.core.runtime_probe import RuntimeProbe
 from kinoforge.core.warm_reuse.ephemeral_index import (
     EphemeralIndex,
@@ -87,7 +93,9 @@ class ActionResult:
         reason: Free-text explanation for skipped / failed / deferred-
             session-claim actions. For ``deferred-session-claim`` the
             reason contains the holder PID when readable from the lock
-            sidecar.
+            sidecar. Spec C1: an ephemeral ORPHAN_REAP also carries one —
+            the age and the GPU/CPU readings that justified the destroy,
+            so the decision is reviewable after the pod is gone.
     """
 
     instance_id: str
@@ -233,6 +241,7 @@ def act_on_verdict(
         # process holds it, this entry is mid-session-claim — skip this
         # sweep, log INFO with holder_pid, retry next pass.
         deferred = _probe_session_claim_holder(store, instance_id)
+        reason: str | None = None
         if deferred is not None:
             _log.info(
                 "instance %s mid-session-claim (held by pid %s); deferring to next sweep",
@@ -253,9 +262,8 @@ def act_on_verdict(
             live_ids: set[str] = set()
         else:
             live_ids = {i.id for i in provider.list_instances()}
-        v2 = classify(
-            entry, live_ids, clock.now(), stall_history=stall_history, **thresholds
-        )
+        now_s = clock.now()
+        v2 = classify(entry, live_ids, now_s, stall_history=stall_history, **thresholds)
         if v2 != snapshot_verdict:
             return ActionResult(
                 instance_id=instance_id,
@@ -286,6 +294,15 @@ def act_on_verdict(
                 Verdict.ORPHAN_REAP,
                 Verdict.STALL_REAP,  # C26
             }:
+                # Spec C1: an ephemeral orphan reap must state the evidence it
+                # acted on. Recorded on the ActionResult AND logged before the
+                # destroy, so the record survives even if the destroy fails.
+                if (
+                    v2 == Verdict.ORPHAN_REAP
+                    and entry.get("kinoforge_ephemeral") is True
+                ):
+                    reason = ephemeral_orphan_reason(entry, now_s)
+                    _log.warning("reaping %s — %s", instance_id, reason)
                 destroy_confirmed(
                     provider,
                     instance_id,
@@ -354,6 +371,7 @@ def act_on_verdict(
             snapshot_verdict=snapshot_verdict,
             applied_verdict=v2,
             action=action,
+            reason=reason,
         )
 
 
