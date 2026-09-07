@@ -683,7 +683,12 @@ def _resolve_warm_attach_chain(
 
 
 def _stamp_cold_created_instance(
-    ctx: SessionContext, cfg: Config, returned_instance: Instance
+    ctx: SessionContext,
+    cfg: Config,
+    returned_instance: Instance,
+    *,
+    created_at_local: str | None = None,
+    supersedes: str | None = None,
 ) -> str:
     """Ledger-record a cold-created instance and stamp warm-attach metadata.
 
@@ -708,6 +713,14 @@ def _stamp_cold_created_instance(
         cfg: Loaded config for this run.
         returned_instance: Cold-created instance returned by the
             orchestrator.
+        created_at_local: The launch stamp returned by
+            :func:`_ephemeral_launch_row_reserve`, carried verbatim onto the
+            ephemeral index row so its age is measured from the launch and
+            not from now. ``None`` stamps the current time (no reservation
+            was made, e.g. because no ``EphemeralSession`` is active).
+        supersedes: The id of the pre-create launch row this instance's row
+            replaces — the client-side ``run_id``. Dropped after the real
+            row lands, so one pod leaves one row.
 
     Returns:
         The config's warm-attach key, for callers that need it downstream
@@ -729,7 +742,13 @@ def _stamp_cold_created_instance(
         kinoforge_upscaler=cfg.upscale.engine if cfg.upscale else "",
         kinoforge_upscaler_precision=_upscaler_precision_tag(cfg),
     )
-    _ephemeral_index_add(ctx, cfg, returned_instance)
+    _ephemeral_index_add(
+        ctx,
+        cfg,
+        returned_instance,
+        created_at_local=created_at_local,
+        supersedes=supersedes,
+    )
     return cfg_wak
 
 
@@ -822,6 +841,14 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     if chain_rc is not None:
         return chain_rc
 
+    # Spec A2 — the ONLY durable trace an --ephemeral run leaves is the index
+    # row, so it goes in BEFORE the orchestrator can commit money. A cold
+    # create is all that books anything: a warm attach re-uses a pod that is
+    # already indexed.
+    launch_stamp = (
+        _ephemeral_launch_row_reserve(ctx, cfg, run_id) if instance is None else None
+    )
+
     try:
         artifact, returned_instance = _generate(
             cfg,
@@ -846,13 +873,26 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     # was supplied (warm-attach path; entry already in ledger) or when the
     # generate path tore the pod down (--no-reuse).
     if returned_instance is not None and instance is None and not single:
-        cfg_wak = _stamp_cold_created_instance(ctx, cfg, returned_instance)
+        cfg_wak = _stamp_cold_created_instance(
+            ctx,
+            cfg,
+            returned_instance,
+            created_at_local=launch_stamp,
+            supersedes=run_id,
+        )
         if emit_record_path is not None:
             _write_provision_record(
                 emit_record_path,
                 instance=returned_instance,
                 warm_attach_key=cfg_wak,
             )
+    else:
+        # Nothing survives this run — either --no-reuse tore the pod down or
+        # the path booked no compute at all — so the launch row would name a
+        # resource that no longer exists. Only reachable when the run RETURNED;
+        # a raise keeps the row (ruling C1).
+        if launch_stamp is not None:
+            _ephemeral_launch_row_release(ctx, run_id)
 
     print(f"generated: uri={artifact.uri!r}")
     return 0
@@ -965,6 +1005,12 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
         # there is nothing left to guard against here.
         logger.info(report.summarize())
 
+    # Spec A2 — same pre-create reservation as _cmd_generate; see
+    # _ephemeral_launch_row_reserve.
+    launch_stamp = (
+        _ephemeral_launch_row_reserve(ctx, cfg, run_id) if instance is None else None
+    )
+
     artifact, returned_instance = _orchestrator.generate(
         cfg,
         request=None,
@@ -981,7 +1027,15 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     # T11 — symmetric ledger stamp with _cmd_generate (resolves T7 deferral).
     if returned_instance is not None and instance is None and not args.no_reuse:
-        _stamp_cold_created_instance(ctx, cfg, returned_instance)
+        _stamp_cold_created_instance(
+            ctx,
+            cfg,
+            returned_instance,
+            created_at_local=launch_stamp,
+            supersedes=run_id,
+        )
+    elif launch_stamp is not None:
+        _ephemeral_launch_row_release(ctx, run_id)
 
     print(f"upscaled: uri={artifact.uri!r}")
     return 0
@@ -1066,6 +1120,12 @@ def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
         # there is nothing left to guard against here.
         logger.info(report.summarize())
 
+    # Spec A2 — same pre-create reservation as _cmd_generate; see
+    # _ephemeral_launch_row_reserve.
+    launch_stamp = (
+        _ephemeral_launch_row_reserve(ctx, cfg, run_id) if instance is None else None
+    )
+
     artifact, returned_instance = _orchestrator.generate(
         cfg,
         request=None,
@@ -1084,7 +1144,15 @@ def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
     # ledger-stamps its cold-created pod, so NON-ephemeral warm scan cannot
     # rediscover it. Pre-existing and independent of ephemeral indexing.
     if returned_instance is not None and instance is None and not args.no_reuse:
-        _ephemeral_index_add(ctx, cfg, returned_instance)
+        _ephemeral_index_add(
+            ctx,
+            cfg,
+            returned_instance,
+            created_at_local=launch_stamp,
+            supersedes=run_id,
+        )
+    elif launch_stamp is not None:
+        _ephemeral_launch_row_release(ctx, run_id)
     print(f"interpolated: uri={artifact.uri!r}")
     return 0
 
@@ -1800,8 +1868,115 @@ def _cfg_warm_attach_key(cfg: Config) -> str:
     ).derive()
 
 
+def _ephemeral_launch_row_reserve(
+    ctx: SessionContext, cfg: Config, run_id: str
+) -> str | None:
+    """Write the PRE-create ephemeral index row and return its launch stamp.
+
+    Spec A2 (2026-09-06). An ``--ephemeral`` run deliberately writes no
+    durable ledger row, so the ephemeral index is its ONLY durable trace.
+    Writing that row after the orchestrator returns left a window — the whole
+    cold boot, minutes long — in which nothing anywhere named the pod: a
+    Ctrl-C, an OOM or a session death stranded a billing GPU no kinoforge
+    command could identify, and a monitor could not poll its ``/util``
+    endpoint because the endpoint had not been written down. A run launched
+    02:01:23 produced a row stamped 02:02:41.
+
+    The row is keyed by the CLIENT-side ``run_id``, which is the only id that
+    exists before ``create_instance`` returns, and which is what the provider
+    names the resource with (the pod NAME on RunPod, the app run id on Modal)
+    — the same key
+    :func:`~kinoforge.core.orchestrator._record_provisional_row` uses for the
+    ledger's pre-launch row. :func:`_ephemeral_index_add` later replaces it
+    with a row keyed by the provider-side id, carrying this stamp forward.
+
+    No-op when no ``EphemeralSession`` is active (the index is the
+    ephemeral-mode structure; an ordinary run's durable trace is the ledger)
+    or when the cfg has no ``compute`` block (a hosted engine books no pod).
+
+    Never raises: bookkeeping must not fail a run that would otherwise
+    succeed. A fault forfeits the protection for this run only, and is
+    logged.
+
+    Args:
+        ctx: The current SessionContext (carries the ArtifactStore).
+        cfg: Loaded Config — used to derive capability and warm-attach keys.
+        run_id: The client-side run id for this launch.
+
+    Returns:
+        The ISO-format local-TZ launch stamp written onto the row, to be
+        handed back to :func:`_ephemeral_index_add` /
+        :func:`_stamp_cold_created_instance`; ``None`` when nothing was
+        written.
+    """
+    from kinoforge.core.warm_reuse.ephemeral_index import (
+        EphemeralIndex,
+        EphemeralIndexRow,
+    )
+
+    if EphemeralSession.current() is None or cfg.compute is None or not run_id:
+        return None
+    stamp = datetime.now().isoformat()
+    try:
+        EphemeralIndex(store=ctx.store()).add(
+            EphemeralIndexRow(
+                id=run_id,
+                warm_attach_key=_cfg_warm_attach_key(cfg),
+                kinoforge_key=cfg.capability_key().derive()[:12],
+                # Nothing is knowable here: the provider has not been called,
+                # so there is no proxy URL to record. The post-create update
+                # fills these in.
+                endpoints={},
+                provider=cfg.compute.provider,
+                created_at_local=stamp,
+            )
+        )
+    except Exception:  # noqa: BLE001 — index fault must not block a launch
+        logger.warning(
+            "ephemeral index: pre-create row for %r failed; this run has no "
+            "durable name until it completes",
+            run_id,
+            exc_info=True,
+        )
+        return None
+    return stamp
+
+
+def _ephemeral_launch_row_release(ctx: SessionContext, run_id: str | None) -> None:
+    """Drop a pre-create launch row for a run that leaves no pod behind.
+
+    Called ONLY on paths that prove no pod survives this run: ``--no-reuse``
+    (the orchestrator destroyed it) and a hosted/compute-less run that
+    returned no instance at all. A raise is NOT one of those paths — ruling
+    C1 keeps the row for the classifier to age out, because a raise is not
+    evidence the provider booked nothing.
+
+    Args:
+        ctx: The current SessionContext (carries the ArtifactStore).
+        run_id: The launch row id to drop; ``None`` is a no-op.
+    """
+    from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
+
+    if run_id is None:
+        return
+    try:
+        EphemeralIndex(store=ctx.store()).remove(run_id)
+    except Exception:  # noqa: BLE001 — a stale row is reaped by the sweeper
+        logger.warning(
+            "ephemeral index: could not drop the launch row %r; the sweeper "
+            "will age it out",
+            run_id,
+            exc_info=True,
+        )
+
+
 def _ephemeral_index_add(
-    ctx: SessionContext, cfg: Config, instance: Instance | None
+    ctx: SessionContext,
+    cfg: Config,
+    instance: Instance | None,
+    *,
+    created_at_local: str | None = None,
+    supersedes: str | None = None,
 ) -> None:
     """Index a surviving ephemeral pod for cross-CLI discovery.
 
@@ -1811,10 +1986,26 @@ def _ephemeral_index_add(
     process discover the surviving pod (spec 2026-06-27, extended to
     upscale/interpolate + modal by spec 2026-07-12-modal-ephemeral-parity).
 
+    Spec A2 (2026-09-06) made this an UPDATE of the row
+    :func:`_ephemeral_launch_row_reserve` already wrote, rather than the
+    first write. Order is load-bearing and mirrors
+    ``orchestrator._collapse_provisional_row``: the real row goes in FIRST,
+    then the launch row is dropped, so no window exists in which a kill
+    leaves the pod with zero rows.
+
     Args:
         ctx: The current SessionContext (carries the ArtifactStore).
         cfg: Loaded Config — used to derive capability and warm-attach keys.
         instance: The cold-created compute instance, or None for hosted paths.
+        created_at_local: The stamp the pre-create row was written with.
+            Carried through verbatim: this row's ``created_at_local`` is
+            LAUNCH time, and re-stamping it here would under-count the pod's
+            real age by the entire boot window. ``None`` (no reservation was
+            made) falls back to now.
+        supersedes: Id of the pre-create launch row this replaces, dropped
+            once the real row is on disk. Skipped when it equals
+            ``instance.id`` — ``EphemeralIndex.add`` already replaced it in
+            place, and a remove would delete the row just written.
     """
     from kinoforge.core.warm_reuse.ephemeral_index import (
         EphemeralIndex,
@@ -1831,9 +2022,11 @@ def _ephemeral_index_add(
                 kinoforge_key=cfg.capability_key().derive()[:12],
                 endpoints=dict(instance.endpoints),
                 provider=instance.provider,
-                created_at_local=datetime.now().isoformat(),
+                created_at_local=created_at_local or datetime.now().isoformat(),
             )
         )
+        if supersedes is not None and supersedes != instance.id:
+            _ephemeral_launch_row_release(ctx, supersedes)
 
 
 def _resolve_attach_pod(

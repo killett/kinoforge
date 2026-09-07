@@ -36,7 +36,13 @@ class EphemeralIndexRow:
     handed to the matcher; the index re-reads from disk on every lookup.
 
     Attributes:
-        id: Provider-side pod identifier.
+        id: Provider-side pod identifier once the create has returned. While
+            a launch is still in flight it is the CLIENT-side ``run_id``
+            instead (spec A2, 2026-09-06) — the only id that exists before
+            ``create_instance`` returns, and the name the provider gives the
+            resource (the pod NAME on RunPod, the app run id on Modal). The
+            post-create update replaces that row with one keyed by the
+            provider-side id, so at most one row exists per pod.
         warm_attach_key: WAK hex string. Used by
             :func:`~kinoforge.core.warm_reuse.matcher.find_warm_attach_candidate`.
         kinoforge_key: 12-char ``cfg.capability_key().derive()`` prefix.
@@ -50,8 +56,22 @@ class EphemeralIndexRow:
             URL construction.
         provider: Provider kind string (``"runpod"``, ``"skypilot"``, ...)
             — disambiguates which backend to instantiate.
-        created_at_local: ISO-format local-TZ timestamp; debugging +
-            future sweeper TTL backstop.
+        created_at_local: ISO-format local-TZ timestamp of the moment the
+            LAUNCH was recorded — written immediately BEFORE
+            ``create_instance`` was called, and carried verbatim onto the
+            row that replaces it when the provider-side id and endpoints
+            arrive. It is therefore the pod's BIRTH time, and
+            ``now - created_at_local`` is its real age including the whole
+            cold boot.
+
+            This is the contract age-based reaping (the sweeper TTL
+            backstop) depends on, and it is load-bearing: before spec A2
+            (2026-09-06) the row was written only after the orchestrator
+            returned and stamped with COMPLETION time — a run launched
+            02:01:23 produced a row stamped 02:02:41 — so every age
+            computation under-counted the pod's lifetime by the entire boot
+            window. Anything writing this field must stamp the launch, never
+            the completion; anything reading it may treat it as launch time.
     """
 
     id: str
