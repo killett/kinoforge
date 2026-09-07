@@ -663,6 +663,24 @@ per-item entries below.
   **What did NOT hold:** in case (c) `kinoforge destroy --id` could not reap the app — see the new
   item **U17**. The stated pre-fix recovery ("required a raw `modal app stop`") is therefore still
   the recovery for a mid-create kill, by app id rather than by name.
+  **Two side effects of the `build_instance_spec` swap, disclosed and made intentional 2026-09-07
+  (final-review follow-up).** Neither was named in the fix above, and both change what `provision`
+  books rather than only what it records — so they are pinned by tests now instead of being
+  rediscovered from a bill:
+  1. **RunPod pod-vs-serverless routing.** `build_instance_spec` stamps `tags["mode"]` from
+     `compute.mode` (`core/spec_builder.py`), and RunPod branches on `spec.tags.get("mode", "pod")`
+     (`providers/runpod/__init__.py`, `_create_once`). The hand-rolled spec carried no tags, so a
+     cfg with `compute.mode: serverless` always took the **pod** branch on `provision` — a
+     different billable resource shape from the one the cfg asked for, and from the one `deploy`
+     has booked since compute-seam S2. The new behaviour is the RIGHT one (the two commands now
+     agree), so it is KEPT and pinned: `tests/cli/test_cmd_provision.py` asserts the tag is stamped
+     for both modes and then runs the spec `provision` produced through the real
+     `RunPodProvider.create_instance` to capture WHICH branch executes. No config in
+     `examples/configs` sets `mode: serverless`, so nothing shipped changes behaviour today.
+  2. **`diagnostic_mode` now overlays `restart_policy: never`** onto the RunPod backend_options on
+     this path, which the hand-rolled spec never did. Trigger is narrower than it looks:
+     `--diagnostic-mode` is a **`deploy`-only CLI flag**, so on `provision` the only way to set it
+     is `diagnostic_mode: true` in the config file. Also pinned, with its opt-in mirror.
 
 - **U8 — FIXED on Modal (LIVE-PROVEN 2026-09-07), PARTIAL on RunPod, in `9d34d008` + `8403a71c`
   — the RunPod half stays PARTIAL and is filed as U16; the Modal proof below does NOT upgrade it —

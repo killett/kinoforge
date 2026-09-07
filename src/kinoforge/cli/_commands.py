@@ -17,7 +17,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -298,6 +298,39 @@ def _recorded_instance_for_key(
     return None
 
 
+def _provision_reconcile_resolver(
+    provider: Any,  # noqa: ANN401 — ComputeProvider, or None for hosted engines
+) -> Callable[[str], Callable[[], Any]]:
+    """Return the provider-factory resolver ``provision``'s reconcile should use.
+
+    The instance already built for THIS invocation is reused whenever the stale
+    row names the same provider — which is the overwhelmingly common case, since
+    the row matched on this cfg's own capability key. That keeps the reconcile
+    from constructing (and re-authenticating) a second provider just to ask one
+    question, and it keeps the probe on the object the caller already trusts.
+
+    Anything else falls back to the registry, so a row left behind by a cfg that
+    has since switched providers is still probed by the right one.
+
+    Args:
+        provider: The provider built for this invocation, or ``None`` (a hosted
+            engine books no compute, so there is nothing to reuse).
+
+    Returns:
+        A callable mapping a provider name to a zero-arg factory.
+    """
+    provider_name = str(getattr(provider, "name", "")) if provider is not None else ""
+
+    def _resolve(name: str) -> Callable[[], Any]:
+        if provider is not None and name == provider_name:
+            return lambda: provider
+        from kinoforge.core import registry
+
+        return registry.get_provider(name)
+
+    return _resolve
+
+
 def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``provision`` subcommand.
 
@@ -305,8 +338,10 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
     provisioner against it. Two refusals sit ahead of the create, both of them
     the 2026-09-06 Modal incident's lessons:
 
-    * an instance for this capability key is already recorded — ``provision``
-      names it and books nothing;
+    * an instance for this capability key is already recorded AND its provider
+      does not report it gone — ``provision`` names it and books nothing. The
+      matched row is reconciled first, so a pod that died provider-side does
+      not refuse every future provision;
     * the create returned an instance with an empty id — there is no handle to
       reap it by, so it is an error rather than a printed ``instance=''``.
 
@@ -366,6 +401,31 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
     ledger = ctx.ledger()
     already = _recorded_instance_for_key(ledger, key_hash)
     if already is not None:
+        # A row is not proof of a pod. `_recorded_instance_for_key` reads the
+        # ledger raw, so a pod that died provider-side leaves a row that
+        # refuses every subsequent provision FOREVER — and the refusal below
+        # used to offer only `destroy --id`, which fails against a pod that no
+        # longer exists. Reconcile the ONE matched row first, exactly as
+        # `kinoforge list` does for the whole ledger: a provider that
+        # authoritatively reports the pod gone (RunPod, SkyPilot) forgets the
+        # row here and the provision proceeds.
+        #
+        # Cost is one `get_instance` call on a path that was about to return 1
+        # anyway; the success path is untouched and still makes no network call
+        # of its own. Providers outside `_RECONCILABLE_PROVIDERS` (modal) are
+        # not probed at all — for those the refusal stands, which is why the
+        # message names the two commands that CAN clear such a row.
+        gone = _reconcile_dead_ledger_entries(
+            ledger, [already], get_provider=_provision_reconcile_resolver(provider)
+        )
+        if str(already.get("id") or "") in set(gone):
+            logger.info(
+                "provision: the recorded instance for %s was gone "
+                "provider-side; its ledger row was forgotten",
+                key_hash,
+            )
+            already = None
+    if already is not None:
         # The command is named for RE-provisioning, but it was an unconditional
         # second create: run it twice against one config and the second call
         # booked (and billed for) a duplicate GPU with no warning.
@@ -374,7 +434,11 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
             f"already recorded: {already['id']} "
             f"(provider={already.get('provider', 'unknown')}). "
             "provision would book a second one. Reuse it, or destroy it first: "
-            f"kinoforge destroy --id {already['id']}",
+            f"kinoforge destroy --id {already['id']}. "
+            "If that instance is already gone provider-side, the row is stale: "
+            "`kinoforge list` re-checks and drops rows its provider confirms "
+            "gone, and `kinoforge reap --apply` forgets a row whose instance "
+            "is absent from the provider's own listing.",
             file=sys.stderr,
         )
         return 1

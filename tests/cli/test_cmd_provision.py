@@ -156,11 +156,14 @@ class _FakeProvider:
         result: Instance | None = None,
         raises: BaseException | None = None,
         on_create: Callable[[InstanceSpec], None] | None = None,
+        alive: bool = True,
     ) -> None:
         self.specs: list[InstanceSpec] = []
+        self.get_instance_calls: list[str] = []
         self._result = result
         self._raises = raises
         self._on_create = on_create
+        self._alive = alive
 
     def find_offers(self, reqs: Placement) -> list[Offer]:
         return [
@@ -189,17 +192,34 @@ class _FakeProvider:
         )
 
     def get_instance(self, instance_id: str) -> Instance:
-        raise AssertionError("ready instance must not be re-fetched")
+        """Answer the refusal path's reconcile probe.
+
+        ``alive=False`` raises ``KeyError``, which is the ONLY outcome the
+        reconciler treats as "this instance definitively no longer exists".
+        The created instance itself is returned ``status="ready"``, so the
+        provision loop never re-fetches it — a call here always comes from the
+        reconcile.
+        """
+        self.get_instance_calls.append(instance_id)
+        if not self._alive:
+            raise KeyError(instance_id)
+        return Instance(
+            id=instance_id,
+            provider="runpod",
+            status="ready",
+            created_at=0.0,
+            cost_rate_usd_per_hr=0.2,
+        )
 
 
-def _write_cfg(tmp_path: Path) -> tuple[Path, Path]:
+def _write_cfg(tmp_path: Path, cfg_text: str = _CFG) -> tuple[Path, Path]:
     """Materialise the config + state dir a ``provision`` invocation needs.
 
     Returns:
         ``(cfg_path, state_dir)``.
     """
     cfg_path = tmp_path / "cfg.yaml"
-    cfg_path.write_text(_CFG)
+    cfg_path.write_text(cfg_text)
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     return cfg_path, state_dir
@@ -452,3 +472,243 @@ def test_provision_proceeds_when_the_existing_row_is_for_another_key(
         "pod-spy",
         "pod-unrelated",
     ]
+
+
+# ---------------------------------------------------------------------------
+# A stale row must not refuse forever, and the refusal must name a recovery
+# that works.
+#
+# `_recorded_instance_for_key` reads `ledger.entries()` raw, so a pod that died
+# provider-side leaves a row that blocks every later `provision` — while the
+# message offered only `destroy --id`, which fails against a pod that is
+# already gone.
+# ---------------------------------------------------------------------------
+
+
+def _record_row_for_this_key(cfg_path: Path, state_dir: Path, instance_id: str) -> None:
+    """Seed a ledger row carrying this cfg's capability key."""
+    _ctx_for(cfg_path, state_dir).ledger().record(
+        Instance(
+            id=instance_id,
+            provider="runpod",
+            status="ready",
+            created_at=0.0,
+            tags={"kinoforge_key": _key_hash_of(cfg_path), "kinoforge_engine": "fake"},
+            cost_rate_usd_per_hr=0.2,
+        ),
+        max_age_s=3600,
+    )
+
+
+def test_provision_proceeds_when_the_recorded_instance_is_gone_provider_side(
+    tmp_path: Path,
+) -> None:
+    """A dead pod's row must not refuse provisioning forever.
+
+    Bug caught: the refusal read the ledger with no reconciliation, so a row
+    whose pod the provider no longer has blocked `provision` permanently — and
+    the only recovery it named (`destroy --id`) fails against a pod that does
+    not exist. The row must be dropped and the create must happen.
+    """
+    cfg_path, state_dir = _write_cfg(tmp_path)
+    _record_row_for_this_key(cfg_path, state_dir, "pod-died-provider-side")
+    provider = _FakeProvider(alive=False)
+
+    rc, provision_mock = _invoke_provision(cfg_path, state_dir, provider)
+
+    assert rc == 0, "a stale row still refuses"
+    assert provider.get_instance_calls == ["pod-died-provider-side"], (
+        "the refusal did not re-check the row against the provider"
+    )
+    assert len(provider.specs) == 1
+    provision_mock.assert_called_once()
+    assert [e["id"] for e in _ctx_for(cfg_path, state_dir).ledger().entries()] == [
+        "pod-spy"
+    ], "the dead row survived the reconcile"
+
+
+def test_provision_still_refuses_when_the_probe_cannot_confirm_the_pod_is_gone(
+    tmp_path: Path,
+) -> None:
+    """Uncertainty is not permission to double-book.
+
+    Bug caught: treating any probe outcome other than "definitely alive" as
+    "gone" would turn a transient auth/transport fault into a second billed
+    GPU — the exact failure the refusal exists to prevent. Only a ``KeyError``
+    (the provider's authoritative "no such instance") may clear the row.
+    """
+    cfg_path, state_dir = _write_cfg(tmp_path)
+    _record_row_for_this_key(cfg_path, state_dir, "pod-uncertain")
+    provider = _FakeProvider()
+
+    rc, provision_mock = _invoke_provision(cfg_path, state_dir, provider)
+
+    assert rc != 0
+    assert provider.specs == [], "an unconfirmed row let a second instance through"
+    provision_mock.assert_not_called()
+    assert [e["id"] for e in _ctx_for(cfg_path, state_dir).ledger().entries()] == [
+        "pod-uncertain"
+    ]
+
+
+def test_the_refusal_names_a_recovery_that_works_on_a_stale_row(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The message must name the commands that clear a row, not only destroy.
+
+    Bug caught: `destroy --id <id>` is the only recovery offered, and it fails
+    against a pod that no longer exists — leaving an operator with a permanent
+    refusal and no documented way out. Providers the reconcile above cannot
+    probe (modal) reach exactly this branch.
+    """
+    cfg_path, state_dir = _write_cfg(tmp_path)
+    _record_row_for_this_key(cfg_path, state_dir, "pod-uncertain")
+
+    rc, _ = _invoke_provision(cfg_path, state_dir, _FakeProvider())
+
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "kinoforge destroy --id pod-uncertain" in err
+    assert "kinoforge list" in err, "no recovery named for a row the probe cannot clear"
+    assert "kinoforge reap --apply" in err
+
+
+# ---------------------------------------------------------------------------
+# Mode routing on the `provision` path.
+#
+# Replacing the hand-rolled InstanceSpec with `build_instance_spec` (commit
+# `8191bd1b`) newly stamps `tags["mode"]` from `compute.mode`, and RunPod
+# branches on exactly that tag. A config with `mode: serverless` therefore
+# stopped taking the pod branch on `provision` — a different billable resource
+# shape, arrived at as a side effect of a durability change. The direction is
+# right (it is what `deploy` has always done since S2), so it is pinned here
+# rather than left to be rediscovered from a bill.
+# ---------------------------------------------------------------------------
+
+_CFG_SERVERLESS = _CFG.replace(
+    "  image: runpod/pytorch:2.4.0\n",
+    "  image: runpod/pytorch:2.4.0\n  mode: serverless\n",
+)
+
+_CFG_DIAGNOSTIC = _CFG + "diagnostic_mode: true\n"
+
+#: The S4 catalog read a create must answer before it reaches either branch.
+_GPU_TYPES: dict[str, object] = {
+    "data": {
+        "gpuTypes": [
+            {
+                "id": "NVIDIA RTX A4000",
+                "displayName": "NVIDIA RTX A4000",
+                "memoryInGb": 16,
+                "secureCloud": True,
+                "lowestPrice": {
+                    "minimumBidPrice": 0.32,
+                    "uninterruptablePrice": 0.32,
+                },
+            }
+        ]
+    }
+}
+
+
+def _catalog_post(_url: str, body: dict[str, object]) -> dict[str, object]:
+    """Answer the catalog query; every other call gets an empty response."""
+    if "gpuTypes" in str(body.get("query", "")):
+        return _GPU_TYPES
+    return {}
+
+
+def _spec_from_provision(tmp_path: Path, cfg_text: str) -> InstanceSpec:
+    """Return the spec ``provision`` hands the provider for *cfg_text*."""
+    cfg_path, state_dir = _write_cfg(tmp_path, cfg_text)
+    provider = _FakeProvider()
+    rc, _ = _invoke_provision(cfg_path, state_dir, provider)
+    assert rc == 0
+    assert len(provider.specs) == 1
+    return provider.specs[0]
+
+
+def _branch_taken(spec: InstanceSpec) -> tuple[bool, bool]:
+    """Feed *spec* to a real RunPodProvider; return ``(serverless, pod)``."""
+    from kinoforge.providers.runpod import RunPodProvider
+
+    provider = RunPodProvider(http_post=_catalog_post, http_get=lambda _url: {})
+    with (
+        patch.object(RunPodProvider, "_create_serverless") as serverless,
+        patch.object(RunPodProvider, "_create_pod") as pod,
+    ):
+        serverless.return_value = Mock(id="sl-1")
+        pod.return_value = Mock(id="pod-1")
+        provider.create_instance(spec)
+    return bool(serverless.called), bool(pod.called)
+
+
+def test_provision_stamps_the_compute_mode_tag(tmp_path: Path) -> None:
+    """`compute.mode` reaches the spec `provision` books with.
+
+    Bug caught: the hand-rolled InstanceSpec carried no tags at all, so RunPod
+    fell back to its own ``.get("mode", "pod")`` and `mode: serverless` was
+    silently ignored on this command while `deploy` honoured it — the two
+    commands agreeing only by coincidence.
+    """
+    spec = _spec_from_provision(tmp_path, _CFG_SERVERLESS)
+    assert spec.tags["mode"] == "serverless"
+
+
+def test_provision_default_mode_is_stamped_as_pod(tmp_path: Path) -> None:
+    """The default arrives as a written tag, not an absent key.
+
+    Bug caught: a `setdefault`/`update` mix-up that stamped "serverless" for
+    every cfg would pass the serverless test alone and move every pod config
+    onto a branch that bills differently.
+    """
+    spec = _spec_from_provision(tmp_path, _CFG)
+    assert spec.tags["mode"] == "pod"
+
+
+def test_provision_serverless_spec_reaches_the_serverless_branch(
+    tmp_path: Path,
+) -> None:
+    """The stamped tag routes, rather than merely being present.
+
+    Bug caught: reading the tag name off the code proves nothing about which
+    resource RunPod books. This runs the spec `provision` produced through the
+    real `create_instance` and captures WHICH branch executed.
+    """
+    serverless, pod = _branch_taken(_spec_from_provision(tmp_path, _CFG_SERVERLESS))
+    assert serverless
+    assert not pod
+
+
+def test_provision_default_spec_reaches_the_pod_branch(tmp_path: Path) -> None:
+    """The mirror: the 45 pod configs must not start routing elsewhere."""
+    serverless, pod = _branch_taken(_spec_from_provision(tmp_path, _CFG))
+    assert pod
+    assert not serverless
+
+
+def test_provision_honours_diagnostic_mode_in_the_cfg(tmp_path: Path) -> None:
+    """`diagnostic_mode: true` now overlays `restart_policy: never` here too.
+
+    The same swap to `build_instance_spec` brought C28's diagnostic overlay
+    onto this path, where the hand-rolled spec had never applied it. Note the
+    trigger: `--diagnostic-mode` is a `deploy`-only CLI flag, so on `provision`
+    the only way to set it is the config file.
+
+    Bug caught: a diagnostic provision whose container restarts on failure
+    destroys the boot log the flag exists to preserve.
+    """
+    spec = _spec_from_provision(tmp_path, _CFG_DIAGNOSTIC)
+    assert spec.backend_options["runpod"]["restart_policy"] == "never"
+
+
+def test_provision_leaves_restart_policy_alone_without_diagnostic_mode(
+    tmp_path: Path,
+) -> None:
+    """The overlay is opt-in; an ordinary provision keeps RunPod's default.
+
+    Bug caught: applying `restart_policy: never` unconditionally would stop
+    every pod recovering from a transient boot failure.
+    """
+    spec = _spec_from_provision(tmp_path, _CFG)
+    assert "restart_policy" not in spec.backend_options.get("runpod", {})
