@@ -447,7 +447,7 @@ Found by the Modal command-matrix campaign (plan
 `docs/superpowers/plans/2026-09-05-modal-command-matrix.md`, results
 `docs/modal-command-matrix.md`). Operator directive 2026-09-06: big issues land HERE as urgent
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
-suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offline (`8191bd1b`) and awaits a live Modal re-run, U4 is fixed (`c08c3cce`), U10 is fixed (`7d535503`, the interval-reporting half of it excepted), U5 is half-fixed (help text corrected in `c08c3cce`, wiring still open), and **U12 is CLOSED** — the `av<18` pin landed in `82ad084b` and was proven live on Modal at 1920x1920 and 1080x1080 with clean frame QA for $0.64. RunPod and SkyPilot carry the same one-line pin (their goldens moved in that commit) but were **not** re-run, so they are inferred-safe, not demonstrated-safe. **U15 is new** (`--attach-pod` refuses a healthy pod whose endpoint the ledger holds) and, together with U14, currently leaves no way to run a second upscale on an existing pod. Every other item is untouched.**
+suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offline (`8191bd1b`) and awaits a live Modal re-run, U4 is fixed (`c08c3cce`), U10 is fixed (`7d535503`, the interval-reporting half of it excepted), U5 is half-fixed (help text corrected in `c08c3cce`, wiring still open), and **U12 is CLOSED** — the `av<18` pin landed in `82ad084b` and was proven live on Modal at 1920x1920 and 1080x1080 with clean frame QA for $0.64. RunPod and SkyPilot carry the same one-line pin (their goldens moved in that commit) but were **not** re-run, so they are inferred-safe, not demonstrated-safe. **U15 is fixed offline (`ccd4c5e7`) and awaits a live Modal re-run of T2-02** — `--attach-pod` now merges the ledger's `endpoints` alongside its `tags`, so a healthy pod whose endpoint only the ledger holds attaches instead of being refused; until U14 is fixed too, the matcher still cold-boots a duplicate, so the escape hatch works but the automatic path does not. Every other item is untouched.**
 
 - **U1 — the warm-attach matcher is provider-blind (cross-provider attach risk).**
   `WarmAttachKey` (`src/kinoforge/core/interfaces.py:649`) carries base_model / engine /
@@ -877,7 +877,8 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   site logs no reject reason, so establishing why costs another cold boot. Logging the reason is
   the cheap first fix, ahead of the matcher change itself.
 
-- **U15 — `--attach-pod` cannot attach to a healthy pod whose endpoint the ledger is holding.**
+- **U15 — FIXED in `ccd4c5e7` (offline; a live Modal re-run still owes the proof) —
+  `--attach-pod` cannot attach to a healthy pod whose endpoint the ledger is holding.**
   **Symptom:** `kinoforge upscale … --attach-pod <id>` exits **1** with
   `pod <id> has no endpoints after ledger tag merge (ledger tag keys=['kinoforge_engine',
   'kinoforge_key', 'mode']); cannot --attach-pod.`
@@ -899,9 +900,32 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   copies the sibling `endpoints` field, so the downstream `has endpoints?` guard sees an empty dict.
   That is inference from the message alone — **verify against the code before editing**, and do not
   repeat U13's mistake of recording a suspected site that turns out to be wrong.
+  **The hypothesis held.** Verified against the code 2026-09-06: `_resolve_attach_pod`
+  (`src/kinoforge/cli/_commands.py`) merged `entry["tags"]` onto the live instance, called
+  `provider.ensure_endpoints(live)`, and refused on a falsy result — the entry's sibling
+  `endpoints` field was never read. On Modal that leaves the provider with nothing at all to work
+  from: `get_instance` builds the `Instance` from `modal app list`, which carries no URL, and
+  `ModalProvider.endpoints` falls back to a per-process `_deployments` dict a fresh CLI process
+  never populated.
+  **Fix (`ccd4c5e7`):** seed the recorded endpoint map onto the instance *before* the ensure call,
+  with the same precedence as the tag merge beside it (live wins on collision), so the provider has
+  something to repair rather than nothing to find — the sibling of `_resolve_warm_endpoints`, which
+  already did this for the matcher path. The refusal message now cites the field it actually
+  checked (the seeded endpoint ports and the provider's empty return) instead of the tag keys.
+  Red/green in `tests/cli/test_resolve_attach_pod.py` (4 tests: ledger endpoints reach the
+  provider, live-wins-on-collision, the tag merge survives, the earned refusal names endpoints and
+  not tags) — 4/4 RED before the change, 4/4 GREEN after, `tests/cli` 421 passed,
+  `tests/core` + `tests/providers` 2324 passed. **Offline-proven only — the live Modal re-run of
+  T2-02 still owes the proof.**
   **Relationship to U3:** same underlying shape — the endpoint URL is in the ledger and no read path
   consults it — but a different site. U3 is about `status` / `pod lora ls` failing to *report* the
   URL; U15 is about the attach path failing to *use* it. Fixing one will not obviously fix the other.
+  **Checked after the fix, 2026-09-06: it does not.** The `ccd4c5e7` change is confined to
+  `_resolve_attach_pod`. `_cmd_status` still hands the bare `provider.get_instance()` instance to
+  `_render_endpoints_for_status`, and `_cmd_pod_lora_ls` still calls `provider.ensure_endpoints`
+  on the bare instance; neither reads `entry["endpoints"]`, and
+  `_render_endpoints_for_status`'s own docstring names that rehydration as deferred, out-of-scope
+  work. **U3 stays open.**
   **Why it matters:** `--attach-pod` is the explicit escape hatch from U14. With the matcher
   cold-booting duplicate A100s and the explicit override refusing to attach, there is currently **no
   way at all** to run a second upscale on an existing pod — every upscale costs a fresh boot. The two
@@ -944,12 +968,15 @@ ACTION ITEMS section above.
   kinoforge command could see), a pod's endpoint URL from any fresh process (U3), automatic reaping
   of ephemeral pods (U9), `grid --ephemeral` (U11), `--vault` prompts (U5), the warm-attach matcher
   (U1/U14 — U14 reproduced verbatim on 2026-09-06, putting two $2.50/hr A100s on the clock in both
-  passes), **`--attach-pod` on a healthy pod whose endpoint the ledger holds (U15, new)**,
+  passes), ~~`--attach-pod` on a healthy pod whose endpoint the ledger holds~~ (**U15 — fixed offline in `ccd4c5e7`, live proof still owed**),
   `batch --dry-run-swap`'s manifest (U2), ephemeral index timing (U8), and CLI exit after
   `UpscaleFailed` (U13 — now known to be failure-path only; both post-fix upscales exited cleanly).
 - **Warm reuse on the upscale path is currently impossible.** U14 makes the matcher cold-boot a
   duplicate A100, and U15 makes the explicit `--attach-pod` override refuse. Together they mean
   every upscale pays a fresh boot. That pair is the highest-value next fix.
+  **Half of it is now fixed offline:** `ccd4c5e7` makes `--attach-pod` merge the ledger's
+  `endpoints`, so the explicit escape hatch should work — **offline-proven only; no live Modal run
+  has attached yet**. U14 (the matcher) is untouched, so the automatic path still cold-boots.
 - **Fixed in-session, red/green:** `c9d9b284` (doctor), `3c7822b8` (reap --format json),
   `c08c3cce` (logs provider guard + vault help text), `7d535503` (sweeper stop now removes its own
   ledger row), `82ad084b` (`av<18` pin).
