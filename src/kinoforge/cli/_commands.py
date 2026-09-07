@@ -1943,6 +1943,32 @@ def _resolve_attach_pod(
         merged_tags = dict(ledger_tags)
         merged_tags.update(live.tags or {})  # live values still win on collision
         live.tags = merged_tags
+    # The endpoints are the entry's OTHER create-time field, and they need
+    # the same rehydration for a stronger reason: a tag merge only helps a
+    # provider that can rebuild its URL from tags (RunPod's deterministic
+    # `{pod_id}-{port}.proxy.runpod.net`). Modal's `build-<hash>.modal.run`
+    # URL cannot be derived from anything — `get_instance` builds the
+    # Instance from `modal app list`, which carries no URL, and
+    # `ModalProvider.endpoints` falls back to a per-process `_deployments`
+    # dict that a fresh CLI process never populated. Seeding the recorded
+    # map here gives `ensure_endpoints` something to repair rather than
+    # nothing to find; a provider that can establish something live still
+    # overrides it (that is what the `ensure` call below is for), which is
+    # why this is a seed and not the final answer. Same precedence as the
+    # tag merge above: live wins on collision. Sibling of
+    # `_resolve_warm_endpoints`, which does this for the matcher path.
+    #
+    # Observed 2026-09-05: an A100-80GB that had published an artifact 90s
+    # earlier, whose ledger row held `endpoints: {"8000": "https://...
+    # .modal.run"}`, was refused by this gate while that exact URL was
+    # answering `GET /util`.
+    ledger_endpoints = entry.get("endpoints", {}) or {}
+    if isinstance(ledger_endpoints, dict):
+        merged_endpoints = {str(k): str(v) for k, v in ledger_endpoints.items()}
+        merged_endpoints.update(live.endpoints or {})  # live wins on collision
+        live.endpoints = merged_endpoints
+    # What the provider was actually given, for the refusal below to cite.
+    seeded_ports = sorted(live.endpoints)
     try:
         # compute-seam S5: this instance is about to be handed to an engine
         # that will make HTTP requests against it, so use the door that
@@ -1956,9 +1982,16 @@ def _resolve_attach_pod(
         )
         return (None, 1)
     if not live.endpoints:
+        # Report the field that was checked. The previous message cited the
+        # ledger's TAG keys as evidence about a missing ENDPOINT — a
+        # different field entirely, and the reason the live diagnosis of
+        # this refusal had to be filed as a hypothesis.
         print(
-            f"pod {pod_id} has no endpoints after ledger tag merge "
-            f"(ledger tag keys={list(ledger_tags.keys())}); cannot --attach-pod.",
+            f"pod {pod_id} has no endpoints: "
+            f"{provider_kind or 'provider'}.ensure_endpoints returned an "
+            f"empty map, given a seed carrying ports={seeded_ports} "
+            f"(the ledger row's recorded endpoints merged under the live "
+            f"probe's); cannot --attach-pod.",
             file=sys.stderr,
         )
         return (None, 1)
