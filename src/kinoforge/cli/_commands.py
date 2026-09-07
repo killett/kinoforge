@@ -1730,22 +1730,36 @@ class _ScanReport:
         """
         if self.attached is not None:
             if self.skipped:
-                reasons = ", ".join(f"{rid}={r}" for rid, r in self.skipped)
                 return (
                     f"warm-reuse: attached to {self.attached} "
-                    f"(skipped {len(self.skipped)}: {reasons})"
+                    f"(skipped {len(self.skipped)}: {self._reason_counts()})"
                 )
             return f"warm-reuse: attached to {self.attached}"
         if not self.skipped:
             return "warm-reuse: scanned 0 candidates — cold create"
-        reason_counts: dict[str, int] = {}
-        for _, r in self.skipped:
-            reason_counts[r] = reason_counts.get(r, 0) + 1
-        formatted = ", ".join(f"{n} {r}" for r, n in sorted(reason_counts.items()))
+        formatted = self._reason_counts()
         return (
             f"warm-reuse: scanned {len(self.skipped)}, 0 attachable "
             f"(reasons: {formatted}) — cold create"
         )
+
+    def _reason_counts(self) -> str:
+        """Return the skip reasons as ``"<n> <reason>"``, aggregated and sorted.
+
+        Both branches of :meth:`summarize` use this. The hit branch used to
+        join ``id=reason`` verbatim instead, which since coarse rejects started
+        landing in ``skipped`` meant a successful attach printed one term per
+        unrelated ledger row — the reason a busy ledger buried the one line
+        this report exists to make readable.
+
+        Returns:
+            e.g. ``"2 cap-key-mismatch, 1 session-busy"``. Empty string when
+            nothing was skipped.
+        """
+        reason_counts: dict[str, int] = {}
+        for _, r in self.skipped:
+            reason_counts[r] = reason_counts.get(r, 0) + 1
+        return ", ".join(f"{n} {r}" for r, n in sorted(reason_counts.items()))
 
 
 def _probe_lock_held(store: ArtifactStore, key: str) -> bool:
@@ -1830,17 +1844,26 @@ def _scan_warm_candidates(
     index_entries = [
         r.to_entry_dict() for r in EphemeralIndex(store=ctx.store()).rows()
     ]
-    ledger_ids = {e["id"] for e in entries}
+    ledger_ids = {str(e.get("id") or "") for e in entries}
     index_only_ids: set[str] = set()
     for ie in index_entries:
-        if ie["id"] not in ledger_ids:  # ledger wins on overlap
+        ie_id = str(ie.get("id") or "")
+        if ie_id and ie_id not in ledger_ids:  # ledger wins on overlap
             entries.append(ie)
-            index_only_ids.add(ie["id"])
+            index_only_ids.add(ie_id)
 
     skipped: list[tuple[str, str]] = []
     matches: list[dict[str, Any]] = []
     for e in entries:
-        eid = str(e["id"])
+        eid = str(e.get("id") or "")
+        if not eid:
+            # A row with no id names nothing: it cannot be attached to, locked,
+            # classified or destroyed. Recorded rather than dropped silently so
+            # the summary still accounts for it — but NOT subscripted: this scan
+            # sits directly upstream of a cold create, and a KeyError here would
+            # take the whole generate down over a malformed bookkeeping row.
+            skipped.append(("<no-id>", "malformed-entry"))
+            continue
         # Coarse-filter rejects are recorded the same way validation-stage
         # rejects are below — otherwise a live pod dropped here reads
         # identically to a genuinely empty ledger, which is exactly the
@@ -2015,10 +2038,14 @@ def _ephemeral_launch_row_reserve(
         EphemeralIndexRow,
     )
 
-    session = EphemeralSession.current()
+    # The gate is `_ephemeral_strict_session()`, called here rather than
+    # re-spelled: it IS the `not policy.ledger_record` test, and a second copy
+    # of a predicate this load-bearing is a divergence waiting to happen. The
+    # walrus keeps the call inside the `if`, which is what the AST invariant in
+    # tests/test_ephemeral_index_write_gated.py reads to prove the write is
+    # gated at all.
     if (
-        session is not None
-        and not session.policy.ledger_record
+        (session := _ephemeral_strict_session()) is not None
         and cfg.compute is not None
         and run_id
     ):

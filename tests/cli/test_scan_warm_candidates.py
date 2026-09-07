@@ -201,6 +201,44 @@ def test_empty_ledger_returns_none(
     assert report.attached is None
 
 
+def test_a_row_with_no_id_is_skipped_rather_than_killing_the_scan(
+    tmp_path: Any,
+    patched_registry: dict[str, Any],
+    fixed_clock: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed bookkeeping row must not take the generate down with it.
+
+    Bug caught: the coarse filter reads ``e["id"]`` before any filtering, so a
+    row missing ``id`` raises ``KeyError`` out of the whole scan — and this
+    scan sits directly upstream of a cold create, so the generate dies on a
+    bookkeeping defect. The attachable row beside it must still be found.
+    """
+    ctx = _make_ctx(tmp_path)
+    cfg = _make_cfg()
+    cast(_FakeCtx, ctx).seed({"provider": "runpod", "tags": {}})
+    _seed_entry(ctx, "pod-1", heartbeat_thread_tick=_NOW - 5.0)
+    fake_instance = Instance(
+        id="pod-1",
+        provider="runpod",
+        tags={},
+        created_at=_NOW - 60.0,
+        cost_rate_usd_per_hr=0.0,
+        status="ready",
+        endpoints={},
+    )
+    monkeypatch.setattr(
+        "kinoforge.cli._commands._resolve_warm_instance",
+        lambda *a, **kw: (fake_instance, None),
+    )
+
+    instance, report = _scan_warm_candidates(ctx, cfg)
+
+    assert instance is not None, "the healthy row beside the malformed one was lost"
+    assert report.attached == "pod-1"
+    assert ("<no-id>", "malformed-entry") in report.skipped
+
+
 def test_returns_none_when_no_cap_key_match(
     tmp_path: Any, patched_registry: dict[str, Any], fixed_clock: None
 ) -> None:
@@ -369,6 +407,7 @@ def test_record_includes_skipped_reasons_with_stable_codes(
         "list-instances-failed",
         "classify-not-live",
         "get-instance-keyerror",
+        "malformed-entry",
     }
     for _, reason in report.skipped:
         assert reason in valid_codes
@@ -380,6 +419,30 @@ def test_scan_report_summarize_attached_case() -> None:
     msg = r.summarize()
     assert "attached to pod-1" in msg
     assert "skipped" in msg
+
+
+def test_summarize_aggregates_skip_reasons_on_the_hit_branch_too() -> None:
+    """A successful attach must not enumerate every unrelated ledger row.
+
+    Bug caught: the hit branch joined ``id=reason`` verbatim while the miss
+    branch aggregated to counts. Once coarse rejects started landing in
+    ``skipped``, that made the one line reporting a SUCCESSFUL attach grow with
+    the size of the ledger — on a 40-row ledger the attach id is buried behind
+    40 ``pod-x=cap-key-mismatch`` terms.
+    """
+    r = _ScanReport(
+        attached="pod-1",
+        skipped=[
+            ("pod-2", "cap-key-mismatch"),
+            ("pod-3", "cap-key-mismatch"),
+            ("pod-4", "session-busy"),
+        ],
+    )
+    msg = r.summarize()
+    assert "attached to pod-1" in msg
+    assert "skipped 3: 2 cap-key-mismatch, 1 session-busy" in msg
+    for rejected in ("pod-2", "pod-3", "pod-4"):
+        assert rejected not in msg, "hit branch is still enumerating row ids"
 
 
 def test_scan_report_summarize_miss_case() -> None:
