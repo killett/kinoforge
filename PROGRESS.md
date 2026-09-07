@@ -598,7 +598,8 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   **Still owed:** a live Modal `provision` run proving the row lands and the id-less create is
   refused end-to-end (Task 8 of the same plan). Fixed offline only.
 
-- **U8 — FIXED in `9d34d008` + `8403a71c` (offline; a live Modal re-run still owes the proof) — an
+- **U8 — FIXED on Modal, PARTIAL on RunPod, in `9d34d008` + `8403a71c` (offline; a live Modal
+  re-run still owes the proof; the RunPod residual is filed as U16) — an
   `--ephemeral` run is invisible to every state file until it has already finished.**
   `_stamp_cold_created_instance` calls `_ephemeral_index_add` (`src/kinoforge/cli/_commands.py:583`)
   only after the orchestrator returns, so the ephemeral index row is written at *completion*, not
@@ -658,19 +659,13 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   `tests/providers/test_ephemeral_controller_minted_name.py` and
   `tests/core/test_orchestrator_no_reuse.py` (all RED first; the teardown pair drives the real
   `deploy_session` finally, not a stub). Full offline suite 5222 passed, 29 skipped, 6 xfailed.
-  **Carry-ins for the final task (not defects — accepted narrowings that must not be rediscovered
-  the expensive way):**
-  - On **RunPod the reserved string is the pod NAME, not an id `kinoforge destroy --id` accepts** —
-    RunPod mints its own id at create time. It is a provider-console and
-    `_reconcile._adopt_launching_row` (`tags["name"]`) handle, not a CLI one. On Modal the opaque
-    name IS the `Instance.id`, so there the row is a full handle. Recovery for a stranded RunPod
-    ephemeral pod is still console-or-`reap`, never `destroy --id <row id>`.
-  - The **ledger's own pre-launch row (Task 1) is still keyed on `run_id`**, so
-    `cli/_reconcile.py`'s "under `pod_name_includes_alias=False` an ephemeral launching row can
-    never be matched and is aged out instead" note **still stands for that row**. Only the
-    ephemeral INDEX row is fixed here. Routing the ledger row through the same
-    `session.resource_name` seam is a separable follow-up and would close the last case where
-    "aged out" does not imply "no pod existed".
+  **Scope of the fix — read this before calling U8 closed.** The launch row is a **real handle on
+  Modal**, where the reserved opaque name IS the `Instance.id`, so destroy, the console and the
+  reaper probe all resolve it. On **RunPod it is a partial handle**: the name resolves in the
+  provider console, but RunPod mints its own id at create, so the row's id is still not passable to
+  `kinoforge destroy --id` and the sweeper's probe still reports "not found". That residual, and
+  the related `run_id`-keyed ledger pre-launch row, are filed as **U16** — not as prose here,
+  because a real open defect buried in a FIXED entry is an invisible one.
   **Still owed:** a live Modal `--ephemeral generate` proving the row is readable from a second
   process while the run is in flight, carrying launch time and the endpoint a monitor can poll, and
   keyed by a name that resolves on the provider side (Task 8 of the same plan). Fixed offline only
@@ -1044,6 +1039,70 @@ suspected site. **Status 2026-09-06 (updated after the U7 fix): U7 is fixed offl
   way at all** to run a second upscale on an existing pod — every upscale costs a fresh boot. The two
   defects together are what put two $2.50/hr A100s on the clock in both passes of Tier 2a.
   **Discovered by:** matrix cell T2-02 re-run, 2026-09-06.
+
+- **U16 — the ephemeral launch row is only a PARTIAL handle on RunPod; on Modal it is a full one.**
+  Spun out of U8's fix round (`8403a71c`) on the coordinator's ruling, 2026-09-06: the partial is
+  ACCEPTED for this Modal-scoped plan, but it is a partially-addressed finding, not a documented
+  follow-up, and it gets its own number so it cannot go invisible inside a FIXED entry.
+  **Symptom.** U8 gave the pre-create ephemeral index row an id by minting the opaque
+  STRICT_POLICY resource name controller-side, so the row names the resource the create is about
+  to book. On Modal that closes all three original symptoms, because the opaque name IS the
+  `Instance.id`. On RunPod it closes only one of the three:
+  - **FIXED — the provider console.** The reserved `kinoforge-<8 hex>` is literally the `name`
+    RunPod is asked for in the create mutation, so an operator can find the pod by it.
+  - **NOT FIXED — `kinoforge destroy --id <row id>` still misses.** RunPod's create mutation
+    returns RunPod's OWN id (`_instance_from_create_response`,
+    `src/kinoforge/providers/runpod/__init__.py:1314`, `pod_id = str(pod_data.get("id", ""))`),
+    which cannot exist before the create returns. `destroy_instance` (`:808`) takes that id, not
+    the name.
+  - **NOT FIXED — the sweeper's probe still reports "not found".** `probe_runtime` (`:901`)
+    queries `pod(input:{podId:...})` by RunPod's id, and `reaper_actor`'s ephemeral branch
+    (`src/kinoforge/core/reaper_actor.py:498-520`) feeds it `row.id` — which during the pre-create
+    window is the NAME. `data.pod = null` → `RuntimeProbe(found=False)`, indistinguishable from a
+    pod that never existed, which is symptom 3 of the original U8 filing surviving verbatim on
+    this provider.
+  **Provider-specific.** Modal only ever needed the name (its `Instance.id` and its app name are
+  both derived from it), so nothing here applies to Modal, and nothing here is a regression — this
+  is the pre-U8 state on RunPod, narrowed from three symptoms to two.
+  **Reproducer (live, RunPod, a few cents — kill it during the boot, which is the scenario).**
+  Launch an ephemeral RunPod generate on the cheapest t2v cfg:
+  `pixi run kinoforge --ephemeral generate
+  -c examples/configs/runpod-comfyui-wan-2_1-1_3b-t2v.yaml --mode t2v
+  --prompt "$(cat examples/configs/prompts/field-realistic.txt)" --no-reuse`
+  and, while it is still booting, from a second process read
+  `.kinoforge/_lifecycle/ephemeral-index.json`. The row now exists (that is the U8 fix) and its
+  `id` is `kinoforge-<8 hex>`. Now Ctrl-C the first process — the stranding this whole work exists
+  to survive — and from the second: `pixi run kinoforge destroy --id kinoforge-<8 hex>` → fails,
+  RunPod has no pod by that id; `pixi run kinoforge reap` classifies the row **GC_404** rather
+  than recognising a live pod. Search that same string in the RunPod console and the pod IS
+  there, still billing. That is the whole finding: the name is good, the id is not. Recover by
+  destroying the pod with the RunPod id the console shows, then `kinoforge forget` the row.
+  **Sites (verified against the code, not inferred).** Reserved in
+  `EphemeralSession.resource_name` (`src/kinoforge/core/ephemeral.py`); consumed as the pod NAME
+  at `src/kinoforge/providers/runpod/__init__.py:1070`; the divergence is that `:1314` returns a
+  different id, and the two consumers that need an id are `destroy_instance` (`:808`) and
+  `probe_runtime` (`:901`).
+  **Shape of the fix (not attempted here).** RunPod's id cannot exist before its create returns,
+  so keying the row on it is impossible by construction — the fix has to go the other way: probe
+  and destroy **by name** on RunPod (list pods, match `name`, then act on the resolved id), with
+  the reaper's ephemeral branch falling back to a name lookup when an id probe 404s. That is a
+  provider-surface change with its own live-proof cost, which this Modal-scoped plan has no budget
+  for.
+  **Also open, same root cause, different row.** The LEDGER's own pre-launch row
+  (`orchestrator._record_provisional_row`, `src/kinoforge/core/orchestrator.py:582`, written with
+  `id=run_id` at `:629`) was NOT routed through `session.resource_name` — it is still keyed on the
+  client-side `run_id`, which STRICT_POLICY discards. So `cli/_reconcile.py:414-421`'s standing
+  note — "under `pod_name_includes_alias=False` the RunPod pod is named `kinoforge-<hex>` rather
+  than the `run_id` … an ephemeral launching row can never be matched and is aged out instead" —
+  **still stands for that row**, and with it the caveat that on this path "aged out" does not imply
+  "no pod existed". Routing that row through the same seam is the cheap half of this item and
+  would close the last case of it.
+  **Why it matters.** The window U8 exists to protect is the multi-minute cold boot, and the two
+  surviving symptoms are exactly the two that cost money: an operator who reads the row mid-run
+  still cannot destroy by the id it gives them, and the automatic sweeper still cannot tell a
+  booting RunPod pod from a phantom — so it may reap-classify a live, billing pod as GC_404. On
+  Modal, the provider every defect in this campaign was found on, neither is true any more.
+  **Discovered by:** re-review of Task 3 fix round 1, 2026-09-06.
 
 Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
 on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interval_s`
