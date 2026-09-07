@@ -19,7 +19,7 @@
     {
       "id": 2,
       "subject": "Task 2: `--attach-pod` merges the ledger's endpoints, not only its tags (spec B1",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Attaching to a healthy pod whose endpoint the ledger holds succeeds instead of refusing.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_commands.py` (`_resolve_attach_pod`, the merge block at 1765-1789)\n- Test: `tests/cli/test_resolve_attach_pod.py` (create)\n\n**Acceptance Criteria:**\n- [ ] The ledger entry's `endpoints` are merged onto the live instance before `ensure_endpoints` is called, so the provider has something to repair rather than nothing to find.\n- [ ] A pod whose ledger entry holds endpoints and whose provider returns none still attaches.\n- [ ] Live values still win over ledger values on collision, matching the existing tag-merge precedence.\n- [ ] The refusal message, when it does fire, reports what it actually checked \u2014 no tag keys offered as evidence about endpoints.\n\n**Verify:** `pixi run pytest tests/cli/test_resolve_attach_pod.py -v` \u2192 all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/cli/test_resolve_attach_pod.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_resolve_attach_pod.py -v\", \"acceptanceCriteria\": [\"The ledger entry's `endpoints` are merged onto the live instance before `ensure_endpoints` is called, so the provider has something to repair rather than nothing to find.\", \"A pod whose ledger entry holds endpoints and whose provider returns none still attaches.\", \"Live values still win over ledger values on collision, matching the existing tag-merge precedence.\", \"The refusal message, when it does fire, reports what it actually checked \\u2014 no tag keys offered as evidence about endpoints.\"], \"modelTier\": \"standard\", \"liveSpend\": false}\n```",
       "blockedBy": [
         1
@@ -71,5 +71,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-06T22:19:18"
+  "lastUpdated": "2026-09-06T22:30:29"
 }
