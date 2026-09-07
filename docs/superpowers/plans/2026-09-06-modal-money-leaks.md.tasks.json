@@ -10,7 +10,7 @@
     {
       "id": 1,
       "subject": "Task 1: `provision` writes a durable row and refuses to double-book (spec A1)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** `kinoforge provision` can never leave a billing instance that no kinoforge command can name, and stops booking a second instance for a key that already has one.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_commands.py` (`_cmd_provision`, from line 255)\n- Test: `tests/cli/test_cmd_provision.py` (create)\n\n**Acceptance Criteria:**\n- [ ] A provisional row exists before `create_instance` is called, and is upgraded to a real row after it returns.\n- [ ] A create that raises leaves the provisional row in place for the reconciler to age out (matching ruling C1) \u2014 it is not deleted.\n- [ ] An empty or missing instance id from `create_instance` is an error, not a recorded instance: non-zero exit, clear message, no row claiming to name a pod it cannot.\n- [ ] When a live instance for this capability key already exists, `provision` refuses, names that instance, and books nothing.\n\n**Verify:** `pixi run pytest tests/cli/test_cmd_provision.py -v` \u2192 all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/cli/test_cmd_provision.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_cmd_provision.py -v\", \"acceptanceCriteria\": [\"A provisional row exists before `create_instance` is called, and is upgraded to a real row after it returns.\", \"A create that raises leaves the provisional row in place for the reconciler to age out (matching ruling C1) \\u2014 it is not deleted.\", \"An empty or missing instance id from `create_instance` is an error, not a recorded instance: non-zero exit, clear message, no row claiming to name a pod it cannot.\", \"When a live instance for this capability key already exists, `provision` refuses, names that instance, and books nothing.\"], \"modelTier\": \"standard\", \"liveSpend\": false}\n```",
       "blockedBy": [
         0
@@ -71,5 +71,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-06T21:45:28"
+  "lastUpdated": "2026-09-06T22:13:30"
 }
