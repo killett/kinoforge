@@ -382,10 +382,19 @@ def test_scan_report_summarize_miss_case() -> None:
     assert "classify-not-live" in msg
 
 
-def test_scan_report_summarize_empty_ledger_returns_empty_string() -> None:
-    """Bug: chatty log on first-ever generate would clutter happy path."""
-    r = _ScanReport(attached=None, skipped=[])
-    assert r.summarize() == ""
+def test_summarize_names_a_cold_create_when_no_candidates_were_found() -> None:
+    """An empty candidate list must not be silent.
+
+    Bug caught: a cold create with zero candidates logged nothing at all,
+    so an operator could not tell "no pod was running" from "a pod was
+    running and never entered the candidate list" — which is exactly the
+    ambiguity that made U14 undiagnosable without spending money again.
+    """
+    report = _ScanReport(attached=None, skipped=[])
+    summary = report.summarize()
+    assert summary != ""
+    assert "0" in summary
+    assert "cold create" in summary
 
 
 def test_force_attach_param_is_false_always(

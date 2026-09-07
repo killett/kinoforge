@@ -526,9 +526,10 @@ def _resolve_warm_attach_chain(
         )
     elif auto_attach_cfg:
         instance, report = _scan_warm_candidates(ctx, cfg)
-        summary = report.summarize()
-        if summary:
-            logger.info(summary)
+        # summarize() never returns "" now (see _ScanReport.summarize
+        # docstring) — the empty-candidate case is worded explicitly, so
+        # there is nothing left to guard against here.
+        logger.info(report.summarize())
 
     return instance, single, None
 
@@ -811,9 +812,10 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
             return rc
     elif not args.no_reuse:
         instance, report = _scan_warm_candidates(ctx, cfg)
-        summary = report.summarize()
-        if summary:
-            logger.info(summary)
+        # summarize() never returns "" now (see _ScanReport.summarize
+        # docstring) — the empty-candidate case is worded explicitly, so
+        # there is nothing left to guard against here.
+        logger.info(report.summarize())
 
     artifact, returned_instance = _orchestrator.generate(
         cfg,
@@ -911,9 +913,10 @@ def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
             return rc
     elif not args.no_reuse:
         instance, report = _scan_warm_candidates(ctx, cfg)
-        summary = report.summarize()
-        if summary:
-            logger.info(summary)
+        # summarize() never returns "" now (see _ScanReport.summarize
+        # docstring) — the empty-candidate case is worded explicitly, so
+        # there is nothing left to guard against here.
+        logger.info(report.summarize())
 
     artifact, returned_instance = _orchestrator.generate(
         cfg,
@@ -1432,7 +1435,14 @@ class _ScanReport:
         Returns:
             On hit:   ``"warm-reuse: attached to <id> (skipped N: ...)"``
             On miss:  ``"warm-reuse: scanned N, 0 attachable (reasons: ...) — cold create"``
-            On empty: ``""``  (silent — happy first-generate path)
+            On empty: ``"warm-reuse: scanned 0 candidates — cold create"``
+
+        Never returns ``""``. A cold create with zero candidates used to be
+        silent on the theory that it was just the happy first-generate path
+        — but silence there is indistinguishable from a pod that was live
+        and never entered the candidate list, which is the exact ambiguity
+        that made the U14 duplicate-boot defect undiagnosable without
+        spending money again. Always name the count, even when it's zero.
         """
         if self.attached is not None:
             if self.skipped:
@@ -1443,7 +1453,7 @@ class _ScanReport:
                 )
             return f"warm-reuse: attached to {self.attached}"
         if not self.skipped:
-            return ""
+            return "warm-reuse: scanned 0 candidates — cold create"
         reason_counts: dict[str, int] = {}
         for _, r in self.skipped:
             reason_counts[r] = reason_counts.get(r, 0) + 1
