@@ -4,7 +4,7 @@
     {
       "id": 0,
       "subject": "Task 0: Make the warm-scan report never silent (spec B2)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** A cold create always states why, so the duplicate-boot cause becomes observable at $0.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_commands.py` (`_ScanReport.summarize`)\n- Test: `tests/cli/test_scan_report.py` (create if absent; otherwise add to the existing scan-report test module)\n\n**Acceptance Criteria:**\n- [ ] `summarize()` returns a non-empty string when there were zero candidates, naming the count as zero and saying a cold create follows.\n- [ ] The hit and skip branches keep their existing wording, so nothing that greps those lines breaks.\n- [ ] The three call sites still log at INFO and need no change beyond removing the `if summary:` guard if it becomes dead.\n\n**Verify:** `pixi run pytest tests/cli/test_scan_report.py -v` \u2192 all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/cli/test_scan_report.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_scan_report.py -v\", \"acceptanceCriteria\": [\"`summarize()` returns a non-empty string when there were zero candidates, naming the count as zero and saying a cold create follows.\", \"The hit and skip branches keep their existing wording, so nothing that greps those lines breaks.\", \"The three call sites still log at INFO and need no change beyond removing the `if summary:` guard if it becomes dead.\"], \"modelTier\": \"standard\", \"liveSpend\": false}\n```"
     },
     {
@@ -71,5 +71,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-06T22:13:30"
+  "lastUpdated": "2026-09-06T22:19:18"
 }
