@@ -23,8 +23,10 @@ from datetime import datetime
 from typing import Any
 
 from kinoforge.core.clock import FakeClock
+from kinoforge.core.errors import TeardownError
 from kinoforge.core.interfaces import Instance
 from kinoforge.core.reaper import (
+    _EPHEMERAL_GC_404_GRACE_S,
     DEFAULT_APPLY_POLICY,
     Policy,
     Verdict,
@@ -64,13 +66,23 @@ _THRESHOLDS: dict[str, Any] = {
 }
 
 
-def _row(pod_id: str = "eph-61ee7764") -> EphemeralIndexRow:
-    """An index row born at :data:`_BIRTH`."""
+def _row(
+    pod_id: str = "eph-61ee7764",
+    *,
+    endpoints: dict[str, str] | None = None,
+) -> EphemeralIndexRow:
+    """An index row born at :data:`_BIRTH`.
+
+    ``endpoints={}`` is the PRE-CREATE shape: the row the controller reserves
+    before ``create_instance``, when no URL is knowable yet.
+    """
     return EphemeralIndexRow(
         id=pod_id,
         warm_attach_key="wak-deadbeef",
         kinoforge_key="kfkey-dead0",
-        endpoints={"8000": "https://example.invalid/8000"},
+        endpoints=(
+            {"8000": "https://example.invalid/8000"} if endpoints is None else endpoints
+        ),
         provider="runpod",
         created_at_local=_BIRTH.isoformat(),
     )
@@ -356,3 +368,136 @@ def test_sweep_leaves_the_pod_alone_without_the_orphan_opt_in(tmp_path: Any) -> 
     assert [r.id for r in EphemeralIndex(store=store).rows()] == ["eph-61ee7764"]
     assert report.snapshot["eph-61ee7764"][1] == Verdict.ORPHAN_REAP
     assert report.actions == []
+
+
+# ---------------------------------------------------------------------------
+# A concurrent sweeper must not GC the pre-create launch row
+#
+# `_ephemeral_launch_row_reserve` writes an index row keyed by the resource
+# NAME before `create_instance` — and on RunPod that name is not the pod id
+# `probe_runtime` asks about, so the probe answers ``not_found`` for the whole
+# run, not for the ~second it takes the provider to register. A daemon tick in
+# that window used to remove the very row the pre-create write exists to
+# create, leaving a booting, billing pod with no durable name anywhere.
+# ---------------------------------------------------------------------------
+
+
+def _not_found_entry(
+    *, endpoints: dict[str, str] | None = None, pod_id: str = "eph-61ee7764"
+) -> dict[str, Any]:
+    """Synthesise the entry a ``not_found`` probe produces for such a row."""
+    return _synthesize_ephemeral_entry(
+        _row(pod_id, endpoints=endpoints),
+        _probe(gpu=None, cpu=None, found=False, pod_id=pod_id),
+    )
+
+
+def test_a_pre_create_row_the_probe_cannot_find_is_not_gc_ed() -> None:
+    """A young row with no endpoints is a launch in flight, not debris.
+
+    Bug caught: ``probe_state == "not_found"`` returned GC_404 with no grace at
+    all, and GC_404 sits inside DEFAULT_APPLY_POLICY — so a sweeper daemon
+    ticking during a cold boot deleted the launch row of a pod that was
+    already billing. The pod then has no durable name in any state file, which
+    is precisely the condition the pre-create row was added to end.
+    """
+    verdict = _classify(_not_found_entry(endpoints={}), _at(600.0))
+    assert verdict == Verdict.LIVE
+
+
+def test_a_pre_create_row_past_the_grace_window_is_gc_ed() -> None:
+    """The grace defers the cleanup; it must not cancel it.
+
+    Bug caught: an unbounded grace turns every abandoned pre-create row into a
+    permanent ghost that no sweep can ever clear.
+    """
+    verdict = _classify(_not_found_entry(endpoints={}), _at(3600.0))
+    assert verdict == Verdict.GC_404
+
+
+def test_a_row_that_once_named_a_live_pod_is_gc_ed_immediately() -> None:
+    """Endpoints on the row mean it HAS been confirmed; not_found ends it.
+
+    Bug caught: widening the grace to every ``not_found`` row would delay the
+    cleanup of genuinely dead pods by half an hour, and would hide a real
+    provider-side disappearance behind a window sized for a boot.
+    """
+    verdict = _classify(_not_found_entry(), _at(60.0))
+    assert verdict == Verdict.GC_404
+
+
+def test_the_grace_boundary_is_inclusive_and_sits_at_the_documented_value() -> None:
+    """The window ends where it says it does — 1800 s, inclusive.
+
+    Bug caught: an off-by-a-window grace (seconds instead of minutes, or a
+    value shorter than a Wan A14B cold boot) reads as "fixed" while still
+    deleting the launch row of a pod mid-boot.
+    """
+    entry = _not_found_entry(endpoints={})
+    assert _EPHEMERAL_GC_404_GRACE_S == 1800.0
+    assert _classify(entry, _at(_EPHEMERAL_GC_404_GRACE_S)) == Verdict.LIVE
+    assert _classify(entry, _at(_EPHEMERAL_GC_404_GRACE_S + 0.1)) == Verdict.GC_404
+
+
+def test_sweep_leaves_a_pre_create_row_on_disk_when_the_probe_404s(
+    tmp_path: Any,
+) -> None:
+    """End to end: the daemon tick must not delete the row it finds mid-launch.
+
+    Catches the half-fix where classification defers but some other branch of
+    ``sweep`` removes the row anyway — the only outcome that matters here is
+    whether the handle is still on disk when the tick ends.
+    """
+    provider = _FakeProvider(_probe(gpu=None, cpu=None, found=False))
+    store = LocalArtifactStore(root=tmp_path)
+    EphemeralIndex(store=store).add(_row(endpoints={}))
+    ledger = _FakeLedger()
+
+    report = sweep(
+        store,
+        ledger,  # type: ignore[arg-type]
+        lambda _name: lambda: provider,  # type: ignore[arg-type,return-value]
+        _THRESHOLDS,
+        FakeClock(start=_at(600.0)),
+        policy=DEFAULT_APPLY_POLICY,
+    )
+
+    assert [r.id for r in EphemeralIndex(store=store).rows()] == ["eph-61ee7764"]
+    assert provider.destroyed == []
+    assert [a.action for a in report.actions] == []
+
+
+# ---------------------------------------------------------------------------
+# A failed orphan destroy must keep the evidence it acted on
+# ---------------------------------------------------------------------------
+
+
+class _UndestroyableProvider(_FakeProvider):
+    """A provider whose destroy always fails, as a dead API endpoint would."""
+
+    def destroy_instance(self, instance_id: str) -> None:
+        raise TeardownError("simulated teardown failure")
+
+
+def test_a_failed_orphan_destroy_still_records_the_age_and_utilisation(
+    tmp_path: Any,
+) -> None:
+    """`ActionResult.reason` must carry BOTH the failure and the evidence.
+
+    Bug caught: the ``TeardownError`` handler overwrote ``reason`` with the
+    exception string, discarding the age + utilisation the decision was made
+    on — while the comment beside it claims the record "survives even if the
+    destroy fails". An operator reviewing a failed reap of their render gets
+    the error and no answer to "why did it try?".
+    """
+    provider = _UndestroyableProvider(_probe(gpu=0.0, cpu=0.0))
+    policy = Policy(
+        act_verdicts=DEFAULT_APPLY_POLICY.act_verdicts | {Verdict.ORPHAN_REAP}
+    )
+    _store, report = _sweep_once(tmp_path, provider, policy=policy, now=_at(2 * 3600.0))
+
+    assert [a.action for a in report.actions] == ["failed"]
+    reason = report.actions[0].reason or ""
+    assert "simulated teardown failure" in reason, f"failure not reported: {reason!r}"
+    assert "7200" in reason, f"observed age lost on the failure path: {reason!r}"
+    assert "0.0" in reason, f"observed utilisation lost on the failure path: {reason!r}"

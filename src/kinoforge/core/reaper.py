@@ -395,6 +395,53 @@ def _ephemeral_stall_predicate(
     return all(g < gpu_thresh and c < cpu_thresh for (g, c) in recent)
 
 
+#: How long a ``not_found`` ephemeral row is presumed to be a launch still in
+#: flight rather than a dead pod. Same value and the same asymmetry as
+#: ``cli/_reconcile._LAUNCHING_GRACE_S``: acting too early deletes the handle on
+#: a pod that is booting AND BILLING, while acting too late only prolongs a
+#: $0.00 ghost row that removes no resource when it finally goes.
+_EPHEMERAL_GC_404_GRACE_S: float = 1800.0
+
+
+def _ephemeral_pre_create_grace(entry: Mapping[str, Any], now: float) -> bool:
+    """Return True iff a ``not_found`` row is still plausibly a live launch.
+
+    Two conditions, both required:
+
+    * the row carries **no endpoints** — nothing has ever confirmed it names a
+      reachable resource, which is the shape
+      ``cli/_commands._ephemeral_launch_row_reserve`` writes before
+      ``create_instance`` and which ``_ephemeral_index_add`` replaces with a
+      row carrying the provider-side id and its URLs;
+    * it is younger than :data:`_EPHEMERAL_GC_404_GRACE_S`.
+
+    A row that once named a live pod (endpoints present) is GC'd on the first
+    ``not_found`` exactly as before, so a genuinely dead pod's row is not held
+    open by this.
+
+    Deliberately NOT a configurable threshold. Every tunable in this module is
+    wired from ``Lifecycle`` and reaches ``classify`` as an explicit keyword;
+    adding one here for a window whose only job is to outlast a cold boot would
+    grow the config surface (and a migration) for a knob no operator has a
+    reason to move. The module constant is the same shape, and the same value,
+    as ``cli/_reconcile._LAUNCHING_GRACE_S``.
+
+    Args:
+        entry: Synthesised ephemeral entry.
+        now: Wall-clock now (seconds, float).
+
+    Returns:
+        True to defer the GC_404 for this tick.
+    """
+    if entry.get("endpoints"):
+        return False
+    created_at = float(entry.get("created_at", 0.0))
+    if created_at <= 0.0:
+        # An unparseable stamp is no evidence of youth — fall through to GC.
+        return False
+    return (now - created_at) <= _EPHEMERAL_GC_404_GRACE_S
+
+
 def _classify_ephemeral(
     entry: Mapping[str, Any],
     thresholds: Mapping[str, Any],
@@ -405,7 +452,9 @@ def _classify_ephemeral(
     """Heartbeat-free classification for entries flagged ``kinoforge_ephemeral=True``.
 
     Decision tree (spec 2026-06-28 §3.5):
-      1. probe_state == "not_found"    → GC_404
+      1. probe_state == "not_found"    → GC_404, unless the row is still
+         inside the pre-create grace window (no endpoints ever recorded AND
+         younger than :data:`_EPHEMERAL_GC_404_GRACE_S`), in which case → LIVE
       2. probe_state == "no_substrate" → SKIP_NO_PROBE
       3. probe_state == "failed"        → PROBE_FAILED
       4. now - created_at > max_lifetime_s → OVERAGE_REAP
@@ -422,7 +471,7 @@ def _classify_ephemeral(
         entry: Synthetic ephemeral entry from ``_synthesize_ephemeral_entry``.
         thresholds: Threshold mapping; only ``max_lifetime_s``,
             ``stall_window_s``, ``stall_gpu_threshold``,
-            ``stall_cpu_threshold``, ``heartbeat_interval_s`` and
+            ``stall_cpu_threshold``, ``heartbeat_interval_s``,
             ``ephemeral_orphan_age_s`` are read.
         now: Wall-clock now (seconds, float).
         stall_history: Per-pod deque of ``(gpu_util_pct, cpu_pct)`` samples,
@@ -435,6 +484,16 @@ def _classify_ephemeral(
     """
     probe_state = entry.get("probe_state")
     if probe_state == "not_found":
+        if _ephemeral_pre_create_grace(entry, now):
+            # A row a launch has not yet superseded is NOT evidence of a dead
+            # pod: it is keyed by the resource NAME the controller reserved
+            # before `create_instance`, and on RunPod that name is not the pod
+            # id the probe asks about, so `not_found` is the ONLY answer
+            # possible until the post-create update rewrites the row. GC'ing it
+            # deletes the one durable handle on a pod that may already be
+            # billing — the exact hole the pre-create row exists to close, and
+            # reachable from a concurrent `kinoforge sweeper` tick.
+            return Verdict.LIVE
         return Verdict.GC_404
     if probe_state == "no_substrate":
         return Verdict.SKIP_NO_PROBE

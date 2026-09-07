@@ -22,6 +22,12 @@ def _entry(
         "kinoforge_ephemeral": True,
         "probe_state": probe_state,
         "created_at": 1000.0,
+        # The POST-create shape: a row whose endpoints are known has been
+        # confirmed to name a real resource, so a ``not_found`` probe against
+        # it is evidence the pod is gone. A row with ``endpoints={}`` is the
+        # pre-create reservation and is graced instead — see
+        # ``test_ephemeral_pre_create_row_is_not_gc_404_while_young``.
+        "endpoints": {"8000": "https://example.invalid/8000"},
     }
     if probe_state == "ok":
         base["container_uptime_s"] = 300.0
@@ -69,6 +75,21 @@ def test_ephemeral_probe_not_found_gc_404() -> None:
         _entry("not_found"), _THRESHOLDS, _NOW, stall_history=None
     )
     assert verdict == Verdict.GC_404
+
+
+def test_ephemeral_pre_create_row_is_not_gc_404_while_young() -> None:
+    """A reserved-but-not-yet-created row is graced, not collected.
+
+    Bug caught: GC_404 fired on the first ``not_found`` with no grace, so a
+    sweeper tick during a cold boot deleted the pre-create launch row — the
+    only durable name a ``--ephemeral`` run has while it is booting and
+    billing. Distinguished by ``endpoints``: an empty map means nothing has
+    ever confirmed the row names a live resource.
+    """
+    verdict = _classify_ephemeral(
+        _entry("not_found", endpoints={}), _THRESHOLDS, _NOW, stall_history=None
+    )
+    assert verdict == Verdict.LIVE
 
 
 def test_ephemeral_probe_no_substrate_skip() -> None:

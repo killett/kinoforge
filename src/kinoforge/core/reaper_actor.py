@@ -359,12 +359,18 @@ def act_on_verdict(
                 # `forgot_unroutable` path lives in sweep() — see Layer V T5.
                 action = "no_op"
         except TeardownError as exc:
+            # Both halves, in that order: the failure is what the caller acts
+            # on, and the orphan evidence (age + utilisation) is what it acts
+            # on it FOR. Overwriting `reason` with the exception alone made the
+            # comment above — "recorded on the ActionResult AND logged before
+            # the destroy, so the record survives even if the destroy fails" —
+            # true only of the log line.
             return ActionResult(
                 instance_id=instance_id,
                 snapshot_verdict=snapshot_verdict,
                 applied_verdict=v2,
                 action="failed",
-                reason=str(exc),
+                reason=f"{exc}; {reason}" if reason else str(exc),
             )
         return ActionResult(
             instance_id=instance_id,
@@ -429,6 +435,11 @@ def _synthesize_ephemeral_entry(
         "provider_kind": row.provider,
         "kinoforge_ephemeral": True,
         "created_at": _iso_to_epoch(row.created_at_local),
+        # Carried through for the classifier's pre-create grace: an EMPTY map
+        # is what distinguishes a row reserved before ``create_instance``
+        # (which nothing has ever confirmed names a live resource) from one
+        # written after it. See ``reaper._ephemeral_pre_create_grace``.
+        "endpoints": dict(row.endpoints),
     }
     if probe_result == "failed":
         base["probe_state"] = "failed"
