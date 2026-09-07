@@ -1568,10 +1568,15 @@ class _ScanReport:
     Attributes:
         attached: Instance id of the candidate the scan attached to, or
             ``None`` when no valid candidate was found.
-        skipped: List of ``(instance_id, reason_code)`` tuples per
-            per-candidate validation failure. Coarse-filter rejects
-            (provider mismatch, cap_key mismatch, busy) are NOT
-            recorded here — they short-circuit before validation.
+        skipped: List of ``(instance_id, reason_code)`` tuples per rejected
+            entry — both coarse-filter rejects (``provider-mismatch``,
+            ``cap-key-mismatch``, ``session-busy``) and per-candidate
+            validation failures (``reaper-held``, ``provision-held``,
+            ``classify-not-live``, ...) land here. Coarse-filter rejects
+            used to short-circuit before this list existed, so a live pod
+            dropped there was indistinguishable from an empty ledger — the
+            ambiguity that made the U14 duplicate-boot defect undiagnosable
+            without spending money again.
     """
 
     attached: str | None = None
@@ -1701,20 +1706,31 @@ def _scan_warm_candidates(
             entries.append(ie)
             index_only_ids.add(ie["id"])
 
-    matches = [
-        e
-        for e in entries
-        if e.get("provider") == provider_kind
-        and e.get("tags", {}).get("kinoforge_key") == cap_key
-        and not is_session_busy(e, now=now, heartbeat_interval_s=hb_interval)
-    ]
+    skipped: list[tuple[str, str]] = []
+    matches = []
+    for e in entries:
+        eid = str(e["id"])
+        # Coarse-filter rejects are recorded the same way validation-stage
+        # rejects are below — otherwise a live pod dropped here reads
+        # identically to a genuinely empty ledger, which is exactly the
+        # ambiguity that made the U14 duplicate-boot defect undiagnosable
+        # without spending money again.
+        if e.get("provider") != provider_kind:
+            skipped.append((eid, "provider-mismatch"))
+            continue
+        if e.get("tags", {}).get("kinoforge_key") != cap_key:
+            skipped.append((eid, "cap-key-mismatch"))
+            continue
+        if is_session_busy(e, now=now, heartbeat_interval_s=hb_interval):
+            skipped.append((eid, "session-busy"))
+            continue
+        matches.append(e)
     matches.sort(
         key=lambda e: float(e.get("heartbeat_thread_tick") or 0.0),
         reverse=True,
     )
 
     store = ctx.store()
-    skipped: list[tuple[str, str]] = []
 
     for entry in matches:
         instance_id = str(entry["id"])

@@ -205,7 +205,9 @@ def test_returns_none_when_no_cap_key_match(
     _seed_entry(ctx, "pod-1", cap_key="bbb222")
     instance, report = _scan_warm_candidates(ctx, cfg)
     assert instance is None
-    assert report.skipped == []  # coarse-filter drop, not per-candidate skip
+    # Coarse-filter drops must be recorded like any other skip, or a live
+    # pod dropped here reads identically to an empty ledger.
+    assert report.skipped == [("pod-1", "cap-key-mismatch")]
 
 
 def test_returns_none_when_provider_mismatch(
@@ -217,7 +219,9 @@ def test_returns_none_when_provider_mismatch(
     _seed_entry(ctx, "pod-1", provider="skypilot")
     instance, report = _scan_warm_candidates(ctx, cfg)
     assert instance is None
-    assert report.skipped == []
+    # Coarse-filter drops must be recorded like any other skip, or a live
+    # pod dropped here reads identically to an empty ledger.
+    assert report.skipped == [("pod-1", "provider-mismatch")]
 
 
 def test_filters_busy_entries_via_is_session_busy(
@@ -235,8 +239,9 @@ def test_filters_busy_entries_via_is_session_busy(
     )
     instance, report = _scan_warm_candidates(ctx, cfg, clock=FakeClock(100.0))
     assert instance is None
-    # Busy entries are coarse-filtered, not per-candidate-skipped.
-    assert report.skipped == []
+    # Busy entries are coarse-filtered but must still be recorded, or a
+    # live-but-busy pod reads identically to an empty ledger.
+    assert report.skipped == [("pod-1", "session-busy")]
 
 
 def test_filters_classify_non_live_entries(
@@ -352,6 +357,8 @@ def test_record_includes_skipped_reasons_with_stable_codes(
         "reaper-held",
         "provision-held",
         "cap-key-drift",
+        "cap-key-mismatch",
+        "session-busy",
         "provider-mismatch",
         "provider-unconstructable",
         "list-instances-failed",
@@ -392,9 +399,38 @@ def test_summarize_names_a_cold_create_when_no_candidates_were_found() -> None:
     """
     report = _ScanReport(attached=None, skipped=[])
     summary = report.summarize()
-    assert summary != ""
-    assert "0" in summary
-    assert "cold create" in summary
+    # Pinned exact wording, not a substring: another task greps this exact
+    # line, and a substring check would pass for a materially worse message
+    # (e.g. one that dropped the "0" or reworded "cold create").
+    assert summary == "warm-reuse: scanned 0 candidates — cold create"
+
+
+def test_coarse_filtered_entry_summary_differs_from_empty_ledger(
+    tmp_path: Any, patched_registry: dict[str, Any], fixed_clock: None
+) -> None:
+    """A live pod dropped by the coarse filter must not read like an empty ledger.
+
+    Bug caught: provider mismatch, cap-key mismatch, and session-busy all
+    short-circuited before `skipped` was populated, so `summarize()` printed
+    the identical "scanned 0 candidates — cold create" line whether the
+    ledger was genuinely empty or held a live pod dropped before validation
+    ever ran. That is exactly the ambiguity a later task needs to resolve
+    from this line alone, on hardware billed at $2.50/hr — reading it wrong
+    costs a paid boot.
+    """
+    ctx_empty = _make_ctx(tmp_path)
+    cfg = _make_cfg()
+    _, empty_report = _scan_warm_candidates(ctx_empty, cfg)
+
+    ctx_busy = _make_ctx(tmp_path)
+    _seed_entry(ctx_busy, "pod-1", session_start=100.0, heartbeat_thread_tick=100.0)
+    _, busy_report = _scan_warm_candidates(ctx_busy, cfg, clock=FakeClock(100.0))
+
+    assert empty_report.summarize() == "warm-reuse: scanned 0 candidates — cold create"
+    assert busy_report.summarize() != empty_report.summarize()
+    assert busy_report.summarize() == (
+        "warm-reuse: scanned 1, 0 attachable (reasons: 1 session-busy) — cold create"
+    )
 
 
 def test_force_attach_param_is_false_always(
@@ -455,7 +491,8 @@ def test_uses_injected_clock_for_is_session_busy(
     _seed_entry(ctx, "pod-1", session_start=100.0, heartbeat_thread_tick=100.0)
     instance, report = _scan_warm_candidates(ctx, cfg, clock=FakeClock(100.0))
     assert instance is None
-    assert report.skipped == []  # busy → coarse-filtered
+    # busy → coarse-filtered, but still recorded (see coarse-filter tests above)
+    assert report.skipped == [("pod-1", "session-busy")]
 
 
 def test_skips_candidate_on_resolve_warm_instance_failure(
