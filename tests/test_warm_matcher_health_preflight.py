@@ -202,3 +202,87 @@ class TestCfgWantStages:
         assert _cfg_want_stages(cfg) == ("upscale",)
         # And it must not drift from the key that gates the same match.
         assert _cfg_want_stages(cfg) == cfg.capability_key().stages
+
+    def test_interpolate_only_cfg_is_not_health_gated(self) -> None:
+        # Bug caught: delegating wholesale to `capability_key().stages`
+        # started returning ("interpolate",) for a RIFE cfg that
+        # previously returned () and skipped the /health gate entirely.
+        # The in-pod `_capability_for_model` vocabulary has no term for
+        # interpolation — a `rife-*` entry in _LOADED maps to None and
+        # never reaches /health's capabilities — so the subset check can
+        # never pass and EVERY `kinoforge interpolate` warm-attach would
+        # be refused with `stage-mismatch` and cold-boot a duplicate.
+        # That is U14's money leak relocated one command over.
+        from kinoforge.cli._commands import _cfg_want_stages
+        from kinoforge.core.config import Config
+
+        cfg = Config.model_validate(
+            {
+                "engine": {
+                    "kind": "diffusers",
+                    "precision": "fp16",
+                    "diffusers": {
+                        "image": "python:3.13-slim",
+                        # The real RIFE cfg sets this too: it means "skip the
+                        # eager Wan load", and it is what lets models be [].
+                        "upscale_only": True,
+                    },
+                },
+                "models": [],
+                "compute": {"provider": "modal", "image": "python:3.13-slim"},
+                "interpolate": {
+                    "engine": "rife",
+                    "fps": 60.0,
+                    "rife": {
+                        "weights_ref": "hf:hzwer/RIFE",
+                        "model": "rife426",
+                        "precision": "fp16",
+                    },
+                },
+            }
+        )
+        assert cfg.capability_key().stages == ("interpolate",)
+        assert _cfg_want_stages(cfg) == ()
+
+    def test_interpolate_carve_out_does_not_disable_the_upscale_gate(self) -> None:
+        # Bug caught: carving "interpolate" out by short-circuiting the
+        # whole helper whenever an interpolate block is present would
+        # silently drop the upscale gate too, so a cfg needing upscale
+        # would attach to a pod whose upscaler never loaded — the
+        # half-failed-pod case the T14 gate exists for.
+        from kinoforge.cli._commands import _cfg_want_stages
+        from kinoforge.core.config import Config
+
+        cfg = Config.model_validate(
+            {
+                "engine": {
+                    "kind": "diffusers",
+                    "precision": "bfloat16",
+                    "diffusers": {
+                        "image": "python:3.13-slim",
+                        "upscale_only": True,
+                    },
+                },
+                "models": [],
+                "compute": {"provider": "modal", "image": "python:3.13-slim"},
+                "upscale": {
+                    "engine": "flashvsr",
+                    "scale": "4x",
+                    "flashvsr": {
+                        "weights_bundle": "hf:JunhaoZhuang/FlashVSR-v1.1",
+                        "precision": "bfloat16",
+                    },
+                },
+                "interpolate": {
+                    "engine": "rife",
+                    "fps": 60.0,
+                    "rife": {
+                        "weights_ref": "hf:hzwer/RIFE",
+                        "model": "rife426",
+                        "precision": "fp16",
+                    },
+                },
+            }
+        )
+        assert cfg.capability_key().stages == ("upscale", "interpolate")
+        assert _cfg_want_stages(cfg) == ("upscale",)

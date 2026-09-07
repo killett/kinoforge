@@ -676,3 +676,68 @@ def test_t2v_plus_upscale_cfg_still_refuses_an_upscale_only_pod(
     assert instance is None
     assert report.attached is None
     assert report.skipped == [(eid, "stage-mismatch")]
+
+
+def _interpolate_only_cfg() -> Any:
+    """A real Config shaped like modal-diffusers-rife-60fps-interpolate.yaml."""
+    from kinoforge.core.config import Config
+
+    return Config.model_validate(
+        {
+            "engine": {
+                "kind": "diffusers",
+                "precision": "fp16",
+                # upscale_only means "skip the eager Wan load"; the real RIFE
+                # cfg sets it, and it is what lets models be [].
+                "diffusers": {"image": "python:3.13-slim", "upscale_only": True},
+            },
+            "models": [],
+            "compute": {
+                "provider": "modal",
+                "image": "python:3.13-slim",
+                "lifecycle": {"heartbeat_interval_s": 30, "budget": 2.0},
+            },
+            "interpolate": {
+                "engine": "rife",
+                "fps": 60.0,
+                "rife": {
+                    "weights_ref": "hf:hzwer/RIFE",
+                    "model": "rife426",
+                    "precision": "fp16",
+                },
+            },
+        }
+    )
+
+
+def test_interpolate_only_cfg_attaches_to_a_pod_that_cannot_advertise_interpolate(
+    tmp_path: Any,
+    patched_registry: dict[str, Any],
+    fixed_clock: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The /health gate must not be applied to an interpolate cfg.
+
+    Bug caught: deriving the required stages from
+    ``capability_key().stages`` wholesale made a RIFE cfg demand an
+    ``interpolate`` capability that no pod can ever advertise — the in-pod
+    ``_capability_for_model`` prefix map has no term for it, so a
+    ``rife-*`` entry in ``_LOADED`` maps to None and never reaches
+    ``/health``. Every ``kinoforge interpolate`` warm-attach would be
+    refused with ``stage-mismatch`` and cold-boot a duplicate pod, which
+    is U14's money leak moved one command over. The pod payload below is
+    what a live RIFE pod really returns.
+    """
+    ctx = _make_ctx(tmp_path)
+    cfg = _interpolate_only_cfg()
+    eid = _seed_live_upscale_pod(ctx, cfg)
+    monkeypatch.setattr(
+        "kinoforge.cli._commands._http_get_json",
+        lambda url: {"capabilities": ["upload"]},
+    )
+
+    instance, report = _scan_warm_candidates(ctx, cfg)
+
+    assert report.skipped == []
+    assert report.attached == eid
+    assert instance is not None
