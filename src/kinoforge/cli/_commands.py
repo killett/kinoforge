@@ -1379,6 +1379,23 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
     if chain_rc is not None:
         return chain_rc
 
+    # U23 — same pre-create reservation _cmd_generate uses; see
+    # _ephemeral_launch_row_reserve. batch_generate shares ONE pod across the
+    # whole manifest, so this closes the widest crash window in the CLI: under
+    # --ephemeral, nothing anywhere named the pod until batch_generate
+    # returned, and a batch is the longest-running command there is.
+    launch = (
+        _ephemeral_launch_row_reserve(ctx, cfg, batch_id) if instance is None else None
+    )
+    # Snapshot BEFORE batch_generate so _settle_batch_launch_row can tell
+    # this launch's ledger entry apart from any pre-existing warm pod
+    # sharing this state dir. Only needed when something was reserved.
+    _ledger_ids_before: frozenset[str] = (
+        frozenset(str(e.get("id") or "") for e in ctx.ledger().entries())
+        if launch is not None
+        else frozenset()
+    )
+
     try:
         result = batch_generate(
             cfg,
@@ -1408,8 +1425,12 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
         # timeout. All originate inside deploy_session.__enter__ and would
         # otherwise escape as raw tracebacks, breaking the "every CLI failure
         # path produces a clean stderr line + non-zero exit" contract.
+        # Ruling C1 — a raise keeps the launch row for the classifier to age
+        # out, so neither except clause above nor this one settles it.
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
+
+    _settle_batch_launch_row(ctx, cfg, launch, single, _ledger_ids_before)
 
     formatter.render_summary(result)
     n_ok = sum(1 for o in result.outcomes if o.status == "ok")
@@ -2159,6 +2180,74 @@ def _settle_unused_launch_row(
         )
         return
     _ephemeral_launch_row_release(ctx, launch.id)
+
+
+def _settle_batch_launch_row(
+    ctx: SessionContext,
+    cfg: Config,
+    launch: _LaunchRow | None,
+    single: bool,
+    ledger_ids_before: frozenset[str],
+) -> None:
+    """Resolve ``_cmd_batch``'s pre-create launch row once the batch returns.
+
+    U23. ``batch_generate`` shares ONE pod across every manifest entry and
+    hands the caller no ``Instance`` back — ``BatchResult`` carries only
+    per-entry outcomes — unlike ``_cmd_generate`` / ``_cmd_upscale`` /
+    ``_cmd_interpolate``, which get the created instance straight back from
+    the orchestrator. The pod's real row is still written somewhere,
+    though: ``deploy_session`` unconditionally records every cold-created
+    instance to a ``Ledger(store=store)`` (default ``run_id="_lifecycle"``)
+    — the exact namespace ``ctx.ledger()`` reads. Under STRICT_POLICY both
+    go through the SAME session-scoped ``in_memory_ledger`` mirror
+    (``core/lifecycle.py``'s ``_read_entries`` / ``_write_entries`` gate), so
+    the row this launch's create wrote is visible here with no additional
+    plumbing.
+
+    When the pod is meant to survive (ordinary warm-reuse batch, no
+    ``--no-reuse``), the reserved launch row already durably names it —
+    :func:`_ephemeral_launch_row_reserve` keyed it by the same provider-side
+    name ``create_instance`` will use — so there is nothing to settle.
+
+    When ``--no-reuse`` tore the pod down, comparing the ledger's contents
+    against *ledger_ids_before* finds the entry this launch's create added
+    (if it is still there): ``deploy_session``'s ``__exit__`` only calls
+    ``Ledger.forget`` AFTER a successful ``destroy_confirmed``, so a
+    surviving entry means the teardown did NOT confirm. The real instance is
+    reconstructed from that entry and hand off to
+    :func:`_settle_unused_launch_row`, which applies the exact same
+    release / upgrade / warn contract ``generate`` uses. Its own
+    ``session.destroy_was_confirmed`` check reads the SAME real instance id
+    ``deploy_session`` marks unconfirmed on a failed teardown, so this
+    resolves correctly regardless of whether the create used
+    ``EphemeralSession.resource_name`` for its id (RunPod / Modal) or minted
+    its own (``LocalProvider``, the offline test backbone).
+
+    Args:
+        ctx: The current SessionContext.
+        cfg: Loaded config for this run.
+        launch: The reserved launch row, or ``None`` when none was reserved.
+        single: The ``--no-reuse`` flag threaded into ``batch_generate``.
+        ledger_ids_before: Ledger entry ids present just before
+            ``batch_generate`` was called.
+    """
+    if launch is None or not single:
+        return
+    returned_instance: Instance | None = None
+    for entry in ctx.ledger().entries():
+        entry_id = str(entry.get("id") or "")
+        if entry_id and entry_id not in ledger_ids_before:
+            returned_instance = Instance(
+                id=entry_id,
+                provider=str(entry.get("provider", "")),
+                status="ready",
+                created_at=float(entry.get("created_at") or 0.0),
+                endpoints=dict(entry.get("endpoints", {})),
+                tags=dict(entry.get("tags", {})),
+                cost_rate_usd_per_hr=float(entry.get("cost_rate_usd_per_hr") or 0.0),
+            )
+            break
+    _settle_unused_launch_row(ctx, cfg, launch, returned_instance)
 
 
 def _ephemeral_index_add(
