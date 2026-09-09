@@ -166,3 +166,40 @@ def test_cmd_grid_forwards_ephemeral_to_run_grid(
         f"args.ephemeral={ephemeral} but run_grid was called with "
         f"ephemeral={captured.get('ephemeral')!r}"
     )
+
+
+def test_cmd_grid_ephemeral_lora_swap_refusal_exits_2_no_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    ctx: SessionContext,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Review round 2: the ValueError run_grid raises for --ephemeral combined
+    with lora_swap cells (U24) must surface as a clean stderr message + exit
+    2, not an unhandled Python traceback + exit 1 — matching
+    _preflight_ephemeral's fail-closed exit-2 precedent the controller ruling
+    named. Before this fix, _cmd_grid does not catch the ValueError at all,
+    so calling it would propagate the exception out of this test."""
+    fake_spec = MagicMock(cells=[MagicMock()], title="t", layout="1x1")
+    fake_spec.budget_cap_usd = 1.0
+    monkeypatch.setattr(
+        "kinoforge.core.grid.spec.GridSpec.load",
+        classmethod(lambda cls, p: fake_spec),
+    )
+
+    async def fake_run_grid(**kwargs: Any) -> GridResult:
+        raise ValueError(
+            "grid --ephemeral does not support lora_swap cells [0]: "
+            "a lora_swap group shares one pod across the whole swap chain"
+        )
+
+    monkeypatch.setattr("kinoforge.core.grid.executor.run_grid", fake_run_grid)
+    exit_code = _cmd_grid(_args(ephemeral=True), ctx)
+    assert exit_code == 2, f"expected exit 2 (fail-closed refusal), got {exit_code}"
+    err = capsys.readouterr().err
+    assert "lora_swap" in err, (
+        f"stderr should surface the refusal message so the operator sees why, "
+        f"got: {err!r}"
+    )
+    assert "Traceback" not in err, (
+        f"no Python traceback should reach the operator: {err!r}"
+    )

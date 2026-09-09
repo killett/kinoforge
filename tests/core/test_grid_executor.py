@@ -392,7 +392,10 @@ def test_run_grid_ephemeral_refuses_lora_swap_cells(
     )
     spec = _make_lora_swap_spec(tmp_path, n_cells=2)
 
-    with pytest.raises(ValueError, match="lora_swap"):
+    # Pins the offending cell indices into the message, not just the word
+    # "lora_swap" — a regression dropping `{swap_idxs}` from the raise would
+    # not be caught by a looser match (review round 2 finding).
+    with pytest.raises(ValueError, match=r"lora_swap cells \[0, 1\]"):
         asyncio.run(
             run_grid(
                 spec=spec,

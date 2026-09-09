@@ -4489,7 +4489,11 @@ def _cmd_grid(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     Maps :class:`GridResult.status` → exit code:
     full → 0, partial → 2, budget → 3, ffmpeg → 4, teardown → 5,
-    spec error → 1.
+    spec error → 1. Exit 2 is also emitted (review round 2, U11) for an
+    ``--ephemeral`` + ``lora_swap:`` refusal — see below; that refusal never
+    produces a :class:`GridResult` so it cannot collide with a real
+    ``"partial"`` run in practice, but a caller branching on exit codes
+    cannot distinguish the two from the code alone.
 
     ``args.ephemeral`` (U11) is forwarded verbatim to :func:`run_grid`,
     which threads it through to every ``generate:``-mode cell's
@@ -4497,9 +4501,13 @@ def _cmd_grid(args: argparse.Namespace, ctx: SessionContext) -> int:
     ``EphemeralSession`` is opened here — each cell subprocess is a
     fresh ``kinoforge generate`` process and opens its own under
     ``main()``'s ``with EphemeralSession(enabled=args.ephemeral, ...)``.
-    :func:`run_grid` raises ``ValueError`` uncaught (fail-closed) when
-    ``--ephemeral`` is combined with a ``lora_swap:`` cell — that shape
-    is refused, not silently run non-ephemerally (U24).
+    :func:`run_grid` raises ``ValueError`` when ``--ephemeral`` is combined
+    with a ``lora_swap:`` cell — that shape is refused, not silently run
+    non-ephemerally (U24). Caught here (review round 2: the controller
+    ruling's fail-closed precedent, ``_preflight_ephemeral``'s stderr-block
+    + ``return 2``, applies to the presentation too, not only to the
+    refuse-vs-warn decision) and reported as a clean stderr message + exit
+    2, never a raw traceback.
     """
     import asyncio
 
@@ -4529,15 +4537,22 @@ def _cmd_grid(args: argparse.Namespace, ctx: SessionContext) -> int:
     output_dir = Path("output")
     out_path = Path(args.out) if args.out else None
 
-    result = asyncio.run(
-        run_grid(
-            spec=spec,
-            output_dir=output_dir,
-            max_parallel_groups=args.max_parallel_groups,
-            out_path=out_path,
-            ephemeral=args.ephemeral,
+    try:
+        result = asyncio.run(
+            run_grid(
+                spec=spec,
+                output_dir=output_dir,
+                max_parallel_groups=args.max_parallel_groups,
+                out_path=out_path,
+                ephemeral=args.ephemeral,
+            )
         )
-    )
+    except ValueError as exc:
+        # U24 (review round 2): run_grid's ephemeral + lora_swap refusal
+        # must surface as a clean fail-closed message, not an unhandled
+        # Python traceback — matching _preflight_ephemeral's precedent.
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     status_to_exit = {
         "full": 0,
         "partial": 2,
