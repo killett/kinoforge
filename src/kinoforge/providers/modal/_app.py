@@ -191,13 +191,29 @@ def default_deploy(app: Any, server_fn: Any) -> str:  # noqa: ANN401
 
 
 def default_stop(app_name: str) -> None:
-    """Stop a deployed app via the CLI (bounded by subprocess timeout)."""
-    subprocess.run(  # noqa: S603 — fixed argv, app_name from our own run_id
-        ["modal", "app", "stop", app_name, "--yes"],  # noqa: S607 — modal via PATH
-        check=True,
-        timeout=120,
-        env=os.environ.copy(),
-    )
+    """Stop a deployed app via the CLI (bounded by subprocess timeout).
+
+    ``app_name`` may be a ``kinoforge-<run_id>`` deploy name OR a raw Modal
+    ``app_id`` (``ap-...``) — ``modal app stop`` accepts either identifier
+    (U17: the caller resolves whichever one the app is actually addressable
+    by).
+
+    Raises:
+        RuntimeError: The CLI invocation exited non-zero — wrapped so a
+            diagnosable provider error reaches the caller instead of a bare
+            ``subprocess.CalledProcessError`` traceback (U17).
+    """
+    try:
+        subprocess.run(  # noqa: S603 — fixed argv, app_name from our own run_id
+            ["modal", "app", "stop", app_name, "--yes"],  # noqa: S607 — via PATH
+            check=True,
+            timeout=120,
+            env=os.environ.copy(),
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"modal app stop {app_name!r} failed (exit {exc.returncode})"
+        ) from exc
 
 
 def default_list() -> list[dict[str, Any]]:

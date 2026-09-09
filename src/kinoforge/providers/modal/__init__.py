@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict
 from kinoforge.core import registry
 from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.ephemeral import EphemeralSession
-from kinoforge.core.errors import CapacityError
+from kinoforge.core.errors import CapacityError, TeardownError
 from kinoforge.core.interfaces import (
     ComputeProvider,
     FieldSupport,
@@ -444,12 +444,72 @@ class ModalProvider(ComputeProvider):
             f"is what you want"
         )
 
+    def _find_app_id(self, app_name: str) -> str | None:
+        """Resolve ``app_name``'s live ``app_id`` from the listing (U17).
+
+        Modal registers an App's NAME only once its deploy completes; an app
+        whose deploying client died is addressable solely by its ``app_id``.
+        ``description`` (``_rec_name``) is the join key back to that record
+        even then, so matching on it recovers the id a name-only
+        ``destroy --id`` cannot resolve.
+
+        Defensive against an unexpected ``modal app list --json`` shape: this
+        raises a diagnosable :class:`~kinoforge.core.errors.TeardownError`
+        naming what it expected/found rather than letting an untyped
+        ``AttributeError``/``TypeError`` escape from a malformed record.
+
+        Args:
+            app_name: The ``kinoforge-<run_id>`` name to match on
+                ``description``.
+
+        Returns:
+            The matching record's non-empty ``app_id``, or ``None`` when no
+            record matches or the matching record carries no id — the
+            caller falls back to stopping by name in that case.
+
+        Raises:
+            TeardownError: The listing was not a list of dict records.
+        """
+        records = self._lister()
+        if not isinstance(records, list):
+            raise TeardownError(
+                f"could not resolve app_id for {app_name!r}: expected a "
+                f"list of records from `modal app list --json`, got "
+                f"{type(records).__name__}"
+            )
+        for rec in records:
+            if not isinstance(rec, dict):
+                raise TeardownError(
+                    f"could not resolve app_id for {app_name!r}: expected "
+                    f"a dict record from `modal app list --json`, got "
+                    f"{type(rec).__name__}"
+                )
+            if self._rec_name(rec) == app_name:
+                app_id = str(rec.get("app_id") or "")
+                return app_id or None
+        return None
+
     def destroy_instance(self, instance_id: str) -> None:
-        """Stop the deployment and poll until gone (bounded)."""
+        """Stop the deployment and poll until gone (bounded).
+
+        Raises:
+            TeardownError: The stopper raised — reported with the app_id (or
+                name) actually used — or ``_find_app_id`` could not parse the
+                listing. Either way the deployment cache is still cleared
+                (``finally``), matching pre-U17 behaviour of never leaving a
+                stale in-process record behind on failure.
+        """
         rec = self._deployments.get(instance_id)
         app_name = rec["name"] if rec else f"kinoforge-{instance_id}"
         try:
-            self._stopper(app_name)
+            app_id = self._find_app_id(app_name)
+            target = app_id or app_name
+            try:
+                self._stopper(target)
+            except Exception as exc:  # noqa: BLE001 — CalledProcessError et al.
+                raise TeardownError(
+                    f"failed to stop modal app {app_name!r} (app_id={app_id!r}): {exc}"
+                ) from exc
             for _ in range(_DESTROY_POLL_MAX_ITERS):
                 active = {
                     self._rec_name(r) for r in self._lister() if self._rec_active(r)
