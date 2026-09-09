@@ -572,6 +572,93 @@ def test_reap_id_scopes_the_index_check_to_the_named_id(
     assert "typo-d-id" in out, out
 
 
+def test_reap_id_scopes_sweep_apply_to_the_named_pod_only(tmp_path: Any) -> None:
+    """--id X --apply --include-orphans must destroy only X.
+
+    Bug caught (U26 / whole-branch review Finding 1): the short-circuit
+    guard above is scoped by ``--id`` (``index_rows`` filtered to
+    ``single_id``), but once past it, `_cmd_reap` handed `sweep()` the
+    FULL, unscoped `EphemeralIndex` — `sweep()` unions in every row in
+    the index (reaper_actor.py) regardless of the id-scoped ledger view.
+    So `--id target-pod` (an id that DOES exist in the index) would reach
+    `sweep()`, which would then ALSO classify and, under `--apply
+    --include-orphans`, destroy an unrelated orphan-eligible row the
+    operator never named. `--id` is precisely the flag an operator uses
+    to *restrict* scope, so this is a live-pod-safety bug, not cosmetic.
+
+    Fixture mirrors the proven `test_reap_apply_include_orphans_destroys_
+    index_only_orphan` shape: two rows, both 600s old under a 60s
+    `ephemeral_orphan_age_s` gate (both independently orphan-eligible).
+    Only "target-pod" is named by `--id`; "unrelated-pod" must survive.
+    """
+    from datetime import datetime, timedelta
+
+    from kinoforge.core.interfaces import Lifecycle
+    from kinoforge.core.runtime_probe import RuntimeProbe
+    from kinoforge.core.warm_reuse.ephemeral_index import (
+        EphemeralIndex,
+        EphemeralIndexRow,
+    )
+    from kinoforge.stores.local import LocalArtifactStore
+
+    store = LocalArtifactStore(root=tmp_path)
+    old_created_at = (datetime.now() - timedelta(seconds=600)).isoformat()
+    index = EphemeralIndex(store=store)
+    for pod_id in ("target-pod", "unrelated-pod"):
+        index.add(
+            EphemeralIndexRow(
+                id=pod_id,
+                warm_attach_key="w",
+                kinoforge_key="k-12345678901",
+                endpoints={},
+                provider="fake-provider",
+                created_at_local=old_created_at,
+            )
+        )
+
+    class _IdleOldProvider:
+        """Minimal ComputeProvider stand-in for the ORPHAN_REAP act path."""
+
+        def __init__(self) -> None:
+            self.destroyed: list[str] = []
+
+        def probe_runtime(self, pod_id: str) -> RuntimeProbe:
+            return RuntimeProbe(
+                pod_id=pod_id,
+                found=True,
+                container_uptime_s=600.0,
+                gpu_util_pct=0.0,
+                cpu_pct=0.0,
+                cost_per_hr=None,
+                probed_at_local=datetime.now().isoformat(),
+            )
+
+        def list_instances(self) -> list[Any]:
+            return []
+
+        def destroy_instance(self, instance_id: str) -> None:
+            self.destroyed.append(instance_id)
+
+    provider = _IdleOldProvider()
+
+    class _FakeCfgWithOrphanAgeGate:
+        def lifecycle(self) -> Lifecycle:
+            return Lifecycle(ephemeral_orphan_age_s=60.0)
+
+    ctx = _ctx([], cfg=_FakeCfgWithOrphanAgeGate(), store=store)
+
+    with patch(
+        "kinoforge.core.registry.get_provider",
+        side_effect=lambda name: (
+            (lambda: provider) if name == "fake-provider" else None
+        ),
+    ):
+        code = _cmd_reap(_args(apply=True, include_orphans=True, id="target-pod"), ctx)
+
+    assert code == 0
+    assert provider.destroyed == ["target-pod"], provider.destroyed
+
+
 # ---------------------------------------------------------------------------
 # --format json
 # ---------------------------------------------------------------------------

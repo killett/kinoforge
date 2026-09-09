@@ -3596,10 +3596,11 @@ def _cmd_reap(args: argparse.Namespace, ctx: SessionContext) -> int:
         # Scoped by --id (review round 2): checking the index UNSCOPED would
         # let any unrelated ephemeral row defeat the short-circuit for an id
         # the operator never named — handing `--apply --include-orphans` a
-        # live target it was never asked to touch. Note this only decides
-        # whether to short-circuit here; sweep()'s own ephemeral union does
-        # NOT filter by single_id once it runs (reaper_actor.py:527-536,
-        # filed as U26) — out of this task's contained scope.
+        # live target it was never asked to touch. sweep()'s own ephemeral
+        # union is ALSO scoped now (U26, whole-branch review Finding 1) via
+        # the `single_id=single_id` kwarg passed below — an unrelated
+        # orphan-eligible index row can no longer be reached, let alone
+        # acted on, once a single id restricts this run.
         from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
 
         index_rows = EphemeralIndex(store=ctx.store()).rows()
@@ -3657,6 +3658,7 @@ def _cmd_reap(args: argparse.Namespace, ctx: SessionContext) -> int:
         thresholds=thresholds,
         clock=clock,
         policy=policy if apply_flag else None,
+        single_id=single_id,
     )
 
     if fmt == "json":

@@ -470,6 +470,7 @@ def sweep(
     *,
     policy: Policy | None = None,
     stall_history: Mapping[str, deque[tuple[float, float]]] | None = None,
+    single_id: str | None = None,
 ) -> SweepReport:
     """Classify all ledger entries; optionally act.
 
@@ -507,6 +508,16 @@ def sweep(
             STALL_REAP on N consecutive zero-util samples. ``None``
             (default + ``kinoforge reap`` one-shot mode) skips STALL_REAP
             in the ephemeral branch.
+        single_id: When set, restricts the EphemeralIndex union below to
+            the one row matching this id (U26 / whole-branch review
+            Finding 1). ``kinoforge reap --id X`` scopes its ``ledger``
+            argument via ``_SingleIdLedgerView`` already, but without this
+            the ephemeral-index union stayed global — an unrelated
+            orphan-eligible index row could be classified and, under
+            ``--apply --include-orphans``, destroyed even though the
+            operator named a single id to restrict scope to. ``None``
+            (the default; used by the SweeperLoop daemon and every other
+            caller) unions in every row, unchanged.
 
     Returns:
         :class:`SweepReport` with the verdict snapshot and (optional)
@@ -525,8 +536,14 @@ def sweep(
     # via _probe_with_cache and a synthesised ledger-shape entry flagged with
     # ``kinoforge_ephemeral=True`` for the classify dispatch.
     ephemeral_index = EphemeralIndex(store=store)
+    index_rows = ephemeral_index.rows()
+    if single_id is not None:
+        # Finding 1: mirror the caller's id scope into the union itself —
+        # an unrelated row must never reach classify()/act_on_verdict when
+        # the operator restricted this sweep to one id.
+        index_rows = [r for r in index_rows if r.id == single_id]
     probe_cache: dict[tuple[str, str], RuntimeProbe | None | str] = {}
-    for row in ephemeral_index.rows():
+    for row in index_rows:
         if row.id in ledger_ids:
             continue
         factory = registry_get_provider(row.provider)
