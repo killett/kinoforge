@@ -125,3 +125,35 @@ def test_vault_under_repo_rejected(
     finally:
         if in_repo_vault.exists():
             in_repo_vault.unlink()
+
+
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        (["--ephemeral", "grid", "--spec", "/x/spec.yaml"], True),
+        (["grid", "--spec", "/x/spec.yaml", "--ephemeral"], True),
+        (["grid", "--spec", "/x/spec.yaml"], False),
+    ],
+)
+def test_root_ephemeral_survives_the_grid_subparser(
+    argv: list[str], expected: bool
+) -> None:
+    """``--ephemeral`` must mean the same thing on either side of ``grid``.
+
+    ``grid`` is the ONLY subcommand that re-declares ``--ephemeral`` (every
+    other one relies on the root flag). argparse parses a subcommand into a
+    fresh namespace and then copies EVERY key onto the parent, so a
+    subparser option with an implicit ``default=False`` silently overwrites
+    a root-set ``True``. That makes ``kinoforge --ephemeral grid ...`` run
+    non-ephemeral while reporting success — U11's original defect (run id +
+    timestamp published to the provider) reached through the other door.
+
+    Would-fail-bug: ``p_grid``'s ``--ephemeral`` declared without
+    ``default=argparse.SUPPRESS``, so the root value is clobbered.
+    """
+    from kinoforge.cli._main import _build_parser
+
+    args = _build_parser().parse_args(argv)
+    assert args.ephemeral is expected, (
+        f"argv {argv} → args.ephemeral={args.ephemeral!r}, expected {expected}"
+    )

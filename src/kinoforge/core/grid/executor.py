@@ -258,7 +258,8 @@ def _build_generate_cmd(
     will miss when multiple gens land in the same second.
 
     ``ephemeral`` (U11, default ``False``) is the ``grid --ephemeral``
-    pass-through: when set, ``--ephemeral`` is appended so the cell's
+    pass-through: when set, ``--ephemeral`` is emitted in ROOT position
+    (immediately after ``kinoforge``, BEFORE ``generate``) so the cell's
     ``kinoforge generate`` subprocess re-enters ``main()`` under
     ``STRICT_POLICY`` (``cli/_main.py``'s ``with EphemeralSession(enabled=
     args.ephemeral, ...)`` wraps every dispatch, cell subprocess included)
@@ -286,10 +287,15 @@ def _build_generate_cmd(
     run_id = f"{grid_id}__cell{cell.idx}"
     cell_out = _cell_output_dir(grid_id, cell.idx, output_dir)
     cell_out.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        "pixi",
-        "run",
-        "kinoforge",
+    cmd = ["pixi", "run", "kinoforge"]
+    # `--ephemeral` is declared on the ROOT parser only (`cli/_main.py`), so
+    # it MUST precede the subcommand: `kinoforge --ephemeral generate ...`.
+    # Appending it after `generate` — where the subparser declares no such
+    # option — makes the child exit 2 with `unrecognized arguments:
+    # --ephemeral` before it ever reaches a provider (live, Task 6 A2).
+    if ephemeral:
+        cmd.append("--ephemeral")
+    cmd += [
         "generate",
         "--config",
         str(cell.cfg_path),
@@ -304,8 +310,6 @@ def _build_generate_cmd(
     ]
     if no_reuse:
         cmd.append("--no-reuse")
-    if ephemeral:
-        cmd.append("--ephemeral")
     return cmd
 
 

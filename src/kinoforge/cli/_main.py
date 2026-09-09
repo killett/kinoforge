@@ -918,6 +918,14 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     p_grid.add_argument(
         "--ephemeral",
         action="store_true",
+        # SUPPRESS, not the implicit False: argparse parses a subcommand into
+        # a FRESH namespace and then copies every key onto the parent, so an
+        # implicit default here would overwrite a root-set `--ephemeral True`
+        # and make `kinoforge --ephemeral grid ...` run non-ephemeral —
+        # U11's leak through the other door. With SUPPRESS the key is absent
+        # unless the flag is actually given after `grid`, so the root value
+        # survives and either position works.
+        default=argparse.SUPPRESS,
         help="pass-through to each underlying generate",
     )
 

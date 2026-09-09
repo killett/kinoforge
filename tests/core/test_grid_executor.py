@@ -14,13 +14,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from kinoforge.cli._main import _build_parser
 from kinoforge.core.grid.executor import (
     GridCellResult,
     _build_generate_cmd,
+    _build_swap_generate_cmd,
     _ResolvedCell,
     run_grid,
 )
-from kinoforge.core.grid.spec import GridSpec
+from kinoforge.core.grid.spec import GridSpec, LoraStackEntry
 
 
 class _SubprocessLog:
@@ -299,6 +301,96 @@ def test_build_generate_cmd_omits_ephemeral_flag_by_default(tmp_path: Path) -> N
     )
     assert "--ephemeral" not in cmd, (
         f"--ephemeral must be absent by default, got: {cmd}"
+    )
+
+
+_LAUNCHER_PREFIX = ["pixi", "run", "kinoforge"]
+
+
+def _argv_after_launcher(cmd: list[str]) -> list[str]:
+    """Strip the ``pixi run kinoforge`` launcher, leaving what argparse sees.
+
+    The pixi task ``kinoforge`` is ``python -m kinoforge``, so every token
+    after the launcher prefix is handed verbatim to ``_build_parser()`` in
+    the child process. Asserting the prefix shape here is deliberate: if the
+    launcher ever changes, this must be revisited rather than silently
+    slicing the wrong tokens.
+    """
+    assert cmd[:3] == _LAUNCHER_PREFIX, (
+        f"cell argv must start with the pixi launcher prefix, got {cmd[:3]}"
+    )
+    return cmd[3:]
+
+
+@pytest.mark.parametrize("ephemeral", [True, False])
+def test_build_generate_cmd_argv_parses_under_the_real_cli_parser(
+    tmp_path: Path, ephemeral: bool
+) -> None:
+    """The argv a cell is actually spawned with must PARSE in the child.
+
+    U11 regression guard. Every prior test asserted argv *membership*
+    (``"--ephemeral" in cmd``), which is blind to flag POSITION —
+    ``--ephemeral`` is declared only on the ROOT parser, so appending it
+    after the ``generate`` subcommand makes argparse exit 2 with
+    ``unrecognized arguments: --ephemeral`` and kills the cell in 0.75s
+    (live, Task 6 A2). This feeds the built argv through the real
+    ``_build_parser().parse_args`` — which errors on any leftover token —
+    and asserts the child would end up in the ephemeral session state the
+    grid asked for.
+
+    Would-fail-bug: ``--ephemeral`` emitted anywhere the root parser cannot
+    see it, or emitted in a position that parses but binds a different dest.
+    """
+    cell = _make_resolved_cell(tmp_path)
+    cmd = _build_generate_cmd(
+        cell,
+        grid_id="grid_x",
+        output_dir=tmp_path / "out",
+        no_reuse=True,
+        ephemeral=ephemeral,
+    )
+    args = _build_parser().parse_args(_argv_after_launcher(cmd))
+    assert args.cmd == "generate", (
+        f"cell argv must dispatch to the generate subcommand, got {args.cmd!r}"
+    )
+    assert args.ephemeral is ephemeral, (
+        f"grid ephemeral={ephemeral} but the child would run with "
+        f"args.ephemeral={args.ephemeral!r}; argv was {cmd}"
+    )
+
+
+def test_build_swap_generate_cmd_argv_parses_under_the_real_cli_parser(
+    tmp_path: Path,
+) -> None:
+    """The swap-mode cell argv must parse too, and stay non-ephemeral.
+
+    ``_build_swap_generate_cmd`` layers ``--loras`` / ``--attach-pod`` onto
+    ``_build_generate_cmd``'s argv, so any change to WHERE the base builder
+    puts a root-level flag can strand those suffix tokens or reorder them
+    past the subcommand. Nothing has ever fed this argv through the parser.
+
+    Would-fail-bug: a root-position flag inserted after ``generate`` (so the
+    suffix no longer parses), or a swap flag that the ``generate`` subparser
+    does not actually declare.
+    """
+    cell = _make_resolved_cell(tmp_path)
+    cell.is_lora_swap = True
+    cell.lora_swap_stack = [LoraStackEntry(ref="hf:acme/style", strength=0.8)]
+    cmd = _build_swap_generate_cmd(
+        cell,
+        grid_id="grid_x",
+        output_dir=tmp_path / "out",
+        attach_pod_id="pod-1",
+        emit_provision_record=None,
+    )
+    args = _build_parser().parse_args(_argv_after_launcher(cmd))
+    assert args.cmd == "generate"
+    assert args.attach_pod == "pod-1", (
+        f"swap cell must attach to the shared pod, got {args.attach_pod!r}"
+    )
+    assert args.ephemeral is False, (
+        "swap cells are refused under --ephemeral before dispatch, so the "
+        f"swap argv must never carry it; got args.ephemeral={args.ephemeral!r}"
     )
 
 
