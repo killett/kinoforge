@@ -4490,6 +4490,13 @@ def _cmd_grid(args: argparse.Namespace, ctx: SessionContext) -> int:
     Maps :class:`GridResult.status` → exit code:
     full → 0, partial → 2, budget → 3, ffmpeg → 4, teardown → 5,
     spec error → 1.
+
+    ``args.ephemeral`` (U11) is forwarded verbatim to :func:`run_grid`,
+    which threads it through to every ``generate:``-mode cell's
+    subprocess argv (:func:`_build_generate_cmd`). No local
+    ``EphemeralSession`` is opened here — each cell subprocess is a
+    fresh ``kinoforge generate`` process and opens its own under
+    ``main()``'s ``with EphemeralSession(enabled=args.ephemeral, ...)``.
     """
     import asyncio
 
@@ -4525,6 +4532,7 @@ def _cmd_grid(args: argparse.Namespace, ctx: SessionContext) -> int:
             output_dir=output_dir,
             max_parallel_groups=args.max_parallel_groups,
             out_path=out_path,
+            ephemeral=args.ephemeral,
         )
     )
     status_to_exit = {

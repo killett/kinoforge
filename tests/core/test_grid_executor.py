@@ -9,11 +9,12 @@ from __future__ import annotations
 import asyncio
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
-from kinoforge.core.grid.executor import run_grid
+from kinoforge.core.grid.executor import _build_generate_cmd, _ResolvedCell, run_grid
 from kinoforge.core.grid.spec import GridSpec
 
 
@@ -242,3 +243,116 @@ def test_run_grid_treats_sweeper_only_ledger_as_clean(
     )
     assert result.composed_mp4_path is not None
     assert result.composed_mp4_path.exists()
+
+
+def _make_resolved_cell(tmp_path: Path, *, idx: int = 0) -> _ResolvedCell:
+    """Minimal generate-mode _ResolvedCell for _build_generate_cmd unit tests."""
+    cfg_path = tmp_path / f"cell{idx}.yaml"
+    cfg_path.write_text("model: fake\nprompt: hi\n")
+    return _ResolvedCell(
+        idx=idx,
+        caption=f"cell-{idx}",
+        cfg_path=cfg_path,
+        effective_cfg=SimpleNamespace(prompt="hi", mode="t2v"),
+        mp4_path=None,
+    )
+
+
+def test_build_generate_cmd_includes_ephemeral_flag_when_set(tmp_path: Path) -> None:
+    """U11: an ephemeral grid must forward --ephemeral to each cell's
+    ``kinoforge generate`` subprocess, or the pod's run id and timestamp leak
+    to the provider exactly as T1-29 observed live."""
+    cell = _make_resolved_cell(tmp_path)
+    cmd = _build_generate_cmd(
+        cell,
+        grid_id="grid_x",
+        output_dir=tmp_path / "out",
+        no_reuse=True,
+        ephemeral=True,
+    )
+    assert "--ephemeral" in cmd, (
+        f"--ephemeral flag missing from cell argv when ephemeral=True: {cmd}"
+    )
+
+
+def test_build_generate_cmd_omits_ephemeral_flag_by_default(tmp_path: Path) -> None:
+    """A plain (non-ephemeral) grid must never pass --ephemeral to a cell —
+    the default must stay False so swap-mode cells (_build_swap_generate_cmd,
+    which does not pass this kwarg) are unaffected by this change."""
+    cell = _make_resolved_cell(tmp_path)
+    cmd = _build_generate_cmd(
+        cell,
+        grid_id="grid_x",
+        output_dir=tmp_path / "out",
+        no_reuse=True,
+    )
+    assert "--ephemeral" not in cmd, (
+        f"--ephemeral must be absent by default, got: {cmd}"
+    )
+
+
+def test_run_grid_ephemeral_true_reaches_every_cell_subprocess(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """run_grid(ephemeral=True) must thread the flag through _run_group and
+    _run_one_cell into EVERY cell's subprocess argv, not just the first —
+    a partial wiring (e.g. _build_generate_cmd updated but the run_grid /
+    _run_group call sites never passing the kwarg through) would leave every
+    cell's argv missing --ephemeral while a narrower unit test of
+    _build_generate_cmd alone could still pass. Also asserts cells in one
+    grid do not collide on --run-id, since EphemeralSession.resource_name
+    memoises its opaque token per run id."""
+    log = _stub_generate_subprocess(monkeypatch)
+    _stub_compose(monkeypatch)
+    _stub_config_loader(monkeypatch)
+    monkeypatch.setattr(
+        "kinoforge.core.grid.executor._cell_capability_key",
+        lambda cell: "K-same",
+    )
+    spec = _make_spec(tmp_path, n_cells=3)
+
+    result = asyncio.run(
+        run_grid(
+            spec=spec,
+            output_dir=tmp_path / "out",
+            max_parallel_groups=2,
+            ephemeral=True,
+        )
+    )
+    assert result.status == "full", f"expected status='full', got {result.status!r}"
+    assert len(log.calls) == 3
+    missing = [cmd for cmd in log.calls if "--ephemeral" not in cmd]
+    assert not missing, f"cells missing --ephemeral in their argv: {missing}"
+
+    run_ids = [cmd[cmd.index("--run-id") + 1] for cmd in log.calls]
+    assert len(run_ids) == len(set(run_ids)), (
+        f"cells in one grid collided on --run-id (resource_name() memoises "
+        f"its opaque token per run id): {run_ids}"
+    )
+
+
+def test_run_grid_ephemeral_false_omits_flag_from_every_cell(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A non-ephemeral grid (the default) must never let --ephemeral leak
+    into a cell's argv — guards against a fix that hardcodes the flag on."""
+    log = _stub_generate_subprocess(monkeypatch)
+    _stub_compose(monkeypatch)
+    _stub_config_loader(monkeypatch)
+    monkeypatch.setattr(
+        "kinoforge.core.grid.executor._cell_capability_key",
+        lambda cell: "K-same",
+    )
+    spec = _make_spec(tmp_path, n_cells=3)
+
+    result = asyncio.run(
+        run_grid(
+            spec=spec,
+            output_dir=tmp_path / "out",
+            max_parallel_groups=2,
+            ephemeral=False,
+        )
+    )
+    assert result.status == "full", f"expected status='full', got {result.status!r}"
+    leaked = [cmd for cmd in log.calls if "--ephemeral" in cmd]
+    assert not leaked, f"non-ephemeral grid must never pass --ephemeral: {leaked}"

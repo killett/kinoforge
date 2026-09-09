@@ -236,7 +236,12 @@ def _cell_output_dir(grid_id: str, cell_idx: int, output_dir: Path) -> Path:
 
 
 def _build_generate_cmd(
-    cell: _ResolvedCell, *, grid_id: str, output_dir: Path, no_reuse: bool
+    cell: _ResolvedCell,
+    *,
+    grid_id: str,
+    output_dir: Path,
+    no_reuse: bool,
+    ephemeral: bool = False,
 ) -> list[str]:
     """Construct the ``pixi run kinoforge generate ...`` argv for one cell.
 
@@ -251,6 +256,17 @@ def _build_generate_cmd(
     ``<ts>_<provider>_<model>_<promptslug>.mp4`` — the ``--run-id`` is
     NOT embedded in the filename, so any glob against the shared dir
     will miss when multiple gens land in the same second.
+
+    ``ephemeral`` (U11, default ``False``) is the ``grid --ephemeral``
+    pass-through: when set, ``--ephemeral`` is appended so the cell's
+    ``kinoforge generate`` subprocess re-enters ``main()`` under
+    ``STRICT_POLICY`` (``cli/_main.py``'s ``with EphemeralSession(enabled=
+    args.ephemeral, ...)`` wraps every dispatch, cell subprocess included)
+    and mints its own opaque provider-side name via
+    :meth:`~kinoforge.core.ephemeral.EphemeralSession.resource_name` —
+    no further wiring is needed on the grid side for that naming to take
+    effect. The default ``False`` keeps :func:`_build_swap_generate_cmd`'s
+    existing call (which does not pass this kwarg) unaffected.
     """
     if cell.cfg_path is None:
         raise ValueError(
@@ -288,6 +304,8 @@ def _build_generate_cmd(
     ]
     if no_reuse:
         cmd.append("--no-reuse")
+    if ephemeral:
+        cmd.append("--ephemeral")
     return cmd
 
 
@@ -300,11 +318,20 @@ def _sha256_file(p: Path) -> str:
 
 
 async def _run_one_cell(
-    cell: _ResolvedCell, *, grid_id: str, output_dir: Path, no_reuse: bool
+    cell: _ResolvedCell,
+    *,
+    grid_id: str,
+    output_dir: Path,
+    no_reuse: bool,
+    ephemeral: bool = False,
 ) -> GridCellResult:
     """Run one ``generate:`` cell as a subprocess."""
     cmd = _build_generate_cmd(
-        cell, grid_id=grid_id, output_dir=output_dir, no_reuse=no_reuse
+        cell,
+        grid_id=grid_id,
+        output_dir=output_dir,
+        no_reuse=no_reuse,
+        ephemeral=ephemeral,
     )
     proc = await asyncio.to_thread(
         subprocess.run,
@@ -813,6 +840,7 @@ async def _run_group(
     grid_id: str,
     output_dir: Path,
     sem: asyncio.Semaphore,
+    ephemeral: bool = False,
 ) -> list[GridCellResult]:
     """Run one group sequentially under the parallel-group semaphore.
 
@@ -850,6 +878,7 @@ async def _run_group(
                 grid_id=grid_id,
                 output_dir=output_dir,
                 no_reuse=True,
+                ephemeral=ephemeral,
             )
             results.append(r)
             if r.status == "failed":
@@ -943,6 +972,7 @@ async def run_grid(
     output_dir: Path,
     max_parallel_groups: int = 2,
     out_path: Path | None = None,
+    ephemeral: bool = False,
 ) -> GridResult:
     """Resolve cells, dispatch groups, optionally compose grid mp4.
 
@@ -953,6 +983,15 @@ async def run_grid(
         max_parallel_groups: Concurrency cap across groups.
         out_path: Explicit composed-mp4 destination; defaults to
             ``<output_dir>/grid_<ts>_<title-slug>.mp4``.
+        ephemeral: U11 ``grid --ephemeral`` pass-through. Forwarded to
+            every ``generate:``-mode cell's subprocess argv via
+            :func:`_run_group` / :func:`_build_generate_cmd`. Each cell
+            already carries a unique ``run_id`` (``f"{grid_id}__cell
+            {cell.idx}"``), and each cell is its own OS process with its
+            own ``EphemeralSession``, so no two cells can collide on the
+            opaque provider-side name ``EphemeralSession.resource_name``
+            mints. Lora-swap cells (:func:`_build_swap_generate_cmd`) are
+            NOT covered — out of scope for U11, see the task report.
 
     Returns:
         A :class:`GridResult` whose ``status`` tells the caller which
@@ -1007,7 +1046,13 @@ async def run_grid(
             )
         else:
             group_tasks.append(
-                _run_group(cells, grid_id=grid_id, output_dir=output_dir, sem=sem)
+                _run_group(
+                    cells,
+                    grid_id=grid_id,
+                    output_dir=output_dir,
+                    sem=sem,
+                    ephemeral=ephemeral,
+                )
             )
     group_results = await asyncio.gather(*group_tasks) if group_tasks else []
 
