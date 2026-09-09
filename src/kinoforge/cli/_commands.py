@@ -3537,14 +3537,23 @@ def _cmd_reap(args: argparse.Namespace, ctx: SessionContext) -> int:
     if single_id is not None:
         ledger = _SingleIdLedgerView(ledger, single_id)
     if not ledger.entries():
-        # Honour the requested format on the short-circuit too: a consumer
-        # piping `--format json` into jq must not choke on the one case it is
-        # most likely to hit — nothing left to reap.
-        if fmt == "json":
-            print(json.dumps({"type": "header", "entries": 0}))
-        else:
-            print("reap: ledger empty (nothing to do)")
-        return 0
+        # U18: an empty ledger is not proof there is nothing to reap. An
+        # `--ephemeral` run writes no ledger row by design (Tasks 1/2) — its
+        # only durable trace is a row in the EphemeralIndex, which sweep()
+        # unions in on the far side of this guard. Consult the index too
+        # before declaring victory, so a run whose only trace is an index
+        # row doesn't get "nothing to do" printed over a billing pod.
+        from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
+
+        if not EphemeralIndex(store=ctx.store()).rows():
+            # Honour the requested format on the short-circuit too: a
+            # consumer piping `--format json` into jq must not choke on the
+            # one case it is most likely to hit — nothing left to reap.
+            if fmt == "json":
+                print(json.dumps({"type": "header", "entries": 0}))
+            else:
+                print("reap: ledger and ephemeral index both empty (nothing to do)")
+            return 0
 
     cfg = ctx.cfg
     lifecycle = cfg.lifecycle() if cfg is not None else Lifecycle()

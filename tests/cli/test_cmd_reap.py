@@ -36,13 +36,30 @@ def _args(**overrides: Any) -> argparse.Namespace:
 class _FakeCtx:
     """Minimal SessionContext stand-in for CLI tests."""
 
-    def __init__(self, entries: list[dict[str, Any]], cfg: Any = None) -> None:
+    def __init__(
+        self,
+        entries: list[dict[str, Any]],
+        cfg: Any = None,
+        store: Any = None,
+    ) -> None:
         self._entries = entries
         self.cfg = cfg
         self._ledger = MagicMock()
         self._ledger.entries.return_value = entries
         self._ledger.forget = MagicMock()
+
+        if store is not None:
+            # Caller supplied a real store (e.g. LocalArtifactStore) — used
+            # when a test needs EphemeralIndex reads/writes to actually work.
+            self._store = store
+            return
+
         self._store = MagicMock()
+        # No ephemeral-index.json has ever been written in this fake — match
+        # a real ArtifactStore's FileNotFoundError-on-missing-file contract
+        # so EphemeralIndex.rows() sees "no rows" instead of choking trying
+        # to iterate an unconfigured MagicMock return value.
+        self._store.get_json = MagicMock(side_effect=FileNotFoundError)
 
         # acquire_lock returns a context manager
         class _L:
@@ -63,9 +80,11 @@ class _FakeCtx:
         return self._store
 
 
-def _ctx(entries: list[dict[str, Any]], cfg: Any = None) -> SessionContext:
+def _ctx(
+    entries: list[dict[str, Any]], cfg: Any = None, store: Any = None
+) -> SessionContext:
     """Build a typed _FakeCtx cast to SessionContext."""
-    return cast("SessionContext", _FakeCtx(entries, cfg))
+    return cast("SessionContext", _FakeCtx(entries, cfg, store))
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +117,85 @@ def test_reap_empty_ledger_prints_message_and_exits_zero(
     assert code == 0
     combined = captured.out + captured.err
     assert "empty" in combined.lower() or "no" in combined.lower()
+
+
+def test_reap_empty_ledger_with_ephemeral_index_row_reaches_orphan(
+    tmp_path: Any,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Empty ledger + one EphemeralIndex row must reach sweep(), not short-circuit.
+
+    Bug caught (U18): the original guard was ``if not ledger.entries():`` —
+    an empty ledger returned "nothing to do" before ``sweep()`` was ever
+    called. But an ``--ephemeral`` run writes no ledger row by design; its
+    only durable trace is a row in the ``EphemeralIndex``, which is unioned
+    in *inside* ``sweep()``, on the far side of that guard. So a run whose
+    only trace is an index row got "nothing to do" printed over a billing
+    pod. This test writes ONLY an index row (the ledger stays empty) and
+    asserts the orphan's id and verdict actually appear in the reap
+    output — not merely that the exit code is 0, which the broken
+    short-circuit path also returns.
+
+    ``sweep()`` is not mocked: the real registry-provider/probe/classify
+    path must run so the assertion proves the orphan was truly classified,
+    not just that sweep() was invoked with the right arguments.
+    """
+    from datetime import datetime
+
+    from kinoforge.core.reaper import Verdict
+    from kinoforge.core.runtime_probe import RuntimeProbe
+    from kinoforge.core.warm_reuse.ephemeral_index import (
+        EphemeralIndex,
+        EphemeralIndexRow,
+    )
+    from kinoforge.stores.local import LocalArtifactStore
+
+    store = LocalArtifactStore(root=tmp_path)
+    EphemeralIndex(store=store).add(
+        EphemeralIndexRow(
+            id="orphan-pod-1",
+            warm_attach_key="w",
+            kinoforge_key="k-12345678901",
+            endpoints={},
+            provider="fake-provider",
+            # "now" (local TZ, per project convention) — keeps age_s ~0 so
+            # neither OVERAGE_REAP nor ORPHAN_REAP can fire regardless of
+            # wall-clock time-of-day the suite happens to run at.
+            created_at_local=datetime.now().isoformat(),
+        )
+    )
+
+    class _LiveProbeProvider:
+        """Minimal ComputeProvider stand-in: only probe_runtime is used."""
+
+        def probe_runtime(self, pod_id: str) -> RuntimeProbe:
+            return RuntimeProbe(
+                pod_id=pod_id,
+                found=True,
+                container_uptime_s=60.0,
+                gpu_util_pct=0.0,
+                cpu_pct=0.0,
+                cost_per_hr=None,
+                probed_at_local=datetime.now().isoformat(),
+            )
+
+    provider = _LiveProbeProvider()
+    ctx = _ctx([], store=store)
+
+    with patch(
+        "kinoforge.core.registry.get_provider",
+        side_effect=lambda name: (
+            (lambda: provider) if name == "fake-provider" else None
+        ),
+    ):
+        code = _cmd_reap(_args(), ctx)
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "nothing to do" not in out, out
+    assert "orphan-pod-1" in out, out
+    row = next(line for line in out.splitlines() if "orphan-pod-1" in line)
+    assert row.startswith(Verdict.LIVE.value), f"expected LIVE verdict row: {row!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -510,8 +608,9 @@ def test_reap_empty_ledger_json_emits_parseable_records(
     """`reap --format json` on an empty ledger stays machine-readable.
 
     Bug caught: the empty-ledger early return printed the human sentence
-    "reap: ledger empty (nothing to do)" without consulting the requested
-    format, so `kinoforge reap --format json | jq` died on exactly the case a
+    "reap: ledger and ephemeral index both empty (nothing to do)" without
+    consulting the requested format, so `kinoforge reap --format json | jq`
+    died on exactly the case a
     scripted teardown check hits most — the one where there is nothing left to
     reap. Every stdout line must parse as JSON, and the header must report zero
     entries so the consumer can distinguish "empty" from "not run".
@@ -542,14 +641,21 @@ def test_reap_empty_ledger_human_keeps_the_sentence(
     """The default human format still says so in words.
 
     Bug caught: fixing the JSON path by always emitting records would strip the
-    operator-facing message that makes an empty `kinoforge reap` legible.
+    operator-facing message that makes an empty `kinoforge reap` legible. The
+    sentence names both things that were searched (ledger AND ephemeral
+    index, per U18) rather than the pre-fix "ledger empty" wording, which
+    was misleading — the ledger being empty was never proof there was
+    nothing to reap.
     """
     ctx = _ctx([])
 
     code = _cmd_reap(_args(), ctx)
 
     assert code == 0
-    assert "reap: ledger empty (nothing to do)" in capsys.readouterr().out
+    assert (
+        "reap: ledger and ephemeral index both empty (nothing to do)"
+        in capsys.readouterr().out
+    )
 
 
 def test_emit_reap_human_separates_the_longest_verdict_from_the_id(
