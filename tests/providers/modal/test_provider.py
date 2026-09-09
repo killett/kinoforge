@@ -1,5 +1,7 @@
 """Behavior: ModalProvider registration, offers, and heartbeat semantics."""
 
+import pytest
+
 from kinoforge.core import registry
 from kinoforge.core.interfaces import Launch, Placement, SetupStep
 from kinoforge.providers.modal import ModalProvider
@@ -151,6 +153,56 @@ def test_destroy_keeps_polling_when_app_is_stuck_initializing():
     sleeps = []
     provider = ModalProvider(
         lister=lambda: [{"name": "kinoforge-r", "state": "initializing..."}],
+        stopper=lambda name: stop_calls.append(name),
+        sleep=lambda s: sleeps.append(s),
+    )
+    provider._deployments["r"] = {"url": "u", "name": "kinoforge-r"}
+    provider.destroy_instance("r")
+    assert stop_calls == ["kinoforge-r"]
+    assert len(sleeps) == 40  # _DESTROY_POLL_MAX_ITERS — no false-positive success
+
+
+@pytest.mark.parametrize(
+    "listing",
+    [
+        pytest.param(
+            [
+                {"name": "kinoforge-r", "state": "running"},
+                {"name": "kinoforge-r", "state": "stopped"},
+            ],
+            id="live_first",
+        ),
+        pytest.param(
+            [
+                {"name": "kinoforge-r", "state": "stopped"},
+                {"name": "kinoforge-r", "state": "running"},
+            ],
+            id="stopped_first",
+        ),
+    ],
+)
+def test_destroy_does_not_report_gone_when_duplicate_name_has_a_live_record(listing):
+    """A stopped duplicate under the same app name must not mask a still-live one.
+
+    Bug caught (regression from the U17 fix wave): `states_by_name` was built as
+    a plain dict comprehension keyed by app name. With two listing records
+    sharing a name — one live, one stopped — whichever record iterates last
+    silently overwrites the other in the dict. When the stopped record lands
+    last in `self._lister()`'s output, the poll reports the app "gone" on
+    iteration 1 even though a live record under that name is still present and
+    billing. Parametrized over both orderings because a single ordering would
+    pass the buggy code half the time — this is the exact gap the fix must
+    close order-independently, mirroring `_find_app_id`'s `live_first` sort.
+
+    This fixture is static (never transitions away from the duplicate), so the
+    only correct behaviour — as with the sibling `test_destroy_is_bounded_*`
+    and `test_destroy_keeps_polling_*` tests above — is bounded exhaustion:
+    all 40 sleeps consumed, never a false-positive "gone".
+    """
+    stop_calls = []
+    sleeps = []
+    provider = ModalProvider(
+        lister=lambda: listing,
         stopper=lambda name: stop_calls.append(name),
         sleep=lambda s: sleeps.append(s),
     )

@@ -575,11 +575,32 @@ class ModalProvider(ComputeProvider):
                 # stop having taken any visible effect. A state that is
                 # present but neither active nor confirmed-stopped must
                 # keep the poll going.
-                states_by_name = {
-                    self._rec_name(r): str(r.get("state", ""))
+                #
+                # Duplicate app names (a stop racing a redeploy — the same
+                # class of race `_find_app_id` already handles) must not let
+                # a stopped record silently mask a live one just because it
+                # iterates later. Sort `live_first`, mirroring
+                # `_find_app_id`'s existing shape, then `setdefault` so the
+                # first (non-stopped, if any) record under a name wins the
+                # dict key regardless of the listing's original order — a
+                # plain dict comprehension would let whichever record came
+                # last overwrite the other.
+                live_first = [
+                    r
                     for r in listing
                     if isinstance(r, dict)
-                }
+                    and str(r.get("state", "")) not in _STOPPED_APP_STATES
+                ] + [
+                    r
+                    for r in listing
+                    if isinstance(r, dict)
+                    and str(r.get("state", "")) in _STOPPED_APP_STATES
+                ]
+                states_by_name: dict[str, str] = {}
+                for r in live_first:
+                    states_by_name.setdefault(
+                        self._rec_name(r), str(r.get("state", ""))
+                    )
                 state = states_by_name.get(app_name)
                 if state is None or state in _STOPPED_APP_STATES:
                     break
