@@ -451,8 +451,8 @@ suspected site.
 
 **STATUS INDEX (rebuilt 2026-09-07, Task 7 — this is the current state; the paragraphs below it are
 the campaign's running commentary and are dated, not authoritative).** Twenty-three items,
-U1-U23. **Nine are fixed** (U4, U7, U8, U9, U12, U14, U15, U20, U23), **two are partly fixed**
-(U5, U10), **twelve are open** (U1, U2, U3, U6, U11, U13, U16, U17, U18, U19, U21, U22).
+U1-U23. **Ten are fixed** (U4, U7, U8, U9, U11, U12, U14, U15, U20, U23), **two are partly fixed**
+(U5, U10), **eleven are open** (U1, U2, U3, U6, U13, U16, U17, U18, U19, U21, U22).
 
 | Item | State | Detail |
 |---|---|---|
@@ -466,7 +466,7 @@ U1-U23. **Nine are fixed** (U4, U7, U8, U9, U12, U14, U15, U20, U23), **two are 
 | U8 | FIXED ON MODAL, LIVE-PROVEN | `9d34d008` + `8403a71c`; index row readable 2.5 s into a live run, pod still reapable after SIGKILL (~$0.06). RunPod half stays PARTIAL under **U16** and is NOT upgraded by the Modal proof |
 | U9 | FIXED, LIVE-PROVEN | `e582bd0f`; the daemon reaped an idle ephemeral pod at `age=119s idle on probe gpu_util=0.0% cpu=0.0%` (~$0.03). Two boundaries, both filed rather than hidden: a mid-boot row has `endpoints: {}` so the probe returns nulls and the pod stays LIVE (U3's blast radius), and the predicate acts on ONE probe sample (**U22**) |
 | U10 | FIXED ON THE GRACEFUL PATH | `7d535503`, hardened by `9ae52274`. A daemon that is SIGKILLed still strands its row, and `sweeper status` / `metrics` still ignore the `--interval-s` override. Both recorded in the entry; neither re-opened |
-| U11 | OPEN | `grid --ephemeral` is accepted and silently dropped |
+| U11 | FIXED, OFFLINE ONLY | `0dfe90a9` — `_cmd_grid` now reads `args.ephemeral` and forwards it through `run_grid`/`_run_group`/`_run_one_cell` into every generate-mode cell's `--ephemeral` argv. Proof is offline (18 unit tests, `pixi run pytest tests/core tests/cli -q` green at 2239); live proof (provider app list shows opaque `eph-` names) is owed to **Task 6** |
 | U12 | CLOSED | `82ad084b` — `av<18`. Live-proven on Modal for $0.64. RunPod and SkyPilot ride the same one-line pin but were never re-run: inferred safe, not demonstrated safe |
 | U13 | OPEN | the CLI hangs after `UpscaleFailed`. Holder unidentified; the original suspected site was retracted. A $0 offline first step is written into the entry |
 | U14 | FIXED, LIVE-PROVEN | `49394b1d`, with a review-caught regression corrected in `b00a53d1`. A second upscale attached to the warm A100 with no `✓ App deployed` ($0.12). The vocabulary gap the correction sidesteps is **U19** |
@@ -954,6 +954,37 @@ per-item entries below.
   published, and nothing in the output says so: the ledger is empty afterwards, but that is the
   per-cell `no_reuse=True` teardown (`executor.py:852`), which a plain non-ephemeral grid produces
   identically. A user who asked for ephemeral has no way to tell they did not get it.
+  **FIXED, OFFLINE ONLY — `0dfe90a9` (Task 2, 2026-09-08).** Step 1 verification confirmed the
+  filed claim exactly as stated: `_cmd_grid` `del ctx`'d and never touched `args.ephemeral`, and
+  `rg ephemeral src/kinoforge/core/grid/` returned zero hits. `_build_generate_cmd` gained an
+  `ephemeral: bool = False` kwarg that appends `--ephemeral` to a cell's argv when set; `run_grid`
+  grew a matching parameter threaded through `_run_group` → `_run_one_cell` into every
+  generate-mode cell's subprocess; `_cmd_grid` now reads `args.ephemeral` and forwards it.
+  Lora-swap cells (`_build_swap_generate_cmd`, which does not pass this kwarg) are deliberately
+  OUT OF SCOPE — the task's file list did not cover them, and correctly ephemeral-izing a
+  multi-cell pod-persisting swap chain (which cell's `--ephemeral` should own the shared pod's
+  delete-on-completion?) is exactly the kind of question that would need executor restructuring
+  to answer safely, so it was left alone rather than guessed at.
+  **Naming question, answered:** opaque naming follows automatically from the strict policy in
+  the child process — no further grid-side wiring was needed. Every `kinoforge` invocation
+  (`cli/_main.py`'s `main()`) wraps its dispatch in `with EphemeralSession(enabled=args.ephemeral,
+  ...)`; a cell subprocess is a fresh `kinoforge generate` process, so once `--ephemeral` is in its
+  argv, that subprocess binds its own session to `STRICT_POLICY`
+  (`pod_name_includes_alias=False`), and `EphemeralSession.resource_name()` mints the opaque
+  `eph-<8hex>` token the provider names the pod with — the same mechanism `generate`/`upscale`/
+  `interpolate`/`batch` already rely on.
+  **Name-collision analysis:** `resource_name()` memoises its opaque token per `run_id`, not per
+  session, which sounds like a shared-instance risk — but each grid cell already carries a unique
+  `run_id` (`f"{grid_id}__cell{cell.idx}"`, unchanged by this fix), AND each cell runs as its own
+  OS process with its own `EphemeralSession` instance (the class-level `_active` singleton is
+  process-scoped), so there is no dict to collide in even in principle. Verified in
+  `test_run_grid_ephemeral_true_reaches_every_cell_subprocess`, which asserts all cells' `--run-id`
+  values are distinct.
+  **Proof is OFFLINE ONLY.** 18 tests green (`pixi run pytest tests/core/test_grid_executor.py
+  tests/cli/test_cmd_grid.py -v`), full suite 2239 passed (`pixi run pytest tests/core tests/cli
+  -q`). No pod was booked, no subprocess was actually spawned — every test stubs
+  `subprocess.run`. Live proof (the T1-29 reproducer re-run, confirming the provider's app list
+  shows an opaque `eph-` name with no run id or timestamp) is owed to **Task 6**.
 
 - **U12 — CLOSED 2026-09-06 (pin applied in `82ad084b`, proven live on Modal) — FlashVSR upscale was dead on every provider: `av` 18 broke the mp4 encode.**
   **Symptom:** the pod boots, loads FlashVSR, reaches the GPU and computes (util probe caught
