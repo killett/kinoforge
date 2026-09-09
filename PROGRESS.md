@@ -2445,7 +2445,8 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 
 **Ephemeral and recovery gaps CLOSED (2026-09-09, branch `fix/ephemeral-and-recovery-gaps`,
 $0.15 of live proof across Task 6).** Plan
-`.superpowers/sdd/2026-09-07-ephemeral-and-recovery-gaps/`, 7 tasks, all committed. Five defects
+`docs/superpowers/plans/2026-09-07-ephemeral-and-recovery-gaps.md` (`.tasks.json`
+co-located), 7 tasks, all committed, every box ticked. Five defects
 from the money-leaks campaign below were in scope: **U23** (`batch` now reserves the ephemeral
 launch row pre-create; LIVE-PROVEN), **U11** (`grid --ephemeral` now reaches every cell; LIVE-
 PROVEN after a same-day live-caught regression was fixed — see its entry, kept in full, not

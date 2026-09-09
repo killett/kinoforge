@@ -2,6 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers-extended-cc:subagent-driven-development (recommended) or superpowers-extended-cc:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **STATUS: COMPLETE.** All 7 tasks implemented, two-stage reviewed, and merged to `main`
+> on 2026-09-09 at `8f9ffea4` (branch `fix/ephemeral-and-recovery-gaps`, since deleted).
+> Live proof cost $0.15. Every box below is ticked; nothing here is outstanding. See the
+> RESUME SNAPSHOT in `PROGRESS.md` for the outcome and the defects still open.
+
 **Goal:** Close five filed defects — U23, U11, U18, U17 and U21 — so that every command that books a GPU leaves a durable record before it does, and every recovery path can act on the records that exist.
 
 **Architecture:** Three themes. (A) The pre-create durable record reaches `batch` and `grid`, the two commands the 2026-09-06 money-leak branch did not touch. (B) The recovery paths — one-shot `reap` and `destroy` — can act on the records that now exist. (C) `provision` cleans up after a post-create failure and bounds its readiness loop. Offline TDD throughout, then one live task that deliberately kills runs.
@@ -114,19 +119,19 @@ for name in ('_ephemeral_launch_row_reserve', '_ephemeral_index_add', 'Ephemeral
 ```
 
 **Acceptance Criteria:**
-- [ ] Under `--ephemeral`, a row naming the pod exists before `create_instance` returns control to the caller.
-- [ ] The row is settled the same way `generate` settles it — released only on a confirmed destroy, upgraded and warned on an unconfirmed one.
-- [ ] A create that raises keeps the row (ruling C1).
-- [ ] An ordinary (non-ephemeral) batch reserves nothing — the gate is `_ephemeral_strict_session()`.
-- [ ] Several pods in one batch do not collide on a name.
+- [x] Under `--ephemeral`, a row naming the pod exists before `create_instance` returns control to the caller.
+- [x] The row is settled the same way `generate` settles it — released only on a confirmed destroy, upgraded and warned on an unconfirmed one.
+- [x] A create that raises keeps the row (ruling C1).
+- [x] An ordinary (non-ephemeral) batch reserves nothing — the gate is `_ephemeral_strict_session()`.
+- [x] Several pods in one batch do not collide on a name.
 
 **Verify:** `pixi run pytest tests/cli/test_cmd_batch_ephemeral.py -v` → all pass
 
 **Steps:**
 
-- [ ] **Step 1: Read the established pattern.** `git show 9d34d008` and `git show 8403a71c`. Note how `_cmd_generate` reserves, then settles, and how the helpers are gated.
-- [ ] **Step 2: Verify the filed claim** with the reproducer above. Record what it printed.
-- [ ] **Step 3: Write the failing tests.** The strong shape for ordering, used by the merged branch, is to have the fake provider's `create_instance` itself assert the row is already present, reading through a fresh `SessionContext` against the same state dir — that is, through the same on-disk path a separate `kinoforge list` process would use. A test that only checks a row exists at the end would pass an unfixed implementation.
+- [x] **Step 1: Read the established pattern.** `git show 9d34d008` and `git show 8403a71c`. Note how `_cmd_generate` reserves, then settles, and how the helpers are gated.
+- [x] **Step 2: Verify the filed claim** with the reproducer above. Record what it printed.
+- [x] **Step 3: Write the failing tests.** The strong shape for ordering, used by the merged branch, is to have the fake provider's `create_instance` itself assert the row is already present, reading through a fresh `SessionContext` against the same state dir — that is, through the same on-disk path a separate `kinoforge list` process would use. A test that only checks a row exists at the end would pass an unfixed implementation.
 
 ```python
 def test_ephemeral_batch_reserves_a_row_before_the_pod_exists() -> None:
@@ -144,11 +149,11 @@ def test_batch_row_survives_a_create_that_raises() -> None:
     """Ruling C1: a failed create keeps its row for the classifier."""
 ```
 
-- [ ] **Step 4: Run them, confirm RED.**
-- [ ] **Step 5: Implement**, reusing the helpers. Do not build a parallel path.
-- [ ] **Step 6: Confirm GREEN**, then `pixi run pytest tests/cli -q`.
-- [ ] **Step 7: Commit** `fix(batch): reserve the ephemeral launch row before the pod exists`.
-- [ ] **Step 8: Update U23** in `PROGRESS.md` — FIXED with the commit, offline-proven, live proof owed (Task 6). Commit separately as `docs:`.
+- [x] **Step 4: Run them, confirm RED.**
+- [x] **Step 5: Implement**, reusing the helpers. Do not build a parallel path.
+- [x] **Step 6: Confirm GREEN**, then `pixi run pytest tests/cli -q`.
+- [x] **Step 7: Commit** `fix(batch): reserve the ephemeral launch row before the pod exists`.
+- [x] **Step 8: Update U23** in `PROGRESS.md` — FIXED with the commit, offline-proven, live proof owed (Task 6). Commit separately as `docs:`.
 
 ---
 
@@ -165,20 +170,20 @@ def test_batch_row_survives_a_create_that_raises() -> None:
 **Observed live (T1-29):** the run exits 0 and the provider's app list then shows cells named `kinoforge-grid_<local timestamp>_<hash>__cell0` rather than the opaque `eph-<8hex>` the strict policy requires. The ledger is empty afterwards, but that is the per-cell teardown, not the flag working — a plain non-ephemeral grid produces the same empty ledger, which is why this went unnoticed.
 
 **Acceptance Criteria:**
-- [ ] `--ephemeral` appears in each cell's subprocess argv when the flag is set, and does not when it is not.
-- [ ] The report states whether opaque naming then follows automatically from the strict policy in the child process, or whether the grid path needs more. If more is needed and it is contained, do it; if it means restructuring the executor, STOP and file.
-- [ ] Cells in one grid do not collide on a name.
+- [x] `--ephemeral` appears in each cell's subprocess argv when the flag is set, and does not when it is not.
+- [x] The report states whether opaque naming then follows automatically from the strict policy in the child process, or whether the grid path needs more. If more is needed and it is contained, do it; if it means restructuring the executor, STOP and file.
+- [x] Cells in one grid do not collide on a name.
 
 **Verify:** `pixi run pytest tests/core/test_grid_executor.py tests/cli/test_cmd_grid.py -v` → all pass
 
 **Steps:**
 
-- [ ] **Step 1: Verify the filed claim.** Confirm `_cmd_grid` really ignores `args.ephemeral` and that nothing under `core/grid/` reads it.
-- [ ] **Step 2: Write the failing test** asserting the built argv carries the flag when set and omits it when not.
-- [ ] **Step 3: Confirm RED**, implement the pass-through, confirm GREEN.
-- [ ] **Step 4: Answer the naming question.** Trace what the child process does with the flag. Record the answer in your report either way — it is the part a reader cannot infer.
-- [ ] **Step 5: Run** `pixi run pytest tests/core tests/cli -q`.
-- [ ] **Step 6: Commit** `fix(grid): pass --ephemeral through to every cell`, then update U11 as `docs:`.
+- [x] **Step 1: Verify the filed claim.** Confirm `_cmd_grid` really ignores `args.ephemeral` and that nothing under `core/grid/` reads it.
+- [x] **Step 2: Write the failing test** asserting the built argv carries the flag when set and omits it when not.
+- [x] **Step 3: Confirm RED**, implement the pass-through, confirm GREEN.
+- [x] **Step 4: Answer the naming question.** Trace what the child process does with the flag. Record the answer in your report either way — it is the part a reader cannot infer.
+- [x] **Step 5: Run** `pixi run pytest tests/core tests/cli -q`.
+- [x] **Step 6: Commit** `fix(grid): pass --ephemeral through to every cell`, then update U11 as `docs:`.
 
 ---
 
@@ -195,21 +200,21 @@ def test_batch_row_survives_a_create_that_raises() -> None:
 **Observed live:** with a live Modal ephemeral pod and a populated index, `kinoforge reap --format json` printed `{"type": "header", "entries": 0}` and the human format printed `reap: ledger empty (nothing to do)`.
 
 **Acceptance Criteria:**
-- [ ] The short-circuit fires only when the ledger AND the ephemeral index are both empty.
-- [ ] With an empty ledger and a non-empty index, `sweep()` runs and the orphan is classified.
-- [ ] The message says what was actually searched, not "ledger empty".
-- [ ] Both output formats stay correct — there is an existing pair of tests pinning the human sentence and the JSON shape on the empty path; keep both honest.
+- [x] The short-circuit fires only when the ledger AND the ephemeral index are both empty.
+- [x] With an empty ledger and a non-empty index, `sweep()` runs and the orphan is classified.
+- [x] The message says what was actually searched, not "ledger empty".
+- [x] Both output formats stay correct — there is an existing pair of tests pinning the human sentence and the JSON shape on the empty path; keep both honest.
 
 **Verify:** `pixi run pytest tests/cli/test_cmd_reap.py -v` → all pass
 
 **Steps:**
 
-- [ ] **Step 1: Verify the claim** — read the guard and confirm `sweep()` is where the index is unioned in.
-- [ ] **Step 2: Write the failing test:** empty ledger, one index row, assert the orphan is reached rather than short-circuited.
-- [ ] **Step 3: Confirm RED**, implement the union gate, confirm GREEN.
-- [ ] **Step 4: Re-word the message** and update the two existing empty-path tests to match.
-- [ ] **Step 5: Run** `pixi run pytest tests/cli -q`.
-- [ ] **Step 6: Commit** `fix(reap): gate on the union of ledger and ephemeral index`, then update U18 as `docs:`.
+- [x] **Step 1: Verify the claim** — read the guard and confirm `sweep()` is where the index is unioned in.
+- [x] **Step 2: Write the failing test:** empty ledger, one index row, assert the orphan is reached rather than short-circuited.
+- [x] **Step 3: Confirm RED**, implement the union gate, confirm GREEN.
+- [x] **Step 4: Re-word the message** and update the two existing empty-path tests to match.
+- [x] **Step 5: Run** `pixi run pytest tests/cli -q`.
+- [x] **Step 6: Commit** `fix(reap): gate on the union of ledger and ephemeral index`, then update U18 as `docs:`.
 
 ---
 
@@ -226,21 +231,21 @@ def test_batch_row_survives_a_create_that_raises() -> None:
 **Observed live:** a `provision` killed 1.0 s into `create_instance` left an app in state `initializing...` with `tasks=0` that did not self-resolve over ~60 s. `destroy --id` failed with `No App with name … found`; `modal app stop ap-UieraQfT1GhxX3v4etyrEA --yes` returned rc 0 and stopped it.
 
 **Acceptance Criteria:**
-- [ ] Destroy looks the app up in `modal app list --json`, matching on `description`, and stops it by `app_id`.
-- [ ] It falls back to stopping by name when no id is found, preserving today's behaviour for a normally-deployed app.
-- [ ] A provider error is handled and reported with the app id it found — no unhandled `CalledProcessError`.
-- [ ] The JSON parse is defensive: an unexpected shape fails with a message naming what it could not find, rather than raising a parse error.
-- [ ] Tests inject the listing and the stopper; **no live call**.
+- [x] Destroy looks the app up in `modal app list --json`, matching on `description`, and stops it by `app_id`.
+- [x] It falls back to stopping by name when no id is found, preserving today's behaviour for a normally-deployed app.
+- [x] A provider error is handled and reported with the app id it found — no unhandled `CalledProcessError`.
+- [x] The JSON parse is defensive: an unexpected shape fails with a message naming what it could not find, rather than raising a parse error.
+- [x] Tests inject the listing and the stopper; **no live call**.
 
 **Verify:** `pixi run pytest tests/providers/test_modal_destroy_by_app_id.py -v` → all pass
 
 **Steps:**
 
-- [ ] **Step 1: Verify the claim** against `destroy_instance` and `default_stop`.
-- [ ] **Step 2: Write the failing tests** — mid-deploy app resolvable only by id; normally-deployed app still stops by name; provider error reported not raised; malformed listing handled.
-- [ ] **Step 3: Confirm RED**, implement, confirm GREEN.
-- [ ] **Step 4: Run** `pixi run pytest tests/providers -q`.
-- [ ] **Step 5: Commit** `fix(modal): stop an app by the id the provider accepts`, then update U17 as `docs:` — offline-proven; note that a live re-proof means racing a 1-second window and is a separate follow-up.
+- [x] **Step 1: Verify the claim** against `destroy_instance` and `default_stop`.
+- [x] **Step 2: Write the failing tests** — mid-deploy app resolvable only by id; normally-deployed app still stops by name; provider error reported not raised; malformed listing handled.
+- [x] **Step 3: Confirm RED**, implement, confirm GREEN.
+- [x] **Step 4: Run** `pixi run pytest tests/providers -q`.
+- [x] **Step 5: Commit** `fix(modal): stop an app by the id the provider accepts`, then update U17 as `docs:` — offline-proven; note that a live re-proof means racing a 1-second window and is a separate follow-up.
 
 ---
 
@@ -267,21 +272,21 @@ print('unguarded after the create:'); print(tail.strip()[:400])
 ```
 
 **Acceptance Criteria:**
-- [ ] A raise from the readiness poll or the provisioner destroys the pod before propagating.
-- [ ] The readiness loop is bounded by a deadline and surfaces a clear error naming the last status seen.
-- [ ] A destroy that itself fails is reported without masking the original error.
-- [ ] `deploy`'s existing destroy-on-error handling is followed rather than a second shape invented — read it first.
-- [ ] The behaviour change (provision now destroys on failure where it previously left the pod up) is stated in the U21 entry.
+- [x] A raise from the readiness poll or the provisioner destroys the pod before propagating.
+- [x] The readiness loop is bounded by a deadline and surfaces a clear error naming the last status seen.
+- [x] A destroy that itself fails is reported without masking the original error.
+- [x] `deploy`'s existing destroy-on-error handling is followed rather than a second shape invented — read it first.
+- [x] The behaviour change (provision now destroys on failure where it previously left the pod up) is stated in the U21 entry.
 
 **Verify:** `pixi run pytest tests/cli/test_cmd_provision.py -v` → all pass
 
 **Steps:**
 
-- [ ] **Step 1: Verify the claim** with the reproducer above, and read `deploy`'s destroy-on-error handling in `src/kinoforge/core/orchestrator.py`.
-- [ ] **Step 2: Write the failing tests** — a raising readiness poll destroys the pod; a raising provisioner destroys the pod; a never-ready pod hits the deadline rather than looping; a failing destroy is reported without hiding the original error.
-- [ ] **Step 3: Confirm RED**, implement, confirm GREEN.
-- [ ] **Step 4: Run** `pixi run pytest tests/cli -q`.
-- [ ] **Step 5: Commit** `fix(provision): tear down on a post-create failure, and bound the readiness loop`, then update U21 as `docs:`.
+- [x] **Step 1: Verify the claim** with the reproducer above, and read `deploy`'s destroy-on-error handling in `src/kinoforge/core/orchestrator.py`.
+- [x] **Step 2: Write the failing tests** — a raising readiness poll destroys the pod; a raising provisioner destroys the pod; a never-ready pod hits the deadline rather than looping; a failing destroy is reported without hiding the original error.
+- [x] **Step 3: Confirm RED**, implement, confirm GREEN.
+- [x] **Step 4: Run** `pixi run pytest tests/cli -q`.
+- [x] **Step 5: Commit** `fix(provision): tear down on a post-create failure, and bound the readiness loop`, then update U21 as `docs:`.
 
 ---
 
@@ -293,23 +298,23 @@ print('unguarded after the create:'); print(tail.strip()[:400])
 - Modify: `PROGRESS.md` (the U23, U11, U18 entries), `docs/modal-command-matrix.md` (any affected rows)
 
 **Acceptance Criteria:**
-- [ ] **A1 proof:** launch `--ephemeral batch`, read `.kinoforge/_lifecycle/ephemeral-index.json` **while it is still running** and capture a row naming the pod, then kill the controller and confirm the pod is nameable and reapable from a fresh process.
-- [ ] **A2 proof:** run `grid --ephemeral` and confirm the provider's app list shows opaque `eph-` names with no run id or timestamp.
-- [ ] **B1 proof:** with an ephemeral orphan live and an empty ledger, one-shot `reap` finds it rather than printing "nothing to do".
-- [ ] Teardown proof from a fresh process after every cell. No pod alive at the end.
-- [ ] Actual spend recorded per cell.
-- [ ] If a fix does NOT hold live, record it and do **not** retrofit the code to make the proof pass. Report it and stop that cell.
+- [x] **A1 proof:** launch `--ephemeral batch`, read `.kinoforge/_lifecycle/ephemeral-index.json` **while it is still running** and capture a row naming the pod, then kill the controller and confirm the pod is nameable and reapable from a fresh process.
+- [x] **A2 proof:** run `grid --ephemeral` and confirm the provider's app list shows opaque `eph-` names with no run id or timestamp.
+- [x] **B1 proof:** with an ephemeral orphan live and an empty ledger, one-shot `reap` finds it rather than printing "nothing to do".
+- [x] Teardown proof from a fresh process after every cell. No pod alive at the end.
+- [x] Actual spend recorded per cell.
+- [x] If a fix does NOT hold live, record it and do **not** retrofit the code to make the proof pass. Report it and stop that cell.
 
 **Verify:** `pixi run -e live-modal kinoforge list` → both "no instances" lines, and no running `kinoforge-*` app in the Modal app list
 
 **Steps:**
 
-- [ ] **Step 1: `pixi run preflight` → PASS.**
-- [ ] **Step 2: A1.** Build a two-entry manifest (see `examples/configs/manifests/batch-prompts.yaml` for the shape; put yours outside the repo, e.g. `/home/claudeuser/kinoforge-proof/batch.yaml`). Launch it under `--ephemeral`, poll the index file from a second shell during the run, capture the row, kill the controller, recover the pod.
-- [ ] **Step 3: A2.** A 1x2 grid spec must live OUTSIDE the repo — the loader refuses in-repo paths on purpose. Run it with `--ephemeral` and capture the provider's app names.
-- [ ] **Step 4: B1.** With the orphan from A1 or A2 still live and the ledger empty, run one-shot `reap` and capture the output.
-- [ ] **Step 5: Teardown proof and spend reconciliation.**
-- [ ] **Step 6: Update the records with the live evidence**, replacing "offline-proven, live proof owed" with what was actually observed. Commit.
+- [x] **Step 1: `pixi run preflight` → PASS.**
+- [x] **Step 2: A1.** Build a two-entry manifest (see `examples/configs/manifests/batch-prompts.yaml` for the shape; put yours outside the repo, e.g. `/home/claudeuser/kinoforge-proof/batch.yaml`). Launch it under `--ephemeral`, poll the index file from a second shell during the run, capture the row, kill the controller, recover the pod.
+- [x] **Step 3: A2.** A 1x2 grid spec must live OUTSIDE the repo — the loader refuses in-repo paths on purpose. Run it with `--ephemeral` and capture the provider's app names.
+- [x] **Step 4: B1.** With the orphan from A1 or A2 still live and the ledger empty, run one-shot `reap` and capture the output.
+- [x] **Step 5: Teardown proof and spend reconciliation.**
+- [x] **Step 6: Update the records with the live evidence**, replacing "offline-proven, live proof owed" with what was actually observed. Commit.
 
 ---
 
@@ -321,16 +326,16 @@ print('unguarded after the create:'); print(tail.strip()[:400])
 - Modify: `PROGRESS.md`, `docs/modal-command-matrix.md`
 
 **Acceptance Criteria:**
-- [ ] Every item this plan closed says FIXED with its commit and its proof level; every item it did not close still says open.
-- [ ] **Re-read the ENTIRE urgent-actions section for stale claims**, not only the entries this plan touched. This project has repeatedly shipped entries claiming a defect is open after it was fixed, and a section preamble that had quietly become false.
-- [ ] The status index counts (fixed / partial / open) balance against the individual entries.
-- [ ] `pixi run pre-commit run --all-files` green and `pixi run pytest -q` passing.
+- [x] Every item this plan closed says FIXED with its commit and its proof level; every item it did not close still says open.
+- [x] **Re-read the ENTIRE urgent-actions section for stale claims**, not only the entries this plan touched. This project has repeatedly shipped entries claiming a defect is open after it was fixed, and a section preamble that had quietly become false.
+- [x] The status index counts (fixed / partial / open) balance against the individual entries.
+- [x] `pixi run pre-commit run --all-files` green and `pixi run pytest -q` passing.
 
 **Verify:** `pixi run pytest -q` → all pass, and `rg -n "U11|U17|U18|U21|U23" PROGRESS.md` shows each with a current status
 
 **Steps:**
 
-- [ ] **Step 1: Re-read the whole urgent-actions section**, including its preamble and index.
-- [ ] **Step 2: Update the matrix** for any row these fixes change.
-- [ ] **Step 3:** `pixi run pre-commit run --all-files` and `pixi run pytest -q`.
-- [ ] **Step 4: Commit** `docs: record the ephemeral and recovery gaps closed`.
+- [x] **Step 1: Re-read the whole urgent-actions section**, including its preamble and index.
+- [x] **Step 2: Update the matrix** for any row these fixes change.
+- [x] **Step 3:** `pixi run pre-commit run --all-files` and `pixi run pytest -q`.
+- [x] **Step 4: Commit** `docs: record the ephemeral and recovery gaps closed`.
