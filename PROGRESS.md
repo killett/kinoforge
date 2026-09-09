@@ -449,11 +449,11 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site.
 
-**STATUS INDEX (rebuilt 2026-09-07, Task 7; U18 row updated 2026-09-08, Task 3 — this is the
-current state; the paragraphs below it are the campaign's running commentary and are dated, not
-authoritative).** Twenty-five items, U1-U25. **Eleven are fixed** (U4, U7, U8, U9, U11, U12, U14,
-U15, U18, U20, U23), **two are partly fixed** (U5, U10), **twelve are open** (U1, U2, U3, U6, U13,
-U16, U17, U19, U21, U22, U24, U25).
+**STATUS INDEX (rebuilt 2026-09-07, Task 7; U18 row updated + U26 filed 2026-09-08, Task 3 — this
+is the current state; the paragraphs below it are the campaign's running commentary and are dated,
+not authoritative).** Twenty-six items, U1-U26. **Eleven are fixed** (U4, U7, U8, U9, U11, U12,
+U14, U15, U18, U20, U23), **two are partly fixed** (U5, U10), **thirteen are open** (U1, U2, U3,
+U6, U13, U16, U17, U19, U21, U22, U24, U25, U26).
 
 | Item | State | Detail |
 |---|---|---|
@@ -474,7 +474,7 @@ U16, U17, U19, U21, U22, U24, U25).
 | U15 | FIXED, LIVE-PROVEN | `ccd4c5e7`; a fresh process attached to a warm pod via `generate --attach-pod` in 38 s with no cold boot (~$0.07). **T2-02's own `upscale` cell has still not been re-run** — the fix is provider- and command-agnostic, so that is inference, not demonstration |
 | U16 | OPEN | the ephemeral launch row is only a PARTIAL handle on RunPod (good name, unusable id). Spun out of U8 |
 | U17 | OPEN | `destroy --id` cannot reap a Modal app killed mid-deploy; only `modal app stop <app_id>` can. Found by U7's live proof |
-| U18 | FIXED, OFFLINE ONLY | `71582382` (Task 3, 2026-09-08) — `_cmd_reap`'s short-circuit now gates on the union: `if not ledger.entries():` alone no longer returns early; it also checks `EphemeralIndex(store=ctx.store()).rows()` and only short-circuits when both are empty, wording the message as "ledger and ephemeral index both empty" instead of the misleading "ledger empty". Proof is offline only (`pixi run pytest tests/cli/test_cmd_reap.py -v` → 20/20; `pixi run pytest tests/cli -q` → 464/464), including a test that writes only an `EphemeralIndex` row and asserts the orphan's id + `LIVE` verdict actually reach the human-format table with `sweep()` unmocked. Live proof (an ephemeral orphan found by one-shot `reap` under a genuinely empty ledger, against a real provider) is owed to **Task 6** |
+| U18 | FIXED, OFFLINE ONLY | `71582382` + `abe0c21e` (Task 3, 2026-09-08; the second is a review-round-2 fix) — `_cmd_reap`'s short-circuit now gates on the union: `if not ledger.entries():` alone no longer returns early; it also checks `EphemeralIndex(store=ctx.store()).rows()`, **filtered to `--id` when set**, and only short-circuits when both are empty, wording the message for the id it searched for (`--id` case) or "ledger and ephemeral index both empty" (no `--id`). Round-1 review caught that the index check was unscoped by `--id`, so one unrelated ephemeral row could defeat the short-circuit for an id the operator never named — fixed in `abe0c21e`. Proof is offline only (`pixi run pytest tests/cli/test_cmd_reap.py -v` → 22/22; `pixi run pytest tests/cli -q` → 466/466), including a test that writes only an `EphemeralIndex` row and asserts the orphan's id + `LIVE` verdict actually reach the human-format table with `sweep()` unmocked, a test proving `--apply --include-orphans` actually destroys an aged idle index-only row (the act path, not just classification), and a test proving an unrelated index row cannot defeat a scoped `--id` no-op. `sweep()`'s own ephemeral union still does not honour `--id` scoping once it runs — filed separately as **U26**. Live proof (an ephemeral orphan found by one-shot `reap` under a genuinely empty ledger, against a real provider) is owed to **Task 6** |
 | U19 | OPEN | the in-pod capability vocabulary has no term for interpolation. Not a duplicate boot today — the U14 carve-out prevents one — but the `/health` refinement is absent on the interpolate path |
 | U20 | FIXED | `e582bd0f` — the truncated sweeper thresholds dict. Filed retroactively 2026-09-07: it was WIDER than the ephemeral defect it was found under |
 | U21 | OPEN | `provision` has no destroy-on-error path. Filed 2026-09-07 |
@@ -482,6 +482,7 @@ U16, U17, U19, U21, U22, U24, U25).
 | U23 | FIXED, OFFLINE-PROVEN | `f787182d` + `03a4b862` (Task 1, 2026-09-08) — `_cmd_batch` reserves the ephemeral launch row before `batch_generate`, settled by `_settle_batch_launch_row` afterwards; the survive path is upgraded to the real id + endpoints and the ledger diff skips the orchestrator's own provisional row (review round 1). Live proof owed to Task 6 |
 | U24 | OPEN | `grid --ephemeral` cannot cover `lora_swap:` cells — they are refused (`ValueError`), not made ephemeral. Filed 2026-09-08, Task 2 review round 1 |
 | U25 | OPEN | an ephemeral `grid` still writes local artifacts (per-cell stderr, `output/_grid_<id>/`) under the strict policy, contradicting the flag's own help text. Filed 2026-09-08, Task 2 review round 1; reproducer corrected round 2 |
+| U26 | OPEN | `sweep()`'s ephemeral union does not honour a single-id-scoped ledger view — it processes every `EphemeralIndex` row regardless of `--id`. `--id` scoping is enforced only at the `_cmd_reap` CLI guard (fixed under U18), not inside `sweep()` itself. Filed 2026-09-08, Task 3 review round 2 |
 
 **Live proof cost for the whole money-leak campaign: $0.82** — $0.16 for the four fixes' own live
 cells (Task 5, Modal A10), $0.12 for U14's re-proof and $0.54 to reproduce and diagnose it
@@ -1766,6 +1767,52 @@ per-item entries below.
   goal).
   **Discovered by:** Task 2 code review, round 1, 2026-09-08 (reviewer verified no
   `EphemeralSession` consultation exists anywhere in `core/grid/`).
+
+- **U26 — `sweep()`'s ephemeral union does not honour a single-id-scoped ledger view.**
+  **Symptom.** `_cmd_reap`'s `--id` flag wraps the ledger in `_SingleIdLedgerView`
+  (`src/kinoforge/cli/_commands.py:172-184`), which correctly narrows `ledger.entries()` to at most
+  one entry. But `sweep()`'s ephemeral-row union (`src/kinoforge/core/reaper_actor.py:527-536`)
+  reads `EphemeralIndex(store=store).rows()` directly and unconditionally, iterating *every* row in
+  the index and filtering only on `row.id in ledger_ids` (the ids the scoped ledger view already
+  surfaced) — there is no parameter carrying `--id` into `sweep()` at all. So once `sweep()` is
+  reached (e.g. because the CLI guard's own index check, fixed under U18, found a row matching
+  `--id`), every OTHER unrelated ephemeral row in the index is classified and, under
+  `--apply --include-orphans`, potentially acted on too — not just the one the operator named.
+  **Cause.** `sweep()`'s signature takes `ledger: Ledger` and re-derives `ledger_ids` from
+  `ledger.entries()`, but has no equivalent "index_id_filter" concept; the ephemeral loop was
+  written for the daemon's use case (process every row every tick), which is correct there, but
+  `kinoforge reap --id X` calls the same function.
+  **Reproducer (offline, $0) — builds a `_SingleIdLedgerView`-shaped wrapper scoped to an id that
+  matches neither the ledger nor the index, adds one UNRELATED index row, and calls `sweep()`
+  directly:**
+  ```python
+  scoped_ledger = _SingleIdLedgerView(ledger, "some-other-id-not-in-ledger-or-index")
+  print("scoped ledger.entries():", scoped_ledger.entries())
+  report = sweep(store, scoped_ledger, get_provider, thresholds, FakeClock(start=1.0e6),
+                 policy=None, stall_history=None)
+  print("sweep() snapshot keys:", list(report.snapshot.keys()))
+  ```
+  **Actual output (run 2026-09-08):**
+  ```
+  scoped ledger.entries(): []
+  sweep() snapshot keys (should be EMPTY if sweep respected --id scoping):
+  ['unrelated-pod']
+  ```
+  Confirms the gap: the scoped ledger view correctly returned zero entries, but `sweep()` still
+  classified `unrelated-pod` — a row that has nothing to do with the id the caller asked about.
+  **Why it matters.** Today the only caller that could hit this is `kinoforge reap --id`, and only
+  after the U18 fix makes `sweep()` reachable at all for an index-only orphan; U18's own CLI-level
+  guard is scoped correctly (fixed in `abe0c21e`), so the immediate hazard from the U18 review round
+  is closed. But `sweep()` itself has no `--id` concept, so any future caller that expects
+  "`--id X` touches only X" will be surprised the same way.
+  **Suspected site:** `sweep()` (`src/kinoforge/core/reaper_actor.py:464-536`) would need an
+  optional id-filter parameter threaded into the ephemeral-row loop, or `_cmd_reap` would need to
+  pre-filter the rows it hands sweep() some other way that does not require changing `sweep()`'s
+  signature (the daemon's own call site must keep processing every row). Not attempted as part of
+  Task 3 — restructuring `sweep()`'s signature is outside a one-guard `_cmd_reap` fix and needs its
+  own task.
+  **Discovered by:** Task 3 code review, round 2, 2026-09-08 (reviewer traced `sweep()`'s ephemeral
+  union against `_SingleIdLedgerView` and found no filtering path between them).
 
 Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
 on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interval_s`
