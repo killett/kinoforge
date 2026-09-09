@@ -55,12 +55,12 @@
     {
       "id": 7,
       "subject": "Task 7: close the record",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** The filed items and the matrix tell the truth about what is now fixed, proven, and still open.\n\n**Files:**\n- Modify: `PROGRESS.md`, `docs/modal-command-matrix.md`\n\n**Acceptance Criteria:**\n- [ ] Every item this plan closed says FIXED with its commit and its proof level; every item it did not close still says open.\n- [ ] **Re-read the ENTIRE urgent-actions section for stale claims**, not only the entries this plan touched. This project has repeatedly shipped entries claiming a defect is open after it was fixed, and a section preamble that had quietly become false.\n- [ ] The status index counts (fixed / partial / open) balance against the individual entries.\n- [ ] `pixi run pre-commit run --all-files` green and `pixi run pytest -q` passing.\n\n**Verify:** `pixi run pytest -q` → all pass, and `rg -n \"U11|U17|U18|U21|U23\" PROGRESS.md` shows each with a current status\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"docs/modal-command-matrix.md\"], \"verifyCommand\": \"pixi run pytest -q\", \"acceptanceCriteria\": [\"Every item this plan closed says FIXED with its commit and its proof level; every item it did not close still says open.\", \"**Re-read the ENTIRE urgent-actions section for stale claims**, not only the entries this plan touched. This project has repeatedly shipped entries claiming a defect is open after it was fixed, and a section preamble that had quietly become false.\", \"The status index counts (fixed / partial / open) balance against the individual entries.\", \"`pixi run pre-commit run --all-files` green and `pixi run pytest -q` passing.\"], \"modelTier\": \"standard\", \"liveSpend\": false}\n```",
       "blockedBy": [
         6
       ]
     }
   ],
-  "lastUpdated": "2026-09-09T01:20:23.366476"
+  "lastUpdated": "2026-09-09T01:55:46.781272"
 }
