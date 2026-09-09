@@ -449,10 +449,11 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site.
 
-**STATUS INDEX (rebuilt 2026-09-07, Task 7 — this is the current state; the paragraphs below it are
-the campaign's running commentary and are dated, not authoritative).** Twenty-five items,
-U1-U25. **Ten are fixed** (U4, U7, U8, U9, U11, U12, U14, U15, U20, U23), **two are partly fixed**
-(U5, U10), **thirteen are open** (U1, U2, U3, U6, U13, U16, U17, U18, U19, U21, U22, U24, U25).
+**STATUS INDEX (rebuilt 2026-09-07, Task 7; U18 row updated 2026-09-08, Task 3 — this is the
+current state; the paragraphs below it are the campaign's running commentary and are dated, not
+authoritative).** Twenty-five items, U1-U25. **Eleven are fixed** (U4, U7, U8, U9, U11, U12, U14,
+U15, U18, U20, U23), **two are partly fixed** (U5, U10), **twelve are open** (U1, U2, U3, U6, U13,
+U16, U17, U19, U21, U22, U24, U25).
 
 | Item | State | Detail |
 |---|---|---|
@@ -473,7 +474,7 @@ U1-U25. **Ten are fixed** (U4, U7, U8, U9, U11, U12, U14, U15, U20, U23), **two 
 | U15 | FIXED, LIVE-PROVEN | `ccd4c5e7`; a fresh process attached to a warm pod via `generate --attach-pod` in 38 s with no cold boot (~$0.07). **T2-02's own `upscale` cell has still not been re-run** — the fix is provider- and command-agnostic, so that is inference, not demonstration |
 | U16 | OPEN | the ephemeral launch row is only a PARTIAL handle on RunPod (good name, unusable id). Spun out of U8 |
 | U17 | OPEN | `destroy --id` cannot reap a Modal app killed mid-deploy; only `modal app stop <app_id>` can. Found by U7's live proof |
-| U18 | OPEN | `kinoforge reap` short-circuits on an empty ledger and never reaches `sweep()`, so `--include-orphans` is unreachable for exactly the `--ephemeral` case. Found by U8's live proof |
+| U18 | FIXED, OFFLINE ONLY | `71582382` (Task 3, 2026-09-08) — `_cmd_reap`'s short-circuit now gates on the union: `if not ledger.entries():` alone no longer returns early; it also checks `EphemeralIndex(store=ctx.store()).rows()` and only short-circuits when both are empty, wording the message as "ledger and ephemeral index both empty" instead of the misleading "ledger empty". Proof is offline only (`pixi run pytest tests/cli/test_cmd_reap.py -v` → 20/20; `pixi run pytest tests/cli -q` → 464/464), including a test that writes only an `EphemeralIndex` row and asserts the orphan's id + `LIVE` verdict actually reach the human-format table with `sweep()` unmocked. Live proof (an ephemeral orphan found by one-shot `reap` under a genuinely empty ledger, against a real provider) is owed to **Task 6** |
 | U19 | OPEN | the in-pod capability vocabulary has no term for interpolation. Not a duplicate boot today — the U14 carve-out prevents one — but the `/health` refinement is absent on the interpolate path |
 | U20 | FIXED | `e582bd0f` — the truncated sweeper thresholds dict. Filed retroactively 2026-09-07: it was WIDER than the ephemeral defect it was found under |
 | U21 | OPEN | `provision` has no destroy-on-error path. Filed 2026-09-07 |
@@ -1438,6 +1439,28 @@ per-item entries below.
   `ledger.entries()` and `EphemeralIndex(store).rows()` are both empty, and word the message for
   whichever is non-empty.
   **Discovered by:** Task 5 live proof of U8, 2026-09-07.
+  **FIXED, OFFLINE ONLY — `71582382` (Task 3, 2026-09-08).** Step 1 verification confirmed the
+  filed claim exactly as stated: the guard at `_cmd_reap` (then `src/kinoforge/cli/_commands.py:3537`)
+  was `if not ledger.entries():`, and the `EphemeralIndex(store=store)` union lives inside
+  `reaper_actor.sweep()` at `src/kinoforge/core/reaper_actor.py:527`, strictly on the far side of
+  that guard — no retraction needed here. The guard now reads
+  `if not ledger.entries(): ... if not EphemeralIndex(store=ctx.store()).rows(): ... return 0`,
+  so the short-circuit fires only when both are empty; when the index alone is non-empty, control
+  falls through to the same `sweep()` call every other path uses. The message changed from the
+  misleading `"reap: ledger empty (nothing to do)"` to `"reap: ledger and ephemeral index both
+  empty (nothing to do)"`, naming what was actually searched. Both pre-existing empty-path pinning
+  tests (`test_reap_empty_ledger_json_emits_parseable_records`,
+  `test_reap_empty_ledger_human_keeps_the_sentence`) were updated to the new wording rather than
+  weakened. A new test, `test_reap_empty_ledger_with_ephemeral_index_row_reaches_orphan`, writes
+  only an `EphemeralIndex` row (ledger stays empty), does **not** mock `sweep()`, and asserts the
+  orphan's id and `LIVE` verdict actually appear in the human-format output table — proving the
+  orphan is reached and classified, not merely that the exit code changed.
+  **Proof is OFFLINE ONLY.** `pixi run pytest tests/cli/test_cmd_reap.py -v` → 20/20 passed;
+  `pixi run pytest tests/cli -q` → 464/464 passed. No pod was booked and no provider was called —
+  the new test uses a real `LocalArtifactStore` + `EphemeralIndex` and a minimal fake provider
+  (`probe_runtime` only), with `kinoforge.core.registry.get_provider` patched to return it. Live
+  proof — an ephemeral orphan under a genuinely empty ledger, found by one-shot `reap` against a
+  real provider — is owed to **Task 6**.
 
 - **U19 — the in-pod capability vocabulary has no term for interpolation, so `kinoforge interpolate`
   cannot participate in warm reuse at all.**
