@@ -11,6 +11,7 @@ after money was already committed.
 from __future__ import annotations
 
 import argparse
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,7 @@ import kinoforge._adapters  # noqa: F401 — side-effect: register builtins
 from kinoforge.cli._commands import _cmd_provision
 from kinoforge.cli.context import SessionContext
 from kinoforge.core.config import load_config
-from kinoforge.core.errors import CapacityError
+from kinoforge.core.errors import CapacityError, ProvisionTimeout
 from kinoforge.core.interfaces import (
     Instance,
     InstanceSpec,
@@ -157,13 +158,20 @@ class _FakeProvider:
         raises: BaseException | None = None,
         on_create: Callable[[InstanceSpec], None] | None = None,
         alive: bool = True,
+        initial_status: str = "ready",
+        get_instance_raises: BaseException | None = None,
+        destroy_raises: BaseException | None = None,
     ) -> None:
         self.specs: list[InstanceSpec] = []
         self.get_instance_calls: list[str] = []
+        self.destroy_calls: list[str] = []
         self._result = result
         self._raises = raises
         self._on_create = on_create
         self._alive = alive
+        self._initial_status = initial_status
+        self._get_instance_raises = get_instance_raises
+        self._destroy_raises = destroy_raises
 
     def find_offers(self, reqs: Placement) -> list[Offer]:
         return [
@@ -185,22 +193,26 @@ class _FakeProvider:
         return self._result or Instance(
             id="pod-spy",
             provider="runpod",
-            status="ready",
+            status=self._initial_status,
             created_at=0.0,
             tags=dict(spec.tags),
             cost_rate_usd_per_hr=0.2,
         )
 
     def get_instance(self, instance_id: str) -> Instance:
-        """Answer the refusal path's reconcile probe.
+        """Answer the refusal path's reconcile probe, and the readiness poll.
 
         ``alive=False`` raises ``KeyError``, which is the ONLY outcome the
         reconciler treats as "this instance definitively no longer exists".
-        The created instance itself is returned ``status="ready"``, so the
-        provision loop never re-fetches it — a call here always comes from the
-        reconcile.
+        The created instance itself is returned ``status="ready"`` by default,
+        so the provision loop never re-fetches it — a call here always comes
+        from the reconcile UNLESS a test sets ``initial_status`` to something
+        else, in which case this same method answers the readiness poll too.
+        ``get_instance_raises`` simulates a readiness-poll transport failure.
         """
         self.get_instance_calls.append(instance_id)
+        if self._get_instance_raises is not None:
+            raise self._get_instance_raises
         if not self._alive:
             raise KeyError(instance_id)
         return Instance(
@@ -210,6 +222,12 @@ class _FakeProvider:
             created_at=0.0,
             cost_rate_usd_per_hr=0.2,
         )
+
+    def destroy_instance(self, instance_id: str) -> None:
+        """Record the teardown attempt; optionally fail it too."""
+        self.destroy_calls.append(instance_id)
+        if self._destroy_raises is not None:
+            raise self._destroy_raises
 
 
 def _write_cfg(tmp_path: Path, cfg_text: str = _CFG) -> tuple[Path, Path]:
@@ -712,3 +730,226 @@ def test_provision_leaves_restart_policy_alone_without_diagnostic_mode(
     """
     spec = _spec_from_provision(tmp_path, _CFG)
     assert "restart_policy" not in spec.backend_options.get("runpod", {})
+
+
+# ---------------------------------------------------------------------------
+# U21 — everything after the provisional-row collapse ran unguarded: a raise
+# from the readiness poll or the provisioner left a created, billing pod with
+# nothing tearing it down, and the readiness loop had no deadline at all — a
+# pod stuck in "starting" spun forever at 2s/turn. The fix reuses
+# ``orchestrator.deploy``'s destroy-on-error shape verbatim (log naming the
+# instance + the error, attempt destroy, log a SECOND failure separately
+# without masking the first, re-raise the original) and its bounded
+# ``_wait_for_provider_ready`` helper for the readiness poll.
+# ---------------------------------------------------------------------------
+
+
+class _NeverReadyProvider:
+    """A pod that never leaves "starting".
+
+    ``poll_cap`` fails the test fast with a clear ``AssertionError`` instead
+    of hanging forever if the readiness loop regresses to unbounded — the
+    exact bug this test exists to catch.
+    """
+
+    name = "runpod"
+
+    def __init__(self, *, poll_cap: int = 5) -> None:
+        self.specs: list[InstanceSpec] = []
+        self.get_instance_calls: list[str] = []
+        self.destroy_calls: list[str] = []
+        self._poll_cap = poll_cap
+
+    def find_offers(self, reqs: Placement) -> list[Offer]:
+        return [
+            Offer(
+                id="NVIDIA RTX A5000",
+                gpu_type="NVIDIA RTX A5000",
+                vram_gb=24,
+                cuda="12.4",
+                cost_rate_usd_per_hr=0.2,
+            )
+        ]
+
+    def create_instance(self, spec: InstanceSpec) -> Instance:
+        self.specs.append(spec)
+        return Instance(
+            id="pod-never-ready",
+            provider="runpod",
+            status="starting",
+            created_at=0.0,
+            tags=dict(spec.tags),
+            cost_rate_usd_per_hr=0.2,
+        )
+
+    def get_instance(self, instance_id: str) -> Instance:
+        self.get_instance_calls.append(instance_id)
+        if len(self.get_instance_calls) > self._poll_cap:
+            raise AssertionError(
+                f"test guard: readiness loop polled more than {self._poll_cap} "
+                "times — the deadline bound is not working"
+            )
+        return Instance(
+            id=instance_id,
+            provider="runpod",
+            status="starting",
+            created_at=0.0,
+            cost_rate_usd_per_hr=0.2,
+        )
+
+    def destroy_instance(self, instance_id: str) -> None:
+        self.destroy_calls.append(instance_id)
+
+
+#: Same compute cfg as ``_CFG``, but with an instant readiness deadline so the
+#: never-ready test needs no real sleep at all: the deadline is already in
+#: the past on the very first check, before any poll or sleep happens.
+_CFG_INSTANT_BOOT_TIMEOUT = _CFG.replace(
+    "  lifecycle:\n    budget: 1.0\n",
+    "  lifecycle:\n    budget: 1.0\n    boot_timeout: 0\n",
+)
+
+
+def test_provision_destroys_pod_when_readiness_poll_raises(tmp_path: Path) -> None:
+    """A raise from ``provider.get_instance`` during the readiness poll must
+    destroy the pod before the exception propagates.
+
+    Bug caught: the pre-fix ``while instance.status != "ready":`` loop had no
+    guard at all — this raise walked straight out of ``_cmd_provision`` with
+    the pod created, paid-for, and never torn down. A test that only asserted
+    the exception propagated would pass on that unfixed code; asserting
+    ``destroy_calls`` is what discriminates the fix.
+    """
+    cfg_path, state_dir = _write_cfg(tmp_path)
+    ctx = _ctx_for(cfg_path, state_dir)
+    provider = _FakeProvider(
+        initial_status="starting",
+        get_instance_raises=RuntimeError("get_instance transport error"),
+    )
+
+    with (
+        patch("kinoforge._adapters.build_provider_for", return_value=provider),
+        patch("kinoforge.core.provisioner.provision"),
+        pytest.raises(RuntimeError, match="get_instance transport error"),
+    ):
+        _cmd_provision(argparse.Namespace(config=str(cfg_path)), ctx)
+
+    assert provider.destroy_calls == ["pod-spy"], (
+        f"expected the pod destroyed after the readiness poll raised, got "
+        f"destroy_calls={provider.destroy_calls!r}"
+    )
+
+
+def test_provision_destroys_pod_when_provisioner_raises(tmp_path: Path) -> None:
+    """A raise from ``provision(...)`` (the weight-download / bootstrap step)
+    after the pod is ready must also destroy the pod.
+
+    Bug caught: an implementation that wraps ONLY the readiness loop in
+    try/except (and leaves the ``provision(...)`` call after it unguarded,
+    matching the pre-fix code's structure) would let this raise propagate
+    with the pod never destroyed. This discriminates the two failure sites
+    the acceptance criteria name explicitly: "the readiness poll or the
+    provisioner".
+    """
+    cfg_path, state_dir = _write_cfg(tmp_path)
+    ctx = _ctx_for(cfg_path, state_dir)
+    provider = _FakeProvider()  # ready immediately — no readiness loop at all
+
+    with (
+        patch("kinoforge._adapters.build_provider_for", return_value=provider),
+        patch(
+            "kinoforge.core.provisioner.provision",
+            side_effect=RuntimeError("weight download failed"),
+        ),
+        pytest.raises(RuntimeError, match="weight download failed"),
+    ):
+        _cmd_provision(argparse.Namespace(config=str(cfg_path)), ctx)
+
+    assert provider.destroy_calls == ["pod-spy"], (
+        f"expected the pod destroyed after the provisioner raised, got "
+        f"destroy_calls={provider.destroy_calls!r}"
+    )
+
+
+def test_provision_never_ready_pod_hits_deadline_instead_of_looping(
+    tmp_path: Path,
+) -> None:
+    """A pod stuck in "starting" must not spin forever — it hits a deadline,
+    raises naming the last status seen, and the pod is destroyed.
+
+    Bug caught: the pre-fix loop had no timeout and no iteration cap at all —
+    the same money leak as an unguarded raise, but with no exception to even
+    report it. ``boot_timeout: 0`` makes the deadline already-elapsed on the
+    very first check, so the fixed code needs no real sleep to prove this;
+    the unfixed code ignores ``boot_timeout`` entirely and keeps polling
+    every 2 real seconds until ``_NeverReadyProvider``'s poll cap trips.
+    """
+    cfg_path, state_dir = _write_cfg(tmp_path, _CFG_INSTANT_BOOT_TIMEOUT)
+    ctx = _ctx_for(cfg_path, state_dir)
+    provider = _NeverReadyProvider()
+
+    with (
+        patch("kinoforge._adapters.build_provider_for", return_value=provider),
+        patch("kinoforge.core.provisioner.provision") as provision_mock,
+        pytest.raises(ProvisionTimeout) as excinfo,
+    ):
+        _cmd_provision(argparse.Namespace(config=str(cfg_path)), ctx)
+
+    message = str(excinfo.value)
+    assert "pod-never-ready" in message, (
+        f"error must name the instance; got {message!r}"
+    )
+    assert "starting" in message, (
+        f"error must name the last status seen; got {message!r}"
+    )
+    provision_mock.assert_not_called()
+    assert provider.destroy_calls == ["pod-never-ready"], (
+        f"expected the pod destroyed at the deadline, got "
+        f"destroy_calls={provider.destroy_calls!r}"
+    )
+
+
+def test_provision_reports_a_failing_destroy_without_masking_the_original_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A destroy that itself fails must not hide the original error.
+
+    Bug caught: a bare ``except Exception: provider.destroy_instance(...);
+    raise`` with no inner try/except around the destroy call would let a
+    SECOND exception from ``destroy_instance`` replace the original one on
+    its way out — the operator would see "destroy failed" and never learn
+    what actually broke, nor whether the pod is still up. Both must reach the
+    operator: the ORIGINAL error via the raised exception, the destroy
+    failure via the log — mirroring ``orchestrator.deploy``'s shape exactly.
+    """
+    cfg_path, state_dir = _write_cfg(tmp_path)
+    ctx = _ctx_for(cfg_path, state_dir)
+    provider = _FakeProvider(destroy_raises=RuntimeError("destroy also failed"))
+
+    with (
+        patch("kinoforge._adapters.build_provider_for", return_value=provider),
+        patch(
+            "kinoforge.core.provisioner.provision",
+            side_effect=RuntimeError("weight download failed"),
+        ),
+        caplog.at_level(logging.ERROR, logger="kinoforge.cli._commands"),
+        pytest.raises(RuntimeError, match="weight download failed") as excinfo,
+    ):
+        _cmd_provision(argparse.Namespace(config=str(cfg_path)), ctx)
+
+    # The ORIGINAL error, not the destroy error, is what propagated.
+    assert "destroy also failed" not in str(excinfo.value), (
+        "the destroy failure replaced the original error on its way out"
+    )
+    assert provider.destroy_calls == ["pod-spy"]
+
+    # The destroy failure must still reach the operator — via the log, since
+    # only one exception can propagate.
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("destroy also failed" in m for m in messages), (
+        f"destroy failure was never logged; operator has no way to learn the "
+        f"pod may still be up. Log messages: {messages!r}"
+    )
+    assert any("weight download failed" in m for m in messages), (
+        f"original error was not logged either; log messages: {messages!r}"
+    )

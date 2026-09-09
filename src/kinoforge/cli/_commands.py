@@ -539,13 +539,62 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
         _record_real_row(ledger, instance, lifecycle=lifecycle)
         _collapse_provisional_row(ledger, provisional_id, instance.id)
 
-        while instance.status != "ready":
-            time.sleep(2.0)
-            # Status-only refresh — get_instance strips endpoints/tags
-            # (the pod GraphQL query returns id/status/image only).
-            refreshed = provider.get_instance(instance.id)
-            instance = _dc.replace(instance, status=refreshed.status)
+        # U21: everything below used to run unguarded — a raise from either
+        # the readiness poll or the provisioner walked out with the pod
+        # created, paid-for, and nothing tearing it down, and the readiness
+        # loop had no deadline at all (a pod stuck in "starting" spun
+        # forever at 2s/turn — the same money leak with no exception to even
+        # report it). The fix reuses ``orchestrator.deploy``'s destroy-on-error
+        # handling verbatim rather than inventing a second shape: log naming
+        # the instance + the error, attempt destroy, log a SECOND failure
+        # separately without masking the first, then re-raise the ORIGINAL
+        # error. ``_wait_for_provider_ready`` is the same bounded helper
+        # ``deploy()`` polls with — deadline-checked, sleep-seamed, and
+        # already covered for its own bound/interval behaviour in
+        # tests/core/test_ready_poll_bounds.py.
+        from kinoforge.core.credentials import EnvCredentialProvider
+        from kinoforge.core.orchestrator import _wait_for_provider_ready
+        from kinoforge.core.provisioner import provision
 
+        try:
+            instance.status = _wait_for_provider_ready(
+                provider,
+                instance,
+                boot_timeout_s=lifecycle.boot_timeout_s,
+            )
+            provision(
+                engine=engine,
+                cfg=cfg,  # type: ignore[arg-type]  # Config satisfies _ProvisionConfig structurally
+                instance=instance,
+                creds=EnvCredentialProvider(),
+                download_dir=ctx.state_dir / "weights",
+            )
+        except BaseException as exc:
+            # Behaviour change (U21): provision now destroys the pod on a
+            # post-create failure where it previously left it running and
+            # billing.
+            logger.error(
+                "provision failed after create_instance(%r); attempting destroy: %s",
+                instance.id,
+                exc,
+            )
+            try:
+                provider.destroy_instance(instance.id)
+            except Exception as destroy_exc:  # noqa: BLE001
+                logger.error(
+                    "destroy_instance(%r) failed during provision-error cleanup: %s",
+                    instance.id,
+                    destroy_exc,
+                )
+                # Re-raise the ORIGINAL error; surface destroy failure via
+                # the log only — mirrors orchestrator.deploy()'s shape.
+            raise
+
+        print(f"provisioned: instance={instance.id!r}")
+        return 0
+
+    # Hosted engines: provider is None, no compute instance was created, and
+    # there is nothing for a destroy-on-error handler to tear down.
     from kinoforge.core.credentials import EnvCredentialProvider
     from kinoforge.core.provisioner import provision
 
