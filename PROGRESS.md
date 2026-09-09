@@ -449,11 +449,11 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site.
 
-**STATUS INDEX (rebuilt 2026-09-07, Task 7; U18 row updated + U26 filed 2026-09-08, Task 3 — this
-is the current state; the paragraphs below it are the campaign's running commentary and are dated,
-not authoritative).** Twenty-six items, U1-U26. **Eleven are fixed** (U4, U7, U8, U9, U11, U12,
-U14, U15, U18, U20, U23), **two are partly fixed** (U5, U10), **thirteen are open** (U1, U2, U3,
-U6, U13, U16, U17, U19, U21, U22, U24, U25, U26).
+**STATUS INDEX (rebuilt 2026-09-07, Task 7; U18 row updated + U26 filed 2026-09-08, Task 3; U17
+fixed 2026-09-08, Task 4 — this is the current state; the paragraphs below it are the campaign's
+running commentary and are dated, not authoritative).** Twenty-six items, U1-U26. **Twelve are fixed** (U4, U7, U8, U9, U11, U12,
+U14, U15, U17, U18, U20, U23), **two are partly fixed** (U5, U10), **twelve are open** (U1, U2, U3,
+U6, U13, U16, U19, U21, U22, U24, U25, U26).
 
 | Item | State | Detail |
 |---|---|---|
@@ -473,7 +473,7 @@ U6, U13, U16, U17, U19, U21, U22, U24, U25, U26).
 | U14 | FIXED, LIVE-PROVEN | `49394b1d`, with a review-caught regression corrected in `b00a53d1`. A second upscale attached to the warm A100 with no `✓ App deployed` ($0.12). The vocabulary gap the correction sidesteps is **U19** |
 | U15 | FIXED, LIVE-PROVEN | `ccd4c5e7`; a fresh process attached to a warm pod via `generate --attach-pod` in 38 s with no cold boot (~$0.07). **T2-02's own `upscale` cell has still not been re-run** — the fix is provider- and command-agnostic, so that is inference, not demonstration |
 | U16 | OPEN | the ephemeral launch row is only a PARTIAL handle on RunPod (good name, unusable id). Spun out of U8 |
-| U17 | OPEN | `destroy --id` cannot reap a Modal app killed mid-deploy; only `modal app stop <app_id>` can. Found by U7's live proof |
+| U17 | FIXED, OFFLINE-PROVEN | `8069f376` (Task 4, 2026-09-08) — `ModalProvider._find_app_id` looks the app up in the injected listing, matching on `description`, and `destroy_instance` stops by `app_id` when found, falling back to the name (today's behaviour) otherwise; a stopper failure is caught and re-raised as `TeardownError` naming the `app_id` it resolved instead of an unhandled `subprocess.CalledProcessError`, and `default_stop`'s bare `check=True` no longer lets that traceback escape raw. `_find_app_id` also rejects a non-list/non-dict `modal app list --json` shape with a `TeardownError` naming what it expected, rather than an untyped `AttributeError`/`TypeError`. Proof is offline only (`pixi run pytest tests/providers/test_modal_destroy_by_app_id.py -v` → 4/4; `pixi run pytest tests/providers -q` → 593 passed, 2 skipped, 6 xfailed) — tests inject the listing and the stopper, no live call. A live re-proof means racing the same ~1 s mid-deploy kill window U7 verified, and is a separate follow-up, NOT owed to **Task 6** |
 | U18 | FIXED, OFFLINE ONLY | `71582382` + `abe0c21e` (Task 3, 2026-09-08; the second is a review-round-2 fix) — `_cmd_reap`'s short-circuit now gates on the union: `if not ledger.entries():` alone no longer returns early; it also checks `EphemeralIndex(store=ctx.store()).rows()`, **filtered to `--id` when set**, and only short-circuits when both are empty, wording the message for the id it searched for (`--id` case) or "ledger and ephemeral index both empty" (no `--id`). Round-1 review caught that the index check was unscoped by `--id`, so one unrelated ephemeral row could defeat the short-circuit for an id the operator never named — fixed in `abe0c21e`. Proof is offline only (`pixi run pytest tests/cli/test_cmd_reap.py -v` → 22/22; `pixi run pytest tests/cli -q` → 466/466), including a test that writes only an `EphemeralIndex` row and asserts the orphan's id + `LIVE` verdict actually reach the human-format table with `sweep()` unmocked, a test proving `--apply --include-orphans` actually destroys an aged idle index-only row (the act path, not just classification), and a test proving an unrelated index row cannot defeat a scoped `--id` no-op. `sweep()`'s own ephemeral union still does not honour `--id` scoping once it runs — filed separately as **U26**. Live proof (an ephemeral orphan found by one-shot `reap` under a genuinely empty ledger, against a real provider) is owed to **Task 6** |
 | U19 | OPEN | the in-pod capability vocabulary has no term for interpolation. Not a duplicate boot today — the U14 carve-out prevents one — but the `/health` refinement is absent on the interpolate path |
 | U20 | FIXED | `e582bd0f` — the truncated sweeper thresholds dict. Filed retroactively 2026-09-07: it was WIDER than the ephemeral defect it was found under |
@@ -1419,6 +1419,39 @@ per-item entries below.
   fall back to the name, and replace the bare `check=True` with a handled error that prints the
   app id it found.
   **Discovered by:** Task 5 live proof of U7, 2026-09-07.
+  **FIXED, OFFLINE-PROVEN — `8069f376` (Task 4, 2026-09-08).** Step 1 verification confirmed the
+  filed claim exactly as stated, unchanged in either file since it was written: `destroy_instance`
+  (`src/kinoforge/providers/modal/__init__.py:450`, pre-fix) built `app_name = rec["name"] if rec
+  else f"kinoforge-{instance_id}"` and handed it straight to `self._stopper(app_name)`;
+  `default_stop` (`src/kinoforge/providers/modal/_app.py:195`, pre-fix) shelled
+  `subprocess.run(["modal", "app", "stop", app_name, "--yes"], check=True, ...)` with no
+  try/except around it. No retraction needed. Fix shape matches what was filed: a new
+  `ModalProvider._find_app_id` scans the injected listing, matches on `description` (the same
+  join key `_rec_name` already reads), and returns the record's `app_id`; `destroy_instance` stops
+  by that id when found, falling back to the plain name (today's behaviour, unit-tested to be
+  unchanged for a normally-deployed app) when no record matches or the match carries no id. A
+  stopper failure — from either the injected test double or the real `default_stop` — is caught
+  and re-raised as `TeardownError` naming the `app_id` (or name) `destroy_instance` resolved,
+  rather than letting a `subprocess.CalledProcessError` escape raw. `default_stop` itself no
+  longer has a bare `check=True`: a non-zero exit now raises `RuntimeError` naming the identifier
+  and exit code, so even a hypothetical direct caller (not just `destroy_instance`) gets a
+  diagnosable error. `_find_app_id` is defensive against an unexpected `modal app list --json`
+  shape: a non-list return, or a non-dict record inside the list, raises `TeardownError` naming
+  what shape was expected and what was actually found instead of letting `_rec_name`'s
+  `rec.get(...)` raise a bare `AttributeError`. The real JSON shape (`app_id`, `description`,
+  `state`, `tasks`, `created_at`, `stopped_at` — snake_cased from Modal's own `"App ID"` /
+  `"Description"` / ... column headers) was established by reading the installed `modal` package's
+  own CLI source in the `live-modal` pixi env
+  (`.pixi/envs/live-modal/lib/python3.13/site-packages/modal/cli/app.py` — the `list_` command's
+  `columns`/`rows` — and `.../modal/cli/utils.py`'s `_col_name_to_json_key`, `"App ID" ->
+  "app_id"`), not by invoking the `modal` binary. **Proof is offline only**:
+  `pixi run pytest tests/providers/test_modal_destroy_by_app_id.py -v` → 4/4 passed;
+  `pixi run pytest tests/providers -q` → 593 passed, 2 skipped, 6 xfailed. All four new tests
+  inject `lister=`/`stopper=`; none shells out, none touches credentials, none books a GPU. **A
+  live re-proof means SIGKILLing `kinoforge provision` inside the same ~1 s window U7's live proof
+  used, then destroying the resulting mid-deploy app by id** — that is a separate follow-up this
+  entry does not claim, and it is NOT owed to **Task 6** (which re-proves U11/U14/U15/U18/U23, not
+  U17).
 
 - **U18 — `kinoforge reap` returns "ledger empty (nothing to do)" while an ephemeral orphan is
   billing; the one-shot reap never reaches `sweep()`.**
