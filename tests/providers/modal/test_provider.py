@@ -128,6 +128,38 @@ def test_destroy_returns_early_when_app_gone():
     provider.destroy_instance("r")  # returns immediately, no sleep
 
 
+def test_destroy_keeps_polling_when_app_is_stuck_initializing():
+    """The poll must not report success on iteration 1 for a stuck deploy.
+
+    Bug caught (whole-branch review Finding 2): `_rec_active` only counts
+    `{"deployed", "running"}` as active. For a mid-deploy app stuck at
+    `"initializing..."` — the exact state U17 exists to reap — the old
+    predicate (`app_name not in active`) is trivially true on iteration 1
+    regardless of whether the stop took effect, because "initializing..."
+    was never in `active` to begin with. `destroy_instance`'s docstring
+    promises "poll until gone (bounded)"; for this state that promise was
+    a no-op, silently swallowing a false-positive `modal app stop` (CLI
+    exits 0, resource does not terminate).
+
+    This fixture never transitions the app away from "initializing..." —
+    it neither disappears nor reaches a `_STOPPED_APP_STATES` state — so
+    the only correct behaviour is the same bounded exhaustion the sibling
+    `test_destroy_is_bounded_when_app_never_disappears` asserts for a
+    `"deployed"` app that never disappears: all 40 sleeps consumed.
+    """
+    stop_calls = []
+    sleeps = []
+    provider = ModalProvider(
+        lister=lambda: [{"name": "kinoforge-r", "state": "initializing..."}],
+        stopper=lambda name: stop_calls.append(name),
+        sleep=lambda s: sleeps.append(s),
+    )
+    provider._deployments["r"] = {"url": "u", "name": "kinoforge-r"}
+    provider.destroy_instance("r")
+    assert stop_calls == ["kinoforge-r"]
+    assert len(sleeps) == 40  # _DESTROY_POLL_MAX_ITERS — no false-positive success
+
+
 def test_create_instance_uses_opaque_name_under_ephemeral():
     """Bug caught: ephemeral Modal apps named kinoforge-{run_id} leak the
     subcommand + local timestamp (e.g. upscale-20260712-200409) into

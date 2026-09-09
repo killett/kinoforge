@@ -61,6 +61,19 @@ def test_destroy_stops_a_mid_deploy_app_by_its_app_id() -> None:
     THAT to the stopper — the exact defect this task fixes. A name-only
     implementation would call the stopper with "kinoforge-run1", not the
     app_id, so `stop_calls == [_APP_ID]` fails against it.
+
+    `lister` is stateful: before the stop call it reports the app stuck at
+    "initializing..." (the app_id-resolution scenario this test targets);
+    after the app_id-directed stop actually lands, the app disappears from
+    the listing (the real-world U17 outcome — PROGRESS.md's live proof was
+    `modal app stop ap-... --yes` -> rc 0). Post whole-branch-review Finding
+    2, the confirmation poll no longer treats "initializing..." itself as
+    proof of success (see test_provider.py::
+    test_destroy_keeps_polling_when_app_is_stuck_initializing) — a lister
+    that never changed state would now poll all 40 bounded iterations,
+    which is correct but orthogonal to what THIS test verifies (the stop
+    target). Simulating the stop actually taking effect keeps that
+    assertion isolated to app_id resolution.
     """
     records = [
         {
@@ -72,15 +85,18 @@ def test_destroy_stops_a_mid_deploy_app_by_its_app_id() -> None:
         }
     ]
     stop_calls: list[str] = []
+    sleeps: list[float] = []
     provider = ModalProvider(
-        lister=lambda: records,
+        lister=lambda: [] if stop_calls else records,
         stopper=lambda name: stop_calls.append(name),
-        sleep=_never_sleep("app is not 'deployed'/'running'"),
+        sleep=sleeps.append,
     )
     # No `_deployments` entry: this is the cross-process recovery case —
     # the destroying process never ran the create_instance that would have
     # cached the name.
     provider.destroy_instance("run1")
+
+    assert sleeps == []  # gone on the very first poll after the stop landed
 
     assert stop_calls == [_APP_ID]
 
@@ -215,6 +231,13 @@ def test_destroy_stops_by_app_id_despite_an_earlier_malformed_record() -> None:
     attempt at all — worse than the pre-U17 by-name path, and the app keeps
     billing. Against fail-fast this reports `TeardownError` instead of
     `stop_calls == [_APP_ID]`.
+
+    `lister` is stateful, same rationale as
+    `test_destroy_stops_a_mid_deploy_app_by_its_app_id` above: the app
+    disappears once the app_id-directed stop actually lands, so the
+    (correct, post whole-branch-review Finding 2) confirmation poll
+    resolves on the first post-stop check rather than exhausting all 40
+    bounded iterations for an unrelated reason.
     """
     records: list[Any] = [
         "stray log line on stdout",  # malformed, and FIRST
@@ -226,15 +249,17 @@ def test_destroy_stops_by_app_id_despite_an_earlier_malformed_record() -> None:
         },
     ]
     stop_calls: list[str] = []
+    sleeps: list[float] = []
     provider = ModalProvider(
-        lister=lambda: records,
+        lister=lambda: [] if stop_calls else records,
         stopper=lambda name: stop_calls.append(name),
-        sleep=_never_sleep("app is not 'deployed'/'running'"),
+        sleep=sleeps.append,
     )
 
     provider.destroy_instance("run5")
 
     assert stop_calls == [_APP_ID]
+    assert sleeps == []
 
 
 def test_destroy_falls_back_to_name_when_the_listing_cannot_be_read() -> None:
@@ -348,7 +373,12 @@ def test_default_stop_wraps_a_nonzero_exit_with_the_identifier_and_code(
     assert not isinstance(excinfo.value, subprocess.CalledProcessError)
     message = str(excinfo.value)
     assert _APP_ID in message
-    assert "3" in message
+    # Bug caught (whole-branch review Finding 4): "3" in message is vacuous
+    # — _APP_ID ("ap-UieraQfT1GhxX3v4etyrEA") already contains a "3"
+    # independent of the exit code, so a `default_stop` that dropped the
+    # exit code from the message entirely would still pass this assertion.
+    # Pin the actual exit-code substring instead.
+    assert "exit 3" in message
 
 
 def test_default_stop_invokes_the_cli_with_the_identifier_verbatim(

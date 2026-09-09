@@ -564,12 +564,24 @@ class ModalProvider(ComputeProvider):
                     # Nothing left to confirm with; a listing failure after a
                     # successful stop must not become a teardown traceback.
                     break
-                active = {
-                    self._rec_name(r)
+                # Finding 2 (whole-branch review): "gone" must mean absent
+                # from the listing entirely, or present only in a
+                # confirmed-stopped state — NOT merely "not active". The
+                # old check tested membership in `active`
+                # ({"deployed", "running"}), so ANY other state — including
+                # "initializing..." for a mid-deploy app stuck exactly in
+                # the state U17 exists to reap — was trivially "not
+                # active" and broke the poll on iteration 1 without the
+                # stop having taken any visible effect. A state that is
+                # present but neither active nor confirmed-stopped must
+                # keep the poll going.
+                states_by_name = {
+                    self._rec_name(r): str(r.get("state", ""))
                     for r in listing
-                    if isinstance(r, dict) and self._rec_active(r)
+                    if isinstance(r, dict)
                 }
-                if app_name not in active:  # absent OR transitioned to stopped
+                state = states_by_name.get(app_name)
+                if state is None or state in _STOPPED_APP_STATES:
                     break
                 self._sleep(3.0)
         finally:
