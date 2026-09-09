@@ -264,14 +264,26 @@ def test_batch_row_survives_a_create_that_raises(
 
 
 def test_ephemeral_batch_no_reuse_releases_row_on_confirmed_destroy(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Bug caught: an implementation that reserves the row but never
     settles it would leave ephemeral-index.json still naming a pod
     ``--no-reuse`` already confirmed destroyed — a phantom entry the
-    classifier can never clear because nothing living backs it."""
+    classifier can never clear because nothing living backs it. The
+    destroy-call spy makes "released" distinguishable from "never
+    reserved" — without it this test alone cannot tell a correct release
+    apart from a settle that no-ops for the wrong reason."""
     cfg_path, state_dir = _write_cfg(tmp_path)
     manifest_path = _write_manifest(tmp_path)
+
+    destroyed_ids: list[str] = []
+    original_destroy = LocalProvider.destroy_instance
+
+    def spying_destroy(self: LocalProvider, instance_id: str) -> None:
+        destroyed_ids.append(instance_id)
+        original_destroy(self, instance_id)
+
+    monkeypatch.setattr(LocalProvider, "destroy_instance", spying_destroy)
 
     ctx = _ctx_for(cfg_path, state_dir)
     with EphemeralSession(enabled=True):
@@ -283,11 +295,157 @@ def test_ephemeral_batch_no_reuse_releases_row_on_confirmed_destroy(
         )
 
     assert rc == 0
+    assert len(destroyed_ids) == 1, (
+        "expected exactly one destroy_instance call for the batch's pod; "
+        f"got {destroyed_ids!r}"
+    )
     rows = _index_rows(cfg_path, state_dir)
     assert rows == [], (
         f"expected the launch row released after a confirmed --no-reuse "
         f"destroy; found {len(rows)} row(s) still naming a pod that is gone"
     )
+
+
+# ---------------------------------------------------------------------------
+# Behaviour 4b — the survive path upgrades the row with the real id and
+# endpoints, the same way generate's success path does.
+# ---------------------------------------------------------------------------
+
+
+def test_ephemeral_batch_upgrades_row_with_real_endpoints_when_pod_survives(
+    tmp_path: Path,
+) -> None:
+    """Bug caught: an implementation that never upgrades the survive-path
+    row leaves it keyed by the reserved launch name with endpoints={} for
+    as long as the warm pod lives. The reaper treats an endpoint-less row
+    as reserved-but-unconfirmed and GCs it past
+    _EPHEMERAL_GC_404_GRACE_S (core/reaper.py) — self-destructing the only
+    durable handle on a pod that is still billing, mid-batch and after."""
+    cfg_path, state_dir = _write_cfg(tmp_path)
+    manifest_path = _write_manifest(tmp_path)
+
+    ctx = _ctx_for(cfg_path, state_dir)
+    with EphemeralSession(enabled=True) as session:
+        rc = _cmd_batch(
+            _make_args(manifest_path=manifest_path, batch_id="b-survive"), ctx
+        )
+        launch_id = session.resource_name("b-survive", "local")
+
+    assert rc == 0
+    rows = _index_rows(cfg_path, state_dir)
+    assert len(rows) == 1, (
+        f"expected exactly one (upgraded) row after a surviving batch; "
+        f"found {len(rows)}"
+    )
+    row = rows[0]
+    assert row.id != launch_id, (
+        "the settled row must be keyed by the REAL local- instance id "
+        "create_instance produced, not the reserved launch-time name — a "
+        "row still keyed by the launch id was never upgraded"
+    )
+    assert row.id.startswith("local-")
+    assert row.provider == "local"
+
+
+# ---------------------------------------------------------------------------
+# Behaviour 4c — an unconfirmed --no-reuse destroy keeps AND upgrades the
+# row, the only branch exercising the ledger-diff reconstruction the
+# release-on-confirmed test above cannot reach.
+# ---------------------------------------------------------------------------
+
+
+def test_ephemeral_batch_no_reuse_keeps_and_upgrades_row_on_unconfirmed_destroy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bug caught: an implementation whose ledger-diff silently matches
+    nothing (or matches the orchestrator's own launching-phase provisional
+    row instead of the real one) passes the confirmed-destroy test just as
+    well as a correct one — releasing an unconfirmed-teardown pod's only
+    durable trace. This is the only test that drives the reconstruction
+    code with a destroy that does NOT confirm."""
+    cfg_path, state_dir = _write_cfg(tmp_path)
+    manifest_path = _write_manifest(tmp_path)
+
+    def failing_destroy(self: LocalProvider, instance_id: str) -> None:
+        raise RuntimeError("destroy failed for test")
+
+    monkeypatch.setattr(LocalProvider, "destroy_instance", failing_destroy)
+
+    ctx = _ctx_for(cfg_path, state_dir)
+    with EphemeralSession(enabled=True) as session:
+        rc = _cmd_batch(
+            _make_args(
+                manifest_path=manifest_path, batch_id="b-unconfirmed", no_reuse=True
+            ),
+            ctx,
+        )
+        launch_id = session.resource_name("b-unconfirmed", "local")
+
+    assert rc == 0
+    rows = _index_rows(cfg_path, state_dir)
+    assert len(rows) == 1, (
+        f"expected exactly one surviving row after an unconfirmed destroy; "
+        f"found {len(rows)}"
+    )
+    row = rows[0]
+    assert row.id != launch_id, (
+        "the surviving row must be keyed by the REAL instance id "
+        "LocalProvider minted, not the reserved launch-time name — a row "
+        "still keyed by the launch id names no resource create_instance "
+        "actually produced"
+    )
+    assert row.id.startswith("local-")
+    assert row.endpoints == {}, "LocalProvider instances carry no endpoints"
+
+
+# ---------------------------------------------------------------------------
+# Behaviour 4d — a refused provisional-row collapse must not fool the
+# ledger diff into recovering the orchestrator's own pre-launch row.
+# ---------------------------------------------------------------------------
+
+
+def test_ephemeral_batch_settle_recovers_the_real_row_past_an_unremoved_provisional_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bug caught: _collapse_provisional_row is explicitly best-effort and
+    can be refused, leaving the orchestrator's OWN pre-launch provisional
+    row (keyed by batch_id, phase-tagged "launching") sitting in the
+    ledger BEFORE the real row (append order). A diff that takes the
+    first new entry — rather than skipping launching-phase rows — recovers
+    a row naming no real resource instead of the pod create_instance
+    actually produced."""
+    cfg_path, state_dir = _write_cfg(tmp_path)
+    manifest_path = _write_manifest(tmp_path)
+
+    # Simulate a refused collapse: the real row (recorded on create) lands
+    # in the ledger as normal, but the provisional "launching" row is never
+    # removed, exactly as orchestrator.py documents can happen.
+    monkeypatch.setattr(
+        "kinoforge.core.orchestrator._collapse_provisional_row",
+        lambda *a, **kw: None,
+    )
+
+    ctx = _ctx_for(cfg_path, state_dir)
+    with EphemeralSession(enabled=True) as session:
+        rc = _cmd_batch(
+            _make_args(manifest_path=manifest_path, batch_id="b-provisional"), ctx
+        )
+        launch_id = session.resource_name("b-provisional", "local")
+
+    assert rc == 0
+    rows = _index_rows(cfg_path, state_dir)
+    assert len(rows) == 1, (
+        f"expected exactly one row after settling past a surviving "
+        f"provisional row; found {len(rows)}"
+    )
+    row = rows[0]
+    assert row.id not in ("b-provisional", launch_id), (
+        "the settled row must be keyed by the REAL local- instance id, not "
+        "the orchestrator's launching-phase batch_id row nor the reserved "
+        "launch name — a diff that takes the first new entry picks the "
+        "provisional row instead"
+    )
+    assert row.id.startswith("local-")
 
 
 # ---------------------------------------------------------------------------

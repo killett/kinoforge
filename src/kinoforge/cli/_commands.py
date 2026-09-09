@@ -38,7 +38,11 @@ from kinoforge.core.interfaces import (
     Instance,
     WarmAttachKey,
 )
-from kinoforge.core.lifecycle import destroy_confirmed
+from kinoforge.core.lifecycle import (
+    LAUNCH_PHASE_LAUNCHING,
+    LAUNCH_PHASE_TAG,
+    destroy_confirmed,
+)
 from kinoforge.core.lora import LoraEntry, resolve_active_lora_stack
 from kinoforge.core.orchestrator import generate
 from kinoforge.core.reaper_actor import sweep
@@ -1390,7 +1394,7 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
     # Snapshot BEFORE batch_generate so _settle_batch_launch_row can tell
     # this launch's ledger entry apart from any pre-existing warm pod
     # sharing this state dir. Only needed when something was reserved.
-    _ledger_ids_before: frozenset[str] = (
+    ledger_ids_before: frozenset[str] = (
         frozenset(str(e.get("id") or "") for e in ctx.ledger().entries())
         if launch is not None
         else frozenset()
@@ -1430,7 +1434,7 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 
-    _settle_batch_launch_row(ctx, cfg, launch, single, _ledger_ids_before)
+    _settle_batch_launch_row(ctx, cfg, launch, single, ledger_ids_before)
 
     formatter.render_summary(result)
     n_ok = sum(1 for o in result.outcomes if o.status == "ok")
@@ -2182,6 +2186,68 @@ def _settle_unused_launch_row(
     _ephemeral_launch_row_release(ctx, launch.id)
 
 
+def _recover_batch_created_instance(
+    ctx: SessionContext, ledger_ids_before: frozenset[str]
+) -> Instance | None:
+    """Reconstruct the ``Instance`` a batch's cold create wrote to the ledger.
+
+    ``batch_generate`` shares ONE pod across every manifest entry and hands
+    the caller no ``Instance`` back — ``BatchResult`` carries only per-entry
+    outcomes — unlike ``_cmd_generate`` / ``_cmd_upscale`` /
+    ``_cmd_interpolate``, which get the created instance straight back from
+    the orchestrator. The pod's real row is still written somewhere, though:
+    ``deploy_session`` unconditionally records every cold-created instance to
+    a ``Ledger(store=store)`` (default ``run_id="_lifecycle"``) — the exact
+    namespace ``ctx.ledger()`` reads. Under STRICT_POLICY both go through the
+    SAME session-scoped ``in_memory_ledger`` mirror (``core/lifecycle.py``'s
+    ``_read_entries`` / ``_write_entries`` gate), so the row this launch's
+    create wrote is visible here with no additional plumbing.
+
+    Entries carrying ``LAUNCH_PHASE_TAG=LAUNCH_PHASE_LAUNCHING`` are skipped:
+    the orchestrator writes its OWN pre-launch provisional row (compute-seam
+    S5/F12), keyed by the client-side run id, before ``create_instance`` —
+    and ``_collapse_provisional_row`` that is supposed to remove it once the
+    real row lands is explicitly best-effort and can be refused. A refused
+    collapse leaves that provisional row sitting in the ledger BEFORE the
+    real one (append order), so a diff that took the first new entry without
+    this check would pick a row naming no real resource.
+
+    Args:
+        ctx: The current SessionContext.
+        ledger_ids_before: Ledger entry ids present just before
+            ``batch_generate`` was called, so this launch's entry can be told
+            apart from any pre-existing warm pod sharing the state dir.
+
+    Returns:
+        The reconstructed ``Instance``, or ``None`` when no new, non-launching
+        entry is found. Only ``.id``, ``.provider`` and ``.endpoints`` are
+        load-bearing on the object returned — downstream callers key the
+        ephemeral-index row off ``.id`` and copy ``.endpoints`` /
+        ``.provider`` onto it; ``.status`` is fabricated (``deploy_session``
+        never re-polls after create, and ``BatchResult`` does not carry it
+        either) and must not be trusted.
+    """
+    for entry in ctx.ledger().entries():
+        entry_id = str(entry.get("id") or "")
+        if not entry_id or entry_id in ledger_ids_before:
+            continue
+        tags = entry.get("tags")
+        if isinstance(tags, dict) and tags.get(LAUNCH_PHASE_TAG) == (
+            LAUNCH_PHASE_LAUNCHING
+        ):
+            continue
+        return Instance(
+            id=entry_id,
+            provider=str(entry.get("provider", "")),
+            status="ready",  # fabricated — see docstring; do not trust
+            created_at=float(entry.get("created_at") or 0.0),
+            endpoints=dict(entry.get("endpoints", {})),
+            tags=dict(entry.get("tags", {})),
+            cost_rate_usd_per_hr=float(entry.get("cost_rate_usd_per_hr") or 0.0),
+        )
+    return None
+
+
 def _settle_batch_launch_row(
     ctx: SessionContext,
     cfg: Config,
@@ -2191,30 +2257,17 @@ def _settle_batch_launch_row(
 ) -> None:
     """Resolve ``_cmd_batch``'s pre-create launch row once the batch returns.
 
-    U23. ``batch_generate`` shares ONE pod across every manifest entry and
-    hands the caller no ``Instance`` back — ``BatchResult`` carries only
-    per-entry outcomes — unlike ``_cmd_generate`` / ``_cmd_upscale`` /
-    ``_cmd_interpolate``, which get the created instance straight back from
-    the orchestrator. The pod's real row is still written somewhere,
-    though: ``deploy_session`` unconditionally records every cold-created
-    instance to a ``Ledger(store=store)`` (default ``run_id="_lifecycle"``)
-    — the exact namespace ``ctx.ledger()`` reads. Under STRICT_POLICY both
-    go through the SAME session-scoped ``in_memory_ledger`` mirror
-    (``core/lifecycle.py``'s ``_read_entries`` / ``_write_entries`` gate), so
-    the row this launch's create wrote is visible here with no additional
-    plumbing.
+    U23. When the pod is meant to survive (ordinary warm-reuse batch, no
+    ``--no-reuse``), the reserved launch row is upgraded to the real row —
+    real id, real endpoints — exactly the way ``_stamp_cold_created_instance``
+    upgrades ``_cmd_generate``'s: leaving the launch-time row in place with
+    ``endpoints={}`` would hand the surviving pod's only durable trace to the
+    reaper's endpoint-less "reserved but unconfirmed" classification, which
+    ages out and GCs it (``core/reaper.py``'s ``_EPHEMERAL_GC_404_GRACE_S``)
+    long before a real batch finishes.
 
-    When the pod is meant to survive (ordinary warm-reuse batch, no
-    ``--no-reuse``), the reserved launch row already durably names it —
-    :func:`_ephemeral_launch_row_reserve` keyed it by the same provider-side
-    name ``create_instance`` will use — so there is nothing to settle.
-
-    When ``--no-reuse`` tore the pod down, comparing the ledger's contents
-    against *ledger_ids_before* finds the entry this launch's create added
-    (if it is still there): ``deploy_session``'s ``__exit__`` only calls
-    ``Ledger.forget`` AFTER a successful ``destroy_confirmed``, so a
-    surviving entry means the teardown did NOT confirm. The real instance is
-    reconstructed from that entry and handed off to
+    When ``--no-reuse`` tore the pod down, the recovered instance (or
+    ``None``, when the ledger shows no surviving entry) is handed to
     :func:`_settle_unused_launch_row`, which applies the exact same
     release / upgrade / warn contract ``generate`` uses. Its own
     ``session.destroy_was_confirmed`` check reads the SAME real instance id
@@ -2231,22 +2284,19 @@ def _settle_batch_launch_row(
         ledger_ids_before: Ledger entry ids present just before
             ``batch_generate`` was called.
     """
-    if launch is None or not single:
+    if launch is None:
         return
-    returned_instance: Instance | None = None
-    for entry in ctx.ledger().entries():
-        entry_id = str(entry.get("id") or "")
-        if entry_id and entry_id not in ledger_ids_before:
-            returned_instance = Instance(
-                id=entry_id,
-                provider=str(entry.get("provider", "")),
-                status="ready",
-                created_at=float(entry.get("created_at") or 0.0),
-                endpoints=dict(entry.get("endpoints", {})),
-                tags=dict(entry.get("tags", {})),
-                cost_rate_usd_per_hr=float(entry.get("cost_rate_usd_per_hr") or 0.0),
+    returned_instance = _recover_batch_created_instance(ctx, ledger_ids_before)
+    if not single:
+        if returned_instance is not None:
+            _ephemeral_index_add(
+                ctx,
+                cfg,
+                returned_instance,
+                created_at_local=launch.created_at_local,
+                supersedes=launch.id,
             )
-            break
+        return
     _settle_unused_launch_row(ctx, cfg, launch, returned_instance)
 
 
