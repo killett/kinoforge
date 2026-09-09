@@ -466,7 +466,7 @@ U1-U25. **Ten are fixed** (U4, U7, U8, U9, U11, U12, U14, U15, U20, U23), **two 
 | U8 | FIXED ON MODAL, LIVE-PROVEN | `9d34d008` + `8403a71c`; index row readable 2.5 s into a live run, pod still reapable after SIGKILL (~$0.06). RunPod half stays PARTIAL under **U16** and is NOT upgraded by the Modal proof |
 | U9 | FIXED, LIVE-PROVEN | `e582bd0f`; the daemon reaped an idle ephemeral pod at `age=119s idle on probe gpu_util=0.0% cpu=0.0%` (~$0.03). Two boundaries, both filed rather than hidden: a mid-boot row has `endpoints: {}` so the probe returns nulls and the pod stays LIVE (U3's blast radius), and the predicate acts on ONE probe sample (**U22**) |
 | U10 | FIXED ON THE GRACEFUL PATH | `7d535503`, hardened by `9ae52274`. A daemon that is SIGKILLed still strands its row, and `sweeper status` / `metrics` still ignore the `--interval-s` override. Both recorded in the entry; neither re-opened |
-| U11 | FIXED, OFFLINE ONLY | `0dfe90a9` + `7ee50a04` — `_cmd_grid` now reads `args.ephemeral` and forwards it through `run_grid`/`_run_group`/`_run_one_cell` into every generate-mode cell's `--ephemeral` argv; `run_grid` REFUSES (`ValueError`, fail-closed, before any group dispatches) rather than silently dropping the flag when a `lora_swap:` group is present (review round 1). Proof is offline (`pixi run pytest tests/core tests/cli -q` green at 2242); live proof (provider app list shows opaque `eph-` names) is owed to **Task 6**. Two follow-ups filed rather than folded in: **U24** (lora-swap cells still cannot BE ephemeral — they are refused, not supported) and **U25** (an ephemeral grid still writes local artifacts under the strict policy) |
+| U11 | FIXED, OFFLINE ONLY | `0dfe90a9` + `7ee50a04` + `fdc4f388` — `_cmd_grid` now reads `args.ephemeral` and forwards it through `run_grid`/`_run_group`/`_run_one_cell` into every generate-mode cell's `--ephemeral` argv; `run_grid` REFUSES (`ValueError`, before any group dispatches) rather than silently dropping the flag when a `lora_swap:` group is present (review round 1), and `_cmd_grid` catches that `ValueError` and returns clean exit 2 instead of an unhandled traceback (review round 2). Proof is offline (`pixi run pytest tests/core tests/cli -q` green at 2243); live proof (provider app list shows opaque `eph-` names) is owed to **Task 6**. Two follow-ups filed rather than folded in: **U24** (lora-swap cells still cannot BE ephemeral — they are refused, not supported) and **U25** (an ephemeral grid still writes local artifacts under the strict policy) |
 | U12 | CLOSED | `82ad084b` — `av<18`. Live-proven on Modal for $0.64. RunPod and SkyPilot ride the same one-line pin but were never re-run: inferred safe, not demonstrated safe |
 | U13 | OPEN | the CLI hangs after `UpscaleFailed`. Holder unidentified; the original suspected site was retracted. A $0 offline first step is written into the entry |
 | U14 | FIXED, LIVE-PROVEN | `49394b1d`, with a review-caught regression corrected in `b00a53d1`. A second upscale attached to the warm A100 with no `✓ App deployed` ($0.12). The vocabulary gap the correction sidesteps is **U19** |
@@ -480,7 +480,7 @@ U1-U25. **Ten are fixed** (U4, U7, U8, U9, U11, U12, U14, U15, U20, U23), **two 
 | U22 | OPEN | the ephemeral orphan reap acts on a single probe sample. Filed 2026-09-07 |
 | U23 | FIXED, OFFLINE-PROVEN | `f787182d` + `03a4b862` (Task 1, 2026-09-08) — `_cmd_batch` reserves the ephemeral launch row before `batch_generate`, settled by `_settle_batch_launch_row` afterwards; the survive path is upgraded to the real id + endpoints and the ledger diff skips the orchestrator's own provisional row (review round 1). Live proof owed to Task 6 |
 | U24 | OPEN | `grid --ephemeral` cannot cover `lora_swap:` cells — they are refused (`ValueError`), not made ephemeral. Filed 2026-09-08, Task 2 review round 1 |
-| U25 | OPEN | an ephemeral `grid` still writes local artifacts (`.cost.json`, per-cell stderr, `output/_grid_<id>/`) under the strict policy, contradicting the flag's own help text. Filed 2026-09-08, Task 2 review round 1 |
+| U25 | OPEN | an ephemeral `grid` still writes local artifacts (per-cell stderr, `output/_grid_<id>/`) under the strict policy, contradicting the flag's own help text. Filed 2026-09-08, Task 2 review round 1; reproducer corrected round 2 |
 
 **Live proof cost for the whole money-leak campaign: $0.82** — $0.16 for the four fixes' own live
 cells (Task 5, Modal A10), $0.12 for U14's re-proof and $0.54 to reproduce and diagnose it
@@ -956,17 +956,26 @@ per-item entries below.
   published, and nothing in the output says so: the ledger is empty afterwards, but that is the
   per-cell `no_reuse=True` teardown (`executor.py:852`), which a plain non-ephemeral grid produces
   identically. A user who asked for ephemeral has no way to tell they did not get it.
-  **FIXED, OFFLINE ONLY — `0dfe90a9` (Task 2, 2026-09-08).** Step 1 verification confirmed the
-  filed claim exactly as stated: `_cmd_grid` `del ctx`'d and never touched `args.ephemeral`, and
+  **FIXED, OFFLINE ONLY — `0dfe90a9` + `7ee50a04` + `fdc4f388` (Task 2, 2026-09-08; the second and
+  third commits are review-round fixes).** Step 1 verification confirmed the filed claim exactly
+  as stated: `_cmd_grid` `del ctx`'d and never touched `args.ephemeral`, and
   `rg ephemeral src/kinoforge/core/grid/` returned zero hits. `_build_generate_cmd` gained an
   `ephemeral: bool = False` kwarg that appends `--ephemeral` to a cell's argv when set; `run_grid`
   grew a matching parameter threaded through `_run_group` → `_run_one_cell` into every
   generate-mode cell's subprocess; `_cmd_grid` now reads `args.ephemeral` and forwards it.
-  Lora-swap cells (`_build_swap_generate_cmd`, which does not pass this kwarg) are deliberately
-  OUT OF SCOPE — the task's file list did not cover them, and correctly ephemeral-izing a
-  multi-cell pod-persisting swap chain (which cell's `--ephemeral` should own the shared pod's
-  delete-on-completion?) is exactly the kind of question that would need executor restructuring
-  to answer safely, so it was left alone rather than guessed at.
+  **Round-1 review fix (`7ee50a04`):** lora-swap cells were initially left to fall through
+  `_build_generate_cmd`'s new `ephemeral=False` default with no signal to the operator — the
+  reviewer's Important finding was that this silence reproduces U11 exactly for those cells.
+  Controller ruling: REFUSE, not warn. `run_grid` now raises `ValueError` — before any group
+  dispatches, so no cell subprocess is ever spawned — when `ephemeral=True` and a `lora_swap:`
+  group is present, naming the offending cell indices. Restructuring `_run_swap_group` to actually
+  support per-cell ephemerality was explicitly NOT attempted (that would need to answer "which
+  cell in a shared-pod chain owns `delete_on_completion`", filed as **U24** rather than guessed
+  at). **Round-2 review fix (`fdc4f388`):** the round-1 refusal reached the operator as an
+  unhandled Python traceback and exit 1 (colliding with `_cmd_grid`'s own "spec error" exit code)
+  rather than the clean stderr message + exit 2 the controller's ruling cited
+  `_preflight_ephemeral` as precedent for; `_cmd_grid` now catches the `ValueError` and returns 2
+  with a clean message.
   **Naming question, answered:** opaque naming follows automatically from the strict policy in
   the child process — no further grid-side wiring was needed. Every `kinoforge` invocation
   (`cli/_main.py`'s `main()`) wraps its dispatch in `with EphemeralSession(enabled=args.ephemeral,
@@ -975,18 +984,22 @@ per-item entries below.
   (`pod_name_includes_alias=False`), and `EphemeralSession.resource_name()` mints the opaque
   `eph-<8hex>` token the provider names the pod with — the same mechanism `generate`/`upscale`/
   `interpolate`/`batch` already rely on.
-  **Name-collision analysis:** `resource_name()` memoises its opaque token per `run_id`, not per
-  session, which sounds like a shared-instance risk — but each grid cell already carries a unique
-  `run_id` (`f"{grid_id}__cell{cell.idx}"`, unchanged by this fix), AND each cell runs as its own
-  OS process with its own `EphemeralSession` instance (the class-level `_active` singleton is
-  process-scoped), so there is no dict to collide in even in principle. Verified in
-  `test_run_grid_ephemeral_true_reaches_every_cell_subprocess`, which asserts all cells' `--run-id`
-  values are distinct.
-  **Proof is OFFLINE ONLY.** 18 tests green (`pixi run pytest tests/core/test_grid_executor.py
-  tests/cli/test_cmd_grid.py -v`), full suite 2239 passed (`pixi run pytest tests/core tests/cli
+  **Name-collision analysis (corrected round 1):** distinctness comes from `resource_name()`
+  minting a fresh `secrets.token_hex(4)` inside each cell's own OS process (each cell is a
+  separate `kinoforge generate` subprocess with its own `EphemeralSession` instance, so no two
+  cells ever share a token-minting dict to begin with); the per-cell unique `run_id`
+  (`f"{grid_id}__cell{cell.idx}"`) only guarantees that IF a dict were ever shared, its
+  per-`run_id` memo entry still wouldn't collide — it is not itself the source of distinctness.
+  Verified in `test_run_grid_ephemeral_flag_reaches_every_cell_subprocess[True-True]`, which
+  asserts all cells' `--run-id` values are distinct.
+  **Proof is OFFLINE ONLY.** 22 tests green (`pixi run pytest tests/core/test_grid_executor.py
+  tests/cli/test_cmd_grid.py -v`), full suite 2243 passed (`pixi run pytest tests/core tests/cli
   -q`). No pod was booked, no subprocess was actually spawned — every test stubs
   `subprocess.run`. Live proof (the T1-29 reproducer re-run, confirming the provider's app list
-  shows an opaque `eph-` name with no run id or timestamp) is owed to **Task 6**.
+  shows an opaque `eph-` name with no run id or timestamp) is owed to **Task 6**. Two follow-ups
+  filed rather than folded in: **U24** (lora-swap cells still cannot BE ephemeral — they are
+  refused, not supported) and **U25** (an ephemeral grid still writes local artifacts under the
+  strict policy — genuinely separate from U11, which is provider-side identity only).
 
 - **U12 — CLOSED 2026-09-06 (pin applied in `82ad084b`, proven live on Modal) — FlashVSR upscale was dead on every provider: `av` 18 broke the mp4 encode.**
   **Symptom:** the pod boots, loads FlashVSR, reaches the GPU and computes (util probe caught
@@ -1666,8 +1679,10 @@ per-item entries below.
 - **U24 — `grid --ephemeral` cannot cover `lora_swap:` cells; they are refused, not made
   ephemeral.**
   **Symptom.** `grid --ephemeral` over a spec whose cells are (or include a group of)
-  `lora_swap:` cells now exits with an uncaught `ValueError` (fail-closed, per the controller
-  ruling on U11's review round 1) instead of running. The underlying gap: a `lora_swap:` group
+  `lora_swap:` cells now refuses with a clean `error: ...` stderr message and exit 2 (fail-closed,
+  per the controller ruling on U11's review round 1; the clean exit-2 presentation itself was a
+  review round-2 fix — round 1 shipped the refusal as an uncaught traceback) instead of running.
+  The underlying gap: a `lora_swap:` group
   cold-boots ONE pod for cell-1 and attaches cells 2..N to it via `--attach-pod` /
   `--emit-provision-record` (never `--no-reuse`, see `_run_swap_group`'s docstring), so there is
   no single cell whose `--ephemeral` could correctly own the shared pod's
@@ -1676,12 +1691,15 @@ per-item entries below.
   carry it races N processes over one `EphemeralSession.mark_destroy_unconfirmed` outcome.
   **Reproducer (offline, $0).**
   ```
-  pixi run pytest tests/core/test_grid_executor.py::test_run_grid_ephemeral_refuses_lora_swap_cells -v
+  pixi run pytest tests/core/test_grid_executor.py::test_run_grid_ephemeral_refuses_lora_swap_cells \
+    tests/cli/test_cmd_grid.py::test_cmd_grid_ephemeral_lora_swap_refusal_exits_2_no_traceback -v
   ```
-  asserts the `ValueError` names the offending cell indices and that zero cell subprocesses are
-  spawned. Live reproducer (not run): a `grid --ephemeral` spec with `lora_swap:` cells against a
-  real provider now exits before any create call, where before U11's fix it would have proceeded
-  and published every cell's run id/timestamp exactly like plain `generate` cells did.
+  the first asserts the `ValueError` names the offending cell indices and that zero cell
+  subprocesses are spawned; the second (added review round 2) asserts the CLI-level presentation —
+  exit code 2, an `error: ...` stderr line, no Python traceback text in stderr. Live reproducer
+  (not run): a `grid --ephemeral` spec with `lora_swap:` cells against a real provider now exits
+  cleanly before any create call, where before U11's fix it would have proceeded and published
+  every cell's run id/timestamp exactly like plain `generate` cells did.
   **Suspected site:** `_run_swap_group` / `_run_swap_cell_once` / `_build_swap_generate_cmd`
   (`src/kinoforge/core/grid/executor.py`) would need to decide which cell's `--ephemeral` governs
   the shared pod, and `EphemeralSession`'s single-process-scoped `resource_name` memo would need
@@ -1694,28 +1712,35 @@ per-item entries below.
   **Symptom.** `--ephemeral`'s own help text says "skip local writes"; `STRICT_POLICY`
   (`src/kinoforge/core/ephemeral.py`) gates `ledger_record`, `profile_cache_persist`,
   `batch_summary_write`, `cost_sidecar_write` and `heartbeat_ledger_touch` to `False` — but nothing
-  under `src/kinoforge/core/grid/` reads `EphemeralSession.policy` or calls
-  `EphemeralSession.current()` at all (confirmed by the same `rg ephemeral` sweep Task 2 ran for
-  U11: zero hits pre-fix, and the fix that landed only threads the CLI flag into cell argv, not
-  the local write gates). A `grid --ephemeral` run still writes, all named with the local
-  timestamp: `<composed>.cost.json` (`CostSidecarBuilder.write`, swap-mode grids only),
-  `cell_<idx>.stderr.txt` next to each failed cell's tmp cfg, and the whole
-  `output/_grid_<grid_id>/` tree (per-cell cfgs, mp4s, provision records) — none of which is
-  cleaned up or suppressed.
-  **Reproducer (offline, $0):**
+  under `src/kinoforge/core/grid/` ever calls `EphemeralSession.current()` or reads
+  `.policy` to consult those gates (Task 2's own review-round-1 and round-2 fixes added
+  `--ephemeral` pass-through and an `EphemeralSession`-*explaining* docstring to
+  `executor.py`, so the bare string `EphemeralSession` now appears there — but always in prose,
+  never in a call that would actually READ the policy). A `grid --ephemeral` run still writes, all
+  named with the local timestamp: `cell_<idx>.stderr.txt` next to each failed cell's tmp cfg, and
+  the whole `output/_grid_<grid_id>/` tree (per-cell cfgs, mp4s, provision records) — neither is
+  cleaned up or suppressed. (`<composed>.cost.json` is NOT in this list — `CostSidecarBuilder` is
+  only allocated when `swap_groups_present`, which the U24 refusal makes mutually exclusive with
+  `ephemeral=True`; an earlier draft of this entry listed it in error.)
+  **Reproducer (offline, $0) — probes for a CALL that would consult the policy, not the bare class
+  name (an earlier draft of this reproducer used the bare name and, run post-fix, printed `True`
+  because this round's own docstrings mention the class — a false "closed" signal for whoever
+  picks up U25 next):**
   ```
   pixi run python -c "
   import inspect
   from kinoforge.core.grid import executor
   src = inspect.getsource(executor)
-  print('EphemeralSession' in src)   # False
+  print('EphemeralSession.current(' in src)
   "
   ```
-  **Suspected site:** `run_grid` / `_run_group` / `_run_swap_group` (`src/kinoforge/core/grid/executor.py`)
-  would need to gate `tmp_dir`/`output/_grid_<id>/` retention, the `.cost.json` write and the
-  per-cell stderr dump behind `EphemeralSession.current()`'s policy — a genuinely separate gap
-  from U11, which is provider-side-identity-only. Not attempted as part of Task 2 (out of that
-  task's file list and goal).
+  **Actual output (run 2026-09-08, post review-round-2 fix):** `False` — confirms the gap is
+  still open; nothing in `executor.py` consults the policy via a live call, only in prose.
+  **Suspected site:** `run_grid` / `_run_group` (`src/kinoforge/core/grid/executor.py`) would need
+  to gate `tmp_dir`/`output/_grid_<id>/` retention and the per-cell stderr dump behind
+  `EphemeralSession.current()`'s policy — a genuinely separate gap from U11, which is
+  provider-side-identity-only. Not attempted as part of Task 2 (out of that task's file list and
+  goal).
   **Discovered by:** Task 2 code review, round 1, 2026-09-08 (reviewer verified no
   `EphemeralSession` consultation exists anywhere in `core/grid/`).
 
