@@ -26,8 +26,8 @@ demonstrated**.
 **`9ae52274`** closes **F6** (`reap`'s under-padded verdict column, T1-07) and hardens
 `sweeper stop` against dropping a live daemon's liveness row.
 
-**Update 2026-09-07 — the four money leaks are closed, for $0.82 of live proof.** A follow-up
-campaign (plan `docs/superpowers/plans/2026-09-06-modal-money-leaks.md`) fixed the four items on
+**Update 2026-09-07 — the five money leaks are closed, for $0.82 of live proof.** A follow-up
+campaign (plan `docs/superpowers/plans/2026-09-06-modal-money-leaks.md`) fixed the five items on
 this list that could cost money while an operator watched the wrong thing, and proved each one
 live on Modal rather than offline:
 
