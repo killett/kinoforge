@@ -452,12 +452,13 @@ suspected site.
 **STATUS INDEX (rebuilt 2026-09-07, Task 7; U18 row updated + U26 filed 2026-09-08, Task 3; U17
 fixed 2026-09-08, Task 4, then hardened the same day in a round-2 fix; U21 fixed 2026-09-09, Task 5;
 U23 + U18 LIVE-PROVEN and U11 LIVE-DISPROVEN 2026-09-09, Task 6, $0.07 total; U11 REGRESSION FIXED
-(offline only) + U27/U28/U29 filed 2026-09-09, Task 2 regression fix, $0.00
+(offline only) + U27/U28/U29 filed and U29 then FIXED on a controller ruling, 2026-09-09, Task 2
+regression fix, $0.00
 — this is the current state; the paragraphs below it are the campaign's running commentary and are
 dated, not authoritative).**
-Twenty-nine items, U1-U29. **Thirteen are fixed** (U4, U7, U8, U9, U11, U12, U14, U15, U17, U18,
-U20, U21, U23), **two are partly fixed** (U5, U10), **fourteen are open** (U1, U2, U3, U6, U13,
-U16, U19, U22, U24, U25, U26, U27, U28, U29). **U11 went OPEN → FIXED again on 2026-09-09**: it
+Twenty-nine items, U1-U29. **Fourteen are fixed** (U4, U7, U8, U9, U11, U12, U14, U15, U17, U18,
+U20, U21, U23, U29), **two are partly fixed** (U5, U10), **thirteen are open** (U1, U2, U3, U6,
+U13, U16, U19, U22, U24, U25, U26, U27, U28). **U11 went OPEN → FIXED again on 2026-09-09**: it
 was moved back to OPEN by Task 6's live disproof, and the regression that disproof found is now
 fixed in `b9b4fcd6`. That fix is **OFFLINE-PROVEN ONLY — the live A2 re-proof is still owed**, so
 read its row before trusting `grid --ephemeral` with money.
@@ -474,7 +475,7 @@ read its row before trusting `grid --ephemeral` with money.
 | U8 | FIXED ON MODAL, LIVE-PROVEN | `9d34d008` + `8403a71c`; index row readable 2.5 s into a live run, pod still reapable after SIGKILL (~$0.06). RunPod half stays PARTIAL under **U16** and is NOT upgraded by the Modal proof |
 | U9 | FIXED, LIVE-PROVEN | `e582bd0f`; the daemon reaped an idle ephemeral pod at `age=119s idle on probe gpu_util=0.0% cpu=0.0%` (~$0.03). Two boundaries, both filed rather than hidden: a mid-boot row has `endpoints: {}` so the probe returns nulls and the pod stays LIVE (U3's blast radius), and the predicate acts on ONE probe sample (**U22**) |
 | U10 | FIXED ON THE GRACEFUL PATH | `7d535503`, hardened by `9ae52274`. A daemon that is SIGKILLed still strands its row, and `sweeper status` / `metrics` still ignore the `--interval-s` override. Both recorded in the entry; neither re-opened |
-| U11 | FIXED, OFFLINE-PROVEN ONLY — LIVE RE-PROOF OWED | `0dfe90a9` + `7ee50a04` + `fdc4f388` (Task 2, 2026-09-08) forward `args.ephemeral` from `_cmd_grid` through `run_grid`/`_run_group`/`_run_one_cell` into every generate-mode cell's argv and refuse a `lora_swap:` group under `--ephemeral` with a clean stderr line + exit 2 — but they put the flag in a position `kinoforge generate` cannot parse, which **Task 6's live A2 disproved on 2026-09-09** (every cell died in 0.75 s on `kinoforge: error: unrecognized arguments: --ephemeral`; $0.00, no pod created; full record kept in the detailed entry and in the Task 6 commentary below — do not read this row as erasing it). **Fixed in `b9b4fcd6` (2026-09-09).** `_build_generate_cmd` now emits `--ephemeral` in ROOT position — `pixi run kinoforge --ephemeral generate …`, before the subcommand — rather than appending it after `generate`; the flag is a session-global consumed by `main()` before dispatch, so the root parser is its only correct home. The same commit fixes a SECOND, previously unrecorded instance of U11's leak reached through the other door: `p_grid` re-declared `--ephemeral` with an implicit `default=False`, and argparse copies every key of a subparser's fresh namespace onto the parent, so `kinoforge --ephemeral grid …` parsed to `args.ephemeral=False` and ran NON-ephemeral while reporting success (confirmed: `parse_args(['--ephemeral','grid','--spec','x']).ephemeral` → `False`); now `default=argparse.SUPPRESS`, so both flag positions work. **The test gap that shipped the regression is closed**: three new tests feed the argv `_build_generate_cmd` / `_build_swap_generate_cmd` actually build through the real `_build_parser().parse_args()` (which errors on any leftover token) and assert the resulting `args.ephemeral` / `args.cmd` / `args.attach_pod`, replacing the argv-MEMBERSHIP assertions that were blind to flag position; a fourth pins both `--ephemeral` positions around `grid`. RED was confirmed against the pre-fix code with the real live failure (`SystemExit: 2`, `kinoforge: error: unrecognized arguments: --ephemeral`). **Proof level: OFFLINE ONLY** — `pixi run pytest tests/core tests/cli -q` → 2256 passed. The live A2 re-proof (a real `grid --ephemeral` producing opaque provider-side cell names) has NOT been run and is still owed. The opaque-naming half of A2's criterion remains live-proven only via `batch --ephemeral` — see U23. Follow-ups **U24**, **U25** still stand; the audit behind this fix filed **U27**, **U28**, **U29** |
+| U11 | FIXED, OFFLINE-PROVEN ONLY — LIVE RE-PROOF OWED | `0dfe90a9` + `7ee50a04` + `fdc4f388` (Task 2, 2026-09-08) forward `args.ephemeral` from `_cmd_grid` through `run_grid`/`_run_group`/`_run_one_cell` into every generate-mode cell's argv and refuse a `lora_swap:` group under `--ephemeral` with a clean stderr line + exit 2 — but they put the flag in a position `kinoforge generate` cannot parse, which **Task 6's live A2 disproved on 2026-09-09** (every cell died in 0.75 s on `kinoforge: error: unrecognized arguments: --ephemeral`; $0.00, no pod created; full record kept in the detailed entry and in the Task 6 commentary below — do not read this row as erasing it). **Fixed in `b9b4fcd6` (2026-09-09).** `_build_generate_cmd` now emits `--ephemeral` in ROOT position — `pixi run kinoforge --ephemeral generate …`, before the subcommand — rather than appending it after `generate`; the flag is a session-global consumed by `main()` before dispatch, so the root parser is its only correct home. The same commit fixes a SECOND, previously unrecorded instance of U11's leak reached through the other door: `p_grid` re-declared `--ephemeral` with an implicit `default=False`, and argparse copies every key of a subparser's fresh namespace onto the parent, so `kinoforge --ephemeral grid …` parsed to `args.ephemeral=False` and ran NON-ephemeral while reporting success (confirmed: `parse_args(['--ephemeral','grid','--spec','x']).ephemeral` → `False`); now `default=argparse.SUPPRESS`, so both flag positions work. **The test gap that shipped the regression is closed**: three new tests feed the argv `_build_generate_cmd` / `_build_swap_generate_cmd` actually build through the real `_build_parser().parse_args()` (which errors on any leftover token) and assert the resulting `args.ephemeral` / `args.cmd` / `args.attach_pod`, replacing the argv-MEMBERSHIP assertions that were blind to flag position; a fourth pins both `--ephemeral` positions around `grid`. RED was confirmed against the pre-fix code with the real live failure (`SystemExit: 2`, `kinoforge: error: unrecognized arguments: --ephemeral`). **Proof level: OFFLINE ONLY** — `pixi run pytest tests/core tests/cli -q` → 2256 passed. The live A2 re-proof (a real `grid --ephemeral` producing opaque provider-side cell names) has NOT been run and is still owed. The opaque-naming half of A2's criterion remains live-proven only via `batch --ephemeral` — see U23. Follow-ups **U24**, **U25** still stand; the audit behind this fix filed **U27**, **U28** and **U29** (U29 then fixed the same day in `424e52d1`) |
 | U12 | CLOSED | `82ad084b` — `av<18`. Live-proven on Modal for $0.64. RunPod and SkyPilot ride the same one-line pin but were never re-run: inferred safe, not demonstrated safe |
 | U13 | OPEN | the CLI hangs after `UpscaleFailed`. Holder unidentified; the original suspected site was retracted. A $0 offline first step is written into the entry |
 | U14 | FIXED, LIVE-PROVEN | `49394b1d`, with a review-caught regression corrected in `b00a53d1`. A second upscale attached to the warm A100 with no `✓ App deployed` ($0.12). The vocabulary gap the correction sidesteps is **U19** |
@@ -492,7 +493,7 @@ read its row before trusting `grid --ephemeral` with money.
 | U26 | OPEN | `sweep()`'s ephemeral union does not honour a single-id-scoped ledger view — it processes every `EphemeralIndex` row regardless of `--id`. `--id` scoping is enforced only at the `_cmd_reap` CLI guard (fixed under U18), not inside `sweep()` itself. Filed 2026-09-08, Task 3 review round 2 |
 | U27 | OPEN | `kinoforge batch --ephemeral` is an argparse error — the flag is ROOT-only, so only `kinoforge --ephemeral batch …` works. Pre-existing (this branch never touched `p_batch`), not a regression. Filed 2026-09-09, Task 2 regression fix |
 | U28 | OPEN | the `--ephemeral` batch launch row never receives its `endpoints` — `_settle_batch_launch_row` runs only AFTER `batch_generate` returns, i.e. never on the crash path the row exists for. Starves the reaper's util probe (blocks C1 orphan promotion past `LIVE`); larger on RunPod (see U16). **Assessed as a restructure, not a contained fix** — generate/upscale/interpolate share the identical shape. Filed 2026-09-09, Task 2 regression fix |
-| U29 | OPEN | `p_batch` re-declares the ROOT `--env-file` with an implicit `default=None`, so `kinoforge --env-file X batch …` silently loads the DEFAULT `.env` instead of `X`. Same argparse namespace-clobber mechanism as the U11 half fixed in `b9b4fcd6`. Filed 2026-09-09, Task 2 regression fix |
+| U29 | FIXED, OFFLINE-PROVEN | `424e52d1` (2026-09-09, Task 2 regression fix) — `p_batch` re-declared the ROOT `--env-file` with an implicit `default=None`, and argparse copies every key of a subparser's fresh namespace onto the parent, so `kinoforge --env-file X batch …` parsed to `env_file=None` and `main()` loaded the DEFAULT secrets file instead of `X` — a batch run (which books GPUs) against the wrong credentials or provider account, with no warning and exit 0. Same mechanism and same one-token remedy as the `p_grid`/`--ephemeral` half of U11: `default=argparse.SUPPRESS`. These two were the ONLY root/subparser `dest` collisions in the whole parser, so the class is now closed. Covered by a test that feeds each composed argv through the real `_build_parser().parse_args()` and asserts `args.env_file` — not argv membership — with a `generate` case guarding the path that already worked. RED confirmed first (`args.env_file=None, expected '/x/creds-a'`). Offline-proven; no provider or network call. Filed and fixed the same day, on a controller ruling that a known one-token money hazard should not ship filed-open from the branch that discovered it |
 
 **Live proof cost for the whole money-leak campaign: $0.82** — $0.16 for the four fixes' own live
 cells (Task 5, Modal A10), $0.12 for U14's re-proof and $0.54 to reproduce and diagnose it
@@ -537,7 +538,12 @@ flag; fixing it well means deciding once whether `--ephemeral` is accepted after
 or strictly root-only), **U28** (the batch launch row never receives its `endpoints`; assessed as
 a restructure, since the same reserve-then-settle shape exists in generate/upscale/interpolate and
 the endpoints are minted below the CLI frame), and **U29** (`p_batch` clobbers the root
-`--env-file` the same way `p_grid` clobbered `--ephemeral`).
+`--env-file` the same way `p_grid` clobbered `--ephemeral`). **U29 was then FIXED the same day in
+`424e52d1`** on a controller ruling — a one-token defect that silently books GPUs against the wrong
+credentials should not ship filed-open from the branch that found it — with the same
+`default=argparse.SUPPRESS` treatment and the same parse-the-real-argv test style. That closes the
+root/subparser `dest`-collision class: those two were the only collisions in the parser. U27 and
+U28 stay filed, deliberately: U27 needs a uniform CLI decision, and U28 is a restructure.
 
 **Status update 2026-09-07 (Task 5 — live proof of the four money-leak fixes on Modal A10, total
 spend ~$0.16 of a ~$0.60 budget).** **U15 HELD** (a fresh process attached to a warm pod, no cold
@@ -1126,8 +1132,10 @@ per-item entries below.
   `["pixi","run","kinoforge","destroy","--id",<id>]` and `["pixi","run","kinoforge","list"]`
   (`core/grid/executor.py:828,943`) — both parse. Enumerating every subparser action whose `dest`
   collides with a root action found exactly two: `grid.ephemeral` (fixed here) and
-  `batch.env_file` (filed as **U29**). `batch --ephemeral` remains an argparse error and is filed
-  as **U27**; the batch launch row's missing `endpoints` is filed as **U28**.
+  `batch.env_file` (filed as **U29**, then fixed the same day in `424e52d1` on a controller
+  ruling — see its entry). Those two were the only collisions in the parser, so the class is
+  closed. `batch --ephemeral` remains an argparse error and stays filed as **U27**; the batch
+  launch row's missing `endpoints` stays filed as **U28**.
   *Still owed:* a live `grid --ephemeral` run showing opaque provider-side cell names. This fix
   has never touched a provider.
 
@@ -2211,8 +2219,8 @@ per-item entries below.
   **Discovered by:** Task 6 live proof, A1/B1, 2026-09-09; assessed and filed by the Task 2
   regression fix, 2026-09-09.
 
-- **U29 — `p_batch` re-declares the ROOT `--env-file`, so `kinoforge --env-file X batch …` silently
-  loads the wrong `.env`.**
+- **U29 — CLOSED 2026-09-09 (`424e52d1`, offline-proven) — `p_batch` re-declared the ROOT
+  `--env-file`, so `kinoforge --env-file X batch …` silently loaded the wrong secrets file.**
   **Symptom.** Same argparse namespace-clobber mechanism as the `p_grid` half of U11: argparse
   parses a subcommand into a fresh namespace and copies every key onto the parent, so
   `p_batch`'s `--env-file` (`src/kinoforge/cli/_main.py:835`, implicit `default=None`) overwrites
@@ -2234,13 +2242,28 @@ per-item entries below.
   **Found by** an exhaustive enumeration of subparser actions whose `dest` collides with a root
   action — exactly two exist, `grid.ephemeral` (fixed in `b9b4fcd6` under U11) and
   `batch.env_file` (this item).
-  **Suspected site / why it is filed rather than fixed.** The one-token fix is
-  `default=argparse.SUPPRESS` on `src/kinoforge/cli/_main.py:835`, mirroring the `p_grid` fix. It
-  was left out of the U11 regression fix because it is a different flag with a different blast
-  radius (credential/provider selection, not ephemerality), it is outside the
-  ephemeral-and-recovery scope, and it deserves its own test asserting the loaded env path rather
-  than just the parsed namespace. Pre-existing; not introduced by this branch.
-  **Discovered by:** Task 2 regression fix audit, 2026-09-09.
+  **FIXED 2026-09-09 in `424e52d1`.** Filed open first, then fixed the same day on a controller
+  ruling: a known one-token defect whose failure mode is *booking GPUs against the wrong
+  credentials or provider account* should not ship filed-open from the very branch whose audit
+  found it, and since the root flag was being ignored for `batch` entirely, the change can only
+  move behaviour toward the documented intent. The remedy is `default=argparse.SUPPRESS` on
+  `src/kinoforge/cli/_main.py:835`, mirroring the `p_grid` fix in `b9b4fcd6` exactly — the key is
+  absent from the subparser's namespace unless the flag is actually given after `batch`, so the
+  root value survives and both positions work.
+  **Covering test:** `test_root_env_file_survives_the_batch_subparser`
+  (`tests/cli/test_flags_validation.py`), four cases, each feeding a composed argv through the real
+  `_build_parser().parse_args()` and asserting `args.env_file` — NOT argv membership. Root-position
+  `batch` (the bug), subcommand-position `batch`, `batch` with no flag at all (must stay `None`),
+  and a root-position `generate` case that guards the path which already worked. RED was confirmed
+  against the pre-fix code for the stated reason:
+  `AssertionError: argv ['--env-file', '/x/creds-a', 'batch', ...] -> args.env_file=None, expected
+  '/x/creds-a'`. GREEN after the fix; `pixi run pytest tests/core tests/cli -q` -> 2260 passed.
+  **Offline-proven; no provider or network call, $0.00.** The behaviour is a pure argparse
+  namespace property, so a live run would prove nothing an offline parse does not.
+  **The defect CLASS is now closed:** an exhaustive enumeration of subparser actions whose `dest`
+  collides with a root action found exactly two, `grid.ephemeral` (fixed in `b9b4fcd6` under U11)
+  and `batch.env_file` (this item). There are no others.
+  **Discovered by:** Task 2 regression fix audit, 2026-09-09; fixed the same day.
 
 Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
 on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interval_s`
