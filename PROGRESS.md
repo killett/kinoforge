@@ -2458,11 +2458,12 @@ the pod up). Six new defects were filed along the way: **U24**–**U28** are ope
 and fixed the same day (`424e52d1`). **The STATUS INDEX at the top of the URGENT ACTION ITEMS
 section is the authoritative current count — 29 items, 14 fixed, 2 partly fixed, 13 open — read it,
 not the older money-leaks table directly below, which is frozen as of 2026-09-07.**
-**This branch is UNMERGED — `fix/ephemeral-and-recovery-gaps` was 33 commits ahead of `main` as of
-`1c19d70c`, with a whole-branch review still pending (this count grows with every commit added
-during the review's fix wave — check `git rev-list --count main..HEAD` for the live number rather
-than trusting a bare figure here). A session resuming on `main` will not see any of this work; it
-needs to check out this branch (or wait for the merge) to pick it up.**
+**MERGED to `main` 2026-09-09 at `8f9ffea4`; the branch `fix/ephemeral-and-recovery-gaps` has been
+deleted.** The whole-branch review completed before the merge: 0 Critical, and its four findings
+plus one regression the fix wave itself introduced (the Modal destroy confirmation poll masking a
+live duplicate app name, `887db3e1`) were all fixed and re-reviewed. `pixi run pytest -q` → 5312
+passed / 163 skipped / 16 xfailed and `pixi run pre-commit run --all-files` green on the merged
+result. Nothing was pushed — `main` is local-only ahead of `origin`.
 
 **Modal money leaks CLOSED (2026-09-07, branch `fix/modal-money-leaks`, $0.82 of live proof).**
 Plan `docs/superpowers/plans/2026-09-06-modal-money-leaks.md`, 8 tasks, all committed. The five
