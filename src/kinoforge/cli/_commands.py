@@ -2214,7 +2214,7 @@ def _settle_batch_launch_row(
     (if it is still there): ``deploy_session``'s ``__exit__`` only calls
     ``Ledger.forget`` AFTER a successful ``destroy_confirmed``, so a
     surviving entry means the teardown did NOT confirm. The real instance is
-    reconstructed from that entry and hand off to
+    reconstructed from that entry and handed off to
     :func:`_settle_unused_launch_row`, which applies the exact same
     release / upgrade / warn contract ``generate`` uses. Its own
     ``session.destroy_was_confirmed`` check reads the SAME real instance id
