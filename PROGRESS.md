@@ -451,8 +451,8 @@ suspected site.
 
 **STATUS INDEX (rebuilt 2026-09-07, Task 7 — this is the current state; the paragraphs below it are
 the campaign's running commentary and are dated, not authoritative).** Twenty-three items,
-U1-U23. **Eight are fixed** (U4, U7, U8, U9, U12, U14, U15, U20), **two are partly fixed**
-(U5, U10), **thirteen are open** (U1, U2, U3, U6, U11, U13, U16, U17, U18, U19, U21, U22, U23).
+U1-U23. **Nine are fixed** (U4, U7, U8, U9, U12, U14, U15, U20, U23), **two are partly fixed**
+(U5, U10), **twelve are open** (U1, U2, U3, U6, U11, U13, U16, U17, U18, U19, U21, U22).
 
 | Item | State | Detail |
 |---|---|---|
@@ -478,7 +478,7 @@ U1-U23. **Eight are fixed** (U4, U7, U8, U9, U12, U14, U15, U20), **two are part
 | U20 | FIXED | `e582bd0f` — the truncated sweeper thresholds dict. Filed retroactively 2026-09-07: it was WIDER than the ephemeral defect it was found under |
 | U21 | OPEN | `provision` has no destroy-on-error path. Filed 2026-09-07 |
 | U22 | OPEN | the ephemeral orphan reap acts on a single probe sample. Filed 2026-09-07 |
-| U23 | OPEN | `kinoforge --ephemeral batch` writes no index row at all — the U8 hole, one command over. Pre-existing, not a regression. Filed 2026-09-07 |
+| U23 | FIXED, OFFLINE-PROVEN | `f787182d` (Task 1, 2026-09-08) — `_cmd_batch` reserves the ephemeral launch row before `batch_generate`, settled by `_settle_batch_launch_row` afterwards. Live proof owed to Task 6 |
 
 **Live proof cost for the whole money-leak campaign: $0.82** — $0.16 for the four fixes' own live
 cells (Task 5, Modal A10), $0.12 for U14's re-proof and $0.54 to reproduce and diagnose it
@@ -1552,7 +1552,10 @@ per-item entries below.
   the U9 cell before it is trusted.
   **Discovered by:** review of the U9 fix, carried into the Task 7 record sweep, 2026-09-07.
 
-- **U23 — `kinoforge --ephemeral batch` leaves NO durable record of the pod it books.**
+- **U23 — FIXED (OFFLINE-PROVEN) in `f787182d` (Task 1,
+  `.superpowers/sdd/2026-09-07-ephemeral-and-recovery-gaps/task-1-brief.md`, 2026-09-08).
+  `kinoforge --ephemeral batch` used to leave NO durable record of the pod it books; live proof
+  owed to Task 6.**
   **Symptom.** `_cmd_batch` (`src/kinoforge/cli/_commands.py`) cold-creates through
   `batch_generate` -> `deploy_session` and never reserves a launch row: it calls neither
   `_ephemeral_launch_row_reserve` (before the create) nor `_ephemeral_index_add` (after it), and
@@ -1593,6 +1596,23 @@ per-item entries below.
   with — closing this properly means returning the instance, or moving the settle inside
   `batch_generate`. `grid` (U11) has the same absence behind a different symptom, so the two are
   worth fixing together.
+  **Fix (`f787182d`, Task 1):** `_cmd_batch` now reserves the launch row via
+  `_ephemeral_launch_row_reserve(ctx, cfg, batch_id)` before `batch_generate` is called (gated by
+  `_ephemeral_strict_session()`, not "a session is active" — ordinary batches reserve nothing) and
+  settles it afterwards via a new `_settle_batch_launch_row`. The "obstacle worth naming" above
+  turned out to be avoidable without touching `core/batch.py` or `batch_generate`'s return shape:
+  `deploy_session` already records every cold-created instance to the same `Ledger(store=store)`
+  namespace `ctx.ledger()` reads, and under STRICT_POLICY both go through the SAME
+  session-scoped `in_memory_ledger` mirror — so `_settle_batch_launch_row` diffs the ledger's
+  contents against a before-snapshot to recover the real instance (id, provider, endpoints) and
+  hands it to the existing `_settle_unused_launch_row`, which applies the identical
+  release/upgrade/warn contract `generate` uses. `grid` (U11) is untouched — still open, planned as
+  Task 2 of the same plan.
+  **Verify (offline, $0):** `pixi run pytest tests/cli/test_cmd_batch_ephemeral.py -v` — 5 tests,
+  including one where the fake provider's `create_instance` itself asserts the row is already
+  present, read through a fresh `SessionContext` against the same state dir.
+  **Not yet done:** live proof (Task 6 of the same plan) — the reproducer above has not been re-run
+  against a real Modal/RunPod pod.
   **Discovered by:** the final whole-branch review of `fix/modal-money-leaks`, 2026-09-07.
 
 Fixed in the same campaign (no action needed, recorded for context): `kinoforge doctor` exited 1
