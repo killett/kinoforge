@@ -4497,6 +4497,9 @@ def _cmd_grid(args: argparse.Namespace, ctx: SessionContext) -> int:
     ``EphemeralSession`` is opened here — each cell subprocess is a
     fresh ``kinoforge generate`` process and opens its own under
     ``main()``'s ``with EphemeralSession(enabled=args.ephemeral, ...)``.
+    :func:`run_grid` raises ``ValueError`` uncaught (fail-closed) when
+    ``--ephemeral`` is combined with a ``lora_swap:`` cell — that shape
+    is refused, not silently run non-ephemerally (U24).
     """
     import asyncio
 

@@ -985,13 +985,19 @@ async def run_grid(
             ``<output_dir>/grid_<ts>_<title-slug>.mp4``.
         ephemeral: U11 ``grid --ephemeral`` pass-through. Forwarded to
             every ``generate:``-mode cell's subprocess argv via
-            :func:`_run_group` / :func:`_build_generate_cmd`. Each cell
-            already carries a unique ``run_id`` (``f"{grid_id}__cell
-            {cell.idx}"``), and each cell is its own OS process with its
-            own ``EphemeralSession``, so no two cells can collide on the
-            opaque provider-side name ``EphemeralSession.resource_name``
-            mints. Lora-swap cells (:func:`_build_swap_generate_cmd`) are
-            NOT covered — out of scope for U11, see the task report.
+            :func:`_run_group` / :func:`_build_generate_cmd`. Each cell's
+            opaque provider-side name comes from
+            ``EphemeralSession.resource_name`` minting a fresh
+            ``secrets.token_hex(4)`` inside that cell's own OS process
+            (each cell is a separate ``kinoforge generate`` subprocess with
+            its own ``EphemeralSession`` instance), so no two cells share a
+            token-minting dict to begin with; the per-cell unique
+            ``run_id`` (``f"{grid_id}__cell{cell.idx}"``) only guarantees
+            that IF a dict were ever shared, its per-``run_id`` memo entry
+            still wouldn't collide. Lora-swap cells are REFUSED when
+            ``ephemeral`` is true (see the raise right after
+            ``swap_groups_present`` is computed) rather than silently
+            defaulted to non-ephemeral — filed as U24 in PROGRESS.md.
 
     Returns:
         A :class:`GridResult` whose ``status`` tells the caller which
@@ -1016,6 +1022,32 @@ async def run_grid(
         for key, cells in groups.items()
         if key != _PATH_GROUP_KEY
     )
+    if ephemeral and swap_groups_present:
+        # U11 follow-up (review round 1, filed as U24 in PROGRESS.md): a
+        # lora_swap group shares ONE pod across the whole swap chain
+        # (--attach-pod / --emit-provision-record, never --no-reuse), so no
+        # single cell's --ephemeral can own the shared pod's
+        # delete_on_completion without a real executor-shape decision this
+        # task is not making. Controller ruling: REFUSE rather than warn —
+        # a warning still lets the run proceed and leak run id, local
+        # timestamp and workload shape to the provider, which is exactly
+        # U11's original symptom. This check runs before any group is
+        # dispatched, so no cell subprocess is ever spawned on this path.
+        swap_idxs = sorted(
+            cell.idx
+            for key, cells in groups.items()
+            if key != _PATH_GROUP_KEY
+            for cell in cells
+            if cell.is_lora_swap
+        )
+        raise ValueError(
+            f"grid --ephemeral does not support lora_swap cells {swap_idxs}: "
+            "a lora_swap group shares one pod across the whole swap chain, "
+            "so no single cell can own --ephemeral's delete_on_completion "
+            "without leaking the rest of the chain's run id and local "
+            "timestamp to the provider. Filed as U24 (see PROGRESS.md) — "
+            "drop --ephemeral or remove the lora_swap cells to proceed."
+        )
     if swap_groups_present:
         sidecar = CostSidecarBuilder(
             grid_id=grid_id,

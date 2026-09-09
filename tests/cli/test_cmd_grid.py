@@ -133,12 +133,16 @@ def test_cmd_grid_dry_run_skips_compute(
     assert "cells" in out.lower() or "2" in out
 
 
-def test_cmd_grid_passes_ephemeral_true_to_run_grid(
-    monkeypatch: pytest.MonkeyPatch, ctx: SessionContext
+@pytest.mark.parametrize("ephemeral", [True, False])
+def test_cmd_grid_forwards_ephemeral_to_run_grid(
+    monkeypatch: pytest.MonkeyPatch, ctx: SessionContext, ephemeral: bool
 ) -> None:
-    """U11: _cmd_grid must read args.ephemeral and forward it to run_grid — the
-    filed defect was that _cmd_grid `del ctx`'d and never touched args.ephemeral
-    at all, so the parser's --ephemeral flag was accepted and silently dropped."""
+    """U11: _cmd_grid must read args.ephemeral and forward it to run_grid
+    VERBATIM — the filed defect was that _cmd_grid `del ctx`'d and never
+    touched args.ephemeral at all, so the parser's --ephemeral flag was
+    accepted and silently dropped. Parametrized over both values so a fix
+    that hardcodes either True or False regardless of args.ephemeral fails
+    on the other case."""
     fake_spec = MagicMock(cells=[MagicMock()], title="t", layout="1x1")
     fake_spec.budget_cap_usd = 1.0
     monkeypatch.setattr(
@@ -157,38 +161,8 @@ def test_cmd_grid_passes_ephemeral_true_to_run_grid(
         )
 
     monkeypatch.setattr("kinoforge.core.grid.executor.run_grid", fake_run_grid)
-    assert _cmd_grid(_args(ephemeral=True), ctx) == 0
-    assert captured.get("ephemeral") is True, (
-        f"--ephemeral was set on the CLI args but run_grid was called with "
+    assert _cmd_grid(_args(ephemeral=ephemeral), ctx) == 0
+    assert captured.get("ephemeral") is ephemeral, (
+        f"args.ephemeral={ephemeral} but run_grid was called with "
         f"ephemeral={captured.get('ephemeral')!r}"
-    )
-
-
-def test_cmd_grid_passes_ephemeral_false_to_run_grid(
-    monkeypatch: pytest.MonkeyPatch, ctx: SessionContext
-) -> None:
-    """A plain (non-ephemeral) grid must not accidentally forward
-    ephemeral=True — guards against a fix that hardcodes the flag on
-    regardless of args.ephemeral."""
-    fake_spec = MagicMock(cells=[MagicMock()], title="t", layout="1x1")
-    fake_spec.budget_cap_usd = 1.0
-    monkeypatch.setattr(
-        "kinoforge.core.grid.spec.GridSpec.load",
-        classmethod(lambda cls, p: fake_spec),
-    )
-    captured: dict[str, Any] = {}
-
-    async def fake_run_grid(**kwargs: Any) -> GridResult:
-        captured.update(kwargs)
-        return GridResult(
-            grid_id="g",
-            status="full",
-            cell_results=[],
-            composed_mp4_path=Path("/tmp/g.mp4"),
-        )
-
-    monkeypatch.setattr("kinoforge.core.grid.executor.run_grid", fake_run_grid)
-    assert _cmd_grid(_args(ephemeral=False), ctx) == 0
-    assert captured.get("ephemeral") is False, (
-        f"expected ephemeral=False forwarded, got {captured.get('ephemeral')!r}"
     )

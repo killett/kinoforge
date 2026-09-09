@@ -14,7 +14,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from kinoforge.core.grid.executor import _build_generate_cmd, _ResolvedCell, run_grid
+from kinoforge.core.grid.executor import (
+    GridCellResult,
+    _build_generate_cmd,
+    _ResolvedCell,
+    run_grid,
+)
 from kinoforge.core.grid.spec import GridSpec
 
 
@@ -258,27 +263,33 @@ def _make_resolved_cell(tmp_path: Path, *, idx: int = 0) -> _ResolvedCell:
     )
 
 
-def test_build_generate_cmd_includes_ephemeral_flag_when_set(tmp_path: Path) -> None:
-    """U11: an ephemeral grid must forward --ephemeral to each cell's
-    ``kinoforge generate`` subprocess, or the pod's run id and timestamp leak
-    to the provider exactly as T1-29 observed live."""
+@pytest.mark.parametrize("ephemeral, expect_flag", [(True, True), (False, False)])
+def test_build_generate_cmd_ephemeral_flag(
+    tmp_path: Path, ephemeral: bool, expect_flag: bool
+) -> None:
+    """U11: --ephemeral must land in a cell's ``kinoforge generate`` argv
+    exactly when the grid itself is ephemeral, and only then — omitting it
+    when set leaks the pod's run id/timestamp to the provider (T1-29, live);
+    emitting it when unset would silently ephemeral-ize every grid."""
     cell = _make_resolved_cell(tmp_path)
     cmd = _build_generate_cmd(
         cell,
         grid_id="grid_x",
         output_dir=tmp_path / "out",
         no_reuse=True,
-        ephemeral=True,
+        ephemeral=ephemeral,
     )
-    assert "--ephemeral" in cmd, (
-        f"--ephemeral flag missing from cell argv when ephemeral=True: {cmd}"
+    assert ("--ephemeral" in cmd) is expect_flag, (
+        f"ephemeral={ephemeral}: expected --ephemeral present={expect_flag} "
+        f"in argv, got {cmd}"
     )
 
 
 def test_build_generate_cmd_omits_ephemeral_flag_by_default(tmp_path: Path) -> None:
-    """A plain (non-ephemeral) grid must never pass --ephemeral to a cell —
-    the default must stay False so swap-mode cells (_build_swap_generate_cmd,
-    which does not pass this kwarg) are unaffected by this change."""
+    """Omitting the ``ephemeral`` kwarg entirely (not just passing False)
+    must still exclude --ephemeral — the default must stay False so
+    swap-mode cells (_build_swap_generate_cmd, which does not pass this
+    kwarg) are unaffected by this change."""
     cell = _make_resolved_cell(tmp_path)
     cmd = _build_generate_cmd(
         cell,
@@ -291,17 +302,22 @@ def test_build_generate_cmd_omits_ephemeral_flag_by_default(tmp_path: Path) -> N
     )
 
 
-def test_run_grid_ephemeral_true_reaches_every_cell_subprocess(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("ephemeral, expect_flag", [(True, True), (False, False)])
+def test_run_grid_ephemeral_flag_reaches_every_cell_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    ephemeral: bool,
+    expect_flag: bool,
 ) -> None:
-    """run_grid(ephemeral=True) must thread the flag through _run_group and
+    """run_grid(ephemeral=...) must thread the flag through _run_group and
     _run_one_cell into EVERY cell's subprocess argv, not just the first —
     a partial wiring (e.g. _build_generate_cmd updated but the run_grid /
     _run_group call sites never passing the kwarg through) would leave every
     cell's argv missing --ephemeral while a narrower unit test of
-    _build_generate_cmd alone could still pass. Also asserts cells in one
-    grid do not collide on --run-id, since EphemeralSession.resource_name
-    memoises its opaque token per run id."""
+    _build_generate_cmd alone could still pass. When ephemeral, also asserts
+    cells in one grid do not collide on --run-id (the memo
+    EphemeralSession.resource_name keys per run id is never shared, because
+    each cell is its own run id AND its own OS process)."""
     log = _stub_generate_subprocess(monkeypatch)
     _stub_compose(monkeypatch)
     _stub_config_loader(monkeypatch)
@@ -316,34 +332,121 @@ def test_run_grid_ephemeral_true_reaches_every_cell_subprocess(
             spec=spec,
             output_dir=tmp_path / "out",
             max_parallel_groups=2,
-            ephemeral=True,
+            ephemeral=ephemeral,
         )
     )
     assert result.status == "full", f"expected status='full', got {result.status!r}"
     assert len(log.calls) == 3
-    missing = [cmd for cmd in log.calls if "--ephemeral" not in cmd]
-    assert not missing, f"cells missing --ephemeral in their argv: {missing}"
+    flagged = [cmd for cmd in log.calls if "--ephemeral" in cmd]
+    if expect_flag:
+        assert len(flagged) == 3, (
+            f"cells missing --ephemeral in their argv: "
+            f"{[c for c in log.calls if c not in flagged]}"
+        )
+        run_ids = [cmd[cmd.index("--run-id") + 1] for cmd in log.calls]
+        assert len(run_ids) == len(set(run_ids)), (
+            f"cells in one grid collided on --run-id: {run_ids}"
+        )
+    else:
+        assert not flagged, f"non-ephemeral grid must never pass --ephemeral: {flagged}"
 
-    run_ids = [cmd[cmd.index("--run-id") + 1] for cmd in log.calls]
-    assert len(run_ids) == len(set(run_ids)), (
-        f"cells in one grid collided on --run-id (resource_name() memoises "
-        f"its opaque token per run id): {run_ids}"
-    )
+
+def _make_lora_swap_spec(tmp_path: Path, n_cells: int = 2) -> GridSpec:
+    """Grid spec whose cells are ALL ``lora_swap:`` (shared-pod swap mode)."""
+    cfg = tmp_path / "swap_base.yaml"
+    cfg.write_text("model: fake\nprompt: hi\nloras: []\n")
+    raw = {
+        "title": "test-swap-grid",
+        "layout": f"1x{n_cells}",
+        "budget_cap_usd": 1.0,
+        "cells": [
+            {
+                "lora_swap": {
+                    "config": str(cfg),
+                    "stack": [{"ref": "civitai:1@1", "strength": 1.0}],
+                },
+                "caption": f"cell={i}",
+            }
+            for i in range(n_cells)
+        ],
+    }
+    return GridSpec.model_validate(raw)
 
 
-def test_run_grid_ephemeral_false_omits_flag_from_every_cell(
+def test_run_grid_ephemeral_refuses_lora_swap_cells(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A non-ephemeral grid (the default) must never let --ephemeral leak
-    into a cell's argv — guards against a fix that hardcodes the flag on."""
+    """U11 follow-up (Important finding, review round 1): a lora_swap group
+    shares ONE pod across the whole swap chain (--attach-pod /
+    --emit-provision-record, never --no-reuse), so no single cell's
+    --ephemeral can own the shared pod's delete_on_completion. Controller
+    ruling: refuse (fail-closed), not warn — a warning still leaks run
+    id/timestamp/workload shape to the provider exactly like U11's original
+    symptom. This must raise BEFORE any cell subprocess is spawned."""
     log = _stub_generate_subprocess(monkeypatch)
     _stub_compose(monkeypatch)
     _stub_config_loader(monkeypatch)
     monkeypatch.setattr(
         "kinoforge.core.grid.executor._cell_capability_key",
-        lambda cell: "K-same",
+        lambda cell: "K-swap",
     )
-    spec = _make_spec(tmp_path, n_cells=3)
+    spec = _make_lora_swap_spec(tmp_path, n_cells=2)
+
+    with pytest.raises(ValueError, match="lora_swap"):
+        asyncio.run(
+            run_grid(
+                spec=spec,
+                output_dir=tmp_path / "out",
+                max_parallel_groups=2,
+                ephemeral=True,
+            )
+        )
+    assert log.calls == [], (
+        f"refusal must happen before any cell subprocess is spawned, "
+        f"got {len(log.calls)} calls: {log.calls}"
+    )
+
+
+def test_run_grid_non_ephemeral_lora_swap_cells_not_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The refusal must be scoped to ephemeral=True — a plain (non-ephemeral)
+    lora_swap grid is the existing, supported shape and must not regress.
+    Only the swap dispatch itself is faked (full swap-chain behaviour is
+    covered by tests/integration/test_grid_lora_swap_e2e.py); everything
+    else (spec resolution, grouping, the ephemeral gate, composition) runs
+    for real."""
+    from kinoforge.core.grid import executor as ex_mod
+
+    _stub_compose(monkeypatch)
+    _stub_config_loader(monkeypatch)
+    monkeypatch.setattr(
+        "kinoforge.core.grid.executor._cell_capability_key",
+        lambda cell: "K-swap",
+    )
+    monkeypatch.setattr(ex_mod, "_check_no_residual_pods", lambda: (True, ""))
+    spec = _make_lora_swap_spec(tmp_path, n_cells=1)
+
+    mp4 = tmp_path / "swap_cell0.mp4"
+    mp4.write_bytes(b"\x00" * 64)
+    called = {"swap": False}
+
+    async def fake_run_swap_group(
+        *args: object, **kwargs: object
+    ) -> list[GridCellResult]:
+        called["swap"] = True
+        return [
+            GridCellResult(
+                idx=0,
+                caption="cell=0",
+                status="success",
+                mp4_path=mp4,
+                sha256="deadbeef",
+                cost_usd=0.0,
+            )
+        ]
+
+    monkeypatch.setattr(ex_mod, "_run_swap_group", fake_run_swap_group)
 
     result = asyncio.run(
         run_grid(
@@ -353,6 +456,5 @@ def test_run_grid_ephemeral_false_omits_flag_from_every_cell(
             ephemeral=False,
         )
     )
+    assert called["swap"] is True, "non-ephemeral swap group must still be dispatched"
     assert result.status == "full", f"expected status='full', got {result.status!r}"
-    leaked = [cmd for cmd in log.calls if "--ephemeral" in cmd]
-    assert not leaked, f"non-ephemeral grid must never pass --ephemeral: {leaked}"
