@@ -478,7 +478,7 @@ U1-U23. **Nine are fixed** (U4, U7, U8, U9, U12, U14, U15, U20, U23), **two are 
 | U20 | FIXED | `e582bd0f` — the truncated sweeper thresholds dict. Filed retroactively 2026-09-07: it was WIDER than the ephemeral defect it was found under |
 | U21 | OPEN | `provision` has no destroy-on-error path. Filed 2026-09-07 |
 | U22 | OPEN | the ephemeral orphan reap acts on a single probe sample. Filed 2026-09-07 |
-| U23 | FIXED, OFFLINE-PROVEN | `f787182d` (Task 1, 2026-09-08) — `_cmd_batch` reserves the ephemeral launch row before `batch_generate`, settled by `_settle_batch_launch_row` afterwards. Live proof owed to Task 6 |
+| U23 | FIXED, OFFLINE-PROVEN | `f787182d` + `03a4b862` (Task 1, 2026-09-08) — `_cmd_batch` reserves the ephemeral launch row before `batch_generate`, settled by `_settle_batch_launch_row` afterwards; the survive path is upgraded to the real id + endpoints and the ledger diff skips the orchestrator's own provisional row (review round 1). Live proof owed to Task 6 |
 
 **Live proof cost for the whole money-leak campaign: $0.82** — $0.16 for the four fixes' own live
 cells (Task 5, Modal A10), $0.12 for U14's re-proof and $0.54 to reproduce and diagnose it
@@ -1552,8 +1552,10 @@ per-item entries below.
   the U9 cell before it is trusted.
   **Discovered by:** review of the U9 fix, carried into the Task 7 record sweep, 2026-09-07.
 
-- **U23 — FIXED (OFFLINE-PROVEN) in `f787182d` (Task 1,
-  `.superpowers/sdd/2026-09-07-ephemeral-and-recovery-gaps/task-1-brief.md`, 2026-09-08).
+- **U23 — FIXED (OFFLINE-PROVEN) in `f787182d` + `03a4b862` (Task 1,
+  `.superpowers/sdd/2026-09-07-ephemeral-and-recovery-gaps/task-1-brief.md`, 2026-09-08; the
+  second commit is a review-round-1 fix — the first commit's survive path never upgraded the row,
+  and its ledger diff could pick the orchestrator's own provisional row).
   `kinoforge --ephemeral batch` used to leave NO durable record of the pod it books; live proof
   owed to Task 6.**
   **Symptom.** `_cmd_batch` (`src/kinoforge/cli/_commands.py`) cold-creates through
@@ -1608,9 +1610,22 @@ per-item entries below.
   hands it to the existing `_settle_unused_launch_row`, which applies the identical
   release/upgrade/warn contract `generate` uses. `grid` (U11) is untouched — still open, planned as
   Task 2 of the same plan.
-  **Verify (offline, $0):** `pixi run pytest tests/cli/test_cmd_batch_ephemeral.py -v` — 5 tests,
+  **Round-1 review fix (`03a4b862`):** the first commit only settled the `--no-reuse` path; the
+  default survive path (no `--no-reuse`) never upgraded the launch row, so it kept `endpoints={}`
+  for as long as the warm pod lived — and the reaper's endpoint-less "reserved but unconfirmed"
+  classification GCs exactly that shape past `_EPHEMERAL_GC_404_GRACE_S` (`core/reaper.py`),
+  self-destructing the fix's own protection mid-batch. Separately, the ledger diff took the first
+  new entry, but the orchestrator's own pre-launch provisional row (`kf_launch_phase="launching"`,
+  keyed by `batch_id`) precedes the real one in append order and its removal
+  (`_collapse_provisional_row`) is explicitly best-effort and can be refused — a refused collapse
+  made the diff recover a row naming no real resource. Both fixed: `_recover_batch_created_instance`
+  now runs on both settle paths and skips `LAUNCH_PHASE_TAG=LAUNCH_PHASE_LAUNCHING` entries.
+  **Verify (offline, $0):** `pixi run pytest tests/cli/test_cmd_batch_ephemeral.py -v` — 8 tests,
   including one where the fake provider's `create_instance` itself asserts the row is already
-  present, read through a fresh `SessionContext` against the same state dir.
+  present (read through a fresh `SessionContext` against the same state dir), one proving the
+  survive path is upgraded to the real id/endpoints, one proving an unconfirmed `--no-reuse`
+  destroy keeps + upgrades the row to the real id, and one proving a refused provisional-row
+  collapse does not fool the diff.
   **Not yet done:** live proof (Task 6 of the same plan) — the reproducer above has not been re-run
   against a real Modal/RunPod pod.
   **Discovered by:** the final whole-branch review of `fix/modal-money-leaks`, 2026-09-07.
