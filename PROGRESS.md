@@ -450,10 +450,11 @@ items, not only in the matrix follow-up list. Each carries the symptom, the repr
 suspected site.
 
 **STATUS INDEX (rebuilt 2026-09-07, Task 7; U18 row updated + U26 filed 2026-09-08, Task 3; U17
-fixed 2026-09-08, Task 4, then hardened the same day in a round-2 fix — this is the current state;
-the paragraphs below it are the campaign's running commentary and are dated, not authoritative).**
-Twenty-six items, U1-U26. **Twelve are fixed** (U4, U7, U8, U9, U11, U12, U14, U15, U17, U18, U20,
-U23), **two are partly fixed** (U5, U10), **twelve are open** (U1, U2, U3, U6, U13, U16, U19, U21,
+fixed 2026-09-08, Task 4, then hardened the same day in a round-2 fix; U21 fixed 2026-09-09, Task 5
+— this is the current state; the paragraphs below it are the campaign's running commentary and are
+dated, not authoritative).**
+Twenty-six items, U1-U26. **Thirteen are fixed** (U4, U7, U8, U9, U11, U12, U14, U15, U17, U18, U20,
+U21, U23), **two are partly fixed** (U5, U10), **eleven are open** (U1, U2, U3, U6, U13, U16, U19,
 U22, U24, U25, U26).
 
 | Item | State | Detail |
@@ -464,7 +465,7 @@ U22, U24, U25, U26).
 | U4 | FIXED | `c08c3cce` — `logs` refuses cleanly off RunPod instead of 404ing a fabricated host |
 | U5 | PARTLY FIXED | `c08c3cce` corrected the help text; wiring `vault.positive_prompt` into prompt resolution is still open, and so is failing an empty prompt BEFORE a pod is billed |
 | U6 | OPEN | `kinoforge deploy` renders no provision; dead on Modal, books a portless pod on RunPod |
-| U7 | FIXED, LIVE-PROVEN IN PART | `8191bd1b`; three SIGKILLed provisions each left a durable row naming the app (2026-09-07, $0.00). NOT proven: `destroy --id` on a mid-create app (**U17**). NOT covered at all: teardown when the readiness poll or the weight download fails (**U21**) |
+| U7 | FIXED, LIVE-PROVEN IN PART | `8191bd1b`; three SIGKILLed provisions each left a durable row naming the app (2026-09-07, $0.00). NOT proven: `destroy --id` on a mid-create app (**U17**). Teardown when the readiness poll or the weight download fails is now covered offline by **U21**'s fix, not live-proven |
 | U8 | FIXED ON MODAL, LIVE-PROVEN | `9d34d008` + `8403a71c`; index row readable 2.5 s into a live run, pod still reapable after SIGKILL (~$0.06). RunPod half stays PARTIAL under **U16** and is NOT upgraded by the Modal proof |
 | U9 | FIXED, LIVE-PROVEN | `e582bd0f`; the daemon reaped an idle ephemeral pod at `age=119s idle on probe gpu_util=0.0% cpu=0.0%` (~$0.03). Two boundaries, both filed rather than hidden: a mid-boot row has `endpoints: {}` so the probe returns nulls and the pod stays LIVE (U3's blast radius), and the predicate acts on ONE probe sample (**U22**) |
 | U10 | FIXED ON THE GRACEFUL PATH | `7d535503`, hardened by `9ae52274`. A daemon that is SIGKILLed still strands its row, and `sweeper status` / `metrics` still ignore the `--interval-s` override. Both recorded in the entry; neither re-opened |
@@ -478,7 +479,7 @@ U22, U24, U25, U26).
 | U18 | FIXED, OFFLINE ONLY | `71582382` + `abe0c21e` (Task 3, 2026-09-08; the second is a review-round-2 fix) — `_cmd_reap`'s short-circuit now gates on the union: `if not ledger.entries():` alone no longer returns early; it also checks `EphemeralIndex(store=ctx.store()).rows()`, **filtered to `--id` when set**, and only short-circuits when both are empty, wording the message for the id it searched for (`--id` case) or "ledger and ephemeral index both empty" (no `--id`). Round-1 review caught that the index check was unscoped by `--id`, so one unrelated ephemeral row could defeat the short-circuit for an id the operator never named — fixed in `abe0c21e`. Proof is offline only (`pixi run pytest tests/cli/test_cmd_reap.py -v` → 22/22; `pixi run pytest tests/cli -q` → 466/466), including a test that writes only an `EphemeralIndex` row and asserts the orphan's id + `LIVE` verdict actually reach the human-format table with `sweep()` unmocked, a test proving `--apply --include-orphans` actually destroys an aged idle index-only row (the act path, not just classification), and a test proving an unrelated index row cannot defeat a scoped `--id` no-op. `sweep()`'s own ephemeral union still does not honour `--id` scoping once it runs — filed separately as **U26**. Live proof (an ephemeral orphan found by one-shot `reap` under a genuinely empty ledger, against a real provider) is owed to **Task 6** |
 | U19 | OPEN | the in-pod capability vocabulary has no term for interpolation. Not a duplicate boot today — the U14 carve-out prevents one — but the `/health` refinement is absent on the interpolate path |
 | U20 | FIXED | `e582bd0f` — the truncated sweeper thresholds dict. Filed retroactively 2026-09-07: it was WIDER than the ephemeral defect it was found under |
-| U21 | OPEN | `provision` has no destroy-on-error path. Filed 2026-09-07 |
+| U21 | FIXED, OFFLINE ONLY | `9e268c18` (Task 5, 2026-09-09) — the post-create tail of `_cmd_provision` (readiness poll + `provision()`/weight-download) is now wrapped in a `try` that destroys the pod on any raise before re-raising the original error, mirroring `orchestrator.deploy()`'s destroy-on-error shape verbatim; the readiness poll itself now goes through the same bounded `_wait_for_provider_ready` helper `deploy()` uses, so a pod that never reaches `ready` hits `lifecycle.boot_timeout_s` and raises `ProvisionTimeout` naming the last status seen instead of spinning forever. **Behaviour change: `provision` now destroys the pod on a post-create failure where it previously left it running and billing.** Proof is offline only (`pixi run pytest tests/cli/test_cmd_provision.py -v` → 23/23; `pixi run pytest tests/cli -q` → 470/470) — four new tests cover a raising readiness poll, a raising provisioner, a never-ready pod (`boot_timeout: 0`, no real sleep needed), and a failing destroy that does not mask the original error. Live proof (killing the readiness poll or the weight download against a real provider mid-flight) is NOT owed to Task 6, which covers U23/U11/U18 only |
 | U22 | OPEN | the ephemeral orphan reap acts on a single probe sample. Filed 2026-09-07 |
 | U23 | FIXED, OFFLINE-PROVEN | `f787182d` + `03a4b862` (Task 1, 2026-09-08) — `_cmd_batch` reserves the ephemeral launch row before `batch_generate`, settled by `_settle_batch_launch_row` afterwards; the survive path is upgraded to the real id + endpoints and the ledger diff skips the orchestrator's own provisional row (review round 1). Live proof owed to Task 6 |
 | U24 | OPEN | `grid --ephemeral` cannot cover `lora_swap:` cells — they are refused (`ValueError`), not made ephemeral. Filed 2026-09-08, Task 2 review round 1 |
@@ -1641,12 +1642,38 @@ per-item entries below.
   examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml` and interrupt the network during the
   weight download. The app stays `deployed` with `tasks=1`; `kinoforge list` names it, and
   `kinoforge destroy --id <id>` reaps it — by hand.
-  **Shape of the fix (not attempted).** Wrap the post-create phases in a `try` whose `except`
-  destroys the instance before re-raising, with the same ruling-C1 care the create already has: a
-  destroy that itself fails must leave the row in place, not swallow the handle. Bound the
-  readiness loop by `lifecycle.max_lifetime_s` (or a dedicated boot cap) and raise
-  `ProvisionFailed` naming the instance when it expires. `deploy_session` already owns a teardown
-  path worth mirroring rather than inventing a second one — the same argument that shaped U7's fix.
+  **FIXED (`9e268c18`, Task 5, 2026-09-09).** The post-create tail of `_cmd_provision` (readiness
+  poll, then `provision(...)`) is now inside one `try` whose `except BaseException` logs the
+  instance id and the original error, attempts `provider.destroy_instance(instance.id)`, and — on
+  a SECOND failure from the destroy itself — logs that separately without letting it replace the
+  original error, then re-raises the ORIGINAL exception unchanged. This is `orchestrator.deploy()`'s
+  destroy-on-error shape reused verbatim (`src/kinoforge/core/orchestrator.py`, the `except
+  BaseException as exc:` block after `deploy()`'s own readiness wait), not a second shape invented
+  for this command. The raw unbounded `while instance.status != "ready": time.sleep(2.0); ...` loop
+  is gone; the readiness poll now calls `orchestrator._wait_for_provider_ready(provider, instance,
+  boot_timeout_s=lifecycle.boot_timeout_s)` — the same deadline-checked, sleep-seamed helper
+  `deploy()` already polls with (its own bound/interval behaviour is independently covered by
+  `tests/core/test_ready_poll_bounds.py`) — so a pod stuck in "starting" now raises
+  `ProvisionTimeout` naming the instance id and the last status seen once `boot_timeout_s` elapses,
+  instead of spinning forever at 2s/turn.
+  **Behaviour change, stated plainly.** `provision` now destroys the pod on a post-create failure
+  (readiness-poll raise, provisioner raise, or a boot-timeout expiry) where it previously left the
+  pod running and billing with no exception even naming what happened for the timeout case.
+  **Proof — offline only, not live.** `pixi run pytest tests/cli/test_cmd_provision.py -v` → 23/23
+  passed; `pixi run pytest tests/cli -q` → 470/470 passed. Four new tests: a raising readiness poll
+  destroys the pod before the exception propagates
+  (`test_provision_destroys_pod_when_readiness_poll_raises`); a raising provisioner does the same
+  (`test_provision_destroys_pod_when_provisioner_raises`, discriminating the two failure sites the
+  acceptance criteria name separately); a never-ready pod hits the `boot_timeout_s` deadline instead
+  of looping and is destroyed, asserted via a poll-capped fake provider that would fail the test
+  with a clear guard message rather than hang if the bound regressed
+  (`test_provision_never_ready_pod_hits_deadline_instead_of_looping`; `boot_timeout: 0` in the test
+  cfg makes the deadline already-elapsed on the first check, so the passing run needs no real sleep
+  at all); and a destroy that itself fails still lets the ORIGINAL error propagate while the destroy
+  failure reaches the operator through the log
+  (`test_provision_reports_a_failing_destroy_without_masking_the_original_error`, via `caplog`).
+  Live proof — killing the readiness poll or the weight download against a real provider mid-flight
+  — is NOT owed to Task 6, which covers U23/U11/U18 only; it remains a follow-up if wanted.
   **Discovered by:** review of the U7 fix, carried into the Task 7 record sweep, 2026-09-07.
 
 - **U22 — the ephemeral orphan reap destroys on a SINGLE probe sample, unlike every other
