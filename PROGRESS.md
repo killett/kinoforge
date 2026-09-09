@@ -450,12 +450,14 @@ items, not only in the matrix follow-up list. Each carries the symptom, the repr
 suspected site.
 
 **STATUS INDEX (rebuilt 2026-09-07, Task 7; U18 row updated + U26 filed 2026-09-08, Task 3; U17
-fixed 2026-09-08, Task 4, then hardened the same day in a round-2 fix; U21 fixed 2026-09-09, Task 5
+fixed 2026-09-08, Task 4, then hardened the same day in a round-2 fix; U21 fixed 2026-09-09, Task 5;
+U23 + U18 LIVE-PROVEN and U11 LIVE-DISPROVEN 2026-09-09, Task 6, $0.07 total
 — this is the current state; the paragraphs below it are the campaign's running commentary and are
 dated, not authoritative).**
-Twenty-six items, U1-U26. **Thirteen are fixed** (U4, U7, U8, U9, U11, U12, U14, U15, U17, U18, U20,
-U21, U23), **two are partly fixed** (U5, U10), **eleven are open** (U1, U2, U3, U6, U13, U16, U19,
-U22, U24, U25, U26).
+Twenty-six items, U1-U26. **Twelve are fixed** (U4, U7, U8, U9, U12, U14, U15, U17, U18, U20,
+U21, U23), **two are partly fixed** (U5, U10), **twelve are open** (U1, U2, U3, U6, U11, U13, U16,
+U19, U22, U24, U25, U26). **U11 moved back to OPEN on 2026-09-09**: its branch fix does not hold
+live — see its row.
 
 | Item | State | Detail |
 |---|---|---|
@@ -469,19 +471,19 @@ U22, U24, U25, U26).
 | U8 | FIXED ON MODAL, LIVE-PROVEN | `9d34d008` + `8403a71c`; index row readable 2.5 s into a live run, pod still reapable after SIGKILL (~$0.06). RunPod half stays PARTIAL under **U16** and is NOT upgraded by the Modal proof |
 | U9 | FIXED, LIVE-PROVEN | `e582bd0f`; the daemon reaped an idle ephemeral pod at `age=119s idle on probe gpu_util=0.0% cpu=0.0%` (~$0.03). Two boundaries, both filed rather than hidden: a mid-boot row has `endpoints: {}` so the probe returns nulls and the pod stays LIVE (U3's blast radius), and the predicate acts on ONE probe sample (**U22**) |
 | U10 | FIXED ON THE GRACEFUL PATH | `7d535503`, hardened by `9ae52274`. A daemon that is SIGKILLed still strands its row, and `sweeper status` / `metrics` still ignore the `--interval-s` override. Both recorded in the entry; neither re-opened |
-| U11 | FIXED, OFFLINE ONLY | `0dfe90a9` + `7ee50a04` + `fdc4f388` — `_cmd_grid` now reads `args.ephemeral` and forwards it through `run_grid`/`_run_group`/`_run_one_cell` into every generate-mode cell's `--ephemeral` argv; `run_grid` REFUSES (`ValueError`, before any group dispatches) rather than silently dropping the flag when a `lora_swap:` group is present (review round 1), and `_cmd_grid` catches that `ValueError` and returns clean exit 2 instead of an unhandled traceback (review round 2). Proof is offline (`pixi run pytest tests/core tests/cli -q` green at 2243); live proof (provider app list shows opaque `eph-` names) is owed to **Task 6**. Two follow-ups filed rather than folded in: **U24** (lora-swap cells still cannot BE ephemeral — they are refused, not supported) and **U25** (an ephemeral grid still writes local artifacts under the strict policy) |
+| U11 | OPEN — REGRESSED, LIVE-DISPROVEN 2026-09-09 (Task 6, A2, $0.00) | `0dfe90a9` + `7ee50a04` + `fdc4f388` do forward `args.ephemeral` from `_cmd_grid` through `run_grid`/`_run_group`/`_run_one_cell` into every generate-mode cell's argv, and `run_grid` refuses a `lora_swap:` group under `--ephemeral` with a clean stderr line + exit 2. **But the flag is forwarded into a position `kinoforge generate` cannot parse.** `_build_generate_cmd` APPENDS `--ephemeral` to the end of the cell argv, while `--ephemeral` is declared only on the ROOT parser (`cli/_main.py:382`) and on `p_grid` (`:919`) — the `generate` subparser has no such option — so the child dies on `kinoforge: error: unrecognized arguments: --ephemeral`. Live: `kinoforge grid --spec <outside-repo 1x2> --out … --max-parallel-groups 1 --ephemeral` failed cell 0 in **0.75 s** (`WARNING kinoforge.core.grid.executor grid cell 0 failed; aborting remaining cells in group`, `[grid summary] status=partial` → exit 2); cell 1 never dispatched; **no Modal app was ever created, so the cell cost $0.00**. The captured child stderr is the argparse usage error verbatim (`output/_grid_grid_20260909-002938_069bb8a6/cell_0.stderr.txt`). Confirmed directly against the parser: `['generate', …, '--ephemeral']` → leftover `['--ephemeral']` with `ephemeral=False`; `['--ephemeral', 'generate', …]` → `ephemeral=True`; `['grid', '--spec', …, '--ephemeral']` → `ephemeral=True`. **This is worse than the symptom U11 was filed for**: `grid --ephemeral` used to run and merely leak identity, and now it cannot run at all. The offline suite could not catch it — every U11 test asserts `"--ephemeral" in cmd` (argv membership) and none feeds the argv back through `kinoforge`'s argparse. Task 6 did NOT retrofit the code to make its own proof pass; the fix is a one-line argv reorder (or a `--ephemeral` on the `generate` subparser) and is left for a follow-up task. The opaque-naming half of A2's criterion IS live-proven, but via `batch --ephemeral` — see U23. Follow-ups **U24** and **U25** still stand
 | U12 | CLOSED | `82ad084b` — `av<18`. Live-proven on Modal for $0.64. RunPod and SkyPilot ride the same one-line pin but were never re-run: inferred safe, not demonstrated safe |
 | U13 | OPEN | the CLI hangs after `UpscaleFailed`. Holder unidentified; the original suspected site was retracted. A $0 offline first step is written into the entry |
 | U14 | FIXED, LIVE-PROVEN | `49394b1d`, with a review-caught regression corrected in `b00a53d1`. A second upscale attached to the warm A100 with no `✓ App deployed` ($0.12). The vocabulary gap the correction sidesteps is **U19** |
 | U15 | FIXED, LIVE-PROVEN | `ccd4c5e7`; a fresh process attached to a warm pod via `generate --attach-pod` in 38 s with no cold boot (~$0.07). **T2-02's own `upscale` cell has still not been re-run** — the fix is provider- and command-agnostic, so that is inference, not demonstration |
 | U16 | OPEN | the ephemeral launch row is only a PARTIAL handle on RunPod (good name, unusable id). Spun out of U8 |
 | U17 | FIXED, OFFLINE-PROVEN | `8069f376` + `45f4254c` (Task 4, 2026-09-08; the second is the round-2 review fix). `ModalProvider._find_app_id` looks the app up in the injected listing, matching on `description`, and `destroy_instance` stops by `app_id` when found, falling back to the name (today's behaviour) otherwise; a stopper failure is caught and re-raised as `TeardownError` naming the `app_id` it resolved instead of an unhandled `subprocess.CalledProcessError`, and `default_stop`'s bare `check=True` no longer lets that traceback escape raw. Round 2 kept the lookup OFF the critical path: an unreadable listing degrades to the name path, a malformed record is skipped rather than aborting the scan, and a non-stopped record wins over a stopped namesake — three ways the round-1 lookup could have made a destroy that used to work fail. A non-list/non-dict shape with nothing resolved still raises a `TeardownError` naming what it expected. Proof is offline only (`pixi run pytest tests/providers/test_modal_destroy_by_app_id.py -v` → 10/10; `pixi run pytest tests/providers -q` → 599 passed, 2 skipped, 6 xfailed) — tests inject the listing and the stopper, no live call. A live re-proof means racing the same ~1 s mid-deploy kill window U7 verified, and is a separate follow-up, NOT owed to **Task 6** |
-| U18 | FIXED, OFFLINE ONLY | `71582382` + `abe0c21e` (Task 3, 2026-09-08; the second is a review-round-2 fix) — `_cmd_reap`'s short-circuit now gates on the union: `if not ledger.entries():` alone no longer returns early; it also checks `EphemeralIndex(store=ctx.store()).rows()`, **filtered to `--id` when set**, and only short-circuits when both are empty, wording the message for the id it searched for (`--id` case) or "ledger and ephemeral index both empty" (no `--id`). Round-1 review caught that the index check was unscoped by `--id`, so one unrelated ephemeral row could defeat the short-circuit for an id the operator never named — fixed in `abe0c21e`. Proof is offline only (`pixi run pytest tests/cli/test_cmd_reap.py -v` → 22/22; `pixi run pytest tests/cli -q` → 466/466), including a test that writes only an `EphemeralIndex` row and asserts the orphan's id + `LIVE` verdict actually reach the human-format table with `sweep()` unmocked, a test proving `--apply --include-orphans` actually destroys an aged idle index-only row (the act path, not just classification), and a test proving an unrelated index row cannot defeat a scoped `--id` no-op. `sweep()`'s own ephemeral union still does not honour `--id` scoping once it runs — filed separately as **U26**. Live proof (an ephemeral orphan found by one-shot `reap` under a genuinely empty ledger, against a real provider) is owed to **Task 6** |
+| U18 | FIXED, LIVE-PROVEN 2026-09-09 | `71582382` + `abe0c21e` (Task 3, 2026-09-08; the second is a review-round-2 fix) — `_cmd_reap`'s short-circuit now gates on the union: `if not ledger.entries():` alone no longer returns early; it also checks `EphemeralIndex(store=ctx.store()).rows()`, **filtered to `--id` when set**, and only short-circuits when both are empty, wording the message for the id it searched for (`--id` case) or "ledger and ephemeral index both empty" (no `--id`). Round-1 review caught that the index check was unscoped by `--id`, so one unrelated ephemeral row could defeat the short-circuit for an id the operator never named — fixed in `abe0c21e`. Proof is offline only (`pixi run pytest tests/cli/test_cmd_reap.py -v` → 22/22; `pixi run pytest tests/cli -q` → 466/466), including a test that writes only an `EphemeralIndex` row and asserts the orphan's id + `LIVE` verdict actually reach the human-format table with `sweep()` unmocked, a test proving `--apply --include-orphans` actually destroys an aged idle index-only row (the act path, not just classification), and a test proving an unrelated index row cannot defeat a scoped `--id` no-op. `sweep()`'s own ephemeral union still does not honour `--id` scoping once it runs — filed separately as **U26**. **LIVE-PROVEN 2026-09-09 (Task 6, B1 — $0.00 extra; it shared A1's pod).** With the ledger genuinely empty (`{"entries": []}`) and a real Modal A10 orphan (`eph-63cda383`) still billing after its controller was SIGKILLed, `pixi run -e live-modal kinoforge reap` from a FRESH process printed the verdict table — `LIVE  eph-63cda383  modal  age_h 0.1` followed by `1 entries classified — pass --apply to act on default policy`, exit 0 — instead of `reap: ledger and ephemeral index both empty (nothing to do)`. Nineteen seconds earlier `kinoforge list` from another fresh process printed BOTH "no instances" lines against the same live pod, so the index really was the only thing that could name it. **One boundary re-confirmed, not a new defect:** `reap -c <cfg: ephemeral_orphan_reap_enabled true, ephemeral_orphan_age_s 60> --apply --include-orphans` against the same pod at age 218 s and idle (a direct `/util` read 6 s earlier gave `gpu_util_percent=0.0, cpu_percent=2.0`) still returned `LIVE` and `acted on 0: 0 destroyed · 0 forgotten · 0 drift-skipped · 0 deferred · 0 failed`. The row's `endpoints` is `{}` (see U23) and `_probe_with_cache` calls `note_endpoints` only when `row.endpoints` is non-empty, so the C1 age+idle predicate has no util reading and is conservative-on-ignorance — the documented starvation path already recorded at matrix T1-24, not something new. Teardown fell to `kinoforge destroy --id eph-63cda383` → `destroyed orphan: eph-63cda383 (no ledger entry, provider=modal)`. `sweep()`'s `--id` scoping gap is still **U26** |
 | U19 | OPEN | the in-pod capability vocabulary has no term for interpolation. Not a duplicate boot today — the U14 carve-out prevents one — but the `/health` refinement is absent on the interpolate path |
 | U20 | FIXED | `e582bd0f` — the truncated sweeper thresholds dict. Filed retroactively 2026-09-07: it was WIDER than the ephemeral defect it was found under |
 | U21 | FIXED, OFFLINE ONLY | `9e268c18` (Task 5, 2026-09-09) — the post-create tail of `_cmd_provision` (readiness poll + `provision()`/weight-download) is now wrapped in a `try` that destroys the pod on any raise before re-raising the original error, mirroring `orchestrator.deploy()`'s destroy-on-error shape verbatim; the readiness poll itself now goes through the same bounded `_wait_for_provider_ready` helper `deploy()` uses, so a pod that never reaches `ready` hits `lifecycle.boot_timeout_s` and raises `ProvisionTimeout` naming the last status seen instead of spinning forever. **Behaviour change: `provision` now destroys the pod on a post-create failure where it previously left it running and billing.** Proof is offline only (`pixi run pytest tests/cli/test_cmd_provision.py -v` → 23/23; `pixi run pytest tests/cli -q` → 470/470) — four new tests cover a raising readiness poll, a raising provisioner, a never-ready pod (`boot_timeout: 0`, no real sleep needed), and a failing destroy that does not mask the original error. Live proof (killing the readiness poll or the weight download against a real provider mid-flight) is NOT owed to Task 6, which covers U23/U11/U18 only |
 | U22 | OPEN | the ephemeral orphan reap acts on a single probe sample. Filed 2026-09-07 |
-| U23 | FIXED, OFFLINE-PROVEN | `f787182d` + `03a4b862` (Task 1, 2026-09-08) — `_cmd_batch` reserves the ephemeral launch row before `batch_generate`, settled by `_settle_batch_launch_row` afterwards; the survive path is upgraded to the real id + endpoints and the ledger diff skips the orchestrator's own provisional row (review round 1). Live proof owed to Task 6 |
+| U23 | FIXED, LIVE-PROVEN 2026-09-09 | `f787182d` + `03a4b862` (Task 1, 2026-09-08) — `_cmd_batch` reserves the ephemeral launch row before `batch_generate`, settled by `_settle_batch_launch_row` afterwards; the survive path is upgraded to the real id + endpoints and the ledger diff skips the orchestrator's own provisional row (review round 1). **LIVE-PROVEN 2026-09-09 (Task 6, A1, $0.07 — Modal A10, pod `eph-63cda383`, 00:24:40 → 00:28:34 = 3 m 54 s @ $1.10/hr).** `kinoforge --ephemeral batch -c examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml --manifest <2-row manifest outside the repo>`: the index row was stamped `created_at_local=2026-09-09T00:24:39.697356`, the same millisecond as the run's own `00:24:39,697 … warm-reuse: scanned 0 candidates — cold create` line and **6 s before** Modal returned the app (`✓ App deployed in 1.477s`, `00:24:45,032 … running provisioner.provision for instance eph-63cda383`) — so the row is genuinely reserved pre-create and its timestamp is launch time. Read from FRESH processes at 00:24:52, 00:25:06 and 00:26:54 (the last mid-generation with the pod at `gpu_util_percent=100.0`), the row named the pod throughout: `id=eph-63cda383 provider=modal kinoforge_key=0aaf4ee6e6c0`, while the ledger stayed `{"entries": []}` and `kinoforge list` printed both "no instances" lines at 00:27:02. The controller was then SIGKILLed (`kill -9 -<pgid>`) at 00:27:23, mid-generation of manifest row 2 (`/util` one second earlier: `gpu=100.0 cpu=5.4`). From fresh processes afterwards the row still named the pod, `modal app list` showed `kinoforge-eph-63cda383` `state=deployed tasks=1`, and `/util` at 00:27:36 still read `gpu_util_percent=100.0` — a genuinely billing GPU with no controller — and `kinoforge destroy --id eph-63cda383` recovered it: `destroyed orphan: eph-63cda383 (no ledger entry, provider=modal)`, index back to `{"rows": []}`, app `state=stopped tasks=0 stopped_at=00:28:34`. Opaque naming held: the app is `kinoforge-eph-63cda383` — 8 hex, no run id, no timestamp. **Two live findings recorded, neither retrofitted:** (1) the mid-run row carries `endpoints: {}` and is NEVER upgraded during the run — `_settle_batch_launch_row` only fires after `batch_generate` RETURNS, so on the crash path the fix exists for, endpoints are never written; on Modal the id alone still names and destroys the pod, but the empty endpoints starve the reaper's util probe (see U18) and the live util poll had to fall back to the `.modal.run` URL scraped from the run log (U3). (2) `kinoforge batch --ephemeral` is an argparse error — `--ephemeral` is a ROOT-parser flag, so it must precede the subcommand (`kinoforge --ephemeral batch …`); same defect class as U11 |
 | U24 | OPEN | `grid --ephemeral` cannot cover `lora_swap:` cells — they are refused (`ValueError`), not made ephemeral. Filed 2026-09-08, Task 2 review round 1 |
 | U25 | OPEN | an ephemeral `grid` still writes local artifacts (per-cell stderr, `output/_grid_<id>/`) under the strict policy, contradicting the flag's own help text. Filed 2026-09-08, Task 2 review round 1; reproducer corrected round 2 |
 | U26 | OPEN | `sweep()`'s ephemeral union does not honour a single-id-scoped ledger view — it processes every `EphemeralIndex` row regardless of `--id`. `--id` scoping is enforced only at the `_cmd_reap` CLI guard (fixed under U18), not inside `sweep()` itself. Filed 2026-09-08, Task 3 review round 2 |
@@ -489,6 +491,25 @@ U22, U24, U25, U26).
 **Live proof cost for the whole money-leak campaign: $0.82** — $0.16 for the four fixes' own live
 cells (Task 5, Modal A10), $0.12 for U14's re-proof and $0.54 to reproduce and diagnose it
 (A100-80GB, Task 6). No cell was left running; every teardown was proven from a fresh process.
+
+**Status update 2026-09-09 (`fix/ephemeral-and-recovery-gaps` Task 6 — live proof of U23 / U11 /
+U18 on Modal A10; total spend $0.07 of a ~$0.50 budget, hard ceiling $1.50).** Plan
+`.superpowers/sdd/2026-09-07-ephemeral-and-recovery-gaps/`; full evidence in that directory's
+`task-6-report.md` (untracked). Preflight PASS and a verified 0-app Modal baseline before the
+first spend. **A1 (U23) PROVEN** — `--ephemeral batch` reserved the index row 6 s before the pod
+existed, the row named `eph-63cda383` from three fresh processes across the run, and after the
+controller was SIGKILLed mid-generation the pod was still nameable, still billing at
+`gpu_util_percent=100.0`, and recoverable with one `destroy --id`. **B1 (U18) PROVEN** — one-shot
+`reap`, empty ledger, found the orphan and classified it instead of printing "nothing to do".
+**A2 (U11) FAILED, and the cell was stopped rather than retrofitted** — `grid --ephemeral` now
+fails every cell in 0.75 s at the child's argparse (`unrecognized arguments: --ephemeral`), which
+is a REGRESSION on the pre-fix behaviour; $0.00, no pod was ever created. U11 is moved back to
+OPEN. Two live findings recorded under U23: the mid-run index row never gets its `endpoints`
+(the settle only fires after `batch_generate` returns, i.e. never on the crash path the fix
+exists for), and `kinoforge batch --ephemeral` is itself an argparse error because `--ephemeral`
+is a root-parser flag. Frame-QA PASS (soft flags) on the one clip produced. Teardown proven from
+fresh processes after every cell: both `kinoforge list` lines, `{"rows": []}`, and no non-stopped
+`kinoforge-*` app.
 
 **Status update 2026-09-07 (Task 5 — live proof of the four money-leak fixes on Modal A10, total
 spend ~$0.16 of a ~$0.60 budget).** **U15 HELD** (a fresh process attached to a warm pod, no cold
@@ -999,11 +1020,45 @@ per-item entries below.
   **Proof is OFFLINE ONLY.** 22 tests green (`pixi run pytest tests/core/test_grid_executor.py
   tests/cli/test_cmd_grid.py -v`), full suite 2243 passed (`pixi run pytest tests/core tests/cli
   -q`). No pod was booked, no subprocess was actually spawned — every test stubs
-  `subprocess.run`. Live proof (the T1-29 reproducer re-run, confirming the provider's app list
-  shows an opaque `eph-` name with no run id or timestamp) is owed to **Task 6**. Two follow-ups
-  filed rather than folded in: **U24** (lora-swap cells still cannot BE ephemeral — they are
-  refused, not supported) and **U25** (an ephemeral grid still writes local artifacts under the
-  strict policy — genuinely separate from U11, which is provider-side identity only).
+  `subprocess.run`. Two follow-ups filed rather than folded in: **U24** (lora-swap cells still
+  cannot BE ephemeral — they are refused, not supported) and **U25** (an ephemeral grid still
+  writes local artifacts under the strict policy — genuinely separate from U11, which is
+  provider-side identity only).
+  **RE-OPENED — LIVE-DISPROVEN 2026-09-09 (Task 6, cell A2, $0.00).** The fix does not hold
+  against the real CLI. `_build_generate_cmd` APPENDS `--ephemeral` to the END of the cell argv,
+  but `--ephemeral` is declared on the ROOT parser (`cli/_main.py:382`) and on `p_grid`
+  (`cli/_main.py:919`) only — the `generate` subparser declares no such option — so the child
+  process dies at argument parsing. Reproducer as run:
+  `pixi run -e live-modal kinoforge grid --spec /home/claudeuser/kinoforge-proof/grid.yaml
+  --out /home/claudeuser/kinoforge-proof/grid.mp4 --max-parallel-groups 1 --ephemeral`
+  → cell 0 failed **0.75 s** in (`2026-09-09 00:29:38,858 WARNING kinoforge.core.grid.executor
+  grid cell 0 failed; aborting remaining cells in group`), `[grid summary] status=partial`
+  (exit 2), cell 1 never dispatched, and **no Modal app was created at all** — verified from a
+  fresh process: `modal app list` held only the stopped `kinoforge-eph-63cda383` from cell A1.
+  The child's captured stderr
+  (`output/_grid_grid_20260909-002938_069bb8a6/cell_0.stderr.txt`) ends:
+  `kinoforge: error: unrecognized arguments: --ephemeral`, under the usage line for the ROOT
+  parser. Confirmed directly against `_build_parser()` with `parse_known_args`:
+  `['generate', …, '--no-reuse', '--ephemeral']` → leftover `['--ephemeral']`, `ephemeral=False`;
+  `['--ephemeral', 'generate', …]` → `ephemeral=True`; `['grid', '--spec', …, '--ephemeral']` →
+  `ephemeral=True`.
+  **This is a regression, not merely an unproven fix.** Before Task 2, `grid --ephemeral` ran and
+  leaked identity; now it cannot run at all, so the flag turned a privacy defect into a hard
+  failure of the whole command.
+  **Why the offline suite missed it:** every U11 test asserts argv MEMBERSHIP
+  (`assert ("--ephemeral" in cmd) is expect_flag`,
+  `tests/core/test_grid_executor.py:266-351`) and none of them feeds the constructed argv back
+  through `kinoforge`'s own parser; `subprocess.run` is stubbed everywhere, so the one thing that
+  would have failed — argparse — never ran. A regression test for the fix must parse the built
+  argv with `_build_parser()`, not just grep the list.
+  **Not fixed here.** Task 6's brief forbids retrofitting the code to make its own proof pass, so
+  the one-line remedy (insert `--ephemeral` immediately after `"kinoforge"` in
+  `_build_generate_cmd`'s argv, or declare `--ephemeral` on the `generate` subparser) is left to
+  a follow-up task. Note the same defect class bit `batch` during A1: `kinoforge batch
+  --ephemeral …` is also an argparse error; the working form is `kinoforge --ephemeral batch …`.
+  The **opaque-naming half** of A2's acceptance criterion is nevertheless live-proven, just
+  through a different command — see U23, where `batch --ephemeral` produced the Modal app
+  `kinoforge-eph-63cda383` (8 hex, no run id, no timestamp).
 
 - **U12 — CLOSED 2026-09-06 (pin applied in `82ad084b`, proven live on Modal) — FlashVSR upscale was dead on every provider: `av` 18 broke the mp4 encode.**
   **Symptom:** the pod boots, loads FlashVSR, reaches the GPU and computes (util probe caught
@@ -1523,9 +1578,43 @@ per-item entries below.
   **Proof is OFFLINE ONLY.** `pixi run pytest tests/cli/test_cmd_reap.py -v` → 20/20 passed;
   `pixi run pytest tests/cli -q` → 464/464 passed. No pod was booked and no provider was called —
   the new test uses a real `LocalArtifactStore` + `EphemeralIndex` and a minimal fake provider
-  (`probe_runtime` only), with `kinoforge.core.registry.get_provider` patched to return it. Live
-  proof — an ephemeral orphan under a genuinely empty ledger, found by one-shot `reap` against a
-  real provider — is owed to **Task 6**.
+  (`probe_runtime` only), with `kinoforge.core.registry.get_provider` patched to return it.
+  **LIVE-PROVEN 2026-09-09 (Task 6, cell B1). $0.00 of its own — it ran against the orphan cell
+  A1 had already created.** Setup: the A1 `--ephemeral batch` controller was SIGKILLed
+  mid-generation, leaving Modal A10 `eph-63cda383` alive (`modal app list` → `state=deployed`,
+  `tasks=1`; a direct `/util` read at 00:27:36 → `gpu_util_percent=100.0`) with
+  `.kinoforge/_lifecycle/ledger.json` = `{"entries": []}`.
+  Ledger blindness first, from a fresh process at 00:27:42:
+  ```
+  $ pixi run -e live-modal kinoforge list
+  [instance overview] No running instances.
+  No instances recorded in ledger.
+  ```
+  Then the fix, from another fresh process at 00:27:43:
+  ```
+  $ pixi run -e live-modal kinoforge reap
+  [instance overview] No running instances.
+  verdict                     id                    provider    age_h  hb_age_s  sent_age_s
+  LIVE                        eph-63cda383          modal         0.1         -           -
+
+  1 entries classified — pass --apply to act on default policy
+  ```
+  Exit 0. Before `71582382` this invocation printed `reap: ledger empty (nothing to do)` and
+  returned without calling `sweep()`; the orphan is now reached and classified. **The `--apply
+  --include-orphans` backstop is still NOT reachable for this row shape** — with
+  `-c <cfg: ephemeral_orphan_reap_enabled true, ephemeral_orphan_age_s 60>` at pod age 218 s and
+  idle (`/util` at 00:28:11 → `gpu_util_percent=0.0, cpu_percent=2.0`), the verdict stayed `LIVE`
+  and the summary read `acted on 0: 0 destroyed · 0 forgotten · 0 drift-skipped · 0 deferred ·
+  0 failed`. That is the already-documented starvation path, not a new defect: the index row
+  carries `endpoints: {}` (U23's second live finding) and `_probe_with_cache`
+  (`src/kinoforge/core/reaper_actor.py:409-411`) calls `note_endpoints` only when
+  `row.endpoints` is non-empty, so `_ephemeral_orphan_predicate` has no util reading and is
+  conservative-on-ignorance — the same boundary recorded at matrix T1-24 for a mid-boot row.
+  Teardown therefore fell to the documented manual path, from a fresh process:
+  `pixi run -e live-modal kinoforge destroy --id eph-63cda383` → `destroyed orphan: eph-63cda383
+  (no ledger entry, provider=modal)`, after which the index read `{"rows": []}` and the Modal app
+  read `state=stopped tasks=0 stopped_at=2026-09-09 00:28:34-07:00`. `sweep()`'s own `--id`
+  scoping gap is untouched and remains **U26**.
 
 - **U19 — the in-pod capability vocabulary has no term for interpolation, so `kinoforge interpolate`
   cannot participate in warm reuse at all.**
@@ -1786,8 +1875,68 @@ per-item entries below.
   survive path is upgraded to the real id/endpoints, one proving an unconfirmed `--no-reuse`
   destroy keeps + upgrades the row to the real id, and one proving a refused provisional-row
   collapse does not fool the diff.
-  **Not yet done:** live proof (Task 6 of the same plan) — the reproducer above has not been re-run
-  against a real Modal/RunPod pod.
+  **LIVE-PROVEN 2026-09-09 (Task 6, cell A1). Modal A10 `eph-63cda383`, 00:24:40 -> 00:28:34
+  (3 m 54 s @ $1.10/hr) = $0.07.** Command as run:
+  ```
+  pixi run -e live-modal kinoforge --ephemeral batch \
+    -c examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml \
+    --manifest /home/claudeuser/kinoforge-proof/batch.yaml
+  ```
+  (a 2-row manifest outside the repo, both rows reading the standard smoke prompt verbatim from
+  `examples/configs/prompts/field-realistic.txt`). Note the flag position: `--ephemeral` is a
+  ROOT-parser option, so `kinoforge batch --ephemeral …` is rejected with
+  `kinoforge: error: unrecognized arguments: --ephemeral` — the same defect class that
+  live-disproved U11.
+  *The row is reserved before the pod exists.* Its `created_at_local` is
+  `2026-09-09T00:24:39.697356` — the same millisecond as the run's own
+  `2026-09-09 00:24:39,697 INFO kinoforge.cli._commands warm-reuse: scanned 0 candidates — cold
+  create` line, and **6 s before** Modal returned the app (`✓ App deployed in 1.477s`, then
+  `2026-09-09 00:24:45,032 INFO kinoforge.orchestrator running provisioner.provision for instance
+  eph-63cda383`). So the timestamp is launch time, not completion time.
+  *The row names the pod for the whole run,* read from FRESH processes at 00:24:52, 00:25:06 and
+  00:26:54 — the last of these mid-generation, with the pod at `gpu_util_percent=100.0,
+  cpu_percent=5.7`:
+  ```
+  {"created_at_local": "2026-09-09T00:24:39.697356", "endpoints": {}, "id": "eph-63cda383",
+   "kinoforge_key": "0aaf4ee6e6c0", "provider": "modal",
+   "warm_attach_key": "11d18127929f6e70885b925eaa4d0d352534ad121a621fad12de3e801524111b"}
+  ```
+  while `ledger.json` stayed `{"entries": []}` and `kinoforge list` (fresh process, 00:27:02)
+  printed BOTH `[instance overview] No running instances.` and `No instances recorded in ledger.`
+  against a billing A10. Modal named the app `kinoforge-eph-63cda383` — opaque, 8 hex, no run id
+  and no timestamp.
+  *The deliberate crash.* At 00:27:23 the controller's whole process group was SIGKILLed
+  (`kill -9 -<pgid>`) mid-generation of manifest row 2 (a `/util` read one second earlier gave
+  `gpu_util_percent=100.0, cpu_percent=5.4`); manifest row 1 had already published
+  `output/batch-20260909-002439/20260909-002717_diffusers_Wan2.1-T2V-1.3B-Diffuser_Photorealistic-cinem.mp4`.
+  From fresh processes afterwards the row still named the pod, `modal app list` still showed
+  `kinoforge-eph-63cda383` `state=deployed tasks=1`, and `/util` at 00:27:36 still read
+  `gpu_util_percent=100.0` — a genuinely orphaned, genuinely billing GPU.
+  *Recovery.* `pixi run -e live-modal kinoforge destroy --id eph-63cda383` →
+  `destroyed orphan: eph-63cda383 (no ledger entry, provider=modal)`; index back to
+  `{"rows": []}`, ledger `{"entries": []}`, app `state=stopped tasks=0
+  stopped_at=2026-09-09 00:28:34-07:00`, `kinoforge list` both lines. The same orphan is what
+  cell B1 used to live-prove **U18**.
+  *Frame-QA of the one clip the run produced* (480x480, 33 f, 16 fps, 2.0625 s, 360,717 B; five
+  frames via `ffmpeg_frames_by_count`, read as one contact sheet): **PASS with soft flags.**
+  Prompt adherence is good — alpine meadow of yellow wildflowers, tall backlit waterfall over
+  mossy cliff, misting pool, golden-hour rim light, glowing butterflies and pollen motes, the
+  subject facing away in frame 1 and turned over her shoulder by frame 3, a slow push-in across
+  the five samples. Temporally coherent: composition, waterfall and flower field are stable frame
+  to frame with no flicker, morphing, seams or false colour. Flags: the look is stylised/painterly
+  rather than the requested photoreal, the face is indistinct at 480 px, and the highlights around
+  the sun and waterfall are blown — all ordinary Wan 2.1 1.3B behaviour at this resolution, not
+  defects.
+  **Live finding, recorded not retrofitted: the mid-run row carries `endpoints: {}` and is never
+  upgraded while the run is in flight.** `_settle_batch_launch_row` fires only after
+  `batch_generate` RETURNS, so on the crash path the fix exists for, the endpoints are never
+  written at all. On Modal that is survivable — the reserved resource name IS the pod id, so
+  `destroy --id` works off the row alone — but it has two live costs: the reaper's util probe is
+  starved (`_probe_with_cache` calls `note_endpoints` only when `row.endpoints` is non-empty), so
+  `reap --apply --include-orphans` could not promote this orphan past `LIVE` (see U18), and the
+  Task 6 monitor had to fall back to scraping the `.modal.run` URL out of the run log because
+  neither the index nor `provider.get_instance` would yield it (U3). On RunPod, where the reserved
+  name is NOT the pod id, the same gap is larger — see **U16**.
   **Discovered by:** the final whole-branch review of `fix/modal-money-leaks`, 2026-09-07.
 
 - **U24 — `grid --ephemeral` cannot cover `lora_swap:` cells; they are refused, not made
