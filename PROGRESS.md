@@ -472,7 +472,7 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | U4 | FIXED | `c08c3cce` — `logs` refuses cleanly off RunPod instead of 404ing a fabricated host |
 | U5 | PARTLY FIXED | `c08c3cce` corrected the help text; wiring `vault.positive_prompt` into prompt resolution is still open, and so is failing an empty prompt BEFORE a pod is billed |
 | U6 | OPEN | `kinoforge deploy` renders no provision; dead on Modal, books a portless pod on RunPod |
-| U7 | FIXED, LIVE-PROVEN IN PART | `8191bd1b`; three SIGKILLed provisions each left a durable row naming the app (2026-09-07, $0.00). NOT proven: `destroy --id` on a mid-create app (**U17**). Teardown when the readiness poll or the weight download fails is now covered offline by **U21**'s fix, not live-proven |
+| U7 | FIXED, LIVE-PROVEN IN PART | `8191bd1b`; three SIGKILLed provisions each left a durable row naming the app (2026-09-07, $0.00). NOT live-proven: `destroy --id` on a mid-create app — that gap is **U17**, since FIXED offline-proven-only in `8069f376`+`45f4254c`; a live re-proof of the exact mid-create window is a separate follow-up. Teardown when the readiness poll or the weight download fails is now covered offline by **U21**'s fix, not live-proven |
 | U8 | FIXED ON MODAL, LIVE-PROVEN | `9d34d008` + `8403a71c`; index row readable 2.5 s into a live run, pod still reapable after SIGKILL (~$0.06). RunPod half stays PARTIAL under **U16** and is NOT upgraded by the Modal proof |
 | U9 | FIXED, LIVE-PROVEN | `e582bd0f`; the daemon reaped an idle ephemeral pod at `age=119s idle on probe gpu_util=0.0% cpu=0.0%` (~$0.03). Two boundaries, both filed rather than hidden: a mid-boot row has `endpoints: {}` so the probe returns nulls and the pod stays LIVE (U3's blast radius), and the predicate acts on ONE probe sample (**U22**) |
 | U10 | FIXED ON THE GRACEFUL PATH | `7d535503`, hardened by `9ae52274`. A daemon that is SIGKILLed still strands its row, and `sweeper status` / `metrics` still ignore the `--interval-s` override. Both recorded in the entry; neither re-opened |
@@ -707,8 +707,9 @@ per-item entries below.
   `kinoforge list` showed `kinoforge-deploy-20260906-013616-45da4a provider=modal` during boot and
   the row survived the raise.
 
-- **U7 — FIXED in `8191bd1b`, LIVE-PROVEN IN PART on Modal 2026-09-07 (the row holds; `destroy
-  --id` does not reap a mid-create app — see U17) — `kinoforge
+- **U7 — FIXED in `8191bd1b`, LIVE-PROVEN IN PART on Modal 2026-09-07 (the row holds; at the time,
+  `destroy --id` did not reap a mid-create app — see U17, since FIXED offline-proven-only in
+  `8069f376`+`45f4254c`, `fix/ephemeral-and-recovery-gaps`, 2026-09-08) — `kinoforge
   provision` booked a live instance that no kinoforge command could see or destroy.**
   `_cmd_provision` called `provider.create_instance(spec)` directly and wrote **nothing to the
   ledger** — no pre-launch provisional row, no real row after. It also never checked whether an
@@ -750,9 +751,13 @@ per-item entries below.
   `tasks=0`), and a fresh `kinoforge list` named it from that row alone. **The durability half of
   U7 therefore holds live, on all three kill points**, against a pre-fix baseline that recorded
   nothing at any point.
-  **What did NOT hold:** in case (c) `kinoforge destroy --id` could not reap the app — see the new
-  item **U17**. The stated pre-fix recovery ("required a raw `modal app stop`") is therefore still
-  the recovery for a mid-create kill, by app id rather than by name.
+  **What did NOT hold at the time:** in case (c) `kinoforge destroy --id` could not reap the app —
+  filed as **U17**. The stated pre-fix recovery ("required a raw `modal app stop`") was, at the
+  time this paragraph was written, still the recovery for a mid-create kill, by app id rather than
+  by name. **U17 is now FIXED, offline-proven only, in `8069f376`+`45f4254c`
+  (`fix/ephemeral-and-recovery-gaps`, 2026-09-08)** — `destroy --id` now resolves the Modal
+  `app_id` via a listing lookup before falling back to the by-name stop; a live re-proof of this
+  exact mid-create kill window is a separate, un-run follow-up. See U17's own entry.
   **Two side effects of the `build_instance_spec` swap, disclosed and made intentional 2026-09-07
   (final-review follow-up).** Neither was named in the fix above, and both change what `provision`
   books rather than only what it records — so they are pinned by tests now instead of being
@@ -1024,7 +1029,9 @@ per-item entries below.
   (six in the shipped `docs/modal-command-matrix.md`, three here) now name the real source and
   inline the rule being cited, so no reader is sent to a file they cannot open.
 
-- **U11 — `kinoforge grid --ephemeral` is accepted and silently dropped, leaking run identity to
+- **U11 — FIXED, LIVE-PROVEN 2026-09-09 (`b9b4fcd6`, after a same-day live-caught regression fixed
+  in the same commit — see the full history in this entry, kept intact and not rewritten) —
+  `kinoforge grid --ephemeral` was accepted and silently dropped, leaking run identity to
   the provider.**
   The `grid` parser declares `--ephemeral` with the help text "pass-through to each underlying
   generate". `_cmd_grid` (`src/kinoforge/cli/_commands.py:3612`) does `del ctx`, never reads
@@ -1624,8 +1631,9 @@ per-item entries below.
   Modal, the provider every defect in this campaign was found on, neither is true any more.
   **Discovered by:** re-review of Task 3 fix round 1, 2026-09-06.
 
-- **U17 — `kinoforge destroy --id` cannot reap a Modal app that was killed mid-deploy; only the
-  raw `modal app stop <app_id>` can.**
+- **U17 — FIXED, OFFLINE-PROVEN in `8069f376`+`45f4254c` (2026-09-08; live re-proof still owed,
+  see below) — `kinoforge destroy --id` could not reap a Modal app that was killed mid-deploy; only
+  the raw `modal app stop <app_id>` could.**
   Found by the U7 live proof (Task 5, 2026-09-07) — the fix's durable row worked exactly as
   designed and then handed the operator an id the destroy path could not use.
   **Symptom.** SIGKILL `kinoforge provision` 1.0 s into `create_instance`. Modal has already
@@ -1687,8 +1695,10 @@ per-item entries below.
   inject `lister=`/`stopper=`; none shells out, none touches credentials, none books a GPU. **A
   live re-proof means SIGKILLing `kinoforge provision` inside the same ~1 s window U7's live proof
   used, then destroying the resulting mid-deploy app by id** — that is a separate follow-up this
-  entry does not claim, and it is NOT owed to **Task 6** (which re-proves U11/U14/U15/U18/U23, not
-  U17).
+  entry does not claim, and it is NOT owed to **Task 6** (which re-proves U23/U11/U18 only, not
+  U17). Corrected 2026-09-09, Task 7: this line previously and incorrectly named U14/U15 as part
+  of Task 6's scope — those were re-proven in Task 5 of the earlier `fix/modal-money-leaks` branch,
+  not Task 6 of this one.
 
   **ROUND-2 FIX — `45f4254c` (Task 4, 2026-09-08).** Review of `8069f376` found the lookup had
   moved onto the destroy critical path and could make a destroy that previously succeeded fail.
@@ -1719,8 +1729,9 @@ per-item entries below.
   pre-existing `tests/providers/modal/test_provider.py` destroy tests unmodified. The live
   re-proof caveat above is unchanged.
 
-- **U18 — `kinoforge reap` returns "ledger empty (nothing to do)" while an ephemeral orphan is
-  billing; the one-shot reap never reaches `sweep()`.**
+- **U18 — FIXED, LIVE-PROVEN 2026-09-09 in `71582382`+`abe0c21e` — `kinoforge reap` used to return
+  "ledger empty (nothing to do)" while an ephemeral orphan was
+  billing; the one-shot reap never reached `sweep()`.**
   Found by the U8 live proof (Task 5, 2026-09-07).
   **Symptom.** With a live Modal ephemeral pod and a populated
   `.kinoforge/_lifecycle/ephemeral-index.json`, `pixi run -e live-modal kinoforge reap
@@ -1876,8 +1887,9 @@ per-item entries below.
   **Discovered by:** Task 4 of the money-leaks plan; filed as its own item on the Task 7 record
   sweep, 2026-09-07.
 
-- **U21 — `kinoforge provision` has no destroy-on-error path: a create that succeeds followed by a
-  readiness poll or a weight download that fails leaves the pod running, and nothing tears it
+- **U21 — FIXED, OFFLINE-PROVEN in `9e268c18` (2026-09-09; live re-proof still owed, see below) —
+  `kinoforge provision` had no destroy-on-error path: a create that succeeded followed by a
+  readiness poll or a weight download that failed left the pod running, and nothing tore it
   down.**
   **Symptom.** `_cmd_provision` (`src/kinoforge/cli/_commands.py`) books the instance, writes the
   real ledger row, collapses the provisional one — and then runs two unguarded phases:
@@ -1984,12 +1996,15 @@ per-item entries below.
   the U9 cell before it is trusted.
   **Discovered by:** review of the U9 fix, carried into the Task 7 record sweep, 2026-09-07.
 
-- **U23 — FIXED (OFFLINE-PROVEN) in `f787182d` + `03a4b862` (Task 1,
+- **U23 — FIXED, LIVE-PROVEN in `f787182d` + `03a4b862` (Task 1,
   `.superpowers/sdd/2026-09-07-ephemeral-and-recovery-gaps/task-1-brief.md`, 2026-09-08; the
   second commit is a review-round-1 fix — the first commit's survive path never upgraded the row,
   and its ledger diff could pick the orchestrator's own provisional row).
-  `kinoforge --ephemeral batch` used to leave NO durable record of the pod it books; live proof
-  owed to Task 6.**
+  `kinoforge --ephemeral batch` used to leave NO durable record of the pod it books. Offline-proven
+  at the time this header was written; the live proof then owed to Task 6 was run and PASSED
+  (Task 6, cell A1, $0.07, 2026-09-09) — see the LIVE-PROVEN block later in this entry. Header
+  corrected 2026-09-09, Task 7, so a reader stopping at the header does not get a weaker proof
+  level than the truth.**
   **Symptom.** `_cmd_batch` (`src/kinoforge/cli/_commands.py`) cold-creates through
   `batch_generate` -> `deploy_session` and never reserves a launch row: it calls neither
   `_ephemeral_launch_row_reserve` (before the create) nor `_ephemeral_index_add` (after it), and
@@ -2404,9 +2419,12 @@ the pod up). Six new defects were filed along the way: **U24**–**U28** are ope
 and fixed the same day (`424e52d1`). **The STATUS INDEX at the top of the URGENT ACTION ITEMS
 section is the authoritative current count — 29 items, 14 fixed, 2 partly fixed, 13 open — read it,
 not the older money-leaks table directly below, which is frozen as of 2026-09-07.**
+**This branch is UNMERGED — `fix/ephemeral-and-recovery-gaps` is 31 commits ahead of `main` with a
+whole-branch review still pending. A session resuming on `main` will not see any of this work; it
+needs to check out this branch (or wait for the merge) to pick it up.**
 
 **Modal money leaks CLOSED (2026-09-07, branch `fix/modal-money-leaks`, $0.82 of live proof).**
-Plan `docs/superpowers/plans/2026-09-06-modal-money-leaks.md`, 8 tasks, all committed. The four
+Plan `docs/superpowers/plans/2026-09-06-modal-money-leaks.md`, 8 tasks, all committed. The five
 items on the command-matrix list that could cost money while an operator watched the wrong thing
 are fixed, and each was proven live on Modal rather than offline:
 

@@ -41,7 +41,7 @@ live on Modal rather than offline:
 
 **Total live spend: $0.82.** Every pod was destroyed and every teardown proven from a new process.
 
-**Five new items came out of those proofs; two remain open today, three are fixed** — the honest
+**Six new items came out of those proofs; three remain open today, three are fixed** — the honest
 shape of the result rather than a clean sweep: **U16** (the ephemeral launch row is only a partial
 handle on RunPod, open), ~~**U17** (`destroy --id` cannot reap a Modal app killed mid-deploy)~~ —
 **U17 is FIXED (offline-proven only) in `8069f376` + `45f4254c`**, `fix/ephemeral-and-recovery-gaps`,
@@ -178,7 +178,7 @@ unconditional precondition — "every output mp4 gets 5 frames via `ffmpeg_frame
 tiled into one montage, read, and a one-line verdict recorded. No cell is PASS without it" —
 so they are FAILs; nothing in kinoforge is implicated, and the
 remedy for each is a re-run rather than a fix. Every one of the other eleven names a filed item
-(U1–U29) or a fix commit in its own row. (T1-29, which used to be one of these eleven, was
+(U1–U29) or a fix commit in its own row. (T1-29, which used to be one of these twelve, was
 reclassified PASS on 2026-09-09 once **U11** was fixed and live-re-proven; the sixteen-FAIL /
 twelve-code-defect figures this paragraph once carried are historical and are corrected here rather
 than left standing.)
@@ -408,8 +408,12 @@ not obtained is a clean composed clip on the first attempt.
 | T2-05 | `kinoforge --ephemeral upscale -c VSRX4 --video FIX --scale 1080p --no-reuse` + proof | VSRX4 | EXPECTED-REFUSAL | $0.00 | `logs/T2-05.log` | Exit 2, identical guard to T2-02: `error: --scale 1080p deferred to a later session; use --scale Nx for v1`, raised before any pod work, so the cell cost nothing and started nothing. The `--ephemeral` and `--no-reuse` flags were never reached |
 | T2-05b | same, **without** `--scale 1080p` (added so the cell tested something) | VSRX4 | FAIL | $0.10 | `logs/T2-05b.log` | Added because T2-05 as written refuses before doing anything, leaving the ephemeral + `--no-reuse` teardown path — the money-critical half of the cell — untested. Result: the upscale died at the same encoder (3/3, `u-0814ca0238...`), **but the teardown behaved correctly under failure**, which is the reassuring finding here: `--no-reuse` destroyed the pod even though the job raised, verified from a new process as **0 non-stopped `kinoforge-*` apps** while the CLI was still hung. So the hang of F15 / U13 is in the **post-teardown unwind**, not before the destroy — it does not leak a pod. Recorded FAIL on the generation, not on the teardown |
 
-**Tier 2a tally (6 cells), after the 2026-09-06 re-run:** **2 PASS** (T2-01, T2-04),
-1 EXPECTED-REFUSAL (T2-05), **3 FAIL** (T2-02, T2-03, T2-05b). As originally run it was 1 PASS,
+**Tier 2a tally (6 cells), after the 2026-09-06 re-run:** as this paragraph was originally
+written, **2 PASS** (T2-01, T2-04), 1 EXPECTED-REFUSAL (T2-05), **3 FAIL** (T2-02, T2-03, T2-05b).
+**That count is stale: T2-03's own row (above) is PASS, and the sentence two lines below already
+says it "flipped to PASS on 2026-09-07" — the prose was updated at the time, the tally line was
+not.** Current tally: **3 PASS** (T2-01, T2-03, T2-04), 1 EXPECTED-REFUSAL (T2-05), **2 FAIL**
+(T2-02, T2-05b). As originally run (2026-09-06, before either re-run) it was 1 PASS,
 2 EXPECTED-REFUSAL, 3 FAIL — **T2-01** flipped to PASS once the `av<18` pin (**`82ad084b`**) was
 applied and re-proven live; **T2-03 did not flip then**, because the same re-run that fixed its encode
 reproduced the warm-attach miss (**U14**) and a cell whose notes describe a live defect is a FAIL;
