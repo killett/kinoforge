@@ -453,21 +453,22 @@ suspected site.
 fixed 2026-09-08, Task 4, then hardened the same day in a round-2 fix; U21 fixed 2026-09-09, Task 5;
 U23 + U18 LIVE-PROVEN and U11 LIVE-DISPROVEN 2026-09-09, Task 6, $0.07 total; U11 REGRESSION FIXED
 (offline only) + U27/U28/U29 filed and U29 then FIXED on a controller ruling, 2026-09-09, Task 2
-regression fix, $0.00
+regression fix, $0.00; U11 then LIVE-RE-PROVEN 2026-09-09, Task 6 cell A2 re-run, $0.08
 — this is the current state; the paragraphs below it are the campaign's running commentary and are
 dated, not authoritative).**
 Twenty-nine items, U1-U29. **Fourteen are fixed** (U4, U7, U8, U9, U11, U12, U14, U15, U17, U18,
 U20, U21, U23, U29), **two are partly fixed** (U5, U10), **thirteen are open** (U1, U2, U3, U6,
 U13, U16, U19, U22, U24, U25, U26, U27, U28). **U11 went OPEN → FIXED again on 2026-09-09**: it
 was moved back to OPEN by Task 6's live disproof, and the regression that disproof found is now
-fixed in `b9b4fcd6`. That fix is **OFFLINE-PROVEN ONLY — the live A2 re-proof is still owed**, so
-read its row before trusting `grid --ephemeral` with money.
+fixed in `b9b4fcd6`. That fix is **LIVE-PROVEN as of 2026-09-09** — the owed A2 re-run booked two
+real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge-eph-<8hex>` apps
+($0.08); see its row.
 
 | Item | State | Detail |
 |---|---|---|
 | U1 | OPEN | warm-attach matcher is provider-blind; untouched |
 | U2 | OPEN | `batch --dry-run-swap` never parses the manifest; untouched |
-| U3 | OPEN | a Modal pod's endpoint URL is unreachable from a fresh process. Re-checked after `ccd4c5e7` and still open — that fix is confined to `_resolve_attach_pod` |
+| U3 | OPEN | a Modal pod's endpoint URL is unreachable from a fresh process. Re-checked after `ccd4c5e7` and still open — that fix is confined to `_resolve_attach_pod`. Re-confirmed live twice on 2026-09-09 (Task 6): in A1 the util probe had to scrape the `.modal.run` URL out of the run log because neither `provider.get_instance` nor the index row (`endpoints: {}`) yields it; in the A2 re-run even that fallback was unavailable, because `grid` captures each cell subprocess's stderr and writes it only at cell end, so **no `gpuUtilPercent` reading was obtainable for a grid cell at all** and the polling loop had to fall back to `modal app list` `state`/`tasks` as the liveness signal. That makes U3 a live-monitoring blocker for `grid`, not only an inconvenience |
 | U4 | FIXED | `c08c3cce` — `logs` refuses cleanly off RunPod instead of 404ing a fabricated host |
 | U5 | PARTLY FIXED | `c08c3cce` corrected the help text; wiring `vault.positive_prompt` into prompt resolution is still open, and so is failing an empty prompt BEFORE a pod is billed |
 | U6 | OPEN | `kinoforge deploy` renders no provision; dead on Modal, books a portless pod on RunPod |
@@ -475,7 +476,7 @@ read its row before trusting `grid --ephemeral` with money.
 | U8 | FIXED ON MODAL, LIVE-PROVEN | `9d34d008` + `8403a71c`; index row readable 2.5 s into a live run, pod still reapable after SIGKILL (~$0.06). RunPod half stays PARTIAL under **U16** and is NOT upgraded by the Modal proof |
 | U9 | FIXED, LIVE-PROVEN | `e582bd0f`; the daemon reaped an idle ephemeral pod at `age=119s idle on probe gpu_util=0.0% cpu=0.0%` (~$0.03). Two boundaries, both filed rather than hidden: a mid-boot row has `endpoints: {}` so the probe returns nulls and the pod stays LIVE (U3's blast radius), and the predicate acts on ONE probe sample (**U22**) |
 | U10 | FIXED ON THE GRACEFUL PATH | `7d535503`, hardened by `9ae52274`. A daemon that is SIGKILLed still strands its row, and `sweeper status` / `metrics` still ignore the `--interval-s` override. Both recorded in the entry; neither re-opened |
-| U11 | FIXED, OFFLINE-PROVEN ONLY — LIVE RE-PROOF OWED | `0dfe90a9` + `7ee50a04` + `fdc4f388` (Task 2, 2026-09-08) forward `args.ephemeral` from `_cmd_grid` through `run_grid`/`_run_group`/`_run_one_cell` into every generate-mode cell's argv and refuse a `lora_swap:` group under `--ephemeral` with a clean stderr line + exit 2 — but they put the flag in a position `kinoforge generate` cannot parse, which **Task 6's live A2 disproved on 2026-09-09** (every cell died in 0.75 s on `kinoforge: error: unrecognized arguments: --ephemeral`; $0.00, no pod created; full record kept in the detailed entry and in the Task 6 commentary below — do not read this row as erasing it). **Fixed in `b9b4fcd6` (2026-09-09).** `_build_generate_cmd` now emits `--ephemeral` in ROOT position — `pixi run kinoforge --ephemeral generate …`, before the subcommand — rather than appending it after `generate`; the flag is a session-global consumed by `main()` before dispatch, so the root parser is its only correct home. The same commit fixes a SECOND, previously unrecorded instance of U11's leak reached through the other door: `p_grid` re-declared `--ephemeral` with an implicit `default=False`, and argparse copies every key of a subparser's fresh namespace onto the parent, so `kinoforge --ephemeral grid …` parsed to `args.ephemeral=False` and ran NON-ephemeral while reporting success (confirmed: `parse_args(['--ephemeral','grid','--spec','x']).ephemeral` → `False`); now `default=argparse.SUPPRESS`, so both flag positions work. **The test gap that shipped the regression is closed**: three new tests feed the argv `_build_generate_cmd` / `_build_swap_generate_cmd` actually build through the real `_build_parser().parse_args()` (which errors on any leftover token) and assert the resulting `args.ephemeral` / `args.cmd` / `args.attach_pod`, replacing the argv-MEMBERSHIP assertions that were blind to flag position; a fourth pins both `--ephemeral` positions around `grid`. RED was confirmed against the pre-fix code with the real live failure (`SystemExit: 2`, `kinoforge: error: unrecognized arguments: --ephemeral`). **Proof level: OFFLINE ONLY** — `pixi run pytest tests/core tests/cli -q` → 2256 passed. The live A2 re-proof (a real `grid --ephemeral` producing opaque provider-side cell names) has NOT been run and is still owed. The opaque-naming half of A2's criterion remains live-proven only via `batch --ephemeral` — see U23. Follow-ups **U24**, **U25** still stand; the audit behind this fix filed **U27**, **U28** and **U29** (U29 then fixed the same day in `424e52d1`) |
+| U11 | FIXED, LIVE-PROVEN 2026-09-09 (re-proof after the same-day live disproof) | `0dfe90a9` + `7ee50a04` + `fdc4f388` (Task 2, 2026-09-08) forward `args.ephemeral` from `_cmd_grid` through `run_grid`/`_run_group`/`_run_one_cell` into every generate-mode cell's argv and refuse a `lora_swap:` group under `--ephemeral` with a clean stderr line + exit 2 — but they put the flag in a position `kinoforge generate` cannot parse, which **Task 6's live A2 disproved on 2026-09-09** (every cell died in 0.75 s on `kinoforge: error: unrecognized arguments: --ephemeral`; $0.00, no pod created; full record kept in the detailed entry and in the Task 6 commentary below — do not read this row as erasing it). **Fixed in `b9b4fcd6` (2026-09-09).** `_build_generate_cmd` now emits `--ephemeral` in ROOT position — `pixi run kinoforge --ephemeral generate …`, before the subcommand — rather than appending it after `generate`; the flag is a session-global consumed by `main()` before dispatch, so the root parser is its only correct home. The same commit fixes a SECOND, previously unrecorded instance of U11's leak reached through the other door: `p_grid` re-declared `--ephemeral` with an implicit `default=False`, and argparse copies every key of a subparser's fresh namespace onto the parent, so `kinoforge --ephemeral grid …` parsed to `args.ephemeral=False` and ran NON-ephemeral while reporting success (confirmed: `parse_args(['--ephemeral','grid','--spec','x']).ephemeral` → `False`); now `default=argparse.SUPPRESS`, so both flag positions work. **The test gap that shipped the regression is closed**: three new tests feed the argv `_build_generate_cmd` / `_build_swap_generate_cmd` actually build through the real `_build_parser().parse_args()` (which errors on any leftover token) and assert the resulting `args.ephemeral` / `args.cmd` / `args.attach_pod`, replacing the argv-MEMBERSHIP assertions that were blind to flag position; a fourth pins both `--ephemeral` positions around `grid`. RED was confirmed against the pre-fix code with the real live failure (`SystemExit: 2`, `kinoforge: error: unrecognized arguments: --ephemeral`). Offline proof: `pixi run pytest tests/core tests/cli -q` → 2256 passed. **LIVE-RE-PROVEN 2026-09-09 (Task 6, cell A2 re-run, $0.08 — two Modal A10s @ $1.10/hr, 148 s + 110 s = 258 s).** `pixi run -e live-modal kinoforge --ephemeral grid --spec <1x2 spec outside the repo> --out <path> --max-parallel-groups 1` — deliberately the ROOT flag position, i.e. the door the `p_grid` half of this defect had been silently dropping. Both halves held: (a) the child argv observed live in `ps` reads `python -m kinoforge --ephemeral generate --config … --no-reuse`, with `--ephemeral` in root position, and the cell process survived past argparse instead of dying in 0.75 s; (b) the run reached `[grid summary] composed mp4 → …` (status `full`, exit 0), so the root-position flag was NOT dropped by `p_grid`'s namespace copy. **Provider-side naming evidence** — `modal app list` from fresh processes during the run: `kinoforge-eph-2edbbd45` (created 01:08:01, stopped 01:10:29) and `kinoforge-eph-c89c0418` (created 01:10:32, stopped 01:12:22). Both are opaque 8-hex: no run id (the grid ids were `grid_20260909-010759_12fe6ccc__cell0` / `__cell1`), no local timestamp, no workload shape. That is exactly what A2's criterion asks for, now proven through `grid` itself rather than borrowed from `batch`. The ephemeral index carried exactly one row at a time (`eph-2edbbd45`, then `eph-c89c0418`), the ledger stayed `{"entries": []}` throughout, and both rows were gone at end of run. **Both flag positions were also confirmed live at $0.00**, via the root-only `--debug-show-secrets` mutual exclusion, which fires in `main()` after parse and before any dispatch: `--debug-show-secrets grid … --ephemeral` → exit 2 mutex error, `--ephemeral --debug-show-secrets grid …` → exit 2 mutex error, and the control with no `--ephemeral` anywhere → exit 0 `[grid dry-run] 2 cells`. So the sub-position door is proven too, without a second pair of pods. Frame-QA (mandatory) on both cell clips and the composed 960x480 grid: PASS with the usual soft flags — see the Task 6 A2 status update below. Teardown verified from a fresh process after the orchestrator exited: both `kinoforge list` lines, 0 index rows, empty ledger, `modal container list` → `Active Containers in environment: None`, no `deployed` app. **⚠️ One thing did not hold:** no `gpuUtilPercent` reading was obtainable during this cell — `grid` captures each cell subprocess's stderr and writes it only at the end, so the `.modal.run` URL the A1 util probe scraped from a run log does not exist live for a grid cell, and U3 still blocks resolving it from the provider. The 75 s polling loop therefore fell back to a provider-side liveness signal (`modal app list` `state`/`tasks`, never `est_spend`). No new item is filed for this: it is the already-open **U3** (endpoint URL unreachable from a fresh process) meeting `grid`'s deferred stderr capture, and it is recorded on U3's row rather than as a thirtieth item. Follow-ups **U24**, **U25** still stand; the audit behind this fix filed **U27**, **U28** and **U29** (U29 then fixed the same day in `424e52d1`) |
 | U12 | CLOSED | `82ad084b` — `av<18`. Live-proven on Modal for $0.64. RunPod and SkyPilot ride the same one-line pin but were never re-run: inferred safe, not demonstrated safe |
 | U13 | OPEN | the CLI hangs after `UpscaleFailed`. Holder unidentified; the original suspected site was retracted. A $0 offline first step is written into the entry |
 | U14 | FIXED, LIVE-PROVEN | `49394b1d`, with a review-caught regression corrected in `b00a53d1`. A second upscale attached to the warm A100 with no `✓ App deployed` ($0.12). The vocabulary gap the correction sidesteps is **U19** |
@@ -532,7 +533,8 @@ regression is closed: the new tests feed the argv the executor actually builds t
 `_build_parser().parse_args()` rather than asserting argv membership, and RED was confirmed
 against the pre-fix code with the live failure verbatim (`SystemExit: 2`, `kinoforge: error:
 unrecognized arguments: --ephemeral`). `pixi run pytest tests/core tests/cli -q` → 2256 passed.
-**This fix has never touched a provider — the live A2 re-proof is still owed.** Three follow-ups
+**As written this fix had never touched a provider; the owed live A2 re-proof was then run the
+same day and PASSED — see the status update immediately below.** Three follow-ups
 filed from the audit: **U27** (`batch --ephemeral` is an argparse error — pre-existing, root-only
 flag; fixing it well means deciding once whether `--ephemeral` is accepted after every subcommand
 or strictly root-only), **U28** (the batch launch row never receives its `endpoints`; assessed as
@@ -544,6 +546,32 @@ credentials should not ship filed-open from the branch that found it — with th
 `default=argparse.SUPPRESS` treatment and the same parse-the-real-argv test style. That closes the
 root/subparser `dest`-collision class: those two were the only collisions in the parser. U27 and
 U28 stay filed, deliberately: U27 needs a uniform CLI decision, and U28 is a restructure.
+
+**Status update 2026-09-09 (`fix/ephemeral-and-recovery-gaps` Task 6 cell A2 RE-RUN — the owed
+live re-proof of U11 on Modal A10; spend $0.08 of a ~$0.15 budget, hard ceiling $0.40).** Evidence
+in `.superpowers/sdd/2026-09-07-ephemeral-and-recovery-gaps/task-6-a2-report.md` (untracked).
+`pixi run preflight` PASS at 01:07:03 and a re-verified baseline (0 index rows, empty ledger, the
+single stopped `kinoforge-eph-63cda383` left over from A1) before any spend. **A2 (U11) PROVEN.**
+`pixi run -e live-modal kinoforge --ephemeral grid --spec <1x2 spec outside the repo> --out <path>
+--max-parallel-groups 1` ran both cells to completion and composed the grid (`[grid summary]
+composed mp4 → …`, status `full`). The cell child observed live in `ps` was `python -m kinoforge
+--ephemeral generate …` — root position, alive, not dead in 0.75 s — and the provider published
+the two cells as **`kinoforge-eph-2edbbd45`** and **`kinoforge-eph-c89c0418`**: opaque 8-hex, no
+run id, no local timestamp, where the pre-fix reproducer had published
+`kinoforge-grid_<timestamp>_<hash>__cell0`. The ROOT flag position was chosen deliberately because
+that is the door `p_grid`'s implicit `default=False` had been silently dropping; the SUB position
+was closed separately at $0.00 with the `--debug-show-secrets` mutual exclusion (both positions →
+exit 2 mutex error; the no-`--ephemeral` control → exit 0 dry-run line), so both doors are live-
+proven without a second pair of pods. Frame-QA PASS with the usual ⚠️ soft flags (stylised rather
+than photoreal, blown highlights) on both 480² clips and the composed 960x480 grid; no false
+colour. Teardown proven from fresh processes at 01:14:10 after the orchestrator exited: both
+`kinoforge list` lines, 0 index rows, empty ledger, every `kinoforge-eph-*` app `state=stopped
+tasks=0`, `modal container list` → none. **One thing did not hold: ⚠️ no `gpuUtilPercent` reading
+was obtainable for a grid cell** — `grid` writes each cell's captured stderr only at cell end, so
+the `.modal.run` URL A1 scraped from a live run log does not exist here, and U3 still blocks
+resolving it from the provider or the index row; the poll degraded to `modal app list`
+`state`/`tasks` (never `est_spend`). Recorded on U3's row, not filed as a new item. Nothing was
+added to `successful-generations.md` — every run here was ephemeral.
 
 **Status update 2026-09-07 (Task 5 — live proof of the four money-leak fixes on Modal A10, total
 spend ~$0.16 of a ~$0.60 budget).** **U15 HELD** (a fresh process attached to a warm pod, no cold
@@ -1094,7 +1122,8 @@ per-item entries below.
   through a different command — see U23, where `batch --ephemeral` produced the Modal app
   `kinoforge-eph-63cda383` (8 hex, no run id, no timestamp).
 
-  **FIXED 2026-09-09 in `b9b4fcd6` — OFFLINE-PROVEN ONLY, live A2 re-proof still owed.**
+  **FIXED 2026-09-09 in `b9b4fcd6` — offline first, then LIVE-RE-PROVEN the same day (see the
+  A2 re-run block at the end of this entry).**
   Everything above stands as the record of the live failure; this is what changed after it.
   *Fix shape chosen:* emit `--ephemeral` in ROOT position (`pixi run kinoforge --ephemeral
   generate …`, before the subcommand), NOT declare it on the `generate` subparser. `--ephemeral`
@@ -1136,8 +1165,80 @@ per-item entries below.
   ruling — see its entry). Those two were the only collisions in the parser, so the class is
   closed. `batch --ephemeral` remains an argparse error and stays filed as **U27**; the batch
   launch row's missing `endpoints` stays filed as **U28**.
-  *Still owed:* a live `grid --ephemeral` run showing opaque provider-side cell names. This fix
-  has never touched a provider.
+  **LIVE RE-PROOF 2026-09-09 — Task 6 cell A2 re-run, $0.08. A2 PROVEN.**
+  The re-run deliberately used the ROOT flag position — `pixi run -e live-modal kinoforge
+  --ephemeral grid --spec /home/claudeuser/kinoforge-proof/grid.yaml --out <path outside the
+  repo> --max-parallel-groups 1` — because that is the door the `p_grid` half of this defect had
+  been silently dropping; the sub-position door was closed separately at $0.00 (below). Spec: the
+  same 1x2, no-`lora_swap` fixture as the failed attempt, outside the repo, `budget_cap_usd`
+  lowered to `0.30`; both cells run `examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml`,
+  whose top-level `prompt:` is the standard smoke prompt verbatim from
+  `examples/configs/prompts/field-realistic.txt`.
+  *The argparse half held.* Observed live in `ps -eo pid,pgid,cmd` 8 s after launch, the cell
+  child is `python -m kinoforge --ephemeral generate --config output/_grid_grid_20260909-010759_
+  12fe6ccc/cell_0.yaml --prompt <standard prompt> --mode t2v --run-id
+  grid_20260909-010759_12fe6ccc__cell0 --output-dir … --no-reuse` — `--ephemeral` in ROOT
+  position, before the subcommand — and the process was ALIVE, not dead in 0.75 s.
+  *The `p_grid` half held.* The controller reached `[grid summary] composed mp4 →
+  /home/claudeuser/kinoforge-proof/grid_a2.mp4` (status `full` → exit 0) with both cells run
+  ephemerally, so the root-set `args.ephemeral=True` survived `p_grid`'s namespace copy.
+  *Provider-side naming — the actual A2 criterion.* `modal app list`, read from FRESH processes
+  during the run at 01:08:22, 01:09:38, 01:11:31 and 01:12:47:
+  ```
+  {"app_id": "ap-LO2We817B6UBqNTcMG3Pwd", "created_at": "2026-09-09 01:08:01-07:00",
+   "description": "kinoforge-eph-2edbbd45", "state": "deployed", "tasks": "1"}
+  {"app_id": "ap-gKdmEzFMnd0lKHf6lBSsvt", "created_at": "2026-09-09 01:10:32-07:00",
+   "description": "kinoforge-eph-c89c0418", "state": "deployed", "tasks": "1"}
+  ```
+  Both names are opaque `kinoforge-eph-<8hex>`: **no run id** (the grid ids were
+  `grid_20260909-010759_12fe6ccc__cell0` / `__cell1`), **no local timestamp**, no workload shape.
+  Contrast the pre-fix reproducer at the top of this entry, which published
+  `kinoforge-grid_<local timestamp>_<hash>__cell0`. The ephemeral index carried exactly one row
+  at a time (`eph-2edbbd45` created_at_local `01:08:00.793602`, then `eph-c89c0418` at
+  `01:10:31.272995`), the ledger stayed `{"entries": []}` throughout, and the index was empty at
+  end of run.
+  *Both flag positions closed live, at $0.00 and without a second pair of pods*, using the
+  root-only `--debug-show-secrets` mutual exclusion — it fires in `main()` after parse and before
+  any dispatch, so it reports `args.ephemeral` without booking anything:
+  ```
+  kinoforge --debug-show-secrets grid --spec S --dry-run --ephemeral
+    -> error: --ephemeral and --debug-show-secrets are mutually exclusive   exit=2
+  kinoforge --ephemeral --debug-show-secrets grid --spec S --dry-run
+    -> error: --ephemeral and --debug-show-secrets are mutually exclusive   exit=2
+  kinoforge --debug-show-secrets grid --spec S --dry-run          (control, no --ephemeral)
+    -> [grid dry-run] 2 cells, layout=1x2, budget_cap=$0.30               exit=0
+  ```
+  The control matters: the mutex fires only when `args.ephemeral` is genuinely `True`, so the two
+  exit-2s are positive evidence for both doors, not a blanket error.
+  *Spend.* App lifetimes `01:08:01 → 01:10:29` (148 s) and `01:10:32 → 01:12:22` (110 s) = 258 s
+  of Modal A10 at $1.10/hr = **$0.079 ≈ $0.08**. Much faster than A1's single 234 s cell because
+  the Wan 2.1 1.3B weights were already on the Modal Volume (`HF_HOME`) from A1.
+  *Frame-QA (mandatory) — PASS with soft flags.* Five frames per clip via
+  `kinoforge.core.frames.ffmpeg_frames_by_count`, read as contact sheets. Cell A (480x480, 33 f
+  @ 16 fps, 454,961 B): alpine meadow, tall waterfall over mossy cliffs, glowing butterfly, woman
+  in a blue dress facing away then turning; composition, waterfall geometry and flower field
+  stable across all five samples; no flicker, no morphing, **no false colour**. Cell B (480x480,
+  33 f, 337,495 B): tighter framing, the over-the-shoulder coy glance the prompt asks for,
+  butterflies and god rays, equally coherent. Composed grid (960x480, 33 f, 806,381 B): both
+  panes in sync with correct `cell A` / `cell B` captions and no seam artifacts. ⚠️ Soft flags on
+  both clips, matching the historical Wan 2.1 1.3B baseline at 480² (`successful-generations.md`
+  §22) and NOT defects: the look is stylised/3D-animated rather than the requested photoreal, and
+  highlights around the sun and waterfall are blown. Nothing was written to
+  `successful-generations.md` — every run in Task 6 is ephemeral and barred from it.
+  *Teardown, from fresh processes at 01:14:10 after the orchestrator had exited:* no `kinoforge`
+  processes; `kinoforge list` → `[instance overview] No running instances.` **and** `No instances
+  recorded in ledger.`; 0 ephemeral-index rows; ledger `{"entries": []}`; `modal app list` shows
+  all three `kinoforge-eph-*` apps `state=stopped tasks=0`; `modal container list` → `Active
+  Containers in environment: None`. Nothing needed an explicit `destroy`.
+  *⚠️ One thing did not hold: no `gpuUtilPercent` reading was obtainable for a grid cell.*
+  `grid` captures each cell subprocess's stderr and writes it only at cell end, so the
+  `.modal.run` URL that A1's util probe scraped from a live run log simply does not exist for a
+  grid cell while it runs, and **U3** still blocks resolving it from the provider or from the
+  index row (`endpoints: {}`). The 75 s polling loop therefore degraded to a provider-side
+  liveness signal — `modal app list` `state` and `tasks` (never `est_spend`) — which did show
+  each app deploy, run with `tasks=1`, and stop. No stall occurred (both cells produced real
+  video in ~2 min each), but the util-probe rule could not be satisfied as written. Recorded on
+  U3's row rather than filed as a new item.
 
 - **U12 — CLOSED 2026-09-06 (pin applied in `82ad084b`, proven live on Modal) — FlashVSR upscale was dead on every provider: `av` 18 broke the mp4 encode.**
   **Symptom:** the pod boots, loads FlashVSR, reaches the GPU and computes (util probe caught
