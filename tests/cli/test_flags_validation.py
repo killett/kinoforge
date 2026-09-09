@@ -157,3 +157,58 @@ def test_root_ephemeral_survives_the_grid_subparser(
     assert args.ephemeral is expected, (
         f"argv {argv} → args.ephemeral={args.ephemeral!r}, expected {expected}"
     )
+
+
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        (
+            ["--env-file", "/x/creds-a", "batch", "-c", "c", "--manifest", "m"],
+            "/x/creds-a",
+        ),
+        (
+            ["batch", "-c", "c", "--manifest", "m", "--env-file", "/x/creds-a"],
+            "/x/creds-a",
+        ),
+        (["batch", "-c", "c", "--manifest", "m"], None),
+        (
+            [
+                "--env-file",
+                "/x/creds-a",
+                "generate",
+                "-c",
+                "c",
+                "--prompt",
+                "p",
+                "--mode",
+                "t2v",
+            ],
+            "/x/creds-a",
+        ),
+    ],
+)
+def test_root_env_file_survives_the_batch_subparser(
+    argv: list[str], expected: str | None
+) -> None:
+    """U29: the ROOT ``--env-file`` must reach ``main()`` for ``batch`` too.
+
+    ``p_batch`` re-declares ``--env-file`` with an implicit ``default=None``.
+    argparse parses a subcommand into a FRESH namespace and then copies every
+    key onto the parent, so that default silently overwrites the operator's
+    root-set path; ``main()`` then loads the default secrets file instead
+    (``env_file = Path(args.env_file) if args.env_file is not None else None``).
+    Because ``batch`` books GPUs, the failure mode is a run against the wrong
+    credentials or the wrong provider account, with no warning and exit 0.
+    Same namespace-clobber mechanism as the ``p_grid``/``--ephemeral`` half of
+    U11.
+
+    Would-fail-bug: ``p_batch``'s ``--env-file`` declared without
+    ``default=argparse.SUPPRESS``. The last case is the guard — every other
+    subcommand already honours the root flag and must keep doing so.
+    """
+    from kinoforge.cli._main import _build_parser
+
+    args = _build_parser().parse_args(argv)
+    assert args.env_file == expected, (
+        f"argv {argv} → args.env_file={args.env_file!r}, expected {expected!r}"
+    )

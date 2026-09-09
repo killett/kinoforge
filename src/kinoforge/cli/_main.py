@@ -832,7 +832,17 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     p_batch.add_argument("--manifest", required=True, metavar="PATH")
     p_batch.add_argument("--batch-id", default=None, metavar="ID")
     p_batch.add_argument("--concurrent", type=int, default=None, metavar="N")
-    p_batch.add_argument("--env-file", default=None, metavar="PATH")
+    p_batch.add_argument(
+        "--env-file",
+        # SUPPRESS, not the implicit None (U29): argparse parses a subcommand
+        # into a FRESH namespace and copies every key onto the parent, so an
+        # implicit default here silently overwrote a root-set `--env-file` and
+        # `main()` loaded the DEFAULT secrets file instead — a batch run
+        # against the wrong credentials or provider account, with no warning.
+        # Same mechanism as the p_grid/--ephemeral half of U11.
+        default=argparse.SUPPRESS,
+        metavar="PATH",
+    )
     p_batch.add_argument(
         "--stream-format",
         choices=("human", "jsonl", "none"),
