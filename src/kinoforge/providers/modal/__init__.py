@@ -40,6 +40,13 @@ from kinoforge.providers.modal._app import (
 from kinoforge.providers.modal._catalog import MODAL_GPU_CATALOG, modal_offers
 
 _DESTROY_POLL_MAX_ITERS: int = 40  # 40 × 3s ≈ 120s upper bound (mirror SkyPilot)
+# `modal app list` deliberately includes recently-stopped apps ("running,
+# deployed or recently stopped", modal/cli/app.py:104), and `modal app stop`
+# on an already-stopped one exits non-zero (modal/cli/app.py:513-520,
+# "App is already stopped."). A stopped namesake must therefore never be
+# preferred over the live app that shadows it. State strings are the CLI's
+# own (modal/cli/app.py:41-49).
+_STOPPED_APP_STATES: frozenset[str] = frozenset({"stopped", "stopping..."})
 
 
 class ModalProvider(ComputeProvider):
@@ -453,40 +460,74 @@ class ModalProvider(ComputeProvider):
         even then, so matching on it recovers the id a name-only
         ``destroy --id`` cannot resolve.
 
-        Defensive against an unexpected ``modal app list --json`` shape: this
-        raises a diagnosable :class:`~kinoforge.core.errors.TeardownError`
-        naming what it expected/found rather than letting an untyped
-        ``AttributeError``/``TypeError`` escape from a malformed record.
+        This lookup is an *enhancement* over the pre-U17 stop-by-name, so it
+        must never make a destroy that used to work fail:
+
+        * A listing that cannot be read at all (no ``modal`` binary,
+          unauthenticated CLI, unparseable JSON) returns ``None`` — the
+          caller falls back to the name path, exactly as before U17.
+        * A malformed record is skipped, not fatal; the scan continues and
+          can still resolve a match that sits after it.
+
+        It still fails loudly when the shape is unusable *and* nothing was
+        resolved: no match plus a bad record (or a non-list listing) raises
+        a :class:`~kinoforge.core.errors.TeardownError` naming what it
+        expected and what it found, rather than letting an untyped
+        ``AttributeError``/``TypeError`` escape.
+
+        Among several records sharing ``app_name`` — a reused or redeployed
+        ``kinoforge-<run_id>`` description, with the stopped ones lingering
+        in the listing — a record that is not stopped wins, mirroring
+        Modal's own by-name resolution (modal/cli/app.py:84-91).
 
         Args:
             app_name: The ``kinoforge-<run_id>`` name to match on
                 ``description``.
 
         Returns:
-            The matching record's non-empty ``app_id``, or ``None`` when no
-            record matches or the matching record carries no id — the
-            caller falls back to stopping by name in that case.
+            The matching record's non-empty ``app_id``, preferring a
+            non-stopped record; ``None`` when no record matches, no match
+            carries an id, or the listing could not be read — the caller
+            falls back to stopping by name in each case.
 
         Raises:
-            TeardownError: The listing was not a list of dict records.
+            TeardownError: The listing was not a list, or it contained a
+                non-dict record AND no record matched ``app_name``.
         """
-        records = self._lister()
+        try:
+            records = self._lister()
+        except Exception:  # noqa: BLE001 — degrade to the by-name stop
+            return None
         if not isinstance(records, list):
             raise TeardownError(
                 f"could not resolve app_id for {app_name!r}: expected a "
                 f"list of records from `modal app list --json`, got "
                 f"{type(records).__name__}"
             )
+        matches: list[dict[str, Any]] = []
+        bad_shape: str | None = None
         for rec in records:
             if not isinstance(rec, dict):
+                if bad_shape is None:
+                    bad_shape = type(rec).__name__
+                continue
+            if self._rec_name(rec) == app_name:
+                matches.append(rec)
+        if not matches:
+            if bad_shape is not None:
                 raise TeardownError(
                     f"could not resolve app_id for {app_name!r}: expected "
                     f"a dict record from `modal app list --json`, got "
-                    f"{type(rec).__name__}"
+                    f"{bad_shape}"
                 )
-            if self._rec_name(rec) == app_name:
-                app_id = str(rec.get("app_id") or "")
-                return app_id or None
+            return None
+        live_first = [
+            r for r in matches if str(r.get("state", "")) not in _STOPPED_APP_STATES
+        ] + [r for r in matches if str(r.get("state", "")) in _STOPPED_APP_STATES]
+        for rec in live_first:
+            app_id = str(rec.get("app_id") or "")
+            if app_id:
+                return app_id
         return None
 
     def destroy_instance(self, instance_id: str) -> None:
@@ -494,10 +535,12 @@ class ModalProvider(ComputeProvider):
 
         Raises:
             TeardownError: The stopper raised — reported with the app_id (or
-                name) actually used — or ``_find_app_id`` could not parse the
-                listing. Either way the deployment cache is still cleared
-                (``finally``), matching pre-U17 behaviour of never leaving a
-                stale in-process record behind on failure.
+                name) actually used — or ``_find_app_id`` found an unusable
+                listing shape with nothing to resolve. Either way the
+                deployment cache is still cleared (``finally``), matching
+                pre-U17 behaviour of never leaving a stale in-process record
+                behind on failure. A listing that simply cannot be read is
+                NOT fatal: the stop falls back to the app name.
         """
         rec = self._deployments.get(instance_id)
         app_name = rec["name"] if rec else f"kinoforge-{instance_id}"
@@ -506,13 +549,25 @@ class ModalProvider(ComputeProvider):
             target = app_id or app_name
             try:
                 self._stopper(target)
+            except TeardownError:
+                # Already diagnosable — re-wrapping would nest
+                # "failed to stop ...: failed to ...".
+                raise
             except Exception as exc:  # noqa: BLE001 — CalledProcessError et al.
                 raise TeardownError(
                     f"failed to stop modal app {app_name!r} (app_id={app_id!r}): {exc}"
                 ) from exc
             for _ in range(_DESTROY_POLL_MAX_ITERS):
+                try:
+                    listing = self._lister()
+                except Exception:  # noqa: BLE001 — the stop already succeeded
+                    # Nothing left to confirm with; a listing failure after a
+                    # successful stop must not become a teardown traceback.
+                    break
                 active = {
-                    self._rec_name(r) for r in self._lister() if self._rec_active(r)
+                    self._rec_name(r)
+                    for r in listing
+                    if isinstance(r, dict) and self._rec_active(r)
                 }
                 if app_name not in active:  # absent OR transitioned to stopped
                     break
