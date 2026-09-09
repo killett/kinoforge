@@ -3537,20 +3537,39 @@ def _cmd_reap(args: argparse.Namespace, ctx: SessionContext) -> int:
     if single_id is not None:
         ledger = _SingleIdLedgerView(ledger, single_id)
     if not ledger.entries():
-        # U18: an empty ledger is not proof there is nothing to reap. An
-        # `--ephemeral` run writes no ledger row by design (Tasks 1/2) — its
-        # only durable trace is a row in the EphemeralIndex, which sweep()
-        # unions in on the far side of this guard. Consult the index too
-        # before declaring victory, so a run whose only trace is an index
-        # row doesn't get "nothing to do" printed over a billing pod.
+        # U18: an empty ledger (view) is not proof there is nothing to reap.
+        # An `--ephemeral` run writes no ledger row by design (Tasks 1/2) —
+        # its only durable trace is a row in the EphemeralIndex, which
+        # sweep() unions in on the far side of this guard. Consult the index
+        # too before declaring victory, so a run whose only trace is an
+        # index row doesn't get "nothing to do" printed over a billing pod.
+        #
+        # Scoped by --id (review round 2): checking the index UNSCOPED would
+        # let any unrelated ephemeral row defeat the short-circuit for an id
+        # the operator never named — handing `--apply --include-orphans` a
+        # live target it was never asked to touch. Note this only decides
+        # whether to short-circuit here; sweep()'s own ephemeral union does
+        # NOT filter by single_id once it runs (reaper_actor.py:527-536,
+        # filed as U26) — out of this task's contained scope.
         from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
 
-        if not EphemeralIndex(store=ctx.store()).rows():
+        index_rows = EphemeralIndex(store=ctx.store()).rows()
+        if single_id is not None:
+            index_rows = [r for r in index_rows if r.id == single_id]
+        if not index_rows:
             # Honour the requested format on the short-circuit too: a
             # consumer piping `--format json` into jq must not choke on the
             # one case it is most likely to hit — nothing left to reap.
             if fmt == "json":
                 print(json.dumps({"type": "header", "entries": 0}))
+            elif single_id is not None:
+                # Name what was actually searched: the ledger may hold OTHER
+                # entries (single_id only filtered the view of it), so
+                # "ledger empty" would be false. Say what was searched for.
+                print(
+                    f"reap: {single_id!r} not found in ledger or ephemeral "
+                    "index (nothing to do)"
+                )
             else:
                 print("reap: ledger and ephemeral index both empty (nothing to do)")
             return 0

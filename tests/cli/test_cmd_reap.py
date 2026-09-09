@@ -52,24 +52,24 @@ class _FakeCtx:
             # Caller supplied a real store (e.g. LocalArtifactStore) — used
             # when a test needs EphemeralIndex reads/writes to actually work.
             self._store = store
-            return
+        else:
+            self._store = MagicMock()
+            # No ephemeral-index.json has ever been written in this fake —
+            # match a real ArtifactStore's FileNotFoundError-on-missing-file
+            # contract so EphemeralIndex.rows() sees "no rows" instead of
+            # choking trying to iterate an unconfigured MagicMock return
+            # value.
+            self._store.get_json = MagicMock(side_effect=FileNotFoundError)
 
-        self._store = MagicMock()
-        # No ephemeral-index.json has ever been written in this fake — match
-        # a real ArtifactStore's FileNotFoundError-on-missing-file contract
-        # so EphemeralIndex.rows() sees "no rows" instead of choking trying
-        # to iterate an unconfigured MagicMock return value.
-        self._store.get_json = MagicMock(side_effect=FileNotFoundError)
+            # acquire_lock returns a context manager
+            class _L:
+                def __enter__(self) -> _L:
+                    return self
 
-        # acquire_lock returns a context manager
-        class _L:
-            def __enter__(self) -> _L:
-                return self
+                def __exit__(self, *_: object) -> None:
+                    return None
 
-            def __exit__(self, *_: object) -> None:
-                return None
-
-        self._store.acquire_lock = MagicMock(return_value=_L())
+            self._store.acquire_lock = MagicMock(return_value=_L())
 
     def ledger(self) -> MagicMock:
         """Return the fake ledger."""
@@ -110,13 +110,23 @@ def test_reap_dry_run_default_does_not_destroy(
 def test_reap_empty_ledger_prints_message_and_exits_zero(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Empty ledger → exit 0 with informational message."""
+    """Empty ledger → exit 0 with informational message.
+
+    Bug caught: ``"no" in combined.lower()`` is satisfied by "nothing",
+    "no entries", or nearly any plausible sentence — it passed unchanged
+    across the U18 wording change (old: "reap: ledger empty (nothing to
+    do)"; new: "reap: ledger and ephemeral index both empty (nothing to
+    do)"), so it never actually pinned the sentence. Assert the exact
+    current sentence instead.
+    """
     ctx = _ctx([])
     code = _cmd_reap(_args(), ctx)
     captured = capsys.readouterr()
     assert code == 0
-    combined = captured.out + captured.err
-    assert "empty" in combined.lower() or "no" in combined.lower()
+    assert (
+        captured.out == "reap: ledger and ephemeral index both empty (nothing to do)\n"
+    )
+    assert captured.err == ""
 
 
 def test_reap_empty_ledger_with_ephemeral_index_row_reaches_orphan(
@@ -196,6 +206,88 @@ def test_reap_empty_ledger_with_ephemeral_index_row_reaches_orphan(
     assert "orphan-pod-1" in out, out
     row = next(line for line in out.splitlines() if "orphan-pod-1" in line)
     assert row.startswith(Verdict.LIVE.value), f"expected LIVE verdict row: {row!r}"
+
+
+def test_reap_apply_include_orphans_destroys_index_only_orphan(tmp_path: Any) -> None:
+    """--apply --include-orphans actually destroys an aged, idle index-only row.
+
+    Bug this closes the remaining gap on: U18's stated cost was that
+    `--include-orphans` is unreachable for the `--ephemeral` case, but the
+    sibling test above only proves the CLI reaches `sweep()` and classifies
+    a fresh row `LIVE` — it never exercises the *act* path. This writes a
+    row old enough and idle enough to classify `ORPHAN_REAP` under a
+    threshold that enables the age gate, and asserts the fake provider's
+    `destroy_instance` was actually called with that pod's id — the act
+    path, not just the dry-run classification.
+    """
+    from datetime import datetime, timedelta
+
+    from kinoforge.core.interfaces import Lifecycle
+    from kinoforge.core.runtime_probe import RuntimeProbe
+    from kinoforge.core.warm_reuse.ephemeral_index import (
+        EphemeralIndex,
+        EphemeralIndexRow,
+    )
+    from kinoforge.stores.local import LocalArtifactStore
+
+    store = LocalArtifactStore(root=tmp_path)
+    old_created_at = (datetime.now() - timedelta(seconds=600)).isoformat()
+    EphemeralIndex(store=store).add(
+        EphemeralIndexRow(
+            id="orphan-pod-old",
+            warm_attach_key="w",
+            kinoforge_key="k-12345678901",
+            endpoints={},
+            provider="fake-provider",
+            created_at_local=old_created_at,
+        )
+    )
+
+    class _IdleOldProvider:
+        """Minimal ComputeProvider stand-in for the ORPHAN_REAP act path."""
+
+        def __init__(self) -> None:
+            self.destroyed: list[str] = []
+
+        def probe_runtime(self, pod_id: str) -> RuntimeProbe:
+            return RuntimeProbe(
+                pod_id=pod_id,
+                found=True,
+                container_uptime_s=600.0,
+                gpu_util_pct=0.0,
+                cpu_pct=0.0,
+                cost_per_hr=None,
+                probed_at_local=datetime.now().isoformat(),
+            )
+
+        def list_instances(self) -> list[Any]:
+            # Always "gone" — lets destroy_confirmed's poll succeed on the
+            # first attempt without needing a real destroy side effect.
+            return []
+
+        def destroy_instance(self, instance_id: str) -> None:
+            self.destroyed.append(instance_id)
+
+    provider = _IdleOldProvider()
+
+    class _FakeCfgWithOrphanAgeGate:
+        def lifecycle(self) -> Lifecycle:
+            # 60s age gate; the row above is 600s old and idle (gpu=cpu=0.0)
+            # — both halves _ephemeral_orphan_predicate requires.
+            return Lifecycle(ephemeral_orphan_age_s=60.0)
+
+    ctx = _ctx([], cfg=_FakeCfgWithOrphanAgeGate(), store=store)
+
+    with patch(
+        "kinoforge.core.registry.get_provider",
+        side_effect=lambda name: (
+            (lambda: provider) if name == "fake-provider" else None
+        ),
+    ):
+        code = _cmd_reap(_args(apply=True, include_orphans=True), ctx)
+
+    assert code == 0
+    assert provider.destroyed == ["orphan-pod-old"]
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +525,53 @@ def test_reap_id_flag_restricts_sweep_to_one_entry() -> None:
     assert filtered[0]["id"] == "i-1"
 
 
+def test_reap_id_scopes_the_index_check_to_the_named_id(
+    tmp_path: Any,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--id naming an id absent from BOTH ledger and index must still no-op.
+
+    Bug caught (review round 2, Task 3): the union guard consulted
+    ``EphemeralIndex().rows()`` globally, unscoped by ``--id``. So an
+    UNRELATED ephemeral row — belonging to a pod the operator never
+    named — was enough to defeat the short-circuit and let
+    `reap --id <typo'd-id>` reach `sweep()`. Under `--apply
+    --include-orphans` that turns a formerly-safe no-op into a command that
+    can classify and destroy a pod the operator did not ask about. This
+    test writes exactly one index row for a DIFFERENT id and asks for an id
+    that is in neither the ledger nor the index: `sweep()` must never be
+    called, and the printed message must name the id that was searched for.
+    """
+    from datetime import datetime
+
+    from kinoforge.core.warm_reuse.ephemeral_index import (
+        EphemeralIndex,
+        EphemeralIndexRow,
+    )
+    from kinoforge.stores.local import LocalArtifactStore
+
+    store = LocalArtifactStore(root=tmp_path)
+    EphemeralIndex(store=store).add(
+        EphemeralIndexRow(
+            id="unrelated-pod",
+            warm_attach_key="w",
+            kinoforge_key="k-12345678901",
+            endpoints={},
+            provider="fake-provider",
+            created_at_local=datetime.now().isoformat(),
+        )
+    )
+    ctx = _ctx([], store=store)
+
+    with patch("kinoforge.cli._commands.sweep") as mock_sweep:
+        code = _cmd_reap(_args(id="typo-d-id"), ctx)
+
+    assert code == 0
+    mock_sweep.assert_not_called()
+    out = capsys.readouterr().out
+    assert "typo-d-id" in out, out
+
+
 # ---------------------------------------------------------------------------
 # --format json
 # ---------------------------------------------------------------------------
@@ -608,12 +747,13 @@ def test_reap_empty_ledger_json_emits_parseable_records(
     """`reap --format json` on an empty ledger stays machine-readable.
 
     Bug caught: the empty-ledger early return printed the human sentence
-    "reap: ledger and ephemeral index both empty (nothing to do)" without
-    consulting the requested format, so `kinoforge reap --format json | jq`
-    died on exactly the case a
-    scripted teardown check hits most — the one where there is nothing left to
-    reap. Every stdout line must parse as JSON, and the header must report zero
-    entries so the consumer can distinguish "empty" from "not run".
+    "reap: ledger empty (nothing to do)" — the historical wording, since
+    reworded to "reap: ledger and ephemeral index both empty (nothing to
+    do)" by U18 — without consulting the requested format, so `kinoforge
+    reap --format json | jq` died on exactly the case a scripted teardown
+    check hits most — the one where there is nothing left to reap. Every
+    stdout line must parse as JSON, and the header must report zero entries
+    so the consumer can distinguish "empty" from "not run".
     """
     ctx = _ctx([])
 
