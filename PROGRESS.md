@@ -1897,7 +1897,10 @@ per-item entries below.
   that is closed — the row is written pre-create and the pod is visible to `list`, `destroy` and
   the sweeper. This is "nothing tears the pod DOWN", which U7 never claimed. The money protection
   therefore holds and cleanup is manual, which is a real but much smaller cost.
-  **Reproducer ($0, offline — no pod, no spend).** The absence is structural, so read it off the
+  **Reproducer ($0, offline — no pod, no spend). PRE-FIX: this assertion passed at filing time and
+  fails at HEAD, since the FIXED section below wraps this exact tail in a `try`/`except` — that is
+  the fix working, not a regression in the reproducer.** The absence is structural, so read it off
+  the
   source: everything after the provisional-row collapse is outside any `try`.
   ```
   pixi run python -c "
@@ -2004,7 +2007,12 @@ per-item entries below.
   `/util` during the run (no endpoint is written down), which is the same secondary cost U8
   recorded. `kinoforge list` shows nothing, `kinoforge reap` has nothing to classify, and recovery
   is a raw `modal app stop` / RunPod console visit.
-  **Reproducer (offline, $0 — no pod needed).** The absence is structural, so grep proves it:
+  **Reproducer (offline, $0 — no pod needed). PRE-FIX: the `# all three print False` comment below
+  documents the state at filing time. Run verbatim at HEAD (post-fix), it instead prints
+  `_ephemeral_launch_row_reserve True`, `_ephemeral_index_add False`, `EphemeralIndex False` — the
+  reserve call now exists in `_cmd_batch`; the other two names still don't appear verbatim because
+  the fix (below) reuses the ledger diff instead of calling them directly. Confirmed 2026-09-09,
+  Task 7.** The absence is structural, so grep proves it:
   ```
   pixi run python -c "
   import inspect
@@ -2012,7 +2020,7 @@ per-item entries below.
   from kinoforge.core import batch
   src = inspect.getsource(_commands._cmd_batch) + inspect.getsource(batch.batch_generate)
   for name in ('_ephemeral_launch_row_reserve', '_ephemeral_index_add', 'EphemeralIndex'):
-      print(name, name in src)      # all three print False
+      print(name, name in src)      # all three print False (pre-fix; see note above)
   "
   ```
   **Live shape (costs money — not run).** `pixi run -e live-modal kinoforge --ephemeral batch
@@ -2334,12 +2342,20 @@ per-item entries below.
       print(p.parse_args(['--env-file','/x/.env','batch','-c','c','--manifest','m']).env_file); \
       print(p.parse_args(['--env-file','/x/.env','generate','-c','c','--prompt','p','--mode','t2v']).env_file)"
   ```
-  **Actual output (run 2026-09-09):**
+  **Actual output (run 2026-09-09, PRE-FIX — this is the bug this item documents, not HEAD's
+  current behaviour; see the FIXED section below):**
   ```
   None
   /x/.env
   ```
-  `batch` loses it; every other subcommand keeps it.
+  `batch` loses it; every other subcommand keeps it. **Run verbatim at HEAD (post-fix), the same
+  reproducer instead prints:**
+  ```
+  /x/.env
+  /x/.env
+  ```
+  `batch` now keeps the root `--env-file` too — confirmed 2026-09-09,
+  `fix/ephemeral-and-recovery-gaps` Task 7.
   **Found by** an exhaustive enumeration of subparser actions whose `dest` collides with a root
   action — exactly two exist, `grid.ephemeral` (fixed in `b9b4fcd6` under U11) and
   `batch.env_file` (this item).
@@ -2371,7 +2387,23 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-09-07 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-09 — read this, then STOP; below is history)
+
+**Ephemeral and recovery gaps CLOSED (2026-09-09, branch `fix/ephemeral-and-recovery-gaps`,
+$0.15 of live proof across Task 6).** Plan
+`.superpowers/sdd/2026-09-07-ephemeral-and-recovery-gaps/`, 7 tasks, all committed. Five defects
+from the money-leaks campaign below were in scope: **U23** (`batch` now reserves the ephemeral
+launch row pre-create; LIVE-PROVEN), **U11** (`grid --ephemeral` now reaches every cell; LIVE-
+PROVEN after a same-day live-caught regression was fixed — see its entry, kept in full, not
+rewritten), **U18** (one-shot `reap` now gates on the union of ledger and ephemeral index; LIVE-
+PROVEN), **U17** (`destroy` now resolves the Modal `app_id`; OFFLINE-PROVEN ONLY — a live re-proof
+means racing a 1-second window and is a separate follow-up), **U21** (`provision` now tears down
+on a post-create failure and bounds its readiness loop; OFFLINE-PROVEN ONLY, and it is a stated
+**behaviour change on a money path** — `provision` now destroys on failure where it previously left
+the pod up). Six new defects were filed along the way: **U24**–**U28** are open, **U29** was filed
+and fixed the same day (`424e52d1`). **The STATUS INDEX at the top of the URGENT ACTION ITEMS
+section is the authoritative current count — 29 items, 14 fixed, 2 partly fixed, 13 open — read it,
+not the older money-leaks table directly below, which is frozen as of 2026-09-07.**
 
 **Modal money leaks CLOSED (2026-09-07, branch `fix/modal-money-leaks`, $0.82 of live proof).**
 Plan `docs/superpowers/plans/2026-09-06-modal-money-leaks.md`, 8 tasks, all committed. The four
@@ -2387,17 +2419,21 @@ are fixed, and each was proven live on Modal rather than offline:
 | **U14** — the warm-attach matcher cold-booted a duplicate A100 | `49394b1d`, review-corrected in `b00a53d1` | A second upscale attached to the warm A100 and published a 1080² clip; one pod did both runs | $0.12 + $0.54 to diagnose |
 
 **Read the STATUS INDEX at the top of the URGENT ACTION ITEMS section, not this table, for current
-state.** It covers all twenty-two items: eight fixed, two partly fixed, twelve open.
+state.** As of 2026-09-07 (when this table was written) it covered twenty-two items: eight fixed,
+two partly fixed, twelve open. **That count is now stale — see the new paragraph at the top of
+this snapshot: it is 29 items, 14 fixed, 2 partly fixed, 13 open as of 2026-09-09.**
 
-**Six items came out of the proofs and are open** — U16 (the ephemeral launch row is only a partial
-handle on RunPod), U17 (`destroy --id` cannot reap a Modal app killed mid-deploy), U18 (`reap`
+**Six items came out of the proofs and were open as of 2026-09-07** — U16 (the ephemeral launch row
+is only a partial handle on RunPod, still open), U17 (`destroy --id` cannot reap a Modal app killed
+mid-deploy — **FIXED offline-proven-only 2026-09-08** in `8069f376`+`45f4254c`), U18 (`reap`
 short-circuits on an empty ledger, so `--include-orphans` is unreachable for exactly the
-`--ephemeral` case), U19 (no in-pod capability term for interpolation), U21 (`provision` has no
-destroy-on-error path), U22 (the ephemeral orphan reap acts on one probe sample). **U20** was filed
-retroactively and is fixed: the truncated `_cmd_sweeper_start` thresholds dict made `STALL_REAP`
-and `RESTART_LOOP_REAP` unreachable from the daemon for **every** pod, ledger-backed ones included
-— much wider than the ephemeral defect it was found under, and it had been left as a clause inside
-a FIXED entry.
+`--ephemeral` case — **FIXED, LIVE-PROVEN 2026-09-09** in `71582382`+`abe0c21e`), U19 (no in-pod
+capability term for interpolation, still open), U21 (`provision` has no destroy-on-error path —
+**FIXED offline-proven-only 2026-09-09** in `9e268c18`), U22 (the ephemeral orphan reap acts on one
+probe sample, still open). **U20** was filed retroactively and is fixed: the truncated
+`_cmd_sweeper_start` thresholds dict made `STALL_REAP` and `RESTART_LOOP_REAP` unreachable from the
+daemon for **every** pod, ledger-backed ones included — much wider than the ephemeral defect it was
+found under, and it had been left as a clause inside a FIXED entry.
 
 **One deliberate asymmetry, recorded so it is not "harmonised" away.** `_resolve_attach_pod` does
 NOT copy `_resolve_warm_endpoints`'s `return live or recorded` fallback. `ensure_endpoints` is the
@@ -2420,16 +2456,24 @@ The U14 entry's enumerated claim that a sweep of `examples/configs` showed exact
 cfgs is now a committed test (`tests/cli/test_shipped_cfg_want_stages_sweep.py`) rather than prose
 a reader cannot check.
 
-**Next action:** none required from this campaign. If picking it up, the cheapest remaining wins
-are U18 (a one-guard change: gate `reap`'s short-circuit on the UNION of ledger and index, not the
-ledger alone) and U21 (wrap `provision`'s post-create phases in a destroy-on-error `try`).
+**Next action (as of 2026-09-07):** none required from this campaign. If picking it up, the
+cheapest remaining wins are U18 (a one-guard change: gate `reap`'s short-circuit on the UNION of
+ledger and index, not the ledger alone) and U21 (wrap `provision`'s post-create phases in a
+destroy-on-error `try`). **Both were done in `fix/ephemeral-and-recovery-gaps` — see the new
+paragraph at the top of this snapshot.** Current cheapest remaining wins (2026-09-09): U27
+(`batch --ephemeral` argparse position — needs a design decision first, see its entry), U26
+(`sweep()`'s ephemeral union does not honour `--id` scoping), and U16/U22/U19, all still open and
+unchanged by this branch.
 
 **Modal command matrix CLOSED (2026-09-05/06, $3.25 of $20; FlashVSR re-proven 2026-09-06 after
 the `av` pin).** Every `kinoforge` subcommand run against the Modal provider, one verdict per cell:
-**57 cells — 32 PASS, 16 FAIL, 9 EXPECTED-REFUSAL, 0 pending** (T2-03 moved FAIL → PASS when U14
-was fixed; the earlier 31/17 split was never updated for it). Results and the operator-facing
-summary are at the TOP of `docs/modal-command-matrix.md`; defects are **U1–U22** in the URGENT
-ACTION ITEMS section above — read its STATUS INDEX first.
+**57 cells — as of 2026-09-07, 32 PASS, 16 FAIL, 9 EXPECTED-REFUSAL, 0 pending** (T2-03 moved
+FAIL → PASS when U14 was fixed; the earlier 31/17 split was never updated for it). **That count is
+now stale too: T1-29 moved FAIL → PASS on 2026-09-09 when U11 was fixed and live-re-proven, so the
+current split is 33 PASS / 15 FAIL / 9 EXPECTED-REFUSAL — read the Summary at the TOP of
+`docs/modal-command-matrix.md` for the current figure, not this line.** Results and the
+operator-facing summary are at the TOP of `docs/modal-command-matrix.md`; defects are **U1–U29** in
+the URGENT ACTION ITEMS section above — read its STATUS INDEX first.
 
 - **Headline defect FIXED — `av<18` pinned in `82ad084b` and proven live.** `av` 18 broke the
   FlashVSR mp4 writer on every provider (upscale computed on the GPU, then died at
@@ -2452,12 +2496,19 @@ ACTION ITEMS section above — read its STATUS INDEX first.
   target (post-pin)**, warm re-attach in all three forms on the *generate* path, `batch`, `grid`
   mechanics, ephemeral generation, RIFE interpolate, the whole read surface, and `--no-reuse`
   teardown (proven from a new process after every single live cell).
-- **Does not work:** `deploy` and `provision` (U6/U7 — the second leaked $0.13 on a pod no
-  kinoforge command could see), a pod's endpoint URL from any fresh process (U3), automatic reaping
-  of ephemeral pods (U9), `grid --ephemeral` (U11), `--vault` prompts (U5), the warm-attach matcher
+- **Does not work (as originally run, 2026-09-05/06 — several of these are since fixed; see the
+  new paragraph at the top of this snapshot and the STATUS INDEX for current state):** `deploy` and
+  `provision` (U6/~~U7~~ — the second leaked $0.13 on a pod no kinoforge command could see; **U7
+  fixed and live-proven in part 2026-09-07 in `8191bd1b`**), a pod's endpoint URL from any fresh
+  process (U3, still open), ~~automatic reaping of ephemeral pods~~ (U9 — **fixed and live-proven
+  2026-09-07 in `e582bd0f`**), ~~`grid --ephemeral`~~ (U11 — **fixed and live-re-proven 2026-09-09
+  in `b9b4fcd6`, after a same-day live-caught regression; see U11's own entry for the full
+  history**), `--vault` prompts (U5, still partly open), the warm-attach matcher
   (U1/~~U14~~ — U14 reproduced verbatim on 2026-09-06, putting two $2.50/hr A100s on the clock in
   both passes; **fixed and live-proven 2026-09-07 in `49394b1d`**), ~~`--attach-pod` on a healthy pod whose endpoint the ledger holds~~ (**U15 — fixed offline in `ccd4c5e7`, live proof still owed**),
-  `batch --dry-run-swap`'s manifest (U2), ephemeral index timing (U8), and CLI exit after
+  `batch --dry-run-swap`'s manifest (U2, still open), ~~ephemeral index timing~~ (U8 — **fixed on
+  Modal, live-proven, 2026-09-07 in `9d34d008`+`8403a71c`; RunPod half stays PARTIAL under U16**),
+  and CLI exit after
   `UpscaleFailed` (U13 — now known to be failure-path only; both post-fix upscales exited cleanly).
 - **~~Warm reuse on the upscale path is currently impossible.~~ Fixed 2026-09-07.** As found:
   U14 made the matcher cold-boot a duplicate A100, and U15 made the explicit `--attach-pod`

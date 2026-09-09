@@ -46,7 +46,7 @@
     {
       "id": 6,
       "subject": "Task 6: live proof (~$0.50, the only task that spends)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Prove the two money-leak fixes against the real provider, including by deliberately killing a run — because these fixes exist so that something works when a run fails, and a proof that never lets anything fail proves nothing.\n\n**Files:**\n- Modify: `PROGRESS.md` (the U23, U11, U18 entries), `docs/modal-command-matrix.md` (any affected rows)\n\n**Acceptance Criteria:**\n- [ ] **A1 proof:** launch `--ephemeral batch`, read `.kinoforge/_lifecycle/ephemeral-index.json` **while it is still running** and capture a row naming the pod, then kill the controller and confirm the pod is nameable and reapable from a fresh process.\n- [ ] **A2 proof:** run `grid --ephemeral` and confirm the provider's app list shows opaque `eph-` names with no run id or timestamp.\n- [ ] **B1 proof:** with an ephemeral orphan live and an empty ledger, one-shot `reap` finds it rather than printing \"nothing to do\".\n- [ ] Teardown proof from a fresh process after every cell. No pod alive at the end.\n- [ ] Actual spend recorded per cell.\n- [ ] If a fix does NOT hold live, record it and do **not** retrofit the code to make the proof pass. Report it and stop that cell.\n\n**Verify:** `pixi run -e live-modal kinoforge list` → both \"no instances\" lines, and no running `kinoforge-*` app in the Modal app list\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"docs/modal-command-matrix.md\"], \"verifyCommand\": \"pixi run -e live-modal kinoforge list\", \"acceptanceCriteria\": [\"**A1 proof:** launch `--ephemeral batch`, read `.kinoforge/_lifecycle/ephemeral-index.json` **while it is still running** and capture a row naming the pod, then kill the controller and confirm the pod is nameable and reapable from a fresh process.\", \"**A2 proof:** run `grid --ephemeral` and confirm the provider's app list shows opaque `eph-` names with no run id or timestamp.\", \"**B1 proof:** with an ephemeral orphan live and an empty ledger, one-shot `reap` finds it rather than printing \\\"nothing to do\\\".\", \"Teardown proof from a fresh process after every cell. No pod alive at the end.\", \"Actual spend recorded per cell.\", \"If a fix does NOT hold live, record it and do **not** retrofit the code to make the proof pass. Report it and stop that cell.\"], \"modelTier\": \"frontier\", \"liveSpend\": true}\n```",
       "blockedBy": [
         5
@@ -62,5 +62,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-09T00:18:42.685232"
+  "lastUpdated": "2026-09-09T01:20:23.366476"
 }
