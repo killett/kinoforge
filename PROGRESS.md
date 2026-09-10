@@ -458,9 +458,9 @@ OFFLINE-PROVEN 2026-09-09, whole-branch review Finding 1, commit `a8cbb54c`
 — this is the current state; the paragraphs below it are the campaign's running commentary and are
 dated, not authoritative).**
 Twenty-nine items, U1-U29. **Fifteen are fixed** (U4, U7, U8, U9, U11, U12, U14, U15, U17, U18,
-U20, U21, U23, U26, U29) — **plus U3 and U27, fixed 2026-09-09, so seventeen** — **two are partly
-fixed** (U5, U10), **ten are open** (U1, U2, U6,
-U13, U16, U19, U22, U24, U25, U28). **U11 went OPEN → FIXED again on 2026-09-09**: it
+U20, U21, U23, U26, U29) — **plus U3, U27 and U28, fixed 2026-09-09, so eighteen** — **two are
+partly fixed** (U5, U10), **nine are open** (U1, U2, U6,
+U13, U16, U19, U22, U24, U25). **U11 went OPEN → FIXED again on 2026-09-09**: it
 was moved back to OPEN by Task 6's live disproof, and the regression that disproof found is now
 fixed in `b9b4fcd6`. That fix is **LIVE-PROVEN as of 2026-09-09** — the owed A2 re-run booked two
 real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge-eph-<8hex>` apps
@@ -495,7 +495,7 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | U25 | OPEN | an ephemeral `grid` still writes local artifacts (per-cell stderr, `output/_grid_<id>/`) under the strict policy, contradicting the flag's own help text. Filed 2026-09-08, Task 2 review round 1; reproducer corrected round 2 |
 | U26 | FIXED, OFFLINE-PROVEN | `a8cbb54c` (whole-branch review Finding 1, 2026-09-09) — `sweep()` now takes an optional `single_id` kwarg that filters the `EphemeralIndex` union to the one matching row; `_cmd_reap` passes `single_id=single_id`, so `--id X` now restricts BOTH the ledger view AND the ephemeral-index union `sweep()` acts on. Every other caller (notably the `SweeperLoop` daemon) passes no `single_id` and is unaffected — confirmed by the full sweep/sweeper test battery (108 tests) staying green unmodified. RED: `--id target-pod --apply --include-orphans` with an unrelated orphan-eligible `unrelated-pod` row in the index destroyed BOTH pods (`['target-pod', 'unrelated-pod']`) against the pre-fix code. GREEN: only `target-pod`. Filed 2026-09-08, Task 3 review round 2 |
 | U27 | FIXED, OFFLINE-PROVEN + CLI-DEMONSTRATED AT $0.00 | Resolved on the **uniformity** option, not the one-token one, because the contained fix would have deepened the inconsistency that produced the defect. `_propagate_session_globals` walks the parser tree RECURSIVELY and re-declares all five session-globals (`--state-dir`, `--env-file`, `--vault`, `--ephemeral`, `--debug-show-secrets`) on every node with `default=argparse.SUPPRESS`, so both positions work on every subcommand with **no exception list** — the exception list being what shipped U27 in the first place (`--ephemeral` had been hand-added to `grid` alone, so `batch` was never on anybody's list). Recursion, not a leaf walk: `pod` and `sweeper` are intermediate nodes, and a leaf-only pass would leave `kinoforge pod --ephemeral lora ls …` still exiting 2 while every leaf looked covered. The two hand-added copies (`p_batch/--env-file` from U29, `p_grid/--ephemeral` from U11) are DELETED so the propagation is the single source. **This also closed a latent twin nobody had filed**: `kinoforge generate --vault X` was an argparse error too, and would have become U30. `SUPPRESS` remains load-bearing for the reason U11/U29 recorded — argparse copies every key of a subcommand's fresh namespace onto the parent, so an ordinary default CLOBBERS a root-set value; the value nearest the work now wins. Pinned by a 224-test matrix (`tests/cli/test_session_global_flag_positions.py`) that ENUMERATES the parser tree and synthesizes each leaf's required args, so a subcommand added later cannot escape it, and that asserts parsed `args.<dest>` values rather than argv membership — the blindness that shipped U11's regression. **CLI-demonstrated live at $0.00** via the root-only `--debug-show-secrets` mutex, which fires in `main()` after parse and before any dispatch: `batch --ephemeral --debug-show-secrets …`, `--ephemeral batch --debug-show-secrets …`, `generate --vault … --ephemeral --debug-show-secrets …` and `pod --ephemeral --debug-show-secrets lora ls …` all now exit 2 with the MUTEX error where they previously exited 2 with `unrecognized arguments` — same code, different reason, no compute booked. `kinoforge batch --help` now advertises all five. `list --ephemeral` parses and still prints `note: --ephemeral has no effect on read-only subcommands`. One caveat recorded: this is the only production code in the tree that touches argparse internals (`_actions`, `_SubParsersAction`), unavoidable because argparse exposes no public way to enumerate subparsers — the matrix test walks the tree the same way, so a Python release that moved them fails at test COLLECTION rather than silently ceasing to propagate |
-| U28 | OPEN | the `--ephemeral` batch launch row never receives its `endpoints` — `_settle_batch_launch_row` runs only AFTER `batch_generate` returns, i.e. never on the crash path the row exists for. Starves the reaper's util probe (blocks C1 orphan promotion past `LIVE`); larger on RunPod (see U16). **Assessed as a restructure, not a contained fix** — generate/upscale/interpolate share the identical shape. Filed 2026-09-09, Task 2 regression fix |
+| U28 | FIXED, LIVE-PROVEN 2026-09-09 | `f1e7f1ef`. **The "RESTRUCTURE" assessment below was WRONG and is retained as written, because the mistake is the lesson.** The cross-layer seam it says must be built has existed since C29: `_provision_instance_and_build_backend` fires `on_instance_created` exactly once, right after `create_instance` and before `engine.provision`, with an instance that already carries its endpoints — and `_record_then_install`'s own docstring already read "chain `on_instance_created` callbacks". The missing half was that no CALLER could supply one. The assessment was written from `_cmd_batch`'s frame, where the endpoints genuinely are not available, without checking whether the orchestrator already offered a hook — the exact inference the "verify implementation status from the file, not from reasoning" rule in `CLAUDE.md` exists to prevent. Actual change: one optional param on `deploy_session` chained inside `_record_then_install` (after the ledger record, so a hook that reads the ledger sees the row; containment-wrapped and WARN-logged, because the pod is already billing by then), forwarded by `generate` and `batch_generate`, plus one CLI closure at four call sites. **Two bugs the fix itself introduced, both caught pre-commit:** (1) the hook re-keys the row to the pod's real id, so `--no-reuse` teardown releasing only the LAUNCH id left a row naming a destroyed pod — caught by the EXISTING `test_the_launch_row_is_dropped_when_no_reuse_destroys_the_pod`; (2) the batch variant no test covered, because `_cmd_batch` re-derives its instance from the ledger and that can legitimately return `None`, so releasing "launch id + recovered id" still stranded the row — `_LaunchRow` is now a mutable dataclass whose `upgraded_id` the hook writes back, and the settle drops whichever key the row ended up under. Six red/green tests; the one that matters is TIMING, since the pre-existing `test_ephemeral_row_is_updated_not_duplicated_when_endpoints_arrive` asserts the END state and passed throughout U28's entire life — which is why the defect survived. **LIVE-PROVEN 2026-09-09 ($0.0406, Modal A10 `eph-a6d3b12e`, 2 m 13 s):** mid-run at 28 s the row already carried the real id + endpoints; the process GROUP was SIGKILLed at GPU 100 % and the row survived intact while `kinoforge list` printed both "no instances" lines; `/util` answered from fresh processes on both sides of the kill; and — the criterion that matters — `reap` classified **`ORPHAN_REAP`** and `--apply --include-orphans` reported **`acted on 1: 1 destroyed`**, where Task 6's B1 on this same scenario returned `LIVE` / `acted on 0`. Teardown verified from fresh processes; preflight back to 0 pods. **Helps but does not close U16** (RunPod's reserved name is still not a usable id), and reap semantics are UNCHANGED — the fix removes the ignorance rather than licensing action under it |
 | U29 | FIXED, OFFLINE-PROVEN | `424e52d1` (2026-09-09, Task 2 regression fix) — `p_batch` re-declared the ROOT `--env-file` with an implicit `default=None`, and argparse copies every key of a subparser's fresh namespace onto the parent, so `kinoforge --env-file X batch …` parsed to `env_file=None` and `main()` loaded the DEFAULT secrets file instead of `X` — a batch run (which books GPUs) against the wrong credentials or provider account, with no warning and exit 0. Same mechanism and same one-token remedy as the `p_grid`/`--ephemeral` half of U11: `default=argparse.SUPPRESS`. These two were the ONLY root/subparser `dest` collisions in the whole parser, so the class is now closed. Covered by a test that feeds each composed argv through the real `_build_parser().parse_args()` and asserts `args.env_file` — not argv membership — with a `generate` case guarding the path that already worked. RED confirmed first (`args.env_file=None, expected '/x/creds-a'`). Offline-proven; no provider or network call. Filed and fixed the same day, on a controller ruling that a known one-token money hazard should not ship filed-open from the branch that discovered it |
 
 **Live proof cost for the whole money-leak campaign: $0.82** — $0.16 for the four fixes' own live
@@ -2451,8 +2451,8 @@ per-item entries below.
   either name fails at test COLLECTION rather than shipping a parser that silently stopped
   propagating.
 
-- **U28 — the `--ephemeral` batch launch row never receives its `endpoints`, so the reaper cannot
-  promote the orphan the row exists to catch.**
+- **U28 — FIXED and LIVE-PROVEN 2026-09-09 — the `--ephemeral` launch row never received its
+  `endpoints`, so the reaper could not promote the orphan the row exists to catch.**
   **Symptom.** During a live `--ephemeral batch`, the `EphemeralIndex` row that names the pod
   carries `endpoints: {}` for the entire run, and on the crash path — the SIGKILL the row was
   designed for — it never gets them at all. `_probe_with_cache` calls `note_endpoints` only when
@@ -2479,7 +2479,9 @@ per-item entries below.
   never reaches line 1486 at all. Live corroboration: Task 6's index row, read from fresh processes
   at 00:24:52, 00:25:06 and 00:26:54 (the last with the GPU at 100 %), was byte-identical each
   time with `"endpoints": {}`.
-  **Assessment — this is a RESTRUCTURE, not a contained change.** The endpoints do not exist in
+  **⚠️ The assessment below is WRONG. It is kept verbatim, not rewritten, because the mistake
+  is the transferable lesson — see the correction that follows it.**
+  **Assessment (2026-09-09, SUPERSEDED) — this is a RESTRUCTURE, not a contained change.** The endpoints do not exist in
   `_cmd_batch`'s frame until `batch_generate` returns; they are minted deep inside
   `deploy_session` → the provisioner. Closing the gap needs a NEW cross-layer seam — an
   "instance ready" callback threaded from the orchestrator back out to the CLI so the index row can
@@ -2501,6 +2503,72 @@ per-item entries below.
   `.modal.run` host out of the run log).
   **Discovered by:** Task 6 live proof, A1/B1, 2026-09-09; assessed and filed by the Task 2
   regression fix, 2026-09-09.
+  **CORRECTION (2026-09-09) — the assessment above was wrong, and how it went wrong is the point.**
+  It says "closing the gap needs a NEW cross-layer seam". That seam already existed, and had since
+  C29. `_provision_instance_and_build_backend` takes `on_instance_created`
+  (`core/orchestrator.py:1254`), fires it exactly once at `:1517-1518` — after `create_instance`,
+  BEFORE `engine.provision` — and the instance it hands over already carries its endpoints
+  (`:1555-1560`: "instance.endpoints goes from populated-by-`_create_pod`…"). `deploy_session`
+  already built a callback and passed it (`:2035`, `:2081`), and that callback's own docstring
+  already read **"Record + claim — chain `on_instance_created` callbacks"** (`:1874`). The missing
+  half was only that no CALLER could supply one.
+  **Why it was missed:** the assessment was reasoned from `_cmd_batch`'s frame — where the
+  endpoints genuinely are unavailable — outward to "therefore a seam must be built", without
+  reading the orchestrator to check whether one already existed. That is the inference
+  `CLAUDE.md`'s "Verifying implementation status" rule exists to stop: *History tells you when
+  something happened; the file tells you whether it happened.* One `rg on_instance_created` would
+  have settled it. Generalise: before filing something as a restructure, grep the layer you are
+  claiming lacks a seam.
+  **Fix (`f1e7f1ef`).** `deploy_session` gains an optional `on_instance_created`, chained inside
+  `_record_then_install` AFTER the ledger record (so a hook that reads the ledger sees the row) and
+  containment-wrapped with a WARNING — by then the pod is created and billing, so a caller's
+  bookkeeping failure must not abort a run the operator is paying for, exactly as the sibling
+  `ledger.record` failure is already swallowed. `generate` and `batch_generate` forward it;
+  `_ephemeral_row_upgrade_hook` is the single CLI closure, passed at all four call sites.
+  **Two bugs the fix itself introduced, both caught before commit — worth keeping, because both are
+  the same shape one layer apart.** (1) The hook re-keys the row to the pod's real id, so
+  `--no-reuse` teardown releasing only the LAUNCH id left a row naming an already-destroyed pod —
+  the next run's matcher would probe it and the sweeper carry a 404 phantom, i.e. exactly what the
+  launch-row release exists to prevent, relocated one key over. Caught by the **existing**
+  `test_the_launch_row_is_dropped_when_no_reuse_destroys_the_pod`, which is the argument for
+  running the whole suite rather than only the new tests. (2) The batch variant, which no existing
+  test covered: `_cmd_batch` gets no `Instance` back and re-derives one from the ledger, and that
+  can legitimately return `None`, so releasing "launch id + recovered id" still stranded the row.
+  `_LaunchRow` became a mutable dataclass whose `upgraded_id` the hook writes back; the settle now
+  drops whichever key the row ended up under, with no dependency on recovery succeeding. Found by
+  going looking for (1)'s shape on the other call path.
+  **Offline proof:** six red/green tests — three in `tests/core/test_deploy_session_instance_callback.py`
+  (presence, TIMING, containment-on-raise) and three in `tests/cli/test_ephemeral_index_timing.py`
+  (endpoints mid-run, endpoints after a raise, no phantom row when recovery finds nothing). The
+  timing test is the load-bearing one: the pre-existing
+  `test_ephemeral_row_is_updated_not_duplicated_when_endpoints_arrive` asserts the END state and
+  passed throughout U28's entire life, which is precisely why the defect survived this long.
+  Full suite 5551 passed / 163 skipped / 17 xfailed.
+  **LIVE-PROVEN 2026-09-09 for $0.0406** (Modal A10, pod `eph-a6d3b12e`, alive 19:05:16 → 19:07:29;
+  scaffold committed RED first in `f961e7e1`, preflight PASS on a verified zero-app baseline):
+  - **Mid-run, 28 s in and still provisioning**, a fresh `SessionContext` read
+    `id=eph-a6d3b12e provider=modal endpoints={'8000': 'https://<operator>--kinoforge-eph-a6d3b12e-…modal.run'}`.
+    Pre-fix: the reserved name with `endpoints: {}`.
+  - **The process GROUP was SIGKILLed at GPU 100 %**, mid-inference. The row survived intact —
+    real id, endpoints — while `kinoforge list` printed BOTH "no instances" lines, so that row was
+    the only thing naming a live, billing GPU with no controller. A raise unwinds Python and can
+    still run cleanup; a SIGKILL cannot, which is why this needed a live cell and not another
+    offline test. The group held THREE processes (`timeout` → `pixi run` → `python -m kinoforge`),
+    so killing the leader alone would have left the real controller running and the proof
+    measuring nothing.
+  - **The endpoint was usable, not merely recorded:** `/util` answered from fresh processes on both
+    sides of the kill (`gpu_util_percent=100.0` before, `0.0` after).
+  - **The payoff:** `kinoforge reap` classified the orphan **`ORPHAN_REAP`** and
+    `--apply --include-orphans` reported **`acted on 1: 1 destroyed`** — where Task 6's B1, against
+    this same scenario before the fix, returned `LIVE` and `acted on 0`. The defect is closed end
+    to end, by the AUTOMATIC path rather than a manual `destroy --id`.
+  - No clip was produced (killed mid-inference by design), so frame-QA is N/A for this cell.
+    Teardown verified from fresh processes: both `kinoforge list` lines, index EMPTY, no
+    non-stopped kinoforge app, `preflight` back to 0 active pods.
+  **Still open, unchanged by this:** **U16** is helped (the row now carries the real id and
+  endpoints) but NOT closed — RunPod's reserved name is still not a usable pod id. Reap semantics
+  are untouched: the fix removes the ignorance rather than licensing action under it, so **U22**
+  (the orphan predicate acts on a single probe sample) stands.
 
 - **U29 — CLOSED 2026-09-09 (`424e52d1`, offline-proven) — `p_batch` re-declared the ROOT
   `--env-file`, so `kinoforge --env-file X batch …` silently loaded the wrong secrets file.**
@@ -2562,6 +2630,54 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`3c7822b8`).
 
 ## RESUME SNAPSHOT (updated 2026-09-09 — read this, then STOP; below is history)
+
+**U28 CLOSED — FIXED and LIVE-PROVEN 2026-09-09 for $0.0406.** The `--ephemeral` index row now
+carries the pod's real id and endpoints from the moment the pod exists, instead of only after the
+orchestrator returns. Fix `f1e7f1ef`; live scaffold `f961e7e1` (committed RED before the spend).
+
+**The headline is a record correction, not the fix.** This entry had been filed as a
+**RESTRUCTURE** needing "a NEW cross-layer seam — an 'instance ready' callback threaded from the
+orchestrator back out to the CLI". **That was wrong.** The seam had existed since C29:
+`_provision_instance_and_build_backend` takes `on_instance_created`, fires it exactly once after
+`create_instance` and before `engine.provision`, with an instance that already carries its
+endpoints — and `deploy_session`'s own `_record_then_install` docstring already read *"chain
+`on_instance_created` callbacks"*. Only the caller-facing half was missing. The bad assessment was
+reasoned outward from `_cmd_batch`'s frame (where the endpoints genuinely are unavailable) without
+reading the orchestrator to check. **One `rg on_instance_created` would have settled it.**
+Generalise: *before filing something as a restructure, grep the layer you are claiming lacks a
+seam.* The wrong assessment is kept verbatim in U28's entry, marked SUPERSEDED, because the mistake
+is the transferable part.
+
+**Two bugs the fix itself introduced, both caught before commit, both the same shape one layer
+apart.** (1) The hook re-keys the row to the pod's real id, so `--no-reuse` teardown releasing only
+the LAUNCH id left a row naming an already-destroyed pod — caught by an **existing** test, which is
+the argument for running the whole suite and not just the new tests. (2) The batch variant, which no
+test covered: `_cmd_batch` re-derives its instance from the ledger and that can legitimately return
+`None`. `_LaunchRow` is now a mutable dataclass whose `upgraded_id` the hook writes back, so the
+settle drops whichever key the row ended up under. Found by deliberately going looking for (1)'s
+shape on the other call path.
+
+**The live proof's payoff line, which is the whole defect in one comparison:** `kinoforge reap`
+classified the orphan **`ORPHAN_REAP`** and `--apply --include-orphans` reported **`acted on 1: 1
+destroyed`** — where Task 6's B1, against this same scenario before the fix, returned `LIVE` and
+`acted on 0`. The pod was SIGKILLed at GPU 100 % (the whole process GROUP — it held three
+processes, so killing the leader alone would have proven nothing), and the row survived intact
+while `kinoforge list` showed the ledger holding nothing at all.
+
+**A test-design lesson that keeps recurring in this project.** The pre-existing
+`test_ephemeral_row_is_updated_not_duplicated_when_endpoints_arrive` asserts the END state and
+passed throughout U28's entire life — which is exactly why the defect survived. When a defect is
+about WHEN something happens, an end-state test is not evidence. This is the same shape as U3's
+trap earlier today (renderer tests that pass `recorded=` in by hand prove nothing about the wire).
+
+**Defect ledger: 29 items — 18 fixed, 2 partly fixed, 9 open** (U1, U2, U6, U13, U16, U19, U22,
+U24, U25). **U16** is helped by U28 but NOT closed (RunPod's reserved name is still not a usable pod
+id); **U22** (orphan predicate acts on one probe sample) is untouched, deliberately — U28 removes
+the ignorance rather than licensing action under it. Cheapest remaining wins are now U16 and U22,
+which are adjacent to the machinery just touched. The STATUS INDEX at the top of the URGENT ACTION
+ITEMS section remains authoritative.
+
+**Session spend 2026-09-09: $0.0406 (U28) + $0.055 (U3) = $0.0956 total.**
 
 **U27 and U3 CLOSED (2026-09-09, $0.00 — no live spend, no pod, no preflight needed).** Two of the
 cheapest remaining wins off the money-leaks list, done offline in one pass on `main`.
