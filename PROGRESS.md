@@ -458,8 +458,9 @@ OFFLINE-PROVEN 2026-09-09, whole-branch review Finding 1, commit `a8cbb54c`
 — this is the current state; the paragraphs below it are the campaign's running commentary and are
 dated, not authoritative).**
 Twenty-nine items, U1-U29. **Fifteen are fixed** (U4, U7, U8, U9, U11, U12, U14, U15, U17, U18,
-U20, U21, U23, U26, U29), **two are partly fixed** (U5, U10), **twelve are open** (U1, U2, U3, U6,
-U13, U16, U19, U22, U24, U25, U27, U28). **U11 went OPEN → FIXED again on 2026-09-09**: it
+U20, U21, U23, U26, U29) — **plus U3 and U27, fixed 2026-09-09, so seventeen** — **two are partly
+fixed** (U5, U10), **ten are open** (U1, U2, U6,
+U13, U16, U19, U22, U24, U25, U28). **U11 went OPEN → FIXED again on 2026-09-09**: it
 was moved back to OPEN by Task 6's live disproof, and the regression that disproof found is now
 fixed in `b9b4fcd6`. That fix is **LIVE-PROVEN as of 2026-09-09** — the owed A2 re-run booked two
 real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge-eph-<8hex>` apps
@@ -469,7 +470,7 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 |---|---|---|
 | U1 | OPEN | warm-attach matcher is provider-blind; untouched |
 | U2 | OPEN | `batch --dry-run-swap` never parses the manifest; untouched |
-| U3 | OPEN | a Modal pod's endpoint URL is unreachable from a fresh process. Re-checked after `ccd4c5e7` and still open — that fix is confined to `_resolve_attach_pod`. Re-confirmed live twice on 2026-09-09 (Task 6): in A1 the util probe had to scrape the `.modal.run` URL out of the run log because neither `provider.get_instance` nor the index row (`endpoints: {}`) yields it; in the A2 re-run even that fallback was unavailable, because `grid` captures each cell subprocess's stderr and writes it only at cell end, so **no `gpuUtilPercent` reading was obtainable for a grid cell at all** and the polling loop had to fall back to `modal app list` `state`/`tasks` as the liveness signal. That makes U3 a live-monitoring blocker for `grid`, not only an inconvenience |
+| U3 | FIXED, OFFLINE-PROVEN | The read paths now consult the ledger row that was always holding the answer. `_merge_recorded_tags` restores the create-time `tags` (RunPod's `endpoints` READS `tags["ports"]`, which `get_instance` never populates) and `_seed_instance_from_ledger_entry` also restores the recorded `endpoints` map (Modal's `.modal.run` URL is derivable from nothing at all). `_cmd_status` seeds tags and passes the recorded map to `_render_endpoints_for_status` as a new `recorded=` argument; `_cmd_pod_lora_ls` seeds both before `ensure_endpoints`. The merge block was EXTRACTED from `_resolve_attach_pod` (the U15 fix, `ccd4c5e7`) rather than re-written, and the four existing tests in `tests/cli/test_resolve_attach_pod.py` stayed green UNMODIFIED — that is the non-regression proof. **A recorded endpoint renders LABELLED** — `{...} (recorded at launch, not verified live)` — because `status` uses the pure read and on SkyPilot the recorded endpoint is routinely a `127.0.0.1:<port>` tunnel that died with the process that opened it; presenting that as live is the F11 failure the S5 read/ensure split exists to prevent. A map the provider COMPUTED from rehydrated tags renders UNLABELLED, because a proxy URL rebuilt from the pod id is derivation, not recollection — that distinction also closes the RunPod-status deferral `_render_endpoints_for_status`'s own docstring had named as out of scope. **Proof is OFFLINE ONLY** and the reason is structural, not laziness: the claim is about what a FRESH PROCESS can reach, and no offline test can exercise that against a real provider — `LocalProvider` keeps instances in-process (so a fresh process raises `KeyError` before the endpoint render is reached) and Modal/RunPod `get_instance` are network calls. Two of the new tests deliberately pin the CALL SITE through `main()`, not the renderer, because every renderer test passes `recorded=` in by hand and would have stayed green if `_cmd_status` never passed one; RED for both was confirmed by temporarily reverting the call-site wiring. **NOT closed by this fix:** an `--ephemeral` run's index row carries `endpoints: {}` for its whole life (**U28**), so this buys ephemeral runs nothing, and the `grid`-cell monitoring blindness recorded on this row is downstream of U28, not of U3 |
 | U4 | FIXED | `c08c3cce` — `logs` refuses cleanly off RunPod instead of 404ing a fabricated host |
 | U5 | PARTLY FIXED | `c08c3cce` corrected the help text; wiring `vault.positive_prompt` into prompt resolution is still open, and so is failing an empty prompt BEFORE a pod is billed |
 | U6 | OPEN | `kinoforge deploy` renders no provision; dead on Modal, books a portless pod on RunPod |
@@ -493,7 +494,7 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | U24 | OPEN | `grid --ephemeral` cannot cover `lora_swap:` cells — they are refused (`ValueError`), not made ephemeral. Filed 2026-09-08, Task 2 review round 1 |
 | U25 | OPEN | an ephemeral `grid` still writes local artifacts (per-cell stderr, `output/_grid_<id>/`) under the strict policy, contradicting the flag's own help text. Filed 2026-09-08, Task 2 review round 1; reproducer corrected round 2 |
 | U26 | FIXED, OFFLINE-PROVEN | `a8cbb54c` (whole-branch review Finding 1, 2026-09-09) — `sweep()` now takes an optional `single_id` kwarg that filters the `EphemeralIndex` union to the one matching row; `_cmd_reap` passes `single_id=single_id`, so `--id X` now restricts BOTH the ledger view AND the ephemeral-index union `sweep()` acts on. Every other caller (notably the `SweeperLoop` daemon) passes no `single_id` and is unaffected — confirmed by the full sweep/sweeper test battery (108 tests) staying green unmodified. RED: `--id target-pod --apply --include-orphans` with an unrelated orphan-eligible `unrelated-pod` row in the index destroyed BOTH pods (`['target-pod', 'unrelated-pod']`) against the pre-fix code. GREEN: only `target-pod`. Filed 2026-09-08, Task 3 review round 2 |
-| U27 | OPEN | `kinoforge batch --ephemeral` is an argparse error — the flag is ROOT-only, so only `kinoforge --ephemeral batch …` works. Pre-existing (this branch never touched `p_batch`), not a regression. Filed 2026-09-09, Task 2 regression fix |
+| U27 | FIXED, OFFLINE-PROVEN + CLI-DEMONSTRATED AT $0.00 | Resolved on the **uniformity** option, not the one-token one, because the contained fix would have deepened the inconsistency that produced the defect. `_propagate_session_globals` walks the parser tree RECURSIVELY and re-declares all five session-globals (`--state-dir`, `--env-file`, `--vault`, `--ephemeral`, `--debug-show-secrets`) on every node with `default=argparse.SUPPRESS`, so both positions work on every subcommand with **no exception list** — the exception list being what shipped U27 in the first place (`--ephemeral` had been hand-added to `grid` alone, so `batch` was never on anybody's list). Recursion, not a leaf walk: `pod` and `sweeper` are intermediate nodes, and a leaf-only pass would leave `kinoforge pod --ephemeral lora ls …` still exiting 2 while every leaf looked covered. The two hand-added copies (`p_batch/--env-file` from U29, `p_grid/--ephemeral` from U11) are DELETED so the propagation is the single source. **This also closed a latent twin nobody had filed**: `kinoforge generate --vault X` was an argparse error too, and would have become U30. `SUPPRESS` remains load-bearing for the reason U11/U29 recorded — argparse copies every key of a subcommand's fresh namespace onto the parent, so an ordinary default CLOBBERS a root-set value; the value nearest the work now wins. Pinned by a 224-test matrix (`tests/cli/test_session_global_flag_positions.py`) that ENUMERATES the parser tree and synthesizes each leaf's required args, so a subcommand added later cannot escape it, and that asserts parsed `args.<dest>` values rather than argv membership — the blindness that shipped U11's regression. **CLI-demonstrated live at $0.00** via the root-only `--debug-show-secrets` mutex, which fires in `main()` after parse and before any dispatch: `batch --ephemeral --debug-show-secrets …`, `--ephemeral batch --debug-show-secrets …`, `generate --vault … --ephemeral --debug-show-secrets …` and `pod --ephemeral --debug-show-secrets lora ls …` all now exit 2 with the MUTEX error where they previously exited 2 with `unrecognized arguments` — same code, different reason, no compute booked. `kinoforge batch --help` now advertises all five. `list --ephemeral` parses and still prints `note: --ephemeral has no effect on read-only subcommands`. One caveat recorded: this is the only production code in the tree that touches argparse internals (`_actions`, `_SubParsersAction`), unavoidable because argparse exposes no public way to enumerate subparsers — the matrix test walks the tree the same way, so a Python release that moved them fails at test COLLECTION rather than silently ceasing to propagate |
 | U28 | OPEN | the `--ephemeral` batch launch row never receives its `endpoints` — `_settle_batch_launch_row` runs only AFTER `batch_generate` returns, i.e. never on the crash path the row exists for. Starves the reaper's util probe (blocks C1 orphan promotion past `LIVE`); larger on RunPod (see U16). **Assessed as a restructure, not a contained fix** — generate/upscale/interpolate share the identical shape. Filed 2026-09-09, Task 2 regression fix |
 | U29 | FIXED, OFFLINE-PROVEN | `424e52d1` (2026-09-09, Task 2 regression fix) — `p_batch` re-declared the ROOT `--env-file` with an implicit `default=None`, and argparse copies every key of a subparser's fresh namespace onto the parent, so `kinoforge --env-file X batch …` parsed to `env_file=None` and `main()` loaded the DEFAULT secrets file instead of `X` — a batch run (which books GPUs) against the wrong credentials or provider account, with no warning and exit 0. Same mechanism and same one-token remedy as the `p_grid`/`--ephemeral` half of U11: `default=argparse.SUPPRESS`. These two were the ONLY root/subparser `dest` collisions in the whole parser, so the class is now closed. Covered by a test that feeds each composed argv through the real `_build_parser().parse_args()` and asserts `args.env_file` — not argv membership — with a `generate` case guarding the path that already worked. RED confirmed first (`args.env_file=None, expected '/x/creds-a'`). Offline-proven; no provider or network call. Filed and fixed the same day, on a controller ruling that a known one-token money hazard should not ship filed-open from the branch that discovered it |
 
@@ -617,7 +618,7 @@ per-item entries below.
   **Why urgent:** the one pre-flight check a batch has is inert, so a malformed or missing
   manifest is discovered only after the pod is up and billing.
 
-- **U3 — a Modal pod's endpoint URL is unreachable from any fresh process.**
+- **U3 — FIXED (offline-proven) 2026-09-09 — a Modal pod's endpoint URL was unreachable from any fresh process.**
   The ledger entry for a live Modal pod carries
   `endpoints={"8000": "https://...modal.run"}` (and `last_gpu_util_percent` etc.), but no read
   path consults it. `ModalProvider.endpoints`
@@ -642,6 +643,48 @@ per-item entries below.
   `_render_endpoints_for_status`'s docstring already defers this on purpose for RunPod/Modal;
   what is new is the measured cost of the deferral. Cheap fix shape: fall back to the ledger
   entry's `endpoints` map.
+  **Fix (2026-09-09).** The cheap fix shape above, with one distinction the shape did not
+  anticipate. Two seams, because recorded `tags` and recorded `endpoints` are not the same kind of
+  thing:
+  - `_merge_recorded_tags(instance, entry)` restores the create-time tags. RunPod's `endpoints`
+    COMPUTES its proxy URL from `tags["ports"]`, so a rehydrated tag is an *input* — the URL is
+    derived deterministically from the pod id, and renders **unlabelled**. This is the piece
+    `_render_endpoints_for_status`'s own docstring had deferred as "out of scope here"; it is now
+    in scope and done.
+  - `_seed_instance_from_ledger_entry(instance, entry)` additionally restores the recorded
+    `endpoints` map, for Modal, whose URL is derivable from nothing. That is a *recollection*, so
+    `status` renders it as `{…} (recorded at launch, not verified live)`.
+  The label is not decoration. `status` uses the pure read (`endpoints`, never `ensure_endpoints`,
+  which would spawn an ssh tunnel per invocation on SkyPilot), and on SkyPilot the recorded
+  endpoint is routinely a `127.0.0.1:<port>` tunnel that died with the process that opened it.
+  Rendering that bare would present a dead URL as current — the F11 failure the S5 read/ensure
+  split exists to prevent. It ranks ABOVE the existing `cluster=<id>` line because it carries
+  strictly more information and the operator already knows the id: they just typed it as `--id`.
+  **The merge block was EXTRACTED, not rewritten.** It already existed inside `_resolve_attach_pod`
+  (the U15 fix, `ccd4c5e7`); it is now a shared helper with three callers — that function,
+  `_cmd_status`, and `_cmd_pod_lora_ls`. The four existing tests in
+  `tests/cli/test_resolve_attach_pod.py` stayed green **unmodified**, which is the proof the
+  extraction changed no behaviour. The deliberate asymmetry recorded in this file is preserved:
+  `_resolve_attach_pod` still REFUSES on an empty post-`ensure` map rather than falling back to the
+  recorded one. The helper seeds inputs; it does not touch that refusal.
+  `_cmd_pod_lora_ls` seeds both halves rather than passing `recorded` separately, because it is
+  about to make a real HTTP request — a stale URL there degrades to the existing clean
+  `pod unreachable` exit 2, which is very different from displaying a stale URL as fact.
+  **Proof is OFFLINE ONLY, and the reason is structural.** The claim is about what a *fresh
+  process* can reach, and no offline test exercises that against a real provider:
+  `LocalProvider` keeps instances in-process, so a fresh process raises `KeyError` before the
+  endpoint render is reached, and Modal's / RunPod's `get_instance` are network calls. A live
+  re-proof needs one real pod (~$0.05-0.10 on a Modal A10: boot, `kinoforge status --id` and
+  `pod lora ls` from fresh processes, destroy) and is a separate follow-up.
+  **A test-design trap worth keeping.** The first pass tested `_render_endpoints_for_status`
+  thoroughly and would have shipped a dead fix: every renderer test passes `recorded=` in by hand,
+  so all of them stay green if `_cmd_status` never passes one. Two tests in `tests/test_cli.py`
+  therefore drive the CALL SITE through `main()` with a seeded ledger, and their RED was confirmed
+  by temporarily reverting the call-site wiring — not inferred.
+  **NOT closed by this fix.** An `--ephemeral` run's index row carries `endpoints: {}` for its
+  entire life (**U28**), so ephemeral runs gain nothing here; and the `grid`-cell monitoring
+  blindness recorded on this row (no `gpuUtilPercent` obtainable for a grid cell) is downstream of
+  U28's empty map plus `grid`'s deferred stderr capture, not of U3.
 
 - **U4 — FIXED in `c08c3cce` — `kinoforge logs` was hard-wired to the RunPod proxy and 404'd on every other provider.**
   `_cmd_logs` does `del ctx  # ledger not consulted — proxy URL is deterministic from id` and
@@ -2295,8 +2338,8 @@ per-item entries below.
   'unrelated-pod']` — both pods destroyed. GREEN after the fix: `provider.destroyed ==
   ['target-pod']` only.
 
-- **U27 — `kinoforge batch --ephemeral` is an argparse error; only `kinoforge --ephemeral batch`
-  works.**
+- **U27 — FIXED (offline-proven, CLI-demonstrated at $0.00) 2026-09-09 —
+  `kinoforge batch --ephemeral` was an argparse error; only `kinoforge --ephemeral batch` worked.**
   **Symptom.** The natural form of the flag is rejected before any work happens, so an operator
   who reaches for `--ephemeral` in the position every other option of that command takes gets a
   usage dump instead of a confidential run.
@@ -2330,6 +2373,47 @@ per-item entries below.
   deliberately.
   **Discovered by:** Task 6 live proof, A1, 2026-09-09; re-verified offline and filed by the Task 2
   regression fix, 2026-09-09.
+  **Resolved 2026-09-09 on the uniformity option** — operator decision, taken because the contained
+  one-argument fix would have deepened the very inconsistency that produced the defect.
+  `_propagate_session_globals(parser)` runs at the end of `_build_parser`, walks the subparser tree
+  **recursively**, and re-declares all five session-globals on every node with
+  `default=argparse.SUPPRESS`. Both positions now work on every subcommand, with **no exception
+  list** — and the exception list is the actual root cause: `--ephemeral` had been hand-added to
+  `grid` alone, so `batch` was simply never on anybody's list.
+  Recursion rather than a walk of leaves: `pod` and `sweeper` are intermediate nodes, and a
+  leaf-only pass would have left `kinoforge pod --ephemeral lora ls …` exiting 2 while every leaf
+  in the matrix looked green — a fix that reads as complete and isn't.
+  **Both hand-added copies are deleted** (`p_batch/--env-file` from U29, `p_grid/--ephemeral` from
+  U11) so the propagation is the single source and cannot drift from the root declarations.
+  **It closed a latent twin nobody had filed:** `kinoforge generate --vault X` was an argparse error
+  on exactly the same mechanism and would have arrived later as U30.
+  `SUPPRESS` is still load-bearing for the reason U11 and U29 recorded — argparse copies every key
+  of a subcommand's fresh namespace onto the parent, so an ordinary default CLOBBERS a root-set
+  value. Precedence is now pinned rather than incidental: the value nearest the work wins.
+  **Offline proof:** `tests/cli/test_session_global_flag_positions.py`, 224 tests. The matrix
+  ENUMERATES the parser tree and synthesizes each leaf's required arguments by introspection, so a
+  subcommand (or a new required argument) added later cannot quietly escape it — the failure mode
+  that let U27 exist. Every assertion is on a parsed `args.<dest>` value, never on argv membership,
+  which is the blindness that shipped U11's regression. RED was 112 failed / 112 passed, with the
+  112 passes being the entire root-position matrix plus the two positions that already worked; the
+  failure text was verbatim `kinoforge: error: unrecognized arguments: --ephemeral`.
+  **CLI-demonstrated at $0.00**, using the root-only `--debug-show-secrets` mutex, which fires in
+  `main()` after parse and before any dispatch — so the flag is proven to have PARSED without
+  booking compute. All four of these now exit 2 with the *mutex* error where they previously exited
+  2 with `unrecognized arguments` (same exit code, different reason, which is the whole point):
+  `batch --ephemeral --debug-show-secrets …`, `--ephemeral batch --debug-show-secrets …`,
+  `generate --vault … --ephemeral --debug-show-secrets …`, and
+  `pod --ephemeral --debug-show-secrets lora ls …`. Separately, `kinoforge batch --help` now
+  advertises all five session-globals in both its usage line and its option list, and
+  `kinoforge list --ephemeral` parses while still printing
+  `note: --ephemeral has no effect on read-only subcommands` (exit 0) — the `_READ_ONLY_CMDS`
+  semantics are untouched; only where argparse ACCEPTS the token changed.
+  **One caveat, stated rather than buried:** this is the only production code in the tree that
+  reaches into argparse internals (`_actions`, `_SubParsersAction`). It is unavoidable — argparse
+  exposes no public way to enumerate subparsers, and the only alternative is the hand-maintained
+  list that failed. The matrix test walks the tree the same way, so a Python release that moved
+  either name fails at test COLLECTION rather than shipping a parser that silently stopped
+  propagating.
 
 - **U28 — the `--ephemeral` batch launch row never receives its `endpoints`, so the reaper cannot
   promote the orphan the row exists to catch.**
@@ -2442,6 +2526,58 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`3c7822b8`).
 
 ## RESUME SNAPSHOT (updated 2026-09-09 — read this, then STOP; below is history)
+
+**U27 and U3 CLOSED (2026-09-09, $0.00 — no live spend, no pod, no preflight needed).** Two of the
+cheapest remaining wins off the money-leaks list, done offline in one pass on `main`.
+
+**U27 — session-global flags now parse in BOTH positions on every subcommand.** Resolved on the
+**uniformity** option rather than the one-argument one, because fixing `batch` alone would have
+deepened the inconsistency that caused the defect. `_propagate_session_globals` walks the parser
+tree RECURSIVELY and re-declares all five session-globals (`--state-dir`, `--env-file`, `--vault`,
+`--ephemeral`, `--debug-show-secrets`) on every node with `default=argparse.SUPPRESS`, so there is
+**no exception list** left to forget — and the exception list was the root cause: `--ephemeral` had
+been hand-added to `grid` alone, so `batch` was never on anybody's list. The two hand-added copies
+(U29's `p_batch/--env-file`, U11's `p_grid/--ephemeral`) are deleted; the propagation is now the
+single source. **It also closed a latent twin nobody had filed** — `kinoforge generate --vault X`
+was an argparse error on the identical mechanism and would have arrived later as U30. Pinned by a
+224-test matrix that enumerates the parser tree by introspection, so a subcommand added later cannot
+escape it, and that asserts parsed `args.<dest>` values rather than argv membership — the blindness
+that shipped U11's regression. **CLI-demonstrated at $0.00** through the root-only
+`--debug-show-secrets` mutex (it fires after parse, before dispatch): four previously-rejected flag
+positions now exit 2 with the MUTEX error instead of `unrecognized arguments` — same exit code,
+different reason, no compute booked.
+
+**U3 — recorded endpoints now reach the out-of-process read paths.** `status` and `pod lora ls`
+consult the ledger row that was holding the answer all along. The merge block was **extracted**
+from `_resolve_attach_pod` (U15's fix) rather than rewritten, and that function's four existing
+tests stayed green **unmodified** — the non-regression proof. One distinction the "cheap fix shape"
+in U3's entry did not anticipate, and it matters: a rehydrated `ports` **tag** is an INPUT that lets
+RunPod *derive* a proxy URL deterministically from the pod id, so it renders **unlabelled** (this
+also closes the RunPod-status deferral `_render_endpoints_for_status`'s own docstring named as out
+of scope); a recorded **endpoints** map is a RECOLLECTION, so it renders
+`{…} (recorded at launch, not verified live)`. Without that label `status` would present a dead
+SkyPilot `127.0.0.1:<port>` tunnel as current — the F11 failure the S5 read/ensure split exists to
+prevent.
+
+**⚠️ U3 is OFFLINE-PROVEN ONLY, and the reason is structural, not laziness.** The claim is about
+what a FRESH PROCESS can reach, and nothing offline exercises that against a real provider:
+`LocalProvider` holds instances in-process (a fresh process raises `KeyError` before the endpoint
+render is reached) and Modal/RunPod `get_instance` are network calls. A live re-proof needs one real
+pod — roughly $0.05–0.10 on a Modal A10: boot, then `kinoforge status --id` and `pod lora ls` from
+fresh processes, then destroy — and is a **separate follow-up, owed**. Same posture as U17 and U21.
+
+**A test-design trap worth carrying forward.** U3's first test pass was thorough about
+`_render_endpoints_for_status` and would still have shipped a DEAD fix: every renderer test passes
+`recorded=` in by hand, so all of them stay green if `_cmd_status` never passes one. Two tests in
+`tests/test_cli.py` now drive the CALL SITE through `main()` with a seeded ledger, and their RED was
+confirmed by temporarily reverting the call-site wiring — not inferred. Generalisable: when a fix is
+"pass the existing value to the existing function", the renderer tests prove nothing about the wire.
+
+**Defect ledger after this pass: 29 items — 17 fixed, 2 partly fixed, 10 open** (U1, U2, U6, U13,
+U16, U19, U22, U24, U25, U28). Cheapest remaining wins: **U28** (the ephemeral launch row never gets
+its `endpoints`; assessed as a restructure, and it is what still blocks ephemeral pods from the U3
+fix and the reaper's util probe), then U16/U22/U19. The STATUS INDEX at the top of the URGENT ACTION
+ITEMS section remains authoritative.
 
 **Ephemeral and recovery gaps CLOSED (2026-09-09, branch `fix/ephemeral-and-recovery-gaps`,
 $0.15 of live proof across Task 6).** Plan
