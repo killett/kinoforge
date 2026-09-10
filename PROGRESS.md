@@ -1578,7 +1578,7 @@ per-item entries below.
   **The claim is false.** Observed live 2026-09-06 10:02 against `upscale-20260906-093919`, an
   A100-80GB that had published an artifact ninety seconds earlier and was still warm. The ledger
   entry read at that moment held
-  `endpoints: {"8000": "https://emmykillett--kinoforge-upscale-20260906-093919-build-mod-bcb59b.modal.run"}`,
+  `endpoints: {"8000": "https://<operator>--kinoforge-upscale-20260906-093919-build-mod-bcb59b.modal.run"}`,
   and that exact URL answered `GET /util` with
   `{"gpu_util_percent":0.0,"cpu_percent":4.0,"memory_percent":1.1,"uptime_seconds":118}` seconds
   before and after the refusal. The pod was reachable; the command refused anyway.

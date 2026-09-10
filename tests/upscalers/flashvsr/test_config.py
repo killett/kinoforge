@@ -336,9 +336,9 @@ def test_flashvsr_config_rejects_bad_bsa_wheel_url_scheme(bad_url: str) -> None:
 @pytest.mark.parametrize(
     "good_url",
     [
-        "https://huggingface.co/emmykillett/kinoforge-artifacts/resolve/main/bsa.whl",
+        "https://huggingface.co/example-user/kinoforge-artifacts/resolve/main/bsa.whl",
         "http://internal.example/bsa.whl",
-        "hf:emmykillett/kinoforge-artifacts/bsa.whl",
+        "hf:example-user/kinoforge-artifacts/bsa.whl",
     ],
 )
 def test_flashvsr_config_accepts_valid_bsa_wheel_url_schemes(good_url: str) -> None:

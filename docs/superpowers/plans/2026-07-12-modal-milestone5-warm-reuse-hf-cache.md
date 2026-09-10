@@ -72,7 +72,7 @@ from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex, EphemeralI
 from kinoforge.providers.modal import ModalProvider
 from kinoforge.stores.local import LocalArtifactStore
 
-_MODAL_URL = "https://emmykillett--kinoforge-generate-x-build-27e651.modal.run"
+_MODAL_URL = "https://example-user--kinoforge-generate-x-build-27e651.modal.run"
 _CAP = "cap0mod4l789"
 
 

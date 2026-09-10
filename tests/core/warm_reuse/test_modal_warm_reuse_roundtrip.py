@@ -18,7 +18,7 @@ from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex, EphemeralI
 from kinoforge.providers.modal import ModalProvider
 from kinoforge.stores.local import LocalArtifactStore
 
-_MODAL_URL = "https://emmykillett--kinoforge-generate-x-build-27e651.modal.run"
+_MODAL_URL = "https://example-user--kinoforge-generate-x-build-27e651.modal.run"
 _CAP = "cap0mod4l789"
 
 
@@ -56,7 +56,7 @@ def test_rows_by_kinoforge_key_filters_by_cap(tmp_path: Path) -> None:
     # Two rows under distinct caps expose that: the query must return exactly
     # the matching row, and [] for a cap with no row.
     _CAP_OTHER = "cap0other999"
-    _OTHER_URL = "https://emmykillett--kinoforge-generate-y-build-abc123.modal.run"
+    _OTHER_URL = "https://example-user--kinoforge-generate-y-build-abc123.modal.run"
     store = LocalArtifactStore(tmp_path)
 
     with EphemeralSession(enabled=True):
