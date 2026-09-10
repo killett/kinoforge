@@ -450,7 +450,7 @@ items, not only in the matrix follow-up list. Each carries the symptom, the repr
 suspected site.
 
 **STATUS INDEX (current as of 2026-09-10. Provenance, newest first: U22 fixed 2026-09-10
-(`__U22SHA__`, $0.00 offline); U28 fixed + LIVE-PROVEN
+(`b6646e37`, $0.00 offline); U28 fixed + LIVE-PROVEN
 2026-09-09 (`f1e7f1ef`, $0.0406); U3 fixed + LIVE-PROVEN and U27 fixed 2026-09-09
 (`e033b170` / `a08b7de6`, $0.055); U26 fixed 2026-09-09 (`a8cbb54c`); U11 LIVE-RE-PROVEN and
 U18 LIVE-PROVEN and U21 fixed 2026-09-09; U29 filed and fixed 2026-09-09; U17 fixed 2026-09-08.
@@ -2104,7 +2104,7 @@ per-item entries below.
   (singular) even when N samples backed the verdict — it has no access to the history at its
   call site in `reaper_actor`. It therefore UNDERSTATES the evidence, which is the safe
   direction for a destroy record, but it is now imprecise. Not filed as a defect; recorded here.
-  **Commit:** see below. **Original filing follows, unedited.**
+  **Commit:** `b6646e37`. **Original filing follows, unedited.**
   **Symptom.** `_ephemeral_orphan_predicate` (`src/kinoforge/core/reaper.py`) reads
   `entry["gpu_util_pct"]` and `entry["cpu_pct"]` — the CURRENT tick's readings — and returns
   `ORPHAN_REAP` if both sit below their thresholds and the row is past the age gate. Its sibling
