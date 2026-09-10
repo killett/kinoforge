@@ -1,4 +1,4 @@
-"""LIVE U3: a pod's endpoint URL is reachable from a FRESH process.
+"""LIVE U3: a pod's endpoint URL is reachable from a FRESH process. PROVEN 2026-09-09.
 
 U3's claim cannot be proven offline, and the reason is structural rather than
 effort: it is a claim about what a process that did NOT create the pod can
@@ -7,8 +7,40 @@ resolve. Nothing offline exercises that against a real provider —
 ``KeyError`` before the endpoint render is ever reached) and Modal's / RunPod's
 ``get_instance`` are network calls. Hence this file.
 
-The fix (``e033b170``) is proven offline at the unit and call-site level; what
-is owed here is the end-to-end claim against a live pod.
+The fix (``e033b170``) was proven offline at the unit and call-site level; what
+was owed here was the end-to-end claim against a live pod.
+
+**RESULT: PASS, 2026-09-09, $0.055** — Modal A10, pod ``run-20260909-182423``,
+alive 18:24:23 -> 18:27:26 (3 m 03 s). All three criteria met from processes
+that did not create the pod:
+
+1. ``status --id`` printed
+   ``endpoints={"8000": "https://<operator>--kinoforge-run-20260909-182423-build-modal-a-84522e.modal.run"} (recorded at launch, not verified live)``
+   at exit 0, where pre-fix it printed ``unknown (no live endpoint)``. The
+   label was present, so the F11 guard held.
+2. ``pod lora ls`` exited 0 with ``no LoRAs loaded`` — an HTTP request really
+   reached the pod — where pre-fix it exited 2 with ``no endpoint URL``.
+3. Same host triangulated: Modal's own deploy URL is byte-identical to the one
+   ``status`` reported; a direct ``GET /lora/inventory`` on that host returned
+   HTTP 200 ``{'inventory': [], ...}``; and the negative control
+   ``pod lora ls run-does-not-exist`` exited 1 ``not found in ledger``, so the
+   command refuses rather than fabricating a host (the U4 shape).
+
+Utilisation was polled throughout, never ``est_spend``: gpu 98% at uptime 21 s,
+100% mid-generation, 0.0% once the clip published — and that 0% is what
+triggered teardown rather than letting an idle pod bill. Frame-QA PASS with
+soft flags. Teardown verified from fresh processes after the orchestrator
+exited: both ``kinoforge list`` lines, ``modal app list`` state ``stopped`` with
+0 tasks, no ephemeral index.
+
+Trap worth keeping: the generate process was a ZOMBIE (``Z``/defunct) while
+unreaped, so ``kill -0 <pid>`` reported it alive and briefly mislabelled a
+post-exit read as concurrent. ``kill -0`` succeeds on zombies — check the
+process STATE, not signal zero, to decide whether a run has finished.
+
+Full evidence is in the U3 entry of ``PROGRESS.md``; the generation itself is a
+See-also under section 22 of ``successful-generations.md`` (same capability
+tuple, so no new section).
 
 Driven manually via the CLI, matching the convention of the other live contract
 files in this directory; this module records the contract and the pass criteria.
@@ -52,7 +84,7 @@ TEARDOWN_CMD = "pixi run -e live-modal kinoforge destroy --id <POD_ID>"
 VERIFY_CMD = "pixi run -e live-modal kinoforge list"
 
 
-@pytest.mark.xfail(reason="live proof driven via CLI; see PROGRESS U3 entry")
+@pytest.mark.xfail(reason="PASSED live 2026-09-09; CLI-driven, see PROGRESS U3 entry")
 def test_u3_endpoint_resolves_from_a_fresh_process_contract() -> None:
     """Contract for the owed U3 live re-proof.
 

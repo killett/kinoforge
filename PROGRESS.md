@@ -470,7 +470,7 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 |---|---|---|
 | U1 | OPEN | warm-attach matcher is provider-blind; untouched |
 | U2 | OPEN | `batch --dry-run-swap` never parses the manifest; untouched |
-| U3 | FIXED, OFFLINE-PROVEN | The read paths now consult the ledger row that was always holding the answer. `_merge_recorded_tags` restores the create-time `tags` (RunPod's `endpoints` READS `tags["ports"]`, which `get_instance` never populates) and `_seed_instance_from_ledger_entry` also restores the recorded `endpoints` map (Modal's `.modal.run` URL is derivable from nothing at all). `_cmd_status` seeds tags and passes the recorded map to `_render_endpoints_for_status` as a new `recorded=` argument; `_cmd_pod_lora_ls` seeds both before `ensure_endpoints`. The merge block was EXTRACTED from `_resolve_attach_pod` (the U15 fix, `ccd4c5e7`) rather than re-written, and the four existing tests in `tests/cli/test_resolve_attach_pod.py` stayed green UNMODIFIED — that is the non-regression proof. **A recorded endpoint renders LABELLED** — `{...} (recorded at launch, not verified live)` — because `status` uses the pure read and on SkyPilot the recorded endpoint is routinely a `127.0.0.1:<port>` tunnel that died with the process that opened it; presenting that as live is the F11 failure the S5 read/ensure split exists to prevent. A map the provider COMPUTED from rehydrated tags renders UNLABELLED, because a proxy URL rebuilt from the pod id is derivation, not recollection — that distinction also closes the RunPod-status deferral `_render_endpoints_for_status`'s own docstring had named as out of scope. **Proof is OFFLINE ONLY** and the reason is structural, not laziness: the claim is about what a FRESH PROCESS can reach, and no offline test can exercise that against a real provider — `LocalProvider` keeps instances in-process (so a fresh process raises `KeyError` before the endpoint render is reached) and Modal/RunPod `get_instance` are network calls. Two of the new tests deliberately pin the CALL SITE through `main()`, not the renderer, because every renderer test passes `recorded=` in by hand and would have stayed green if `_cmd_status` never passed one; RED for both was confirmed by temporarily reverting the call-site wiring. **NOT closed by this fix:** an `--ephemeral` run's index row carries `endpoints: {}` for its whole life (**U28**), so this buys ephemeral runs nothing, and the `grid`-cell monitoring blindness recorded on this row is downstream of U28, not of U3 |
+| U3 | FIXED, LIVE-PROVEN 2026-09-09 | The read paths now consult the ledger row that was always holding the answer. `_merge_recorded_tags` restores the create-time `tags` (RunPod's `endpoints` READS `tags["ports"]`, which `get_instance` never populates) and `_seed_instance_from_ledger_entry` also restores the recorded `endpoints` map (Modal's `.modal.run` URL is derivable from nothing at all). `_cmd_status` seeds tags and passes the recorded map to `_render_endpoints_for_status` as a new `recorded=` argument; `_cmd_pod_lora_ls` seeds both before `ensure_endpoints`. The merge block was EXTRACTED from `_resolve_attach_pod` (the U15 fix, `ccd4c5e7`) rather than re-written, and the four existing tests in `tests/cli/test_resolve_attach_pod.py` stayed green UNMODIFIED — that is the non-regression proof. **A recorded endpoint renders LABELLED** — `{...} (recorded at launch, not verified live)` — because `status` uses the pure read and on SkyPilot the recorded endpoint is routinely a `127.0.0.1:<port>` tunnel that died with the process that opened it; presenting that as live is the F11 failure the S5 read/ensure split exists to prevent. A map the provider COMPUTED from rehydrated tags renders UNLABELLED, because a proxy URL rebuilt from the pod id is derivation, not recollection — that distinction also closes the RunPod-status deferral `_render_endpoints_for_status`'s own docstring had named as out of scope. **The offline proof could not, on its own, establish the claim** — and the reason was structural, not laziness: the claim is about what a FRESH PROCESS can reach, and no offline test can exercise that against a real provider — `LocalProvider` keeps instances in-process (so a fresh process raises `KeyError` before the endpoint render is reached) and Modal/RunPod `get_instance` are network calls. That gap was recorded as an owed debt and has since been paid — see the live proof below. Two of the new tests deliberately pin the CALL SITE through `main()`, not the renderer, because every renderer test passes `recorded=` in by hand and would have stayed green if `_cmd_status` never passed one; RED for both was confirmed by temporarily reverting the call-site wiring. **LIVE-PROVEN 2026-09-09 ($0.055, Modal A10 `run-20260909-182423`, 3 m 03 s)** — this DISCHARGES the offline-only caveat stated above; scaffold committed RED first in `0c8dc571` per the pre-spend rule, preflight PASS on a verified zero-app Modal baseline. From processes that did not create the pod: `status --id` printed the real `.modal.run` URL WITH the `(recorded at launch, not verified live)` label (exit 0) where it previously printed `unknown (no live endpoint)`, and `pod lora ls` reached that same host over HTTP (exit 0, `no LoRAs loaded`) where it previously exited 2 with `no endpoint URL`. Same-host criterion triangulated three ways rather than asserted: the URL Modal's own deploy output created is byte-identical to the one `status` reported; a direct `GET /lora/inventory` on that host returned HTTP 200 `{'inventory': [], ...}`, matching what `pod lora ls` rendered; and a negative control (`pod lora ls run-does-not-exist`) exited 1 `not found in ledger`, proving the command does not fabricate a host — the U4 defect shape. **NOT closed by this fix:** an `--ephemeral` run's index row carries `endpoints: {}` for its whole life (**U28**), so this buys ephemeral runs nothing, and the `grid`-cell monitoring blindness recorded on this row is downstream of U28, not of U3 |
 | U4 | FIXED | `c08c3cce` — `logs` refuses cleanly off RunPod instead of 404ing a fabricated host |
 | U5 | PARTLY FIXED | `c08c3cce` corrected the help text; wiring `vault.positive_prompt` into prompt resolution is still open, and so is failing an empty prompt BEFORE a pod is billed |
 | U6 | OPEN | `kinoforge deploy` renders no provision; dead on Modal, books a portless pod on RunPod |
@@ -618,7 +618,7 @@ per-item entries below.
   **Why urgent:** the one pre-flight check a batch has is inert, so a malformed or missing
   manifest is discovered only after the pod is up and billing.
 
-- **U3 — FIXED (offline-proven) 2026-09-09 — a Modal pod's endpoint URL was unreachable from any fresh process.**
+- **U3 — FIXED and LIVE-PROVEN 2026-09-09 — a Modal pod's endpoint URL was unreachable from any fresh process.**
   The ledger entry for a live Modal pod carries
   `endpoints={"8000": "https://...modal.run"}` (and `last_gpu_util_percent` etc.), but no read
   path consults it. `ModalProvider.endpoints`
@@ -670,12 +670,48 @@ per-item entries below.
   `_cmd_pod_lora_ls` seeds both halves rather than passing `recorded` separately, because it is
   about to make a real HTTP request — a stale URL there degrades to the existing clean
   `pod unreachable` exit 2, which is very different from displaying a stale URL as fact.
-  **Proof is OFFLINE ONLY, and the reason is structural.** The claim is about what a *fresh
-  process* can reach, and no offline test exercises that against a real provider:
+  **The proof was OFFLINE ONLY at first, for a structural reason** — the claim is about what a
+  *fresh process* can reach, and no offline test exercises that against a real provider:
   `LocalProvider` keeps instances in-process, so a fresh process raises `KeyError` before the
-  endpoint render is reached, and Modal's / RunPod's `get_instance` are network calls. A live
-  re-proof needs one real pod (~$0.05-0.10 on a Modal A10: boot, `kinoforge status --id` and
-  `pod lora ls` from fresh processes, destroy) and is a separate follow-up.
+  endpoint render is reached, and Modal's / RunPod's `get_instance` are network calls.
+  **That debt is now DISCHARGED. LIVE-PROVEN 2026-09-09 for $0.055** — Modal A10, pod
+  `run-20260909-182423`, alive 18:24:23 → 18:27:26 (3 m 03 s), scaffold committed RED first in
+  `0c8dc571` per the pre-spend rule, preflight PASS and a verified zero-app Modal baseline before
+  the first dollar.
+  - **Criterion 1 — `status --id` from a fresh process:**
+    `endpoints={"8000": "https://<operator>--kinoforge-run-20260909-182423-build-modal-a-84522e.modal.run"} (recorded at launch, not verified live)`, exit 0. Pre-fix this field
+    read `unknown (no live endpoint)`. The LABEL was part of the pass, not decoration: `status`
+    uses the pure read and Modal cannot confirm the URL out-of-process, so an unlabelled render
+    would have been the F11 failure it is designed to prevent.
+  - **Criterion 2 — `pod lora ls` from a fresh process:** exit 0, `no LoRAs loaded`. Pre-fix this
+    exited 2 with `pod lora ls: no endpoint URL for pod <id>`. An empty inventory is the PASS: this
+    cfg loads no LoRAs, so what is being proven is that an HTTP request was issued at all.
+  - **Criterion 3 — same host, triangulated rather than asserted.** (a) The URL in Modal's own
+    deploy output is byte-identical to the one `status` reported. (b) A direct
+    `GET /lora/inventory` on that host — no kinoforge in the path — returned HTTP 200
+    `{'inventory': [], 'free_bytes': ...}`, matching what `pod lora ls` rendered. (c) Negative
+    control: `pod lora ls run-does-not-exist` exited 1 `not found in ledger`, so the command
+    refuses rather than inventing a host. Without (c) a fabricated-but-consistent hostname would
+    have passed — that is precisely the shape of U4.
+  - **Utilisation polled throughout, never `est_spend`:** gpu=98 % at uptime 21 s, gpu=100.0 %
+    mid-generation, gpu=0.0 % once the clip published. Real compute, and the 0 % reading is what
+    triggered immediate teardown rather than letting an idle pod bill.
+  - **Frame-QA PASS with soft flags** (mandatory before green): coherent alpine meadow, backlit
+    waterfall over mossy cliffs, volumetric god rays, figure tracking consistently across five
+    frames, no false colour, no temporal flicker. Flags: stylised-painterly rather than
+    photorealistic, no push-in-to-close-up or over-shoulder turn as prompted, no magical creatures,
+    minor anatomy artifacts on the figure at the frame edge — all normal for 1.3B at 480 px.
+  - **Teardown verified from fresh processes AFTER the orchestrator exited** (mid-run lines do not
+    count): `kinoforge list` printed BOTH "no instances" lines, `modal app list` showed the app
+    `stopped` with 0 tasks, and no ephemeral index file existed.
+  **One deliberate deviation, recorded rather than buried:** the generate ran WITHOUT `--no-reuse`.
+  The rule requires it for one-shot smokes because a surviving pod is a money leak — but here the
+  surviving pod IS the subject, and `--no-reuse` would have destroyed it at end of generation,
+  leaving nothing for a fresh process to resolve. Teardown was explicit and verified instead.
+  **A `kill -0` trap worth knowing:** the generate process was a ZOMBIE (`Z`/defunct) while its
+  parent had not reaped it, so `kill -0 <pid>` reported it as alive and a liveness check briefly
+  mislabelled a post-exit read as concurrent. `kill -0` succeeds on zombies; use the process STATE,
+  not signal-zero, to decide whether a run has finished.
   **A test-design trap worth keeping.** The first pass tested `_render_endpoints_for_status`
   thoroughly and would have shipped a dead fix: every renderer test passes `recorded=` in by hand,
   so all of them stay green if `_cmd_status` never passes one. Two tests in `tests/test_cli.py`
@@ -2559,12 +2595,20 @@ of scope); a recorded **endpoints** map is a RECOLLECTION, so it renders
 SkyPilot `127.0.0.1:<port>` tunnel as current — the F11 failure the S5 read/ensure split exists to
 prevent.
 
-**⚠️ U3 is OFFLINE-PROVEN ONLY, and the reason is structural, not laziness.** The claim is about
-what a FRESH PROCESS can reach, and nothing offline exercises that against a real provider:
-`LocalProvider` holds instances in-process (a fresh process raises `KeyError` before the endpoint
-render is reached) and Modal/RunPod `get_instance` are network calls. A live re-proof needs one real
-pod — roughly $0.05–0.10 on a Modal A10: boot, then `kinoforge status --id` and `pod lora ls` from
-fresh processes, then destroy — and is a **separate follow-up, owed**. Same posture as U17 and U21.
+**U3's owed live re-proof is DONE — LIVE-PROVEN 2026-09-09 for $0.055.** It was offline-only at
+first for a structural reason (the claim is about what a FRESH PROCESS can reach, and nothing
+offline exercises that against a real provider), so the debt was recorded rather than glossed. It is
+now discharged: Modal A10 pod `run-20260909-182423`, alive 3 m 03 s, scaffold committed RED first
+per the pre-spend rule, preflight PASS on a verified zero-app baseline. From processes that did not
+create the pod, `status --id` printed the real `.modal.run` URL **with** the
+`(recorded at launch, not verified live)` label (exit 0, was `unknown (no live endpoint)`), and
+`pod lora ls` reached that same host over HTTP (exit 0, was exit 2 `no endpoint URL`). The same-host
+claim was triangulated, not asserted: Modal's own deploy URL matches byte-for-byte, a direct
+`GET /lora/inventory` on that host returned HTTP 200, and a negative control on an unknown id exited
+1 `not found in ledger` — without that control a fabricated-but-consistent hostname would have
+passed, which is exactly the U4 defect shape. Util polled throughout (gpu 98 % → 100 % → 0 %, never
+`est_spend`); frame-QA PASS with soft flags; teardown verified from fresh processes after the
+orchestrator exited. Full detail in U3's own entry. **U17 and U21 remain offline-proven-only.**
 
 **A test-design trap worth carrying forward.** U3's first test pass was thorough about
 `_render_endpoints_for_status` and would still have shipped a DEAD fix: every renderer test passes
