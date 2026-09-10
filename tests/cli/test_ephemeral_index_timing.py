@@ -153,14 +153,25 @@ class _CreateWindow:
         self.calls = 0
         self.entered_at: datetime | None = None
         self.read_at_entry: list[EphemeralIndexRow] = []
+        self.read_after_created: list[EphemeralIndexRow] = []
+        self.on_created: Any = None
         self.session: EphemeralSession | None = None
 
     def __call__(self, cfg: Any, request: Any, **kw: Any) -> tuple[Artifact, Any]:
-        del cfg, request, kw
+        del cfg, request
         self.calls += 1
         self.entered_at = datetime.now()
         self.session = EphemeralSession.current()
         self.read_at_entry = _index_rows(self._cfg_path, self._state_dir)
+        # U28 — stand in for the orchestrator's own hook. The real
+        # ``on_instance_created`` fires inside this window, right after
+        # ``create_instance`` returns and before ``engine.provision``. Firing
+        # it here (and only if the CLI actually supplied one) is what lets a
+        # test observe the index MID-RUN rather than after the fact.
+        self.on_created = kw.get("on_instance_created")
+        if self.on_created is not None and self._returns is not None:
+            self.on_created(self._returns)
+        self.read_after_created = _index_rows(self._cfg_path, self._state_dir)
         # A real create is multi-minute. 50 ms is enough that an ISO stamp
         # taken after this returns is unambiguously later than one taken
         # before it, at microsecond resolution.
@@ -521,3 +532,138 @@ def test_ephemeral_row_survives_a_create_that_raises(
         f"expected the launch row to survive the raise, got {[r.id for r in rows]}"
     )
     assert rows[0].endpoints == {}
+
+
+# ---------------------------------------------------------------------------
+# Behaviour 8 (U28) — the row carries endpoints DURING the run, not after it.
+# ---------------------------------------------------------------------------
+
+
+def test_the_index_row_carries_endpoints_before_the_run_completes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The row is upgraded mid-run, from the orchestrator's own hook.
+
+    ``test_ephemeral_row_is_updated_not_duplicated_when_endpoints_arrive``
+    above already asserts the END state, and it passed throughout U28's life —
+    which is exactly why the defect survived. The row did get its endpoints,
+    but only once the orchestrator returned. This test asserts the TIMING
+    instead, reading the index from a fresh context at the instant the pod
+    exists.
+
+    Bug caught: **U28**. With the upgrade deferred to after the run, an
+    ``--ephemeral`` pod killed mid-generation leaves a row whose ``endpoints``
+    is ``{}`` forever — the crash path the row exists for. The reaper's
+    ``_probe_with_cache`` primes ``note_endpoints`` only when ``row.endpoints``
+    is non-empty, so the orphan predicate never gets a utilisation reading and,
+    being conservative-on-ignorance, holds the pod at ``LIVE`` while it bills.
+    Observed live (Task 6, B1): a genuinely idle pod at age 218 s with a direct
+    ``/util`` read of ``gpu_util_percent=0.0`` was still classified ``LIVE``.
+
+    This fails if the CLI passes no callback at all, because the window only
+    fires one it was handed — so it pins the wiring, not just the helper.
+    """
+    cfg_path, state_dir = _write_cfg(tmp_path)
+    window = _CreateWindow(cfg_path, state_dir, returns=_cold_instance())
+
+    rc = _drive(cfg_path, state_dir, window, monkeypatch)
+
+    assert rc == 0
+    assert window.on_created is not None, (
+        "the CLI passed no on_instance_created hook, so nothing can upgrade "
+        "the row until the orchestrator returns — that is U28 itself"
+    )
+    mid_run = window.read_after_created
+    assert [r.id for r in mid_run] == [_POD_ID], (
+        f"mid-run the row must be keyed by the real pod id; got {[r.id for r in mid_run]}"
+    )
+    assert mid_run[0].endpoints == _POD_ENDPOINTS, (
+        "mid-run the row must already carry the endpoints the create returned; "
+        f"got {mid_run[0].endpoints!r} — a reaper reading this row has nothing "
+        "to probe for utilisation"
+    )
+
+
+def test_the_index_row_keeps_its_endpoints_when_the_run_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The crash path — the only path the row exists for.
+
+    The CLI's settle deliberately does NOT run on the ``except`` branches
+    (ruling C1, so the classifier can age the row out instead), and a SIGKILL
+    never reaches it at all. So before U28 the endpoints were written on
+    exactly the path where they were not needed and never on the path where
+    they were.
+
+    Bug caught: upgrading the row from the CLI's own frame after the
+    orchestrator returns. That shape passes every end-state test and still
+    loses the endpoints on every abnormal exit, leaving a billing pod whose
+    only durable record cannot be probed.
+    """
+    cfg_path, state_dir = _write_cfg(tmp_path)
+    window = _CreateWindow(
+        cfg_path,
+        state_dir,
+        returns=_cold_instance(),
+        raises=RuntimeError("boom, mid-generation"),
+    )
+
+    with pytest.raises(RuntimeError, match="boom, mid-generation"):
+        _drive(cfg_path, state_dir, window, monkeypatch)
+
+    # Read as a SEPARATE process would, after the run died.
+    rows = _index_rows(cfg_path, state_dir)
+    assert [r.id for r in rows] == [_POD_ID], (
+        f"the surviving row must name the real pod; got {[r.id for r in rows]}"
+    )
+    assert rows[0].endpoints == _POD_ENDPOINTS, (
+        "the row that outlives a crashed run must carry the endpoints, or the "
+        "reaper cannot promote the orphan this row exists to catch"
+    )
+
+
+def test_a_confirmed_teardown_drops_the_row_even_when_recovery_finds_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The settle must not depend on re-deriving the id the hook already knew.
+
+    Batch is the sharp case. ``_cmd_batch`` gets no ``Instance`` back, so its
+    settle re-derives one from the ledger via
+    ``_recover_batch_created_instance`` — and that can legitimately come back
+    ``None``. Before U28 that was harmless: the row was still keyed by the
+    reserved launch name, so releasing ``launch.id`` cleaned it up.
+
+    Bug caught: the U28 hook re-keys the row to the pod's real id the moment
+    the pod exists, so a settle that releases only ``launch.id`` — or only
+    ``launch.id`` plus an instance it failed to recover — leaves a row naming a
+    pod that has already been destroyed. The next ``--ephemeral`` run's matcher
+    picks that row, probes a dead pod, and the sweeper carries a 404 phantom
+    until it ages out. That is the exact failure the launch-row release exists
+    to prevent, reintroduced one key over.
+    """
+    from kinoforge.cli import _commands
+    from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
+
+    cfg_path, state_dir = _write_cfg(tmp_path)
+    ctx = _ctx_for(cfg_path, state_dir)
+    cfg = ctx.cfg
+    assert cfg is not None
+
+    with EphemeralSession(enabled=True):
+        launch = _commands._ephemeral_launch_row_reserve(ctx, cfg, _RUN_ID)
+        assert launch is not None
+        # The hook fires — exactly as it does mid-run — re-keying the row.
+        hook = _commands._ephemeral_row_upgrade_hook(ctx, cfg, launch)
+        assert hook is not None
+        hook(_cold_instance())
+        assert [r.id for r in _index_rows(cfg_path, state_dir)] == [_POD_ID]
+
+        # Teardown confirmed (nothing marked it unconfirmed — the API is
+        # optimistic by design), but the caller could not re-derive the
+        # instance, so it has only `launch` to work from.
+        _commands._settle_unused_launch_row(ctx, cfg, launch, None)
+
+    assert EphemeralIndex(store=_ctx_for(cfg_path, state_dir).store()).rows() == [], (
+        "a pod whose teardown was confirmed must leave no row, whichever key "
+        "the row ended up under"
+    )

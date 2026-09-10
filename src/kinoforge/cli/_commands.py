@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from types import FrameType
-from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import kinoforge._adapters  # noqa: F401 — triggers self-registrations
 from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
@@ -974,6 +974,9 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
             sink=sink,
             run_id=run_id,
             state_dir=ctx.state_dir,
+            # U28 — upgrade the ephemeral launch row the moment the pod exists,
+            # not when this call returns. See _ephemeral_row_upgrade_hook.
+            on_instance_created=_ephemeral_row_upgrade_hook(ctx, cfg, launch),
             # Phase 50 — thread the per-invocation cancel token into the
             # orchestrator so a CLI SIGINT (set by _install_sigint_handler
             # in cli._main) propagates through every backend poll loop.
@@ -1139,6 +1142,8 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
         single=bool(args.no_reuse),
         skip_clip_stage=True,
         initial_clip=input_artifact,
+        # U28 — see _ephemeral_row_upgrade_hook.
+        on_instance_created=_ephemeral_row_upgrade_hook(ctx, cfg, launch),
     )
 
     # T11 — symmetric ledger stamp with _cmd_generate (resolves T7 deferral).
@@ -1254,6 +1259,8 @@ def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
         single=bool(args.no_reuse),
         skip_clip_stage=True,
         initial_clip=input_artifact,
+        # U28 — see _ephemeral_row_upgrade_hook.
+        on_instance_created=_ephemeral_row_upgrade_hook(ctx, cfg, launch),
     )
     # Known gap, deliberately deferred (plan 2026-07-12-modal-ephemeral-parity
     # Task 3): unlike _cmd_upscale's T11 block above, interpolate never
@@ -1465,6 +1472,11 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
             cancel_token=ctx.cancel_token,
             instance=instance,
             single=single,
+            # U28 — see _ephemeral_row_upgrade_hook. batch shares ONE pod
+            # across every manifest row, so one upgrade covers them all, and
+            # this is the path the defect was found on: the settle runs only
+            # after batch_generate RETURNS, which a SIGKILL never reaches.
+            on_instance_created=_ephemeral_row_upgrade_hook(ctx, cfg, launch),
         )
     except (BudgetExceeded, CapabilityMismatch, TeardownError) as exc:
         print(
@@ -2028,8 +2040,13 @@ def _cfg_warm_attach_key(cfg: Config) -> str:
     ).derive()
 
 
-class _LaunchRow(NamedTuple):
+@dataclass
+class _LaunchRow:
     """The pre-create ephemeral index row this invocation reserved.
+
+    Mutable (U28) rather than a ``NamedTuple``: ``upgraded_id`` is written
+    back by the ``on_instance_created`` hook while the run is still in flight,
+    and the settle needs it afterwards.
 
     Attributes:
         id: The provider-side resource NAME the row is keyed by — the same
@@ -2038,10 +2055,19 @@ class _LaunchRow(NamedTuple):
             :meth:`~kinoforge.core.ephemeral.EphemeralSession.resource_name`).
         created_at_local: The launch stamp, carried onto whatever row
             eventually replaces this one so age is measured from the launch.
+        upgraded_id: The key the row now lives under once
+            :func:`_ephemeral_row_upgrade_hook` has re-keyed it to the pod's
+            real id, or ``None`` while it is still the reserved name. The
+            settle releases BOTH, because it cannot otherwise know which key
+            to drop — and re-deriving the instance is not a substitute:
+            ``_cmd_batch`` gets no ``Instance`` back and its ledger recovery
+            can legitimately return ``None``, which would strand a row naming
+            an already-destroyed pod.
     """
 
     id: str
     created_at_local: str
+    upgraded_id: str | None = None
 
 
 def _ephemeral_strict_session() -> EphemeralSession | None:
@@ -2233,6 +2259,21 @@ def _settle_unused_launch_row(
         )
         return
     _ephemeral_launch_row_release(ctx, launch.id)
+    # U28 — the row may no longer be keyed by the launch id. The
+    # ``on_instance_created`` hook re-keys it to the pod's real id the moment
+    # the pod exists, so on this path (destroy CONFIRMED, nothing survives)
+    # releasing only the launch id leaves a row naming a pod that is already
+    # gone: the next --ephemeral run's matcher would pick it, probe a dead
+    # pod, and the sweeper would carry a 404 phantom until it aged out — the
+    # exact failure the launch-row release exists to prevent, just relocated.
+    # Both ids are released because either may be the live key, and
+    # ``EphemeralIndex.remove`` is a documented no-op on a missing id.
+    for key in (
+        launch.upgraded_id,
+        returned_instance.id if returned_instance is not None else None,
+    ):
+        if key is not None and key != launch.id:
+            _ephemeral_launch_row_release(ctx, key)
 
 
 def _recover_batch_created_instance(
@@ -2406,6 +2447,60 @@ def _ephemeral_index_add(
         )
         if supersedes is not None and supersedes != instance.id:
             _ephemeral_launch_row_release(ctx, supersedes)
+
+
+def _ephemeral_row_upgrade_hook(
+    ctx: SessionContext, cfg: Config, launch: _LaunchRow | None
+) -> Callable[[Instance], None] | None:
+    """Build the ``on_instance_created`` hook that upgrades the launch row (U28).
+
+    The reserved row names a pod that does not exist yet, so it necessarily
+    carries ``endpoints: {}``. Until U28 the only upgrade happened after the
+    orchestrator RETURNED — which is the one path that does not need it. On the
+    path the row exists for (a SIGKILL mid-generation) the row never learned the
+    pod's real id or endpoints at all, and an empty ``endpoints`` starves the
+    reaper: ``_probe_with_cache`` primes ``note_endpoints`` only for a non-empty
+    map, so ``_ephemeral_orphan_predicate`` gets no utilisation reading and,
+    being conservative-on-ignorance, holds an idle pod at ``LIVE`` while it
+    bills. Observed live (Task 6, B1) at ``gpu_util_percent=0.0``.
+
+    The orchestrator's ``on_instance_created`` fires right after
+    ``create_instance`` and before ``engine.provision``, with an instance that
+    already carries its endpoints — so the row is correct for the whole
+    expensive part of a boot rather than only after it.
+
+    Returns ``None`` when nothing was reserved (no ``EphemeralSession``, or a
+    warm attach, which re-uses a pod that is already indexed). ``None`` is
+    forwarded verbatim and keeps the pre-U28 behaviour exactly.
+
+    The post-run :func:`_ephemeral_index_add` still runs and is harmless: the
+    index replaces the row in place, and dropping an already-dropped launch row
+    is a documented no-op.
+
+    Args:
+        ctx: The current SessionContext (carries the ArtifactStore).
+        cfg: Loaded Config — supplies the warm-attach and capability keys.
+        launch: What :func:`_ephemeral_launch_row_reserve` returned.
+
+    Returns:
+        A one-argument hook, or ``None`` when there is no row to upgrade.
+    """
+    if launch is None:
+        return None
+
+    def _upgrade(instance: Instance) -> None:
+        _ephemeral_index_add(
+            ctx,
+            cfg,
+            instance,
+            created_at_local=launch.created_at_local,
+            supersedes=launch.id,
+        )
+        # Record the key the row now lives under, so a later settle can drop
+        # it without having to re-derive the instance (which batch cannot).
+        launch.upgraded_id = instance.id
+
+    return _upgrade
 
 
 def _merge_recorded_tags(instance: Instance, entry: dict[str, Any]) -> None:

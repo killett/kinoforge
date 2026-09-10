@@ -73,6 +73,8 @@ from kinoforge.pipeline.keyframe import KeyframeStage
 from kinoforge.stores.base import ArtifactStore
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from kinoforge.core.cancel import CancelToken
     from kinoforge.core.config import Config, KeyframeConfig
     from kinoforge.core.interfaces import (
@@ -477,6 +479,7 @@ def batch_generate(
     on_event: BatchEventCallback | None = None,
     cancel_token: CancelToken | None = None,
     single: bool = False,
+    on_instance_created: Callable[[Instance], None] | None = None,
 ) -> BatchResult:
     """Run every entry in *manifest* on one shared deployed instance.
 
@@ -581,6 +584,12 @@ def batch_generate(
             destroyed + forgotten under the ``reaper:<id>`` lock once
             the entire batch finishes (not per row). Default ``False``
             preserves warm-reuse across subsequent batches.
+        on_instance_created: Optional hook forwarded verbatim to
+            :func:`deploy_session`, fired once with the freshly created
+            instance right after ``create_instance`` and before
+            ``engine.provision`` — so a caller holds the pod's real id and
+            endpoints for the whole boot rather than only on return (**U28**).
+            Exceptions are caught and logged, never propagated.
 
     Returns:
         A :class:`BatchResult` with one
@@ -676,6 +685,7 @@ def batch_generate(
             tags=tags,
             cancel_token=cancel_token,
             single=single,
+            on_instance_created=on_instance_created,
         ) as session:
             _eph = EphemeralSession.current()
             if _eph is not None:

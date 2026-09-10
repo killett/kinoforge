@@ -1701,6 +1701,7 @@ def deploy_session(
     cancel_token: CancelToken | None = None,
     single: bool = False,
     capacity_wait_s: float | None = None,
+    on_instance_created: Callable[[Instance], None] | None = None,
 ) -> Iterator[DeploySession]:
     """Yield a ready-to-dispatch :class:`DeploySession` for one or more calls.
 
@@ -1796,6 +1797,19 @@ def deploy_session(
             sole ``None``-resolution site. ``None`` (the default) means
             "derive the window from *cfg*"; pass a float only to
             override.
+        on_instance_created: Optional caller hook, fired exactly once with
+            the freshly created :class:`Instance` — right after
+            ``create_instance`` returns and BEFORE ``engine.provision``, so
+            the caller holds the pod's real id and its endpoints for the
+            whole expensive part of a boot rather than only once this
+            session returns (**U28**). The instance carries its endpoints:
+            ``create_instance`` populates them and the status poll
+            deliberately preserves them.
+            Chained after the internal ledger-record/claim callback, so a
+            hook that reads the ledger sees the row. Exceptions are caught
+            and logged, never propagated: the pod is already billing by
+            then, and a caller's bookkeeping failure must not abort the run.
+            ``None`` (the default) keeps the pre-U28 behaviour exactly.
 
     Yields:
         A live :class:`DeploySession`.  ``session.pool`` is open with
@@ -1893,6 +1907,29 @@ def deploy_session(
                 record_exc,
             )
         claim_holder.install(inst)
+        # U28 — the caller's turn. Chained HERE, last, and deliberately so:
+        #   * AFTER ``_ledger_for_claim.record``, so a caller that reads the
+        #     ledger from inside its callback sees the row rather than a gap;
+        #   * INSIDE this callback rather than as a second ``on_instance_created``,
+        #     because the hook fires exactly once and ordering between two
+        #     independent subscribers would be implicit;
+        #   * containment-wrapped, for the same reason ``ledger.record`` above
+        #     is: by the time this runs the pod EXISTS and is BILLING, so a
+        #     caller's bookkeeping failure (full disk, read-only state dir)
+        #     must not abort a launch the operator is already paying for.
+        #     Swallowed but never silent — the WARNING names the failure, or
+        #     the caller has no way to learn its row was never upgraded.
+        if on_instance_created is not None:
+            try:
+                on_instance_created(inst)
+            except Exception as cb_exc:  # noqa: BLE001 — caller bookkeeping
+                _log.warning(
+                    "U28: on_instance_created callback failed for %s: %s "
+                    "(the launch continues; the caller's record of this "
+                    "instance may be incomplete)",
+                    inst.id,
+                    cb_exc,
+                )
 
     def _correct_recorded_rate(inst: Instance) -> None:
         """Rewrite the ledger row's rate with the one read off the instance.
@@ -2498,6 +2535,7 @@ def generate(
     single: bool = False,
     skip_clip_stage: bool = False,
     initial_clip: Artifact | None = None,
+    on_instance_created: Callable[[Instance], None] | None = None,
 ) -> tuple[Artifact, Instance | None]:
     """Run the full generation pipeline for a single clip.
 
@@ -2578,6 +2616,12 @@ def generate(
             must reference a local mp4 the upscaler engine can fetch via
             its ``source_url`` payload — kinoforge's source-resolver
             chain handles ``file://`` / ``hf:`` / ``http(s)://`` URIs.
+        on_instance_created: Optional hook forwarded verbatim to
+            :func:`deploy_session`, fired once with the freshly created
+            instance right after ``create_instance`` and before
+            ``engine.provision`` — so a caller holds the pod's real id and
+            endpoints for the whole boot rather than only on return (**U28**).
+            Exceptions are caught and logged, never propagated.
 
     Returns:
         A ``(Artifact, Instance | None)`` tuple. The ``Artifact`` is the
@@ -2652,6 +2696,7 @@ def generate(
         tags=tags,
         cancel_token=cancel_token,
         single=single,
+        on_instance_created=on_instance_created,
     ) as session:
         _eph = EphemeralSession.current()
         if _eph is not None:
