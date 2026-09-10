@@ -5,11 +5,22 @@ This project is built across multiple sessions, and a session can die mid-run �
 that poisons the conversation so every subsequent turn fails until it is cleared. On **every** new
 or resumed session, before doing anything else:
 
-1. Read the **RESUME SNAPSHOT** section at the top of `PROGRESS.md` (first ~120 lines).
-   It is the source of truth for where the build is. The file exceeds the 256 KB
-   single-read limit — do NOT attempt a full-file read; `rg` the history below the
-   snapshot on demand.
-2. Read the design doc and the implementation plan that `PROGRESS.md` points to.
+1. Read the **RESUME SNAPSHOT** section of `PROGRESS.md`. It is the source of truth for where the
+   build is. **It is NOT at the top of the file** — it sits below the `## Pointers` block and the
+   `## URGENT ACTION ITEMS` section, thousands of lines in, and it moves every time either grows.
+   Locate it, never guess:
+   ```
+   rg -n '^## RESUME SNAPSHOT' PROGRESS.md
+   ```
+   then read from that line onward — the snapshot's own heading says "read this, then STOP; below is
+   history", so everything after it is dated commentary, not current state. The file exceeds the
+   256 KB single-read limit — do NOT attempt a full-file read; `rg` the history below the snapshot
+   on demand.
+   The snapshot defers the authoritative open-defect count to the **STATUS INDEX** at the top of
+   `## URGENT ACTION ITEMS`; when the two disagree, the STATUS INDEX wins. Find it the same way:
+   `rg -n 'STATUS INDEX' PROGRESS.md`.
+2. Read the `## Pointers` block at the top of `PROGRESS.md`, then the design doc and the
+   implementation plan it names.
 3. Run `git log --oneline -20` to see what is already committed.
 4. Resume from the first unchecked task in the plan. **Do not** redo work that is already committed.
 
