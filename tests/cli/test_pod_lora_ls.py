@@ -65,9 +65,7 @@ def _args(pod_id: str) -> argparse.Namespace:
     return argparse.Namespace(pod_id=pod_id)
 
 
-def _install_registry(
-    monkeypatch: pytest.MonkeyPatch, provider: _FakeProvider | None
-) -> None:
+def _install_registry(monkeypatch: pytest.MonkeyPatch, provider: object | None) -> None:
     from kinoforge.core import registry as kf_registry
 
     def _get(name: str) -> Any:
@@ -186,3 +184,92 @@ def test_pod_lora_ls_pod_unreachable_returns_2(
     err = capsys.readouterr().err
     assert rc == 2
     assert "ConnectionResetError" in err or "unreachable" in err.lower()
+
+
+class _ModalShapedProvider:
+    """A provider whose endpoint map can only come from the instance (U3).
+
+    Deliberately NOT ``_FakeProvider``: that one returns a canned map from
+    ``ensure_endpoints`` regardless of the instance, which would make this test
+    pass without any seeding happening. ``ModalProvider.ensure_endpoints``
+    ultimately falls back to ``instance.endpoints``, and ``get_instance`` builds
+    the instance from ``modal app list`` — which carries no URL. So the ONLY
+    route to a URL here is the ledger row, which is exactly the claim.
+    """
+
+    def __init__(self, instance: Any) -> None:
+        self._instance = instance
+        self.calls: list[str] = []
+
+    def endpoints(self, instance: Any) -> dict[str, str]:
+        self.calls.append("endpoints")
+        return dict(getattr(instance, "endpoints", {}) or {})
+
+    def ensure_endpoints(self, instance: Any) -> dict[str, str]:
+        self.calls.append("ensure_endpoints")
+        return dict(getattr(instance, "endpoints", {}) or {})
+
+    def get_instance(self, pod_id: str) -> Any:
+        if pod_id != self._instance.id:
+            raise KeyError(pod_id)
+        return self._instance
+
+
+def test_pod_lora_ls_reaches_a_pod_whose_url_only_the_ledger_holds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The recorded ``.modal.run`` URL is what gets requested (U3).
+
+    Bug caught: U3's second reproducer — ``pod lora ls: no endpoint URL for
+    pod <id>``, exit 2, against a pod that is alive and answering. The URL
+    survived only inside the process that created the pod, so every
+    out-of-process consumer was dead on Modal even though the ledger row held
+    the answer.
+
+    The assertion is on the URL actually requested, not on the exit code: a
+    handler that resolved the wrong URL and got a lucky response, or one that
+    fell back to a fabricated host the way ``logs`` used to (U4), would exit 0
+    too.
+    """
+    from kinoforge.core.interfaces import Instance
+
+    recorded_url = "https://kinoforge-run-abc-8000.modal.run"
+    ledger = _FakeLedger(
+        [
+            {
+                "id": "run-abc",
+                "provider": "modal",
+                "endpoints": {"8000": recorded_url},
+                "created_at": 0.0,
+            }
+        ]
+    )
+    # What `ModalProvider.get_instance` actually yields: no endpoints, no tags.
+    instance = Instance(
+        id="run-abc",
+        provider="modal",
+        status="ready",
+        created_at=0.0,
+        endpoints={},
+        tags={},
+        cost_rate_usd_per_hr=0.0,
+    )
+    provider = _ModalShapedProvider(instance)
+    _install_registry(monkeypatch, provider)
+
+    captured: dict[str, str] = {}
+
+    def _fake_http_get(url: str) -> dict[str, Any]:
+        captured["url"] = url
+        return {"inventory": [], "free_bytes": 0}
+
+    monkeypatch.setattr(
+        "kinoforge.cli._commands._http_get_json", _fake_http_get, raising=False
+    )
+
+    rc = _cmd_pod_lora_ls(_args("run-abc"), _FakeCtx(ledger))  # type: ignore[arg-type]
+
+    assert rc == 0
+    assert captured["url"] == f"{recorded_url}/lora/inventory"
+    # Still the repairing door, unchanged by the seeding (compute-seam S5).
+    assert provider.calls == ["ensure_endpoints"]

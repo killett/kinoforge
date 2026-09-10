@@ -1513,3 +1513,73 @@ def test_version_flag_falls_back_to_pyproject_when_metadata_missing(
     assert exc.value.code == 0
     captured = capsys.readouterr()
     assert re.match(r"^kinoforge \d+\.\d+\.\d+\n?$", captured.out), captured.out
+
+
+def test_cmd_status_renders_the_recorded_endpoint_map_from_the_ledger_row(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status_fake_provider: _StatusFakeProvider,
+) -> None:
+    """status passes the ledger's ``endpoints`` to the renderer (U3).
+
+    This pins the CALL SITE, not the renderer. ``_render_endpoints_for_status``
+    has its own tests in ``tests/cli/test_status_endpoints.py``, and all of them
+    pass a ``recorded`` map in by hand — so every one of them would stay green
+    if ``_cmd_status`` never passed one. That is the exact shape of a fix that
+    looks complete and does nothing on the CLI.
+
+    Bug caught: ``kinoforge status --id <modal pod>`` reporting
+    ``endpoints=unknown (no live endpoint)`` while the ledger row holds the
+    ``.modal.run`` URL — U3's first reproducer, which is what forced the
+    2026-09-06 matrix run to read ``ledger.json`` by hand to poll a pod at all.
+    """
+    entry = _runpod_entry("i-modal")
+    entry["endpoints"] = {"8000": "https://kinoforge-run-8000.modal.run"}
+    state_dir = _seed_ledger_with(tmp_path, entry)
+    # A provider that cannot answer in this process — Modal's real shape, where
+    # the URL lives only in the creating process's `_deployments` dict.
+    status_fake_provider.endpoints_impl = lambda instance: {}
+
+    rc = _call(["status", "--id", "i-modal"], state_dir)
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "https://kinoforge-run-8000.modal.run" in out
+    # Labelled, because the pure read could not confirm it.
+    assert "(recorded at launch, not verified live)" in out
+    assert "unknown (no live endpoint)" not in out
+
+
+def test_cmd_status_rehydrates_port_tags_so_the_provider_can_derive_endpoints(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status_fake_provider: _StatusFakeProvider,
+) -> None:
+    """status merges the ledger's ``tags`` before the pure read (U3).
+
+    RunPod's endpoint map is COMPUTED from ``instance.tags["ports"]``, and
+    ``get_instance`` returns an instance without that tag because the pod-query
+    selection set omits the port spec. The fake mirrors that computation so the
+    assertion is about the merge, not about a canned return value.
+
+    Bug caught: the status line reporting ``unknown (no live endpoint)`` for a
+    perfectly healthy RunPod pod — which reads as "the pod is broken" when the
+    truth is "the status path dropped the ports on the floor". Also caught: a
+    derived map arriving with the unverified label, which would be wrong — a
+    proxy URL rebuilt from the pod id is derivation, not recollection.
+    """
+    entry = _runpod_entry("kfpod9")
+    entry["tags"] = {"ports": "8000", "mode": "pod"}
+    state_dir = _seed_ledger_with(tmp_path, entry)
+    status_fake_provider.endpoints_impl = lambda instance: {
+        port: f"https://{instance.id}-{port}.proxy.runpod.net"
+        for port in str(instance.tags.get("ports", "")).split(",")
+        if port
+    }
+
+    rc = _call(["status", "--id", "kfpod9"], state_dir)
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "https://kfpod9-8000.proxy.runpod.net" in out
+    assert "recorded at launch" not in out

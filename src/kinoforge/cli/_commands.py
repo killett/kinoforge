@@ -2408,6 +2408,77 @@ def _ephemeral_index_add(
             _ephemeral_launch_row_release(ctx, supersedes)
 
 
+def _merge_recorded_tags(instance: Instance, entry: dict[str, Any]) -> None:
+    """Merge a ledger row's create-time ``tags`` onto a thin ``Instance``.
+
+    ``provider.get_instance`` returns whatever the provider's list/query API
+    carries, which is less than what the pod was created with. RunPod's
+    pod-query selection set omits the port spec, so ``instance.tags`` arrives
+    without ``ports`` and ``RunPodProvider.endpoints`` — which reads exactly
+    that key — returns an empty map for a perfectly healthy pod. The ledger row
+    captured ``instance.tags`` at ``ledger.record`` time.
+
+    A recorded tag is an INPUT, not a recollection: it is what lets a provider
+    recompute its endpoint (RunPod's proxy URL is deterministic from the pod id
+    and port). That is why callers may render the result unlabelled, unlike a
+    recorded endpoint literal — see :func:`_render_endpoints_for_status`.
+
+    Live values win on collision, and a row whose ``tags`` is not a mapping is
+    ignored rather than raising: ``status`` and ``pod lora ls`` are what an
+    operator reaches for while a pod is billing and something is already wrong,
+    so a hand-edited or older-schema row must not crash them.
+
+    Args:
+        instance: Mutated in place.
+        entry: The instance's ledger row.
+    """
+    recorded = entry.get("tags")
+    if not isinstance(recorded, dict):
+        return
+    merged: dict[str, Any] = {str(k): v for k, v in recorded.items()}
+    merged.update(getattr(instance, "tags", None) or {})
+    instance.tags = merged
+
+
+def _seed_instance_from_ledger_entry(instance: Instance, entry: dict[str, Any]) -> None:
+    """Seed both create-time fields the ledger holds: ``tags``, then ``endpoints``.
+
+    The endpoint half matters for a stronger reason than the tag half. A tag
+    merge only helps a provider that can REBUILD its URL from tags; Modal's
+    ``…modal.run`` URL cannot be derived from anything. ``get_instance`` builds
+    the Instance from ``modal app list``, which carries no URL, and
+    ``ModalProvider.endpoints`` falls back to a per-process ``_deployments``
+    dict that a fresh CLI process never populated — so the URL survived only
+    inside the process that created the pod (**U3**). Seeding the recorded map
+    gives ``ensure_endpoints`` something to repair rather than nothing to find.
+
+    This is a SEED, not the final answer: live values win on collision, which
+    is why callers still call the provider afterwards. Reversing that
+    precedence would let a dead recorded tunnel overwrite a freshly rebuilt
+    one — the F11 failure.
+
+    Observed 2026-09-05: an A100-80GB that had published an artifact 90 s
+    earlier, whose ledger row held ``endpoints: {"8000": "https://….modal.run"}``,
+    was refused by ``--attach-pod`` while that exact URL was answering
+    ``GET /util``.
+
+    Keys and values are stringified because a row is JSON on disk but is also
+    written in-process, where a port can arrive as an ``int`` — and every
+    consumer indexes the map with a string.
+
+    Args:
+        instance: Mutated in place.
+        entry: The instance's ledger row.
+    """
+    _merge_recorded_tags(instance, entry)
+    recorded = entry.get("endpoints")
+    if not isinstance(recorded, dict):
+        return
+    merged = {str(k): str(v) for k, v in recorded.items()}
+    merged.update(getattr(instance, "endpoints", None) or {})
+    instance.endpoints = merged
+
+
 def _resolve_attach_pod(
     ctx: SessionContext, cfg: Config, pod_id: str
 ) -> tuple[Instance | None, int | None]:
@@ -2502,43 +2573,14 @@ def _resolve_attach_pod(
         )
         return (None, 1)
 
-    # RunPod's `get_instance` returns an Instance whose `tags` LACK the
-    # original port list (the pod-query GraphQL selection set doesn't
-    # include the port spec); `provider.endpoints` reads `tags["ports"]`
-    # and would return an empty dict, which makes
-    # `deploy_session → wait_for_ready` raise
-    # `ProvisionFailed: pod has no endpoints`. The ledger entry captured
-    # the original `instance.tags` at `ledger.record` time, so merge
-    # those back in to recover the port list.
-    ledger_tags = entry.get("tags", {}) or {}
-    if isinstance(ledger_tags, dict):
-        merged_tags = dict(ledger_tags)
-        merged_tags.update(live.tags or {})  # live values still win on collision
-        live.tags = merged_tags
-    # The endpoints are the entry's OTHER create-time field, and they need
-    # the same rehydration for a stronger reason: a tag merge only helps a
-    # provider that can rebuild its URL from tags (RunPod's deterministic
-    # `{pod_id}-{port}.proxy.runpod.net`). Modal's `build-<hash>.modal.run`
-    # URL cannot be derived from anything — `get_instance` builds the
-    # Instance from `modal app list`, which carries no URL, and
-    # `ModalProvider.endpoints` falls back to a per-process `_deployments`
-    # dict that a fresh CLI process never populated. Seeding the recorded
-    # map here gives `ensure_endpoints` something to repair rather than
-    # nothing to find; a provider that can establish something live still
-    # overrides it (that is what the `ensure` call below is for), which is
-    # why this is a seed and not the final answer. Same precedence as the
-    # tag merge above: live wins on collision. Sibling of
-    # `_resolve_warm_endpoints`, which does this for the matcher path.
-    #
-    # Observed 2026-09-05: an A100-80GB that had published an artifact 90s
-    # earlier, whose ledger row held `endpoints: {"8000": "https://...
-    # .modal.run"}`, was refused by this gate while that exact URL was
-    # answering `GET /util`.
-    ledger_endpoints = entry.get("endpoints", {}) or {}
-    if isinstance(ledger_endpoints, dict):
-        merged_endpoints = {str(k): str(v) for k, v in ledger_endpoints.items()}
-        merged_endpoints.update(live.endpoints or {})  # live wins on collision
-        live.endpoints = merged_endpoints
+    # Rehydrate both create-time fields the ledger holds. Without the tag half
+    # `provider.endpoints` reads a `tags["ports"]` that isn't there and
+    # `deploy_session → wait_for_ready` raises `ProvisionFailed: pod has no
+    # endpoints`; without the endpoint half a Modal URL is unrecoverable
+    # outside its creating process. Shared with the `status` and `pod lora ls`
+    # read paths (U3) — see the helper for the full reasoning, including why
+    # live values win on collision.
+    _seed_instance_from_ledger_entry(live, entry)
     # What the provider was actually given, for the refusal below to cite.
     seeded_ports = sorted(live.endpoints)
     try:
@@ -2907,33 +2949,50 @@ def _refuse_reason_for_verdict(
     return verdict
 
 
-def _render_endpoints_for_status(provider: object, instance: Instance) -> str:
+def _render_endpoints_for_status(
+    provider: object,
+    instance: Instance,
+    recorded: dict[str, str] | None = None,
+) -> str:
     """Render the status line's endpoint field without creating anything.
 
-    compute-seam S5: ``endpoints`` is the pure read. An empty map means
-    different things on different providers, so the fallback is scoped to
-    skypilot only:
+    compute-seam S5: ``endpoints`` is the pure read — never
+    ``ensure_endpoints``, which would spawn an ssh tunnel per invocation on
+    skypilot. So a live map is not always obtainable, and the fallbacks are
+    ordered by how much each can be trusted:
 
-    - **skypilot**: the instance id IS the cluster name, and the natural
-      follow-up when this process holds no live tunnel is ``sky status`` or
-      ``kinoforge destroy --id`` — both keyed on that same id. So an empty
-      map renders as ``cluster=<id>``, which is honest and actionable.
-    - **every other provider** (RunPod, Modal, Local): an empty map means
-      something is wrong — e.g. ``RunPodProvider.endpoints`` reads the
-      ``ports`` tag off the instance, which ``_cmd_status``'s bare
-      ``provider.get_instance()`` call does not populate — and must keep
-      looking wrong rather than being repainted as a skypilot-shaped
-      cluster identity. Rehydrating those tags from the ledger so RunPod's
-      status line can render real endpoints is a separate, deferred piece
-      of work — out of scope here.
+    1. **A live map** renders as JSON, unlabelled. This includes a map the
+       provider COMPUTED from tags rehydrated by :func:`_merge_recorded_tags`
+       (RunPod's proxy URL is deterministic from the pod id and port), which is
+       derivation, not recollection — hence no label. Closing that gap for
+       RunPod's status line was the "separate, deferred piece of work" this
+       docstring used to name; it is done, and U3 is what paid for it.
+    2. **A recorded map** — ``endpoints`` off the ledger row, passed in by the
+       caller — renders JSON plus ``(recorded at launch, not verified live)``.
+       Modal needs this: its ``…modal.run`` URL cannot be derived from anything,
+       so a fresh process has no route to it but the ledger. The label is not
+       decoration. On skypilot the recorded endpoint is routinely a
+       ``127.0.0.1:<port>`` tunnel that died with the process that opened it,
+       and presenting that as live is the F11 failure the S5 read/ensure split
+       exists to prevent. It ranks above the ``cluster=<id>`` line below
+       because it carries strictly more information and the operator already
+       knows the id — they just typed it as ``--id``.
+    3. **skypilot with nothing recorded** renders ``cluster=<id>``: the id IS
+       the cluster name, and ``sky status`` / ``kinoforge destroy --id`` are the
+       honest follow-ups.
+    4. **Anything else** keeps saying ``unknown``, because on RunPod, Modal or
+       Local an empty map with an empty ledger row means something is wrong and
+       must keep looking wrong.
 
     Args:
         provider: The resolved compute provider.
         instance: The instance being reported.
+        recorded: The ledger row's ``endpoints`` map, when the caller has one.
+            A non-mapping value (older or hand-edited row) is ignored.
 
     Returns:
-        A JSON endpoint map, ``cluster=<id>`` (skypilot only), or
-        ``unknown (<reason>)``.
+        A JSON endpoint map, that map plus an unverified label,
+        ``cluster=<id>`` (skypilot only), or ``unknown (<reason>)``.
     """
     try:
         mapping = provider.endpoints(instance)  # type: ignore[attr-defined]
@@ -2941,6 +3000,9 @@ def _render_endpoints_for_status(provider: object, instance: Instance) -> str:
         return f"unknown ({exc.__class__.__name__})"
     if mapping:
         return json.dumps(mapping)
+    if isinstance(recorded, dict) and recorded:
+        as_json = json.dumps({str(k): str(v) for k, v in recorded.items()})
+        return f"{as_json} (recorded at launch, not verified live)"
     if getattr(provider, "name", "") == "skypilot":
         return f"cluster={instance.id}"
     return "unknown (no live endpoint)"
@@ -3056,7 +3118,21 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
     # compute-seam S5: status is an observational read, so it calls the
     # pure ``endpoints()`` door — never ``ensure_endpoints()``, which would
     # spawn an ssh tunnel per invocation on skypilot.
-    provider_block["endpoints"] = _render_endpoints_for_status(provider, instance)
+    #
+    # U3: tags are seeded onto the instance so a provider that can DERIVE its
+    # endpoints does (RunPod needs `tags["ports"]`), while the recorded endpoint
+    # map is passed separately so the renderer can label what it could not
+    # verify. Deliberately not `_seed_instance_from_ledger_entry`: seeding the
+    # recorded endpoints onto the instance would let the pure read hand them
+    # back indistinguishable from live ones, and status must not present a
+    # possibly-dead tunnel as current.
+    _merge_recorded_tags(instance, entry)
+    recorded_endpoints = entry.get("endpoints")
+    provider_block["endpoints"] = _render_endpoints_for_status(
+        provider,
+        instance,
+        recorded=recorded_endpoints if isinstance(recorded_endpoints, dict) else None,
+    )
 
     # Layer V — verdict line, same source of truth as `kinoforge reap`.
     # When list_instances raises, we cannot trust pod presence to
@@ -3230,6 +3306,15 @@ def _cmd_pod_lora_ls(args: argparse.Namespace, ctx: SessionContext) -> int:
             file=sys.stderr,
         )
         return 2
+
+    # U3: on Modal the `.modal.run` URL exists nowhere this process can reach —
+    # `get_instance` builds the Instance from `modal app list`, which carries no
+    # URL — so without the ledger's recorded map `ensure_endpoints` has nothing
+    # to work with and this command reported "no endpoint URL" for a live pod.
+    # Unlike `status`, seeding the endpoints themselves is right here: the URL is
+    # about to be used for a real request, and a stale one degrades to the clean
+    # "pod unreachable" exit below rather than being displayed as fact.
+    _seed_instance_from_ledger_entry(instance, entry)
 
     try:
         # compute-seam S5: this endpoint is used to make an HTTP request
