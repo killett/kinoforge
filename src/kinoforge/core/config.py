@@ -131,6 +131,15 @@ class LifecycleConfig(BaseModel):
     # the operator's ``include_orphans`` opt-in.
     ephemeral_orphan_reap_enabled: bool = True
     ephemeral_orphan_age_s: float = 3600.0
+    # U22 — how many CONSECUTIVE low-util samples the orphan verdict rests on,
+    # counting the current probe. One idle reading is not evidence of an
+    # orphan: a busy pod sampled at a VAE decode boundary, an ffmpeg mux, a
+    # model swap or an artifact upload reads idle on that tick, and past the
+    # age gate the pre-U22 rule destroyed it with the operator's work on it.
+    # Three is ``CLAUDE.md``'s own live-monitoring rule. Only the sweeper
+    # daemon banks samples; ``kinoforge reap`` runs one tick in a fresh
+    # process and keeps the single-sample rule. ``1`` restores it everywhere.
+    ephemeral_orphan_samples: int = 3
     # LoRA-flexible warm-reuse — staleness threshold for the matcher's
     # pod-side free-disk + inventory snapshot. ``0`` disables the
     # stale-check entirely (matcher trusts the ledger snapshot
@@ -266,6 +275,22 @@ class LifecycleConfig(BaseModel):
         """
         if v < 0:
             raise ValueError(f"ephemeral_orphan_age_s must be >= 0; got {v}")
+        return v
+
+    @field_validator("ephemeral_orphan_samples")
+    @classmethod
+    def _validate_ephemeral_orphan_samples_at_least_one(cls, v: int) -> int:
+        """Reject a sample window below one at load time (U22).
+
+        Zero is not "off" for a consecutive-sample count — the kill switch is
+        ``ephemeral_orphan_reap_enabled: false``. Unvalidated it reaches
+        ``required - 1 == -1`` in the predicate, whose history slice
+        ``[-(-1):]`` then reads the WHOLE deque, so the number would silently
+        mean something no operator asked for. ``1`` is the documented minimum
+        and restores the pre-U22 single-sample rule.
+        """
+        if v < 1:
+            raise ValueError(f"ephemeral_orphan_samples must be >= 1; got {v}")
         return v
 
 
@@ -1619,6 +1644,7 @@ class Config(BaseModel):
             ephemeral_orphan_age_s=(
                 lc.ephemeral_orphan_age_s if lc.ephemeral_orphan_reap_enabled else None
             ),
+            ephemeral_orphan_samples=lc.ephemeral_orphan_samples,
         )
 
     def placement(self) -> InterfacePlacement:
@@ -1919,4 +1945,5 @@ def sweeper_thresholds_from_cfg(cfg: Config) -> dict[str, Any]:
         "restart_loop_window_s": lc.restart_loop_window_s,
         "restart_loop_uptime_threshold_s": lc.restart_loop_uptime_threshold_s,
         "ephemeral_orphan_age_s": lc.ephemeral_orphan_age_s,
+        "ephemeral_orphan_samples": lc.ephemeral_orphan_samples,
     }

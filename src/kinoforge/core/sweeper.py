@@ -23,7 +23,11 @@ from typing import Any
 
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.lifecycle import Ledger
-from kinoforge.core.reaper import Policy, Verdict
+from kinoforge.core.reaper import (
+    _DEFAULT_EPHEMERAL_ORPHAN_SAMPLES,
+    Policy,
+    Verdict,
+)
 from kinoforge.core.reaper_actor import SweepReport, sweep
 from kinoforge.stores.base import ArtifactStore  # noqa: TC001  (runtime type)
 
@@ -301,13 +305,28 @@ class SweeperLoop:
         Spec 2026-06-28 §4.2. Bound deque maxlen at
         ``ceil(stall_window_s / interval_s)`` so the in-memory cost is
         proportional to the classification window, not to pod uptime.
+
+        U22: the ORPHAN_REAP window reads the same deque and needs
+        ``ephemeral_orphan_samples - 1`` banked samples (the current tick is
+        the last of the N and is checked live). That count is a FLOOR, not a
+        replacement: taking the max keeps the wider STALL_REAP window intact,
+        while a bare ``stall_window_s`` derivation collapsed maxlen to 1
+        whenever stall reaping was switched off and left ORPHAN_REAP silently
+        unreachable — the U20 failure shape.
         """
         stall_window_s = float(thresholds.get("stall_window_s") or 0.0)
-        maxlen = (
+        stall_maxlen = (
             max(1, math.ceil(stall_window_s / self._interval_s))
             if stall_window_s > 0.0
             else 1
         )
+        raw_samples = thresholds.get("ephemeral_orphan_samples")
+        orphan_samples = (
+            _DEFAULT_EPHEMERAL_ORPHAN_SAMPLES
+            if raw_samples is None
+            else max(1, int(raw_samples))
+        )
+        maxlen = max(stall_maxlen, orphan_samples - 1)
         live_ids: set[str] = set()
         for eid, (entry, _verdict) in report.snapshot.items():
             if entry.get("kinoforge_ephemeral") is not True:

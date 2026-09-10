@@ -270,12 +270,22 @@ ephemeral pod:
   policy, so `--apply` acts on it. Needs sample history, so it only fires
   in the daemon, not in one-shot `kinoforge reap`.
 - **`ORPHAN_REAP`** — the age+idle backstop. Fires when the pod is
-  **strictly older than `ephemeral_orphan_age_s`** *and* idle on the
-  current probe (GPU below `stall_gpu_threshold` **and** CPU below
-  `stall_cpu_threshold`). Age alone never reaps — a four-hour render is
-  not a leak — and idleness alone never reaps, because a Wan A14B cold
-  boot sits at 0% GPU for ~25 minutes fetching weights. Acting on it is
-  **opt-in**: `--include-orphans` or `sweeper.include_orphans: true`.
+  **strictly older than `ephemeral_orphan_age_s`** *and* idle (GPU below
+  `stall_gpu_threshold` **and** CPU below `stall_cpu_threshold`) on
+  `ephemeral_orphan_samples` **consecutive** probes, counting the current
+  one. Age alone never reaps — a four-hour render is not a leak —
+  idleness alone never reaps, because a Wan A14B cold boot sits at 0% GPU
+  for ~25 minutes fetching weights, and **one** idle reading never reaps,
+  because a busy pod sampled at a VAE decode boundary, an ffmpeg mux, a
+  model swap or an artifact upload reads idle on that tick. Acting on it
+  is **opt-in**: `--include-orphans` or `sweeper.include_orphans: true`.
+
+  The consecutive-sample window needs banked samples, which only the
+  daemon has. `kinoforge reap` runs one tick in a fresh process and has
+  nowhere to bank a second, so **one-shot keeps the single-sample rule**,
+  behind its two opt-ins (`--apply --include-orphans`) and the age floor
+  — a deliberate human action, not an unattended tick. Set
+  `ephemeral_orphan_samples: 1` to get that rule in the daemon too.
 
 Age is measured from the index row's `created_at_local`, which is stamped
 immediately *before* `create_instance`, so it includes the whole cold
@@ -290,6 +300,7 @@ compute:
   lifecycle:
     ephemeral_orphan_reap_enabled: true   # false = kill switch
     ephemeral_orphan_age_s: 3600          # must also be idle to reap
+    ephemeral_orphan_samples: 3           # consecutive idle probes (>= 1)
 ```
 
 Note the same shape as the other util-aware verdicts: with **no**

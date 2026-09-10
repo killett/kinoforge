@@ -3819,6 +3819,14 @@ def _cmd_reap(args: argparse.Namespace, ctx: SessionContext) -> int:
         # Spec C1 — one-shot `kinoforge reap --include-orphans` gets the same
         # age+idle backstop the daemon does.
         "ephemeral_orphan_age_s": lifecycle.ephemeral_orphan_age_s,
+        # U22 — carried for symmetry with `sweeper_thresholds_from_cfg`, which
+        # is where the count actually bites. It is INERT here: the consecutive
+        # -sample window needs banked samples, and `sweep` is called below with
+        # no `stall_history`, because a one-shot in a fresh process has nowhere
+        # to bank them. This path keeps the single-sample rule behind its two
+        # opt-ins (`--apply --include-orphans`) and the age floor. Two threshold
+        # dicts that drift apart is the U20 defect, so the key is present.
+        "ephemeral_orphan_samples": lifecycle.ephemeral_orphan_samples,
     }
 
     policy = policy_from_cli_flags(

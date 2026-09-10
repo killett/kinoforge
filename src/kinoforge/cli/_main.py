@@ -886,8 +886,9 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         action="store_true",
         help=(
             "act on ORPHAN_REAP: tear down an --ephemeral pod once it is "
-            "older than lifecycle.ephemeral_orphan_age_s AND idle on the "
-            "util probe. Unions with cfg.sweeper.include_orphans"
+            "older than lifecycle.ephemeral_orphan_age_s AND idle on "
+            "lifecycle.ephemeral_orphan_samples consecutive util probes "
+            "(default 3). Unions with cfg.sweeper.include_orphans"
         ),
     )
 

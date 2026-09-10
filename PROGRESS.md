@@ -449,15 +449,16 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site.
 
-**STATUS INDEX (current as of 2026-09-10. Provenance, newest first: U28 fixed + LIVE-PROVEN
+**STATUS INDEX (current as of 2026-09-10. Provenance, newest first: U22 fixed 2026-09-10
+(`__U22SHA__`, $0.00 offline); U28 fixed + LIVE-PROVEN
 2026-09-09 (`f1e7f1ef`, $0.0406); U3 fixed + LIVE-PROVEN and U27 fixed 2026-09-09
 (`e033b170` / `a08b7de6`, $0.055); U26 fixed 2026-09-09 (`a8cbb54c`); U11 LIVE-RE-PROVEN and
 U18 LIVE-PROVEN and U21 fixed 2026-09-09; U29 filed and fixed 2026-09-09; U17 fixed 2026-09-08.
 This table is authoritative — every paragraph BELOW it is dated campaign commentary and is not.)**
 
-Twenty-nine items, U1-U29. **Eighteen are fixed** (U3, U4, U7, U8, U9, U11, U12, U14, U15, U17,
-U18, U20, U21, U23, U26, U27, U28, U29), **two are partly fixed** (U5, U10), **nine are open**
-(U1, U2, U6, U13, U16, U19, U22, U24, U25).
+Twenty-nine items, U1-U29. **Nineteen are fixed** (U3, U4, U7, U8, U9, U11, U12, U14, U15, U17,
+U18, U20, U21, U22, U23, U26, U27, U28, U29), **two are partly fixed** (U5, U10), **eight are
+open** (U1, U2, U6, U13, U16, U19, U24, U25).
 
 **U11 went OPEN → FIXED again on 2026-09-09**: it
 was moved back to OPEN by Task 6's live disproof, and the regression that disproof found is now
@@ -475,7 +476,7 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | U6 | OPEN | `kinoforge deploy` renders no provision; dead on Modal, books a portless pod on RunPod |
 | U7 | FIXED, LIVE-PROVEN IN PART | `8191bd1b`; three SIGKILLed provisions each left a durable row naming the app (2026-09-07, $0.00). NOT live-proven: `destroy --id` on a mid-create app — that gap is **U17**, since FIXED offline-proven-only in `8069f376`+`45f4254c`; a live re-proof of the exact mid-create window is a separate follow-up. Teardown when the readiness poll or the weight download fails is now covered offline by **U21**'s fix, not live-proven |
 | U8 | FIXED ON MODAL, LIVE-PROVEN | `9d34d008` + `8403a71c`; index row readable 2.5 s into a live run, pod still reapable after SIGKILL (~$0.06). RunPod half stays PARTIAL under **U16** and is NOT upgraded by the Modal proof |
-| U9 | FIXED, LIVE-PROVEN | `e582bd0f`; the daemon reaped an idle ephemeral pod at `age=119s idle on probe gpu_util=0.0% cpu=0.0%` (~$0.03). Two boundaries, both filed rather than hidden: a mid-boot row has `endpoints: {}` so the probe returns nulls and the pod stays LIVE (U3's blast radius), and the predicate acts on ONE probe sample (**U22**) |
+| U9 | FIXED, LIVE-PROVEN | `e582bd0f`; the daemon reaped an idle ephemeral pod at `age=119s idle on probe gpu_util=0.0% cpu=0.0%` (~$0.03). Two boundaries, both filed rather than hidden: a mid-boot row has `endpoints: {}` so the probe returns nulls and the pod stays LIVE (U3's blast radius, since closed for the ephemeral index row by **U28**), and the predicate acts on ONE probe sample (**U22**, FIXED 2026-09-10 — the daemon now needs three consecutive idle probes, so a re-run of this cell reaps on a LATER tick than the 2 s it did on 2026-09-07; that re-run is the live proof U22 still owes) |
 | U10 | FIXED ON THE GRACEFUL PATH | `7d535503`, hardened by `9ae52274`. A daemon that is SIGKILLed still strands its row, and `sweeper status` / `metrics` still ignore the `--interval-s` override. Both recorded in the entry; neither re-opened |
 | U11 | FIXED, LIVE-PROVEN 2026-09-09 (re-proof after the same-day live disproof) | `0dfe90a9` + `7ee50a04` + `fdc4f388` (Task 2, 2026-09-08) forward `args.ephemeral` from `_cmd_grid` through `run_grid`/`_run_group`/`_run_one_cell` into every generate-mode cell's argv and refuse a `lora_swap:` group under `--ephemeral` with a clean stderr line + exit 2 — but they put the flag in a position `kinoforge generate` cannot parse, which **Task 6's live A2 disproved on 2026-09-09** (every cell died in 0.75 s on `kinoforge: error: unrecognized arguments: --ephemeral`; $0.00, no pod created; full record kept in the detailed entry and in the Task 6 commentary below — do not read this row as erasing it). **Fixed in `b9b4fcd6` (2026-09-09).** `_build_generate_cmd` now emits `--ephemeral` in ROOT position — `pixi run kinoforge --ephemeral generate …`, before the subcommand — rather than appending it after `generate`; the flag is a session-global consumed by `main()` before dispatch, so the root parser is its only correct home. The same commit fixes a SECOND, previously unrecorded instance of U11's leak reached through the other door: `p_grid` re-declared `--ephemeral` with an implicit `default=False`, and argparse copies every key of a subparser's fresh namespace onto the parent, so `kinoforge --ephemeral grid …` parsed to `args.ephemeral=False` and ran NON-ephemeral while reporting success (confirmed: `parse_args(['--ephemeral','grid','--spec','x']).ephemeral` → `False`); now `default=argparse.SUPPRESS`, so both flag positions work. **The test gap that shipped the regression is closed**: three new tests feed the argv `_build_generate_cmd` / `_build_swap_generate_cmd` actually build through the real `_build_parser().parse_args()` (which errors on any leftover token) and assert the resulting `args.ephemeral` / `args.cmd` / `args.attach_pod`, replacing the argv-MEMBERSHIP assertions that were blind to flag position; a fourth pins both `--ephemeral` positions around `grid`. RED was confirmed against the pre-fix code with the real live failure (`SystemExit: 2`, `kinoforge: error: unrecognized arguments: --ephemeral`). Offline proof: `pixi run pytest tests/core tests/cli -q` → 2256 passed. **LIVE-RE-PROVEN 2026-09-09 (Task 6, cell A2 re-run, $0.08 — two Modal A10s @ $1.10/hr, 148 s + 110 s = 258 s).** `pixi run -e live-modal kinoforge --ephemeral grid --spec <1x2 spec outside the repo> --out <path> --max-parallel-groups 1` — deliberately the ROOT flag position, i.e. the door the `p_grid` half of this defect had been silently dropping. Both halves held: (a) the child argv observed live in `ps` reads `python -m kinoforge --ephemeral generate --config … --no-reuse`, with `--ephemeral` in root position, and the cell process survived past argparse instead of dying in 0.75 s; (b) the run reached `[grid summary] composed mp4 → …` (status `full`, exit 0), so the root-position flag was NOT dropped by `p_grid`'s namespace copy. **Provider-side naming evidence** — `modal app list` from fresh processes during the run: `kinoforge-eph-2edbbd45` (created 01:08:01, stopped 01:10:29) and `kinoforge-eph-c89c0418` (created 01:10:32, stopped 01:12:22). Both are opaque 8-hex: no run id (the grid ids were `grid_20260909-010759_12fe6ccc__cell0` / `__cell1`), no local timestamp, no workload shape. That is exactly what A2's criterion asks for, now proven through `grid` itself rather than borrowed from `batch`. The ephemeral index carried exactly one row at a time (`eph-2edbbd45`, then `eph-c89c0418`), the ledger stayed `{"entries": []}` throughout, and both rows were gone at end of run. **Both flag positions were also confirmed live at $0.00**, via the root-only `--debug-show-secrets` mutual exclusion, which fires in `main()` after parse and before any dispatch: `--debug-show-secrets grid … --ephemeral` → exit 2 mutex error, `--ephemeral --debug-show-secrets grid …` → exit 2 mutex error, and the control with no `--ephemeral` anywhere → exit 0 `[grid dry-run] 2 cells`. So the sub-position door is proven too, without a second pair of pods. Frame-QA (mandatory) on both cell clips and the composed 960x480 grid: PASS with the usual soft flags — see the Task 6 A2 status update below. Teardown verified from a fresh process after the orchestrator exited: both `kinoforge list` lines, 0 index rows, empty ledger, `modal container list` → `Active Containers in environment: None`, no `deployed` app. **⚠️ One thing did not hold:** no `gpuUtilPercent` reading was obtainable during this cell — `grid` captures each cell subprocess's stderr and writes it only at the end, so the `.modal.run` URL the A1 util probe scraped from a run log does not exist live for a grid cell, and U3 still blocks resolving it from the provider. The 75 s polling loop therefore fell back to a provider-side liveness signal (`modal app list` `state`/`tasks`, never `est_spend`). No new item is filed for this: it is the already-open **U3** (endpoint URL unreachable from a fresh process) meeting `grid`'s deferred stderr capture, and it is recorded on U3's row rather than as a thirtieth item. Follow-ups **U24**, **U25** still stand; the audit behind this fix filed **U27**, **U28** and **U29** (U29 then fixed the same day in `424e52d1`) |
 | U12 | CLOSED | `82ad084b` — `av<18`. Live-proven on Modal for $0.64. RunPod and SkyPilot ride the same one-line pin but were never re-run: inferred safe, not demonstrated safe |
@@ -488,7 +489,7 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | U19 | OPEN | the in-pod capability vocabulary has no term for interpolation. Not a duplicate boot today — the U14 carve-out prevents one — but the `/health` refinement is absent on the interpolate path |
 | U20 | FIXED | `e582bd0f` — the truncated sweeper thresholds dict. Filed retroactively 2026-09-07: it was WIDER than the ephemeral defect it was found under |
 | U21 | FIXED, OFFLINE ONLY | `9e268c18` (Task 5, 2026-09-09) — the post-create tail of `_cmd_provision` (readiness poll + `provision()`/weight-download) is now wrapped in a `try` that destroys the pod on any raise before re-raising the original error, mirroring `orchestrator.deploy()`'s destroy-on-error shape verbatim; the readiness poll itself now goes through the same bounded `_wait_for_provider_ready` helper `deploy()` uses, so a pod that never reaches `ready` hits `lifecycle.boot_timeout_s` and raises `ProvisionTimeout` naming the last status seen instead of spinning forever. **Behaviour change: `provision` now destroys the pod on a post-create failure where it previously left it running and billing.** Proof is offline only (`pixi run pytest tests/cli/test_cmd_provision.py -v` → 23/23; `pixi run pytest tests/cli -q` → 470/470) — four new tests cover a raising readiness poll, a raising provisioner, a never-ready pod (`boot_timeout: 0`, no real sleep needed), and a failing destroy that does not mask the original error. Live proof (killing the readiness poll or the weight download against a real provider mid-flight) is NOT owed to Task 6, which covers U23/U11/U18 only |
-| U22 | OPEN | the ephemeral orphan reap acts on a single probe sample. Filed 2026-09-07 |
+| U22 | FIXED, OFFLINE-PROVEN 2026-09-10 | The orphan verdict now rests on `ephemeral_orphan_samples` CONSECUTIVE low-util readings (default **3**, `CLAUDE.md`'s live rule) counting the current probe, matching `_ephemeral_stall_predicate` twenty lines away. **The window applies only where samples can exist** — an operator decision, not an inferred one: `stall_history` is `SweeperLoop`-owned, so `kinoforge reap` one-shot (a single tick in a fresh process, nowhere to bank a second sample) keeps the single-sample rule behind its two opt-ins + the age floor; requiring a window there would have made `reap --apply --include-orphans` a permanent no-op and regressed exactly what U28's $0.0406 live proof established the day before. `ephemeral_orphan_samples: 1` restores the old rule in the daemon too. **The fix's own trap, caught and pinned:** the deque it reads was sized from `stall_window_s` alone and collapsed to maxlen 1 under `stall_reap_enabled: false`, which would have "closed" U22 by making ORPHAN_REAP silently unreachable; `maxlen` is now `max(stall_maxlen, samples - 1)` — a FLOOR that does not shorten the wider stall window (pinned both ways, since STALL_REAP is inside `DEFAULT_APPLY_POLICY` and acts with no opt-in). Default 3 lives in `reaper.py`, not only cfg, so a threshold dict that drops the key fails SAFE — the U20 shape mirrored, where defaulting to `1` would have reinstated U22 with every test still green. Offline only: `pixi run test` → 5562 passed; eleven new tests, RED confirmed on five before implementation. **Owed: a live re-run of the U9 cell** — no offline test can show the daemon deferring a reap across real heartbeats against a real pod |
 | U23 | FIXED, LIVE-PROVEN 2026-09-09 | `f787182d` + `03a4b862` (Task 1, 2026-09-08) — `_cmd_batch` reserves the ephemeral launch row before `batch_generate`, settled by `_settle_batch_launch_row` afterwards; the survive path is upgraded to the real id + endpoints and the ledger diff skips the orchestrator's own provisional row (review round 1). **LIVE-PROVEN 2026-09-09 (Task 6, A1, $0.07 — Modal A10, pod `eph-63cda383`, 00:24:40 → 00:28:34 = 3 m 54 s @ $1.10/hr).** `kinoforge --ephemeral batch -c examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml --manifest <2-row manifest outside the repo>`: the index row was stamped `created_at_local=2026-09-09T00:24:39.697356`, the same millisecond as the run's own `00:24:39,697 … warm-reuse: scanned 0 candidates — cold create` line and **6 s before** Modal returned the app (`✓ App deployed in 1.477s`, `00:24:45,032 … running provisioner.provision for instance eph-63cda383`) — so the row is genuinely reserved pre-create and its timestamp is launch time. Read from FRESH processes at 00:24:52, 00:25:06 and 00:26:54 (the last mid-generation with the pod at `gpu_util_percent=100.0`), the row named the pod throughout: `id=eph-63cda383 provider=modal kinoforge_key=0aaf4ee6e6c0`, while the ledger stayed `{"entries": []}` and `kinoforge list` printed both "no instances" lines at 00:27:02. The controller was then SIGKILLed (`kill -9 -<pgid>`) at 00:27:23, mid-generation of manifest row 2 (`/util` one second earlier: `gpu=100.0 cpu=5.4`). From fresh processes afterwards the row still named the pod, `modal app list` showed `kinoforge-eph-63cda383` `state=deployed tasks=1`, and `/util` at 00:27:36 still read `gpu_util_percent=100.0` — a genuinely billing GPU with no controller — and `kinoforge destroy --id eph-63cda383` recovered it: `destroyed orphan: eph-63cda383 (no ledger entry, provider=modal)`, index back to `{"rows": []}`, app `state=stopped tasks=0 stopped_at=00:28:34`. Opaque naming held: the app is `kinoforge-eph-63cda383` — 8 hex, no run id, no timestamp. **Two live findings recorded, neither retrofitted:** (1) the mid-run row carries `endpoints: {}` and is NEVER upgraded during the run — `_settle_batch_launch_row` only fires after `batch_generate` RETURNS, so on the crash path the fix exists for, endpoints are never written; on Modal the id alone still names and destroys the pod, but the empty endpoints starve the reaper's util probe (see U18) and the live util poll had to fall back to the `.modal.run` URL scraped from the run log (U3). (2) `kinoforge batch --ephemeral` is an argparse error — `--ephemeral` is a ROOT-parser flag, so it must precede the subcommand (`kinoforge --ephemeral batch …`); same defect class as U11 |
 | U24 | OPEN | `grid --ephemeral` cannot cover `lora_swap:` cells — they are refused (`ValueError`), not made ephemeral. Filed 2026-09-08, Task 2 review round 1 |
 | U25 | OPEN | an ephemeral `grid` still writes local artifacts (per-cell stderr, `output/_grid_<id>/`) under the strict policy, contradicting the flag's own help text. Filed 2026-09-08, Task 2 review round 1; reproducer corrected round 2 |
@@ -2052,8 +2053,58 @@ per-item entries below.
   — is NOT owed to Task 6, which covers U23/U11/U18 only; it remains a follow-up if wanted.
   **Discovered by:** review of the U7 fix, carried into the Task 7 record sweep, 2026-09-07.
 
-- **U22 — the ephemeral orphan reap destroys on a SINGLE probe sample, unlike every other
-  utilisation-driven verdict in the reaper.**
+- **U22 — FIXED, OFFLINE-PROVEN 2026-09-10. The ephemeral orphan reap destroyed on a SINGLE
+  probe sample, unlike every other utilisation-driven verdict in the reaper.**
+  **Resolution (2026-09-10, $0.00 — no pod, no network, no preflight needed).**
+  `_ephemeral_orphan_predicate` now takes `stall_history` and a new
+  `ephemeral_orphan_samples` threshold (default **3**, `CLAUDE.md`'s own live-monitoring rule):
+  under the daemon the verdict rests on N CONSECUTIVE low-util readings counting the current
+  probe, so the busy pod sampled at a VAE-decode boundary survives. The current tick is still
+  checked live and is one of the N — satisfying the window never licenses a reap on a pod that
+  just picked work back up.
+  **The fork that is NOT derivable from the entry below, and the reason it was put to the
+  operator rather than guessed.** `stall_history` is owned by `SweeperLoop`; `kinoforge reap`
+  one-shot passes `None` and runs a single tick in a fresh process, so it can NEVER bank a
+  second sample. Requiring the window there would have turned `reap --apply --include-orphans`
+  into a permanent no-op — regressing precisely the capability U28's $0.0406 live proof
+  established the day before (`acted on 1: 1 destroyed`). **Decision: the window applies only
+  where samples can exist.** The daemon (unattended, ticking every heartbeat) requires N; the
+  one-shot keeps the single-sample rule behind its two existing opt-ins and the one-hour age
+  floor — a deliberate human action, not an unlucky tick. `ephemeral_orphan_samples: 1` puts
+  the daemon back on the old rule. That contrast is pinned by one test
+  (`test_the_window_applies_only_where_samples_can_exist`) rather than left to the docstring.
+  **A trap the fix walked into, and the reason the diff touches `sweeper.py` at all.** The deque
+  the window reads is sized by `_update_stall_history`, whose `maxlen` derived from
+  `stall_window_s` ALONE and collapsed to **1** whenever `stall_reap_enabled: false`. Left
+  alone, ORPHAN_REAP would have become silently unreachable for every operator running with
+  stall reaping off — the fix would have "closed" U22 by disabling the verdict. `maxlen` is now
+  `max(stall_maxlen, ephemeral_orphan_samples - 1)`: the orphan count raises a FLOOR, it does
+  not replace the wider stall window (pinned both ways, because truncating the deque to the
+  orphan minimum would have broken STALL_REAP, which is inside `DEFAULT_APPLY_POLICY` and acts
+  with no opt-in at all).
+  **Fails safe on a forgotten key.** The default 3 lives in `reaper.py`
+  (`_DEFAULT_EPHEMERAL_ORPHAN_SAMPLES`), not only in cfg, so a threshold dict that drops the key
+  gets the SAFE value. This is the U20 defect shape mirrored: U20 was a truncated dict that made
+  every util-aware verdict unreachable, and the equal-and-opposite mistake here — defaulting to
+  `1` — would have reinstated U22 with no visible symptom and every test still green. Pinned by
+  `test_a_threshold_dict_that_omits_the_sample_count_fails_safe`.
+  **Proof is OFFLINE ONLY.** `pixi run test` → **5562 passed, 155 skipped, 20 deselected,
+  6 xfailed**; ruff + ruff-format + mypy clean. Nine new tests (seven in
+  `tests/core/test_reaper_orphans.py`, two in `tests/core/test_sweeper_loop_stall_history.py`)
+  plus two in `tests/core/test_config.py`; RED was confirmed for five of the seven before the
+  implementation existed — the other two are positive-case guards that legitimately passed
+  pre-fix (three-consecutive-samples reaps; a busy current tick survives), kept because they are
+  what catches an over-correction. The entry's own $0 reproducer now prints
+  `sample 1: False / sample 2: False / sample 3: True / busy tick breaks the run: False /
+  one-shot: True`.
+  **What is NOT proven: a live re-run of the U9 cell**, which this entry asked for and which is
+  the only way to see the daemon defer a reap across real heartbeats against a real pod. That is
+  an owed follow-up, not a discharged one.
+  **One thing deliberately left alone.** `ephemeral_orphan_reason` still renders `idle on probe`
+  (singular) even when N samples backed the verdict — it has no access to the history at its
+  call site in `reaper_actor`. It therefore UNDERSTATES the evidence, which is the safe
+  direction for a destroy record, but it is now imprecise. Not filed as a defect; recorded here.
+  **Commit:** see below. **Original filing follows, unedited.**
   **Symptom.** `_ephemeral_orphan_predicate` (`src/kinoforge/core/reaper.py`) reads
   `entry["gpu_util_pct"]` and `entry["cpu_pct"]` — the CURRENT tick's readings — and returns
   `ORPHAN_REAP` if both sit below their thresholds and the row is past the age gate. Its sibling
@@ -2632,31 +2683,33 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 
 ### NEXT ACTION (single, current as of 2026-09-10)
 
-**Do U22 — make the ephemeral orphan reap require N consecutive idle samples instead of one.**
-Offline, ~$0. Its entry below carries the symptom, the sibling that already does it right
-(`_ephemeral_stall_predicate`, twenty lines away, uses `stall_history` over `stall_window_s`), and
-a $0 reproducer.
+**Do U16 — RunPod's reserved ephemeral-launch name is not a usable pod id.** Offline first;
+its entry has file:line for all three sub-cases. U28 helped it — the row now carries the real id
+and endpoints from the moment the create returns — but did NOT close it: the PRE-CREATE window
+still keys the row by NAME, and RunPod's `destroy_instance` / `probe_runtime` both take RunPod's
+own id. So on RunPod the one durable handle on a pod that is already billing remains a partial
+handle for exactly the window the pre-create row exists to cover.
 
-**Why U22 and not U16 — this is the part that is NOT derivable from U22's own entry.** U22 was
-effectively DORMANT on ephemeral rows until 2026-09-09. The predicate never received a utilisation
-reading at all: the index row's `endpoints` was empty, so `_probe_with_cache` never primed
-`note_endpoints`, so the predicate was conservative-on-ignorance and returned `LIVE`. That is
-**U28**, and fixing it turned the readings on. The very same live proof that closed U28 then
-destroyed a real pod on `ORPHAN_REAP` from a **single** 0.0 % sample — correctly, that pod was
-genuinely orphaned, but it is the first live exercise of the one-sample path. U28 promoted U22
-from theoretical to reachable. Anyone picking work off item counts alone would miss that.
+**U22 is FIXED as of 2026-09-10 (offline, $0.00) — do not redo it.** The daemon's orphan verdict
+now rests on three consecutive idle probes; the one-shot CLI deliberately keeps the single-sample
+rule, because a fresh process can never bank a second sample and a permanent no-op is not a safety
+net. Full rationale, the trap the fix walked into (`_update_stall_history`'s maxlen), and the
+operator decision behind the one-shot carve-out are on U22's row in the STATUS INDEX.
 
-**Guards that make this urgent-but-not-on-fire, so it is not overstated:** `ORPHAN_REAP` sits
-outside `DEFAULT_APPLY_POLICY` (it needs `--include-orphans` to bite), the age floor is real, and
-both GPU and CPU must read idle. Those are mitigations, not a fix — see U22's entry.
+**What U22 still OWES, and it is the only debt it left: a live re-run of the U9 cell.** No offline
+test can watch the daemon defer a reap across real heartbeats against a real pod, and the 2026-09-07
+U9 proof (`reaping eph-64dac102 … age=119s` on the SECOND tick, 2 s in) is now expected to reap on a
+LATER tick. Cheap: `sweeper start --include-orphans` with `ephemeral_orphan_age_s: 60`,
+`interval_s: 20` against one idle ephemeral pod — the original cell cost ~$0.03. Fold it into the
+next live session rather than booking a pod for it alone.
 
-**Runner-up:** U16 (RunPod's reserved name is not a usable pod id). U28 helped it — the row now
-carries the real id and endpoints once the create returns — but did NOT close it, because the
-pre-create window still keys the row by NAME and RunPod's `destroy_instance` / `probe_runtime`
-both take RunPod's own id. Its entry has file:line for all three sub-cases.
+**Guards that keep U22's residue from being urgent:** `ORPHAN_REAP` sits outside
+`DEFAULT_APPLY_POLICY` (it needs `--include-orphans` to bite), the age floor is real, and both GPU
+and CPU must read idle.
 
 **Do NOT trust any "cheapest remaining wins" line further down this file** — the 2026-09-09 one is
-struck through and marked superseded, and it names U27, which is fixed.
+struck through and marked superseded, and it names U27, which is fixed. The 2026-09-10 one names
+U22, which is now fixed too.
 
 
 **U28 CLOSED — FIXED and LIVE-PROVEN 2026-09-09 for $0.0406.** The `--ephemeral` index row now
@@ -2698,14 +2751,23 @@ passed throughout U28's entire life — which is exactly why the defect survived
 about WHEN something happens, an end-state test is not evidence. This is the same shape as U3's
 trap earlier today (renderer tests that pass `recorded=` in by hand prove nothing about the wire).
 
-**Defect ledger: 29 items — 18 fixed, 2 partly fixed, 9 open** (U1, U2, U6, U13, U16, U19, U22,
-U24, U25). **U16** is helped by U28 but NOT closed (RunPod's reserved name is still not a usable pod
+**Defect ledger: 29 items — 19 fixed, 2 partly fixed, 8 open** (U1, U2, U6, U13, U16, U19,
+U24, U25). ~~29 items — 18 fixed, 2 partly fixed, 9 open~~ — superseded 2026-09-10 by U22's fix. **U16** is helped by U28 but NOT closed (RunPod's reserved name is still not a usable pod
 id); **U22** (orphan predicate acts on one probe sample) is untouched, deliberately — U28 removes
 the ignorance rather than licensing action under it. Cheapest remaining wins are now U16 and U22,
 which are adjacent to the machinery just touched. The STATUS INDEX at the top of the URGENT ACTION
 ITEMS section remains authoritative.
 
 **Session spend 2026-09-09: $0.0406 (U28) + $0.055 (U3) = $0.0956 total.**
+
+**U22 CLOSED 2026-09-10 for $0.00 — offline, no pod, no preflight.** The ephemeral orphan reap
+required a single idle probe; under the daemon it now requires `ephemeral_orphan_samples`
+consecutive ones (default 3). One-shot `kinoforge reap` deliberately keeps the single-sample rule.
+See U22's STATUS INDEX row for the full record — including the maxlen trap in `_update_stall_history`
+that would have "closed" U22 by making ORPHAN_REAP silently unreachable under
+`stall_reap_enabled: false`, and the live re-run of the U9 cell it still owes.
+
+**Session spend 2026-09-10: $0.00.**
 
 **U27 and U3 CLOSED (2026-09-09, $0.00 — no live spend, no pod, no preflight needed).** Two of the
 cheapest remaining wins off the money-leaks list, done offline in one pass on `main`.

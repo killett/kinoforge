@@ -2094,6 +2094,54 @@ def test_sweeper_thresholds_orphan_gate_is_none_when_disabled() -> None:
     assert th["ephemeral_orphan_age_s"] is None
 
 
+def test_sweeper_thresholds_carry_the_orphan_sample_window() -> None:
+    """The daemon's bridge forwards ``ephemeral_orphan_samples`` (U22).
+
+    Bug caught, and it is the U20 shape one knob later: a bridge that omits
+    the key leaves the operator's YAML inert, so an operator who widened the
+    window to six samples would still get reaps on the default three and
+    never learn why. The default is asserted too, because a default of ``1``
+    would ship U22 unfixed while every test above still passed.
+    """
+    from kinoforge.core.config import sweeper_thresholds_from_cfg
+
+    assert sweeper_thresholds_from_cfg(_c1_cfg())["ephemeral_orphan_samples"] == 3  # type: ignore[arg-type]
+    th = sweeper_thresholds_from_cfg(
+        _c1_cfg(ephemeral_orphan_samples=6)  # type: ignore[arg-type]
+    )
+    assert th["ephemeral_orphan_samples"] == 6
+
+
+def test_zero_ephemeral_orphan_samples_rejected_at_load(tmp_path: Path) -> None:
+    """``ephemeral_orphan_samples: 0`` is refused at YAML load.
+
+    Bug caught: zero is not "off" for a consecutive-sample count — the kill
+    switch is ``ephemeral_orphan_reap_enabled: false``. Left unvalidated it
+    reaches ``required - 1 == -1``, which slices the history as ``[-(-1):]``
+    and reads the WHOLE deque, so the count silently means something no
+    operator asked for. One is the documented minimum and restores the
+    pre-U22 single-sample rule.
+    """
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(
+        "compute:\n"
+        "  provider: local\n"
+        "  image: dummy\n"
+        "  lifecycle:\n"
+        "    budget: 10\n"
+        "    ephemeral_orphan_samples: 0\n"
+        "engine:\n"
+        "  kind: fake\n"
+        "  precision: fp16\n"
+        "models:\n"
+        "  - ref: hf:org/m\n"
+        "    kind: base\n"
+        "    target: checkpoints\n"
+    )
+    with pytest.raises(ConfigError, match="ephemeral_orphan_samples must be >= 1"):
+        load_config(cfg_path)
+
+
 def test_negative_ephemeral_orphan_age_rejected_at_load(tmp_path: Path) -> None:
     """A negative age gate is rejected at YAML load, not at reap time.
 

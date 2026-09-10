@@ -303,12 +303,23 @@ def ephemeral_orphan_reason(entry: Mapping[str, Any], now: float) -> str:
     )
 
 
+#: Consecutive low-util samples an ORPHAN_REAP rests on, counting the current
+#: probe. Three is ``CLAUDE.md``'s own live-monitoring rule ("GPU 0% for >=3
+#: consecutive probes"). Defaulted HERE, not only in cfg, so a threshold dict
+#: that forgets the key fails safe: the U20 defect was a truncated dict that
+#: silently disabled every util-aware verdict, and the mirror-image mistake
+#: here would silently reinstate U22 with no visible symptom.
+_DEFAULT_EPHEMERAL_ORPHAN_SAMPLES: int = 3
+
+
 def _ephemeral_orphan_predicate(
     entry: Mapping[str, Any],
     thresholds: Mapping[str, Any],
     age_s: float,
+    *,
+    stall_history: Mapping[str, deque[tuple[float, float]]] | None,
 ) -> bool:
-    """Return True iff an ephemeral row is old enough AND idle (spec C1).
+    """Return True iff an ephemeral row is old enough AND persistently idle (C1).
 
     Both halves are required, and neither is sufficient:
 
@@ -317,9 +328,24 @@ def _ephemeral_orphan_predicate(
     * **Idleness alone must never reap.** A Wan A14B cold boot spends ~25
       of its ~30 minutes at 0% GPU fetching 70 GB of weights.
 
+    * **One idle reading must never reap** (U22). A busy pod sampled
+      between two compute-light steps — a VAE decode boundary, an ffmpeg
+      mux, a model swap, an artifact upload — reads idle on that tick.
+      Where a sample history exists the verdict rests on
+      ``ephemeral_orphan_samples`` CONSECUTIVE low readings, the same
+      shape ``_ephemeral_stall_predicate`` has always used.
+
     Conservative on ignorance throughout: a missing threshold, a missing
-    reading, or a non-numeric reading all return False. "Not observed" is
-    never read as "idle".
+    reading, a non-numeric reading, or a history too short to fill the
+    window all return False. "Not observed" is never read as "idle".
+
+    The window applies only where samples can exist. ``stall_history`` is
+    owned by ``SweeperLoop``; ``kinoforge reap`` one-shot passes ``None``
+    and can never bank a second sample in a fresh process, so requiring a
+    window there would turn ``reap --apply --include-orphans`` into a
+    permanent no-op. That path keeps the single-sample rule behind its two
+    existing opt-ins and the age floor — a deliberate human action, not an
+    unattended tick.
 
     Args:
         entry: Synthesised ephemeral entry; must carry ``probe_state``
@@ -328,14 +354,24 @@ def _ephemeral_orphan_predicate(
             age gate (``None`` = kill switch, the default); idleness is
             measured against ``stall_gpu_threshold`` /
             ``stall_cpu_threshold``, the same definition of a "low-util
-            sample" the STALL_REAP path uses.
+            sample" the STALL_REAP path uses;
+            ``ephemeral_orphan_samples`` is the consecutive-sample count,
+            counting this tick's probe (absent =
+            :data:`_DEFAULT_EPHEMERAL_ORPHAN_SAMPLES`; ``1`` = the
+            pre-U22 single-sample rule).
         age_s: ``now - created_at``, where ``created_at`` came from the
             index row's ``created_at_local`` — the pod's BIRTH time, so
             this age includes the whole cold boot (spec A2).
+        stall_history: Per-pod deque of ``(gpu_util_pct, cpu_pct)`` samples
+            owned by ``SweeperLoop``, holding the ticks BEFORE this one —
+            the current reading is appended after the sweep returns.
+            ``None`` (one-shot CLI) keeps the single-sample rule.
 
     Returns:
-        True when the pod is strictly older than the age gate and both the
-        GPU and the CPU reading sit below their idle thresholds.
+        True when the pod is strictly older than the age gate, both the GPU
+        and the CPU reading sit below their idle thresholds on this tick,
+        and — under the daemon — the preceding
+        ``ephemeral_orphan_samples - 1`` banked samples did too.
     """
     if entry.get("probe_state") != "ok":
         return False
@@ -350,7 +386,23 @@ def _ephemeral_orphan_predicate(
         return False
     gpu_thresh = float(thresholds.get("stall_gpu_threshold") or 0.0)
     cpu_thresh = float(thresholds.get("stall_cpu_threshold") or 0.0)
-    return gpu < gpu_thresh and cpu < cpu_thresh
+    if not (gpu < gpu_thresh and cpu < cpu_thresh):
+        return False
+    if stall_history is None:
+        return True
+    raw = thresholds.get("ephemeral_orphan_samples")
+    required = _DEFAULT_EPHEMERAL_ORPHAN_SAMPLES if raw is None else max(1, int(raw))
+    # This tick's reading is one of the N and has already been checked above;
+    # the remainder must come from banked samples. `required == 1` therefore
+    # needs no history at all, which is what makes the escape hatch real.
+    banked_needed = required - 1
+    if banked_needed <= 0:
+        return True
+    history = stall_history.get(str(entry["id"]))
+    if history is None or len(history) < banked_needed:
+        return False
+    recent = list(history)[-banked_needed:]
+    return all(g < gpu_thresh and c < cpu_thresh for (g, c) in recent)
 
 
 def _ephemeral_stall_predicate(
@@ -461,7 +513,9 @@ def _classify_ephemeral(
       5. N consecutive samples below gpu+cpu thresholds → STALL_REAP
          (N = ceil(stall_window_s / heartbeat_interval_s); skipped when
          ``stall_history`` is None, i.e. one-shot CLI)
-      6. old enough AND idle on this tick's probe → ORPHAN_REAP (spec C1)
+      6. old enough AND idle on N consecutive probes → ORPHAN_REAP (spec
+         C1; N = ``ephemeral_orphan_samples`` counting this tick, and
+         N is forced to 1 when ``stall_history`` is None, i.e. one-shot CLI)
       7. else → LIVE
 
     NEVER reads heartbeat keys (last_heartbeat, heartbeat_thread_tick,
@@ -472,7 +526,8 @@ def _classify_ephemeral(
         thresholds: Threshold mapping; only ``max_lifetime_s``,
             ``stall_window_s``, ``stall_gpu_threshold``,
             ``stall_cpu_threshold``, ``heartbeat_interval_s``,
-            ``ephemeral_orphan_age_s`` are read.
+            ``ephemeral_orphan_age_s``, ``ephemeral_orphan_samples`` are
+            read.
         now: Wall-clock now (seconds, float).
         stall_history: Per-pod deque of ``(gpu_util_pct, cpu_pct)`` samples,
             owned by ``SweeperLoop``. ``None`` from ``kinoforge reap``
@@ -515,8 +570,12 @@ def _classify_ephemeral(
     # Spec C1 — the age+util backstop for ``--ephemeral`` pods, which write no
     # ledger row and therefore have no heartbeat to go stale. Opt-in at the
     # policy level (ORPHAN_REAP is not in DEFAULT_APPLY_POLICY), and reachable
-    # in one-shot mode too — unlike STALL_REAP it needs no sample history.
-    if _ephemeral_orphan_predicate(entry, thresholds, age_s):
+    # in one-shot mode too — where STALL_REAP switches OFF without a history,
+    # this one falls back to a single sample (U22), because a fresh process
+    # can never bank a second and a permanent no-op is not a safety net.
+    if _ephemeral_orphan_predicate(
+        entry, thresholds, age_s, stall_history=stall_history
+    ):
         return Verdict.ORPHAN_REAP
 
     return Verdict.LIVE
@@ -538,6 +597,7 @@ def classify(
     restart_loop_uptime_threshold_s: float = 90.0,
     stall_history: Mapping[str, deque[tuple[float, float]]] | None = None,
     ephemeral_orphan_age_s: float | None = None,
+    ephemeral_orphan_samples: int | None = None,
 ) -> Verdict:
     """Classify a single ledger entry against the current world state.
 
@@ -584,6 +644,13 @@ def classify(
             probe (below ``stall_gpu_threshold`` and
             ``stall_cpu_threshold``). Age alone never reaps and idleness
             alone never reaps; see :func:`_ephemeral_orphan_predicate`.
+        ephemeral_orphan_samples: Consecutive low-util samples an
+            ORPHAN_REAP must rest on, counting the current probe (U22).
+            ``None`` (the default) means
+            :data:`_DEFAULT_EPHEMERAL_ORPHAN_SAMPLES` — the SAFE value, so
+            a caller that forgets the key does not silently revert to the
+            single-sample rule. Inert without ``stall_history``, i.e. in
+            ``kinoforge reap`` one-shot mode.
 
     Returns:
         One of the seven non-UNROUTABLE Verdict values:
@@ -607,6 +674,7 @@ def classify(
                 "stall_cpu_threshold": stall_cpu_threshold,
                 "heartbeat_interval_s": heartbeat_interval_s,
                 "ephemeral_orphan_age_s": ephemeral_orphan_age_s,
+                "ephemeral_orphan_samples": ephemeral_orphan_samples,
             },
             now,
             stall_history=stall_history,

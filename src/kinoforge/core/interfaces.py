@@ -155,6 +155,11 @@ class Lifecycle:
     # switch; Config.lifecycle() maps it from
     # compute.lifecycle.ephemeral_orphan_age_s when the feature is enabled.
     ephemeral_orphan_age_s: float | None = None
+    # U22 — consecutive low-util samples an ORPHAN_REAP rests on, counting the
+    # current probe. Only the sweeper daemon banks samples, so this is inert in
+    # ``kinoforge reap`` one-shot mode, which keeps the single-sample rule
+    # behind ``--apply --include-orphans`` and the age floor.
+    ephemeral_orphan_samples: int = 3
 
 
 @dataclass(frozen=True)

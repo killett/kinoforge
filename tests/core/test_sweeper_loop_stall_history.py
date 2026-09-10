@@ -207,3 +207,67 @@ def test_loop_reload_preserves_history(tmp_path: Any) -> None:
 
 
 _ = deque  # imported for type-annotation hint
+
+
+# ---------------------------------------------------------------------------
+# U22 — the deque must be long enough for the ORPHAN window too
+# ---------------------------------------------------------------------------
+
+
+def test_deque_holds_the_orphan_window_when_stall_reap_is_switched_off(
+    tmp_path: Any,
+) -> None:
+    """``stall_reap_enabled: false`` must not starve the orphan sample window.
+
+    The trap U22's fix walks into. ``maxlen`` was derived from
+    ``stall_window_s`` ALONE and collapsed to ``1`` whenever STALL_REAP was
+    off, so the ORPHAN_REAP window — which needs
+    ``ephemeral_orphan_samples - 1`` banked samples — could never fill and the
+    verdict became silently unreachable for every operator running with stall
+    reaping disabled. Silent unreachability is precisely the U20 failure: a
+    safety net that classifies LIVE forever while a pod bills.
+    """
+    thresholds = {
+        **_THR,
+        "stall_window_s": None,
+        "ephemeral_orphan_samples": 3,
+    }
+
+    def sweep_one(*args: Any, **kw: Any) -> SweepReport:
+        entry = _ephemeral_entry("pod-1", gpu=0.0, cpu=0.0, probe_state="ok")
+        return SweepReport(snapshot={"pod-1": (entry, Verdict.LIVE)}, actions=[])
+
+    loop = _make_loop(tmp_path, sweep_one, thresholds=thresholds)
+    for _ in range(5):
+        loop._tick_once()
+    history = loop._stall_history["pod-1"]
+    # Two banked samples are what a three-sample window (this tick + two)
+    # actually requires; anything shorter cannot ever satisfy the predicate.
+    assert history.maxlen is not None and history.maxlen >= 2
+    assert len(history) >= 2
+
+
+def test_a_wider_stall_window_still_wins_over_the_orphan_minimum(
+    tmp_path: Any,
+) -> None:
+    """The orphan count raises a FLOOR; it must not shorten the stall window.
+
+    Catches a fix that writes ``maxlen = orphan_samples - 1`` outright rather
+    than taking the max: with ``stall_window_s=120`` at a 30 s interval the
+    STALL_REAP path needs four banked samples, and truncating the deque to two
+    would break a verdict that is inside ``DEFAULT_APPLY_POLICY`` — i.e. one
+    that acts with no operator opt-in at all.
+    """
+
+    def sweep_one(*args: Any, **kw: Any) -> SweepReport:
+        entry = _ephemeral_entry("pod-1", gpu=0.0, cpu=0.0, probe_state="ok")
+        return SweepReport(snapshot={"pod-1": (entry, Verdict.LIVE)}, actions=[])
+
+    loop = _make_loop(
+        tmp_path,
+        sweep_one,
+        interval_s=30.0,
+        thresholds={**_THR, "ephemeral_orphan_samples": 2},
+    )
+    loop._tick_once()
+    assert loop._stall_history["pod-1"].maxlen == math.ceil(120.0 / 30.0)

@@ -18,6 +18,7 @@ and a fake util probe (a hand-built :class:`RuntimeProbe` fed through the real
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
@@ -272,6 +273,152 @@ def test_reason_states_the_age_and_the_utilisation_observed() -> None:
     assert "0.0" in reason
     assert "1.5" in reason
     assert "age" in reason.lower()
+
+
+# ---------------------------------------------------------------------------
+# U22 — the orphan verdict must rest on N consecutive samples, not one tick
+# ---------------------------------------------------------------------------
+#
+# ``_ephemeral_stall_predicate`` twenty lines away has always required
+# ``ceil(stall_window_s / heartbeat_interval_s)`` consecutive low samples, and
+# CLAUDE.md's own live-monitoring rule is the three-consecutive-probe form.
+# The orphan rule was the one place in the reaper that destroyed a pod on a
+# single reading, so a genuinely busy pod sampled between two compute-light
+# steps — a VAE decode boundary, an ffmpeg mux, a model swap, an artifact
+# upload — was reapable on that one unlucky tick.
+#
+# The sample window applies ONLY where samples exist. ``stall_history`` is
+# owned by ``SweeperLoop`` and is ``None`` in ``kinoforge reap`` one-shot mode,
+# which can never accumulate a history: that path keeps the single-sample
+# behaviour U28's 2026-09-09 live proof established, behind its two existing
+# opt-ins (``--apply --include-orphans``) and the one-hour age floor.
+
+
+def _history(*samples: tuple[float, float]) -> dict[str, deque[tuple[float, float]]]:
+    """A ``SweeperLoop``-shaped history holding ``samples`` for the pod."""
+    return {"eph-61ee7764": deque(samples, maxlen=8)}
+
+
+def test_a_single_idle_sample_does_not_reap_when_the_daemon_has_history() -> None:
+    """One idle tick is not evidence of an orphan once history is available.
+
+    This is U22 itself. Against the pre-fix predicate — which read only the
+    current tick's ``gpu_util_pct``/``cpu_pct`` and had no history parameter
+    at all — an old row idle on its FIRST observed sample returned
+    ORPHAN_REAP, so a pod caught mid-VAE-decode past the age gate was
+    destroyed with the operator's work still on it.
+    """
+    verdict = _classify(
+        _entry(gpu=0.0, cpu=0.0),
+        _at(2 * 3600.0),
+        stall_history=_history(),
+    )
+    assert verdict == Verdict.LIVE
+
+
+def test_three_consecutive_idle_samples_reap_the_orphan() -> None:
+    """Two idle samples in history plus an idle current tick → ORPHAN_REAP.
+
+    The default window is three consecutive samples COUNTING the current
+    probe, so the daemon needs two banked. Catches an off-by-one that demands
+    N samples in history (four in total): that reads as "the safety net is
+    just slow" while actually delaying every reap by a whole heartbeat, and
+    at ``stall_window_s`` maxlen it can defer the verdict forever.
+    """
+    verdict = _classify(
+        _entry(gpu=0.0, cpu=0.0),
+        _at(2 * 3600.0),
+        stall_history=_history((0.0, 1.0), (0.0, 2.0)),
+    )
+    assert verdict == Verdict.ORPHAN_REAP
+
+
+def test_a_busy_sample_inside_the_window_resets_the_evidence() -> None:
+    """The samples must be CONSECUTIVE — one busy reading breaks the run.
+
+    History reads [idle, busy] and the current tick is idle, so the pod was
+    working one heartbeat ago and this is a compute-light gap, not an orphan.
+    Catches ``any()`` written for ``all()``, and catches a predicate that
+    inspects the OLDEST end of the deque instead of the most recent samples.
+    """
+    verdict = _classify(
+        _entry(gpu=0.0, cpu=0.0),
+        _at(2 * 3600.0),
+        stall_history=_history((0.0, 1.0), (91.0, 44.0)),
+    )
+    assert verdict == Verdict.LIVE
+
+
+def test_a_busy_current_tick_survives_a_fully_idle_history() -> None:
+    """The current probe must still read idle, however idle the history is.
+
+    Catches the fix inverting its own guard — satisfying the window and then
+    reaping without re-checking the live reading, which would destroy a pod
+    that had just picked up work after a long idle stretch. That is the exact
+    pod the age floor plus idleness rule is built never to touch.
+    """
+    verdict = _classify(
+        _entry(gpu=93.0, cpu=41.0),
+        _at(2 * 3600.0),
+        stall_history=_history((0.0, 1.0), (0.0, 1.0), (0.0, 1.0)),
+    )
+    assert verdict == Verdict.LIVE
+
+
+def test_the_window_applies_only_where_samples_can_exist() -> None:
+    """``stall_history=None`` (one-shot CLI) reaps; an empty daemon history does not.
+
+    The contrast IS the design decision, so it is pinned in one assertion
+    pair. ``kinoforge reap`` runs a single tick in a fresh process and can
+    never bank a second sample, so requiring a window there would silently
+    turn ``reap --apply --include-orphans`` into a no-op — regressing exactly
+    the capability U28's $0.0406 live proof established on 2026-09-09, where
+    it reported ``acted on 1: 1 destroyed``. Catches a fix that keys the
+    window on the threshold alone and forgets which caller supplied history.
+    """
+    old_and_idle = _entry(gpu=0.0, cpu=0.0)
+    now = _at(2 * 3600.0)
+    assert _classify(old_and_idle, now, stall_history=None) == Verdict.ORPHAN_REAP
+    assert _classify(old_and_idle, now, stall_history=_history()) == Verdict.LIVE
+
+
+def test_a_sample_window_of_one_restores_the_single_sample_behaviour() -> None:
+    """``ephemeral_orphan_samples=1`` means the current probe alone suffices.
+
+    The escape hatch for an operator who wants the old semantics under the
+    daemon. Catches a ``max(1, N - 1)`` style floor that would still demand
+    one banked sample at N=1, leaving the documented value inert and the
+    daemon one heartbeat slower than its own config says.
+    """
+    verdict = _classify(
+        _entry(gpu=0.0, cpu=0.0),
+        _at(2 * 3600.0),
+        stall_history=_history(),
+        ephemeral_orphan_samples=1,
+    )
+    assert verdict == Verdict.ORPHAN_REAP
+
+
+def test_a_threshold_dict_that_omits_the_sample_count_fails_safe() -> None:
+    """A missing ``ephemeral_orphan_samples`` key defaults to the SAFE value.
+
+    This is the U20 defect shape restated: the daemon once forwarded a
+    truncated threshold dict and every util-aware verdict silently became
+    unreachable. Here the risk runs the other way — a forwarding site that
+    drops the key must not fall back to "one sample is enough", which would
+    reinstate U22 with no visible symptom. Catches
+    ``int(thresholds.get("ephemeral_orphan_samples") or 1)``.
+    """
+    thresholds = {k: v for k, v in _THRESHOLDS.items()}
+    assert "ephemeral_orphan_samples" not in thresholds
+    verdict = classify(
+        _entry(gpu=0.0, cpu=0.0),
+        set(),
+        _at(2 * 3600.0),
+        stall_history=_history(),
+        **thresholds,
+    )
+    assert verdict == Verdict.LIVE
 
 
 # ---------------------------------------------------------------------------
