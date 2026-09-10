@@ -337,6 +337,93 @@ def _nonnegative_float(value: str) -> float:
     return parsed
 
 
+#: The root flags :func:`main` consumes itself, after parse and before dispatch:
+#: state location, credential sources, and the two run-confidentiality switches.
+#: They are session-globals rather than per-subcommand options, which is why the
+#: root parser owns their real defaults and help text.
+_SESSION_GLOBAL_OPTIONS: frozenset[str] = frozenset(
+    {"--state-dir", "--env-file", "--vault", "--ephemeral", "--debug-show-secrets"}
+)
+
+
+def _propagate_session_globals(parser: argparse.ArgumentParser) -> None:
+    """Re-declare every session-global flag on every subparser, recursively.
+
+    Being root-only made the position an operator naturally reaches for — after
+    the subcommand, where that command's other options live — an argparse usage
+    dump: ``kinoforge batch --ephemeral …`` exited 2 (**U27**), and
+    ``kinoforge generate --vault …`` still would. Propagating the flags makes
+    both positions work everywhere, so there is no exception list to remember.
+    The exception list is what produced U27 in the first place: ``--ephemeral``
+    had been hand-added to ``grid`` alone, so ``batch`` was simply never on
+    anybody's list.
+
+    ``default=argparse.SUPPRESS`` is load-bearing, not tidiness. argparse parses
+    a subcommand into a FRESH namespace and then copies every key of it onto the
+    parent, so a subparser flag with an ordinary default silently CLOBBERS a
+    root-set value. That mechanism has cost real money twice: **U11** (``grid``
+    re-declared ``--ephemeral``, so ``kinoforge --ephemeral grid …`` ran
+    non-ephemerally while reporting success) and **U29** (``batch``
+    re-declared ``--env-file``, so a batch run booked GPUs against the default
+    credentials instead of the named ones). With SUPPRESS the key is absent
+    unless the flag was actually given after the subcommand, so the root value
+    survives and the value nearest the work wins.
+
+    Recursion, not a walk of leaf subparsers only: ``pod`` and ``sweeper`` are
+    intermediate nodes, and a leaf-only pass would leave
+    ``kinoforge pod --ephemeral lora ls …`` still exiting 2 while every leaf
+    looked covered.
+
+    A subparser that already declares one of these options keeps its own — the
+    alternative is an ``ArgumentError`` on a duplicate option string, which
+    would turn a future hand-added flag into an import-time crash rather than a
+    harmless no-op here.
+
+    This is the only production code in the tree that reaches into argparse
+    internals (``_actions``, ``_SubParsersAction``), and it does so because
+    argparse exposes no public way to enumerate subparsers — there is no
+    supported alternative, only a hand-maintained list, which is the thing that
+    failed. Both names have been stable for the life of argparse, and the
+    matrix test in ``tests/cli/test_session_global_flag_positions.py`` walks the
+    tree the same way, so a Python release that moved them would fail at test
+    COLLECTION rather than shipping a parser that silently stopped propagating.
+
+    Args:
+        parser: The fully-populated root parser, mutated in place. Call this
+            after every subparser exists.
+    """
+    roots = [
+        action
+        for action in parser._actions
+        if _SESSION_GLOBAL_OPTIONS.intersection(action.option_strings)
+    ]
+
+    def apply(node: argparse.ArgumentParser) -> None:
+        for sub_action in node._actions:
+            if not isinstance(sub_action, argparse._SubParsersAction):
+                continue
+            for child in sub_action.choices.values():
+                taken = {
+                    opt for action in child._actions for opt in action.option_strings
+                }
+                for root_action in roots:
+                    if taken.intersection(root_action.option_strings):
+                        continue
+                    kwargs: dict[str, Any] = {
+                        "dest": root_action.dest,
+                        "default": argparse.SUPPRESS,
+                        "help": "session-global; see 'kinoforge --help'",
+                    }
+                    if root_action.nargs == 0:  # a store_true switch
+                        kwargs["action"] = "store_true"
+                    else:
+                        kwargs["metavar"] = root_action.metavar
+                    child.add_argument(*root_action.option_strings, **kwargs)
+                apply(child)
+
+    apply(parser)
+
+
 def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentParser:
     """Build and return the top-level ArgumentParser.
 
@@ -832,17 +919,10 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     p_batch.add_argument("--manifest", required=True, metavar="PATH")
     p_batch.add_argument("--batch-id", default=None, metavar="ID")
     p_batch.add_argument("--concurrent", type=int, default=None, metavar="N")
-    p_batch.add_argument(
-        "--env-file",
-        # SUPPRESS, not the implicit None (U29): argparse parses a subcommand
-        # into a FRESH namespace and copies every key onto the parent, so an
-        # implicit default here silently overwrote a root-set `--env-file` and
-        # `main()` loaded the DEFAULT secrets file instead — a batch run
-        # against the wrong credentials or provider account, with no warning.
-        # Same mechanism as the p_grid/--ephemeral half of U11.
-        default=argparse.SUPPRESS,
-        metavar="PATH",
-    )
+    # `--env-file` is NOT declared here any more: `_propagate_session_globals`
+    # supplies it (and every other session-global) to every subparser with
+    # `default=argparse.SUPPRESS`. That was U29's remedy, applied by hand to
+    # this one subparser; it is now the rule for all of them.
     p_batch.add_argument(
         "--stream-format",
         choices=("human", "jsonl", "none"),
@@ -925,20 +1005,11 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         dest="dry_run",
         help="resolve + plan, no compute",
     )
-    p_grid.add_argument(
-        "--ephemeral",
-        action="store_true",
-        # SUPPRESS, not the implicit False: argparse parses a subcommand into
-        # a FRESH namespace and then copies every key onto the parent, so an
-        # implicit default here would overwrite a root-set `--ephemeral True`
-        # and make `kinoforge --ephemeral grid ...` run non-ephemeral —
-        # U11's leak through the other door. With SUPPRESS the key is absent
-        # unless the flag is actually given after `grid`, so the root value
-        # survives and either position works.
-        default=argparse.SUPPRESS,
-        help="pass-through to each underlying generate",
-    )
+    # `--ephemeral` is NOT declared here any more: `_propagate_session_globals`
+    # supplies it to every subparser with `default=argparse.SUPPRESS`. That was
+    # U11's remedy, applied by hand to this one subparser; it is now the rule.
 
+    _propagate_session_globals(parser)
     return parser
 
 
