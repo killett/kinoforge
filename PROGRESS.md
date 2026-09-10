@@ -449,18 +449,17 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site.
 
-**STATUS INDEX (rebuilt 2026-09-07, Task 7; U18 row updated + U26 filed 2026-09-08, Task 3; U17
-fixed 2026-09-08, Task 4, then hardened the same day in a round-2 fix; U21 fixed 2026-09-09, Task 5;
-U23 + U18 LIVE-PROVEN and U11 LIVE-DISPROVEN 2026-09-09, Task 6, $0.07 total; U11 REGRESSION FIXED
-(offline only) + U27/U28/U29 filed and U29 then FIXED on a controller ruling, 2026-09-09, Task 2
-regression fix, $0.00; U11 then LIVE-RE-PROVEN 2026-09-09, Task 6 cell A2 re-run, $0.08; U26 FIXED,
-OFFLINE-PROVEN 2026-09-09, whole-branch review Finding 1, commit `a8cbb54c`
-— this is the current state; the paragraphs below it are the campaign's running commentary and are
-dated, not authoritative).**
-Twenty-nine items, U1-U29. **Fifteen are fixed** (U4, U7, U8, U9, U11, U12, U14, U15, U17, U18,
-U20, U21, U23, U26, U29) — **plus U3, U27 and U28, fixed 2026-09-09, so eighteen** — **two are
-partly fixed** (U5, U10), **nine are open** (U1, U2, U6,
-U13, U16, U19, U22, U24, U25). **U11 went OPEN → FIXED again on 2026-09-09**: it
+**STATUS INDEX (current as of 2026-09-10. Provenance, newest first: U28 fixed + LIVE-PROVEN
+2026-09-09 (`f1e7f1ef`, $0.0406); U3 fixed + LIVE-PROVEN and U27 fixed 2026-09-09
+(`e033b170` / `a08b7de6`, $0.055); U26 fixed 2026-09-09 (`a8cbb54c`); U11 LIVE-RE-PROVEN and
+U18 LIVE-PROVEN and U21 fixed 2026-09-09; U29 filed and fixed 2026-09-09; U17 fixed 2026-09-08.
+This table is authoritative — every paragraph BELOW it is dated campaign commentary and is not.)**
+
+Twenty-nine items, U1-U29. **Eighteen are fixed** (U3, U4, U7, U8, U9, U11, U12, U14, U15, U17,
+U18, U20, U21, U23, U26, U27, U28, U29), **two are partly fixed** (U5, U10), **nine are open**
+(U1, U2, U6, U13, U16, U19, U22, U24, U25).
+
+**U11 went OPEN → FIXED again on 2026-09-09**: it
 was moved back to OPEN by Task 6's live disproof, and the regression that disproof found is now
 fixed in `b9b4fcd6`. That fix is **LIVE-PROVEN as of 2026-09-09** — the owed A2 re-run booked two
 real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge-eph-<8hex>` apps
@@ -2629,7 +2628,36 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-09-09 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-10 — read this, then STOP; below is history)
+
+### NEXT ACTION (single, current as of 2026-09-10)
+
+**Do U22 — make the ephemeral orphan reap require N consecutive idle samples instead of one.**
+Offline, ~$0. Its entry below carries the symptom, the sibling that already does it right
+(`_ephemeral_stall_predicate`, twenty lines away, uses `stall_history` over `stall_window_s`), and
+a $0 reproducer.
+
+**Why U22 and not U16 — this is the part that is NOT derivable from U22's own entry.** U22 was
+effectively DORMANT on ephemeral rows until 2026-09-09. The predicate never received a utilisation
+reading at all: the index row's `endpoints` was empty, so `_probe_with_cache` never primed
+`note_endpoints`, so the predicate was conservative-on-ignorance and returned `LIVE`. That is
+**U28**, and fixing it turned the readings on. The very same live proof that closed U28 then
+destroyed a real pod on `ORPHAN_REAP` from a **single** 0.0 % sample — correctly, that pod was
+genuinely orphaned, but it is the first live exercise of the one-sample path. U28 promoted U22
+from theoretical to reachable. Anyone picking work off item counts alone would miss that.
+
+**Guards that make this urgent-but-not-on-fire, so it is not overstated:** `ORPHAN_REAP` sits
+outside `DEFAULT_APPLY_POLICY` (it needs `--include-orphans` to bite), the age floor is real, and
+both GPU and CPU must read idle. Those are mitigations, not a fix — see U22's entry.
+
+**Runner-up:** U16 (RunPod's reserved name is not a usable pod id). U28 helped it — the row now
+carries the real id and endpoints once the create returns — but did NOT close it, because the
+pre-create window still keys the row by NAME and RunPod's `destroy_instance` / `probe_runtime`
+both take RunPod's own id. Its entry has file:line for all three sub-cases.
+
+**Do NOT trust any "cheapest remaining wins" line further down this file** — the 2026-09-09 one is
+struck through and marked superseded, and it names U27, which is fixed.
+
 
 **U28 CLOSED — FIXED and LIVE-PROVEN 2026-09-09 for $0.0406.** The `--ephemeral` index row now
 carries the pod's real id and endpoints from the moment the pod exists, instead of only after the
@@ -2819,9 +2847,10 @@ ledger and index, not the ledger alone) and U21 (wrap `provision`'s post-create 
 destroy-on-error `try`). **Both were done in `fix/ephemeral-and-recovery-gaps` — see the new
 paragraph at the top of this snapshot.** U26 (`sweep()`'s ephemeral union does not honour `--id`
 scoping) was ALSO fixed, in the same branch's whole-branch-review fix wave (Finding 1, 2026-09-09,
-`a8cbb54c`) — see its own entry above. Current cheapest remaining wins (2026-09-09): U27
-(`batch --ephemeral` argparse position — needs a design decision first, see its entry), and
-U16/U22/U19, all still open and unchanged by this branch.
+`a8cbb54c`) — see its own entry above. ~~Current cheapest remaining wins (2026-09-09): U27
+… and U16/U22/U19~~ — **SUPERSEDED 2026-09-10: U27 and U3 were fixed on 2026-09-09 and U28 on the
+same day. Do NOT pick work from this line; the NEXT ACTION block at the top of the RESUME SNAPSHOT
+is the current one.**
 
 **Modal command matrix CLOSED (2026-09-05/06, $3.25 of $20; FlashVSR re-proven 2026-09-06 after
 the `av` pin).** Every `kinoforge` subcommand run against the Modal provider, one verdict per cell:
