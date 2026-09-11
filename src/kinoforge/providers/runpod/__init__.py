@@ -805,6 +805,56 @@ class RunPodProvider(ComputeProvider):
         )
         _unwrap_graphql_response(resp, context=f"stop pod {instance_id}")
 
+    def _pod_ids_matching(self, identifier: str) -> list[str]:
+        """Return the pod ids ``identifier`` could name (U16).
+
+        RunPod's create mutation returns RunPod's OWN id, which cannot exist
+        before the create returns. Under ``--ephemeral`` the controller mints
+        the pod's NAME instead (spec A2), so for the whole multi-minute cold
+        boot the only durable handle on a billing pod is a string that neither
+        ``podTerminate`` nor ``pod(input:{podId:...})`` accepts. ``tags["name"]``
+        is already populated on every listed pod, so the lookup is one query
+        that already exists.
+
+        An **id match wins over a namesake**, and it wins globally rather than
+        by list order: RunPod does not stop an operator naming one pod after
+        another pod's id, and letting a name shadow a real id would land a
+        destroy on the wrong resource.
+
+        Deliberately NOT built on :meth:`find_instance_by_tag`, which already
+        matches ``tags["name"]`` but filters its listing path to ``ready``
+        instances. The window this exists for IS the cold boot, where the pod
+        has not reached ``ready`` — reusing it would produce a resolver that
+        silently misses every pod it was written to find.
+
+        Never raises. An unreadable listing returns the identifier unchanged,
+        so a lookup added for a narrow recovery case can never fail an
+        operation that works today — the U17 round-2 lesson.
+
+        Args:
+            identifier: A RunPod pod id, or the reserved ephemeral pod name.
+
+        Returns:
+            ``[identifier]`` when it is a live pod's id or the listing is
+            unreadable; every pod id carrying it as a NAME otherwise, which is
+            empty when nothing matches (an already-destroyed pod looks exactly
+            like a typo, and callers must keep treating it as today).
+        """
+        try:
+            resp = self._http_post(self._base_url, {"query": _LIST_PODS_QUERY})
+            data = _unwrap_graphql_response(resp, context="list pods")
+        except Exception:  # noqa: BLE001 — an unreadable listing is not a fault here
+            return [identifier]
+        pods: list[dict[str, Any]] = (data.get("myself") or {}).get("pods") or []
+        by_name: list[str] = []
+        for pod in pods:
+            pod_id = str(pod.get("id") or "")
+            if pod_id == identifier:
+                return [identifier]
+            if str(pod.get("name") or "") == identifier and pod_id:
+                by_name.append(pod_id)
+        return by_name
+
     def destroy_instance(self, instance_id: str) -> None:
         """Terminate a pod and poll until it is confirmed gone.
 
@@ -826,27 +876,48 @@ class RunPodProvider(ComputeProvider):
                 :data:`_MAX_DESTROY_POLLS` attempts (terminate +
                 polls all returned a populated pod).
         """
+        # U16 — accept the reserved ephemeral pod NAME as well as RunPod's id.
+        # Both the terminate AND the confirmation poll follow the resolved
+        # target: a half-fix that resolved only the terminate would still poll
+        # `pod(input:{podId: <name>})`, get `data.pod = null` for a string
+        # RunPod never knew, and report the pod confirmed gone on the first
+        # poll no matter what the terminate did. That false success is what
+        # this path did for every by-name destroy before the fix.
+        candidates = self._pod_ids_matching(instance_id)
+        if len(candidates) > 1:
+            raise TeardownError(
+                f"RunPod pod name {instance_id!r} is ambiguous: it names "
+                f"{len(candidates)} live pods ({', '.join(sorted(candidates))}). "
+                "Destroy by pod id instead — guessing would terminate an "
+                "arbitrary one of them and report success."
+            )
+        # An empty result is NOT an error: an already-destroyed pod is absent
+        # from the listing for the same reason a typo is, and every --no-reuse
+        # teardown and reaper act path ends in a destroy that must be safe to
+        # repeat. Fall through on the identifier as given, exactly as before.
+        target = candidates[0] if candidates else instance_id
         # Terminate — if the GraphQL endpoint replies with errors, raise
         # immediately; do NOT enter the poll loop where errors-only responses
         # are indistinguishable from "pod gone".
         terminate_resp = self._http_post(
             self._base_url,
-            {"query": _terminate_pod_mutation(instance_id)},
+            {"query": _terminate_pod_mutation(target)},
         )
-        _unwrap_graphql_response(terminate_resp, context=f"terminate {instance_id}")
+        _unwrap_graphql_response(terminate_resp, context=f"terminate {target}")
         # Poll until gone or cap exceeded.
         for _ in range(_MAX_DESTROY_POLLS):
-            resp = self._http_post(
-                self._base_url, {"query": _get_pod_query(instance_id)}
-            )
-            data = _unwrap_graphql_response(resp, context=f"get pod {instance_id}")
+            resp = self._http_post(self._base_url, {"query": _get_pod_query(target)})
+            data = _unwrap_graphql_response(resp, context=f"get pod {target}")
             pod = data.get("pod")
             if not pod:
+                # Drop both keys: the caller may hold the name while the create
+                # registry is keyed by the id the create returned.
                 self._created_instances.pop(instance_id, None)
+                self._created_instances.pop(target, None)
                 return  # confirmed gone
             self._sleep(_DESTROY_POLL_INTERVAL)
         raise TeardownError(
-            f"RunPod pod {instance_id!r} not confirmed destroyed after "
+            f"RunPod pod {target!r} not confirmed destroyed after "
             f"{_MAX_DESTROY_POLLS} polls"
         )
 
@@ -921,6 +992,21 @@ class RunPodProvider(ComputeProvider):
         if endpoint is None:
             return None
         found, snapshot = endpoint.probe(pod_id)
+        if not found:
+            # U16 — during an --ephemeral cold boot the caller's id IS the pod
+            # NAME (spec A2), which `pod(input:{podId:...})` cannot resolve, so
+            # a live billing pod reads exactly like a phantom and the reaper
+            # can GC_404 away the only handle on it. Retry once against the id
+            # the listing gives that name. Deliberately AFTER the 404 and not
+            # before it: the sweeper probes every row on every heartbeat, and
+            # an unconditional listing would add a GraphQL read per pod per
+            # tick to serve a fallback that only matters while a pod is
+            # booting. An ambiguous name resolves to nothing here rather than
+            # raising — unlike a destroy there is no action to get wrong, and
+            # `found=False` is the conservative answer.
+            candidates = self._pod_ids_matching(pod_id)
+            if len(candidates) == 1 and candidates[0] != pod_id:
+                found, snapshot = endpoint.probe(candidates[0])
         now_local = datetime.now().isoformat()
         if not found:
             return RuntimeProbe(

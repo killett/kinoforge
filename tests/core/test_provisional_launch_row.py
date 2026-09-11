@@ -1420,3 +1420,49 @@ def test_deploy_session_leaves_one_real_row_for_a_same_key_provider(
     assert "kf_launch_phase" not in entry["tags"], (
         "the provisional stub outlived the real row — the collapse kept the wrong one"
     )
+
+
+def test_the_ephemeral_provisional_row_never_reaches_disk(tmp_path: Path) -> None:
+    """Under ``--ephemeral`` the pre-launch LEDGER row is diverted, not written.
+
+    This pins the retraction of U16's fourth sub-case. That filing said the
+    provisional row is keyed by ``run_id`` while an ephemeral RunPod pod is
+    named ``kinoforge-<hex>``, so ``cli/_reconcile._adopt_or_age_out`` could
+    never match it and "aged out" would not imply "no pod existed" — and it
+    proposed routing the row's id through ``EphemeralSession.resource_name``
+    as the cheap half of the item.
+
+    The premise does not hold. STRICT_POLICY sets ``ledger_record=False``, so
+    ``Ledger._write_entries`` stashes the payload on the session's
+    ``in_memory_ledger`` instead of the store. A fresh process — which is the
+    only thing that runs the reconciler — sees no row at all, so there is
+    nothing to mis-match and nothing to age out. The durable handle on that
+    path is the ``EphemeralIndex`` row, which U8 already keys by
+    ``resource_name``.
+
+    Bug this catches: making the diversion conditional, or writing the
+    provisional row through a path that bypasses it. Either would put a
+    ``run_id``-keyed row carrying the local timestamp and the subcommand on
+    disk for a run whose whole contract is that neither ever persists — a
+    STRICT_POLICY leak, and it would simultaneously resurrect the unmatchable
+    row the retracted sub-case describes.
+    """
+    from kinoforge.core.ephemeral import EphemeralSession
+
+    store = LocalArtifactStore(tmp_path)
+    with EphemeralSession(enabled=True) as session:
+        written = orchestrator._record_provisional_row(
+            ledger=Ledger(store=store, run_id="generate-20260910-120000-abc"),
+            run_id="generate-20260910-120000-abc",
+            provider_name="runpod",
+            tags={},
+            max_age_s=3600,
+            now=1.0e9,
+        )
+        assert written == "generate-20260910-120000-abc"
+        assert list(session.in_memory_ledger) == ["generate-20260910-120000-abc"]
+
+    assert Ledger(store=LocalArtifactStore(tmp_path)).entries() == [], (
+        "an --ephemeral provisional row reached disk: STRICT_POLICY's ledger "
+        "diversion is broken, and the run_id is now durable"
+    )

@@ -93,6 +93,16 @@ def _is_catalog_query(body: dict[str, Any]) -> bool:
     return "gpuTypes" in str(body.get("query", ""))
 
 
+def _is_list_pods_query(body: dict[str, Any]) -> bool:
+    """True when *body* is the pod listing, not a terminate / poll / create.
+
+    U16: ``destroy_instance`` now resolves its identifier against the listing
+    before it terminates, so the listing joins the catalog query as a
+    preliminary read these payload assertions are not about.
+    """
+    return "myself { pods" in str(body.get("query", ""))
+
+
 class HttpPostSpy:
     """Records every (url, body) call; returns the configured response.
 
@@ -149,6 +159,11 @@ def _create_calls(
     compute-seam S4: create_instance enumerates before it creates, so the
     create body is no longer ``calls[0]``. Filtering by shape rather than by
     index keeps these assertions about the PAYLOAD, which is what they are for.
+
+    Deliberately does NOT drop the pod listing, which U16 added ahead of
+    ``destroy_instance``: two tests below use this helper to inspect that very
+    query. The destroy test that needs it dropped filters locally with
+    :func:`_is_list_pods_query`.
     """
     return [(u, b) for u, b in spy.calls if not _is_catalog_query(b)]
 
@@ -958,6 +973,10 @@ def test_destroy_instance_raises_on_terminate_graphql_errors() -> None:
     sleep = SleepSpy()
     http_post = MultiResponseHttpPostSpy(
         responses=[
+            # U16: destroy resolves its identifier against the listing first.
+            # An empty listing leaves the identifier untouched, which is the
+            # already-gone / plain-pod-id path this test is about.
+            {"data": {"myself": {"pods": []}}},
             {"errors": [{"message": "Unauthorized"}], "data": None},  # terminate
         ]
     )
@@ -967,9 +986,15 @@ def test_destroy_instance_raises_on_terminate_graphql_errors() -> None:
     # Pin terminate-not-TeardownError so the test pins the *new* contract:
     # we must surface the GraphQL failure, not mask it as a poll timeout.
     assert "terminate" in str(excinfo.value).lower()
-    # Only one POST should have happened — no polling on a failed terminate.
-    assert len(_create_calls(http_post)) == 1, (
-        f"expected 1 POST (terminate only), got {len(http_post.calls)} "
+    # Only one mutation POST should have happened — no polling on a failed
+    # terminate. U16's identifier-resolution read is dropped here: it is a
+    # preliminary lookup, not a poll, and counting it would make this
+    # assertion about call arithmetic rather than about the poll loop.
+    mutations = [
+        (u, b) for u, b in _create_calls(http_post) if not _is_list_pods_query(b)
+    ]
+    assert len(mutations) == 1, (
+        f"expected 1 POST (terminate only), got {len(mutations)} "
         f"(polls fired after failed terminate)"
     )
 

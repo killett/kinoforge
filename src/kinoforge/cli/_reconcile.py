@@ -411,14 +411,22 @@ def _adopt_or_age_out(
     and the row is forgotten before it haunts ``list`` forever. Adoption is
     therefore confined to genuinely ABANDONED launches, which is what it is for.
 
-    Known non-matching shape: under
+    Known non-matching shape, and why it does not bite: under
     :class:`~kinoforge.core.ephemeral.EphemeralSession` with
     ``pod_name_includes_alias=False`` the RunPod pod is named
     ``kinoforge-<hex>`` rather than the ``run_id`` (see
-    ``providers/runpod/__init__.py``), so an ephemeral launching row can never be
-    matched and is aged out instead. That is the correct outcome for a session
-    whose pod is destroyed at exit anyway, but it means "aged out" does not imply
-    "no pod existed" on that path.
+    ``providers/runpod/__init__.py``), so an ephemeral launching row could never
+    be matched here. **It is never seen here either.** STRICT_POLICY sets
+    ``ledger_record=False``, so ``Ledger._write_entries`` diverts the
+    provisional row to the session's in-memory mirror and it never reaches the
+    store — and this function only ever runs in a later, fresh process. There is
+    no row to mis-match and none to age out. The durable handle on that path is
+    the ``EphemeralIndex`` row, which is already keyed by
+    ``EphemeralSession.resource_name``. Pinned by
+    ``tests/core/test_provisional_launch_row.py::
+    test_the_ephemeral_provisional_row_never_reaches_disk``; recorded because an
+    earlier reading of this paragraph (U16's fourth sub-case) proposed a fix for
+    a path that does not exist.
 
     Anything uncertain — an unreadable provider, a malformed ``created_at``, a
     failing ``forget`` — leaves the row exactly where it is.

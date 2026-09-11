@@ -449,16 +449,17 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site.
 
-**STATUS INDEX (current as of 2026-09-10. Provenance, newest first: U22 fixed 2026-09-10
+**STATUS INDEX (current as of 2026-09-10. Provenance, newest first: U16 fixed 2026-09-10
+(`__U16SHA__`, $0.00 offline, live contract check owed); U22 fixed 2026-09-10
 (`b6646e37`, $0.00 offline); U28 fixed + LIVE-PROVEN
 2026-09-09 (`f1e7f1ef`, $0.0406); U3 fixed + LIVE-PROVEN and U27 fixed 2026-09-09
 (`e033b170` / `a08b7de6`, $0.055); U26 fixed 2026-09-09 (`a8cbb54c`); U11 LIVE-RE-PROVEN and
 U18 LIVE-PROVEN and U21 fixed 2026-09-09; U29 filed and fixed 2026-09-09; U17 fixed 2026-09-08.
 This table is authoritative — every paragraph BELOW it is dated campaign commentary and is not.)**
 
-Twenty-nine items, U1-U29. **Nineteen are fixed** (U3, U4, U7, U8, U9, U11, U12, U14, U15, U17,
-U18, U20, U21, U22, U23, U26, U27, U28, U29), **two are partly fixed** (U5, U10), **eight are
-open** (U1, U2, U6, U13, U16, U19, U24, U25).
+Twenty-nine items, U1-U29. **Twenty are fixed** (U3, U4, U7, U8, U9, U11, U12, U14, U15, U16,
+U17, U18, U20, U21, U22, U23, U26, U27, U28, U29), **two are partly fixed** (U5, U10), **seven are
+open** (U1, U2, U6, U13, U19, U24, U25).
 
 **U11 went OPEN → FIXED again on 2026-09-09**: it
 was moved back to OPEN by Task 6's live disproof, and the regression that disproof found is now
@@ -475,7 +476,7 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | U5 | PARTLY FIXED | `c08c3cce` corrected the help text; wiring `vault.positive_prompt` into prompt resolution is still open, and so is failing an empty prompt BEFORE a pod is billed |
 | U6 | OPEN | `kinoforge deploy` renders no provision; dead on Modal, books a portless pod on RunPod |
 | U7 | FIXED, LIVE-PROVEN IN PART | `8191bd1b`; three SIGKILLed provisions each left a durable row naming the app (2026-09-07, $0.00). NOT live-proven: `destroy --id` on a mid-create app — that gap is **U17**, since FIXED offline-proven-only in `8069f376`+`45f4254c`; a live re-proof of the exact mid-create window is a separate follow-up. Teardown when the readiness poll or the weight download fails is now covered offline by **U21**'s fix, not live-proven |
-| U8 | FIXED ON MODAL, LIVE-PROVEN | `9d34d008` + `8403a71c`; index row readable 2.5 s into a live run, pod still reapable after SIGKILL (~$0.06). RunPod half stays PARTIAL under **U16** and is NOT upgraded by the Modal proof |
+| U8 | FIXED ON MODAL, LIVE-PROVEN | `9d34d008` + `8403a71c`; index row readable 2.5 s into a live run, pod still reapable after SIGKILL (~$0.06). RunPod half stayed PARTIAL under **U16**, now FIXED offline 2026-09-10 — the name is accepted by `destroy_instance` and `probe_runtime`; the Modal proof never upgraded it and neither does this, which is still offline-only |
 | U9 | FIXED, LIVE-PROVEN | `e582bd0f`; the daemon reaped an idle ephemeral pod at `age=119s idle on probe gpu_util=0.0% cpu=0.0%` (~$0.03). Two boundaries, both filed rather than hidden: a mid-boot row has `endpoints: {}` so the probe returns nulls and the pod stays LIVE (U3's blast radius, since closed for the ephemeral index row by **U28**), and the predicate acts on ONE probe sample (**U22**, FIXED 2026-09-10 — the daemon now needs three consecutive idle probes, so a re-run of this cell reaps on a LATER tick than the 2 s it did on 2026-09-07; that re-run is the live proof U22 still owes) |
 | U10 | FIXED ON THE GRACEFUL PATH | `7d535503`, hardened by `9ae52274`. A daemon that is SIGKILLed still strands its row, and `sweeper status` / `metrics` still ignore the `--interval-s` override. Both recorded in the entry; neither re-opened |
 | U11 | FIXED, LIVE-PROVEN 2026-09-09 (re-proof after the same-day live disproof) | `0dfe90a9` + `7ee50a04` + `fdc4f388` (Task 2, 2026-09-08) forward `args.ephemeral` from `_cmd_grid` through `run_grid`/`_run_group`/`_run_one_cell` into every generate-mode cell's argv and refuse a `lora_swap:` group under `--ephemeral` with a clean stderr line + exit 2 — but they put the flag in a position `kinoforge generate` cannot parse, which **Task 6's live A2 disproved on 2026-09-09** (every cell died in 0.75 s on `kinoforge: error: unrecognized arguments: --ephemeral`; $0.00, no pod created; full record kept in the detailed entry and in the Task 6 commentary below — do not read this row as erasing it). **Fixed in `b9b4fcd6` (2026-09-09).** `_build_generate_cmd` now emits `--ephemeral` in ROOT position — `pixi run kinoforge --ephemeral generate …`, before the subcommand — rather than appending it after `generate`; the flag is a session-global consumed by `main()` before dispatch, so the root parser is its only correct home. The same commit fixes a SECOND, previously unrecorded instance of U11's leak reached through the other door: `p_grid` re-declared `--ephemeral` with an implicit `default=False`, and argparse copies every key of a subparser's fresh namespace onto the parent, so `kinoforge --ephemeral grid …` parsed to `args.ephemeral=False` and ran NON-ephemeral while reporting success (confirmed: `parse_args(['--ephemeral','grid','--spec','x']).ephemeral` → `False`); now `default=argparse.SUPPRESS`, so both flag positions work. **The test gap that shipped the regression is closed**: three new tests feed the argv `_build_generate_cmd` / `_build_swap_generate_cmd` actually build through the real `_build_parser().parse_args()` (which errors on any leftover token) and assert the resulting `args.ephemeral` / `args.cmd` / `args.attach_pod`, replacing the argv-MEMBERSHIP assertions that were blind to flag position; a fourth pins both `--ephemeral` positions around `grid`. RED was confirmed against the pre-fix code with the real live failure (`SystemExit: 2`, `kinoforge: error: unrecognized arguments: --ephemeral`). Offline proof: `pixi run pytest tests/core tests/cli -q` → 2256 passed. **LIVE-RE-PROVEN 2026-09-09 (Task 6, cell A2 re-run, $0.08 — two Modal A10s @ $1.10/hr, 148 s + 110 s = 258 s).** `pixi run -e live-modal kinoforge --ephemeral grid --spec <1x2 spec outside the repo> --out <path> --max-parallel-groups 1` — deliberately the ROOT flag position, i.e. the door the `p_grid` half of this defect had been silently dropping. Both halves held: (a) the child argv observed live in `ps` reads `python -m kinoforge --ephemeral generate --config … --no-reuse`, with `--ephemeral` in root position, and the cell process survived past argparse instead of dying in 0.75 s; (b) the run reached `[grid summary] composed mp4 → …` (status `full`, exit 0), so the root-position flag was NOT dropped by `p_grid`'s namespace copy. **Provider-side naming evidence** — `modal app list` from fresh processes during the run: `kinoforge-eph-2edbbd45` (created 01:08:01, stopped 01:10:29) and `kinoforge-eph-c89c0418` (created 01:10:32, stopped 01:12:22). Both are opaque 8-hex: no run id (the grid ids were `grid_20260909-010759_12fe6ccc__cell0` / `__cell1`), no local timestamp, no workload shape. That is exactly what A2's criterion asks for, now proven through `grid` itself rather than borrowed from `batch`. The ephemeral index carried exactly one row at a time (`eph-2edbbd45`, then `eph-c89c0418`), the ledger stayed `{"entries": []}` throughout, and both rows were gone at end of run. **Both flag positions were also confirmed live at $0.00**, via the root-only `--debug-show-secrets` mutual exclusion, which fires in `main()` after parse and before any dispatch: `--debug-show-secrets grid … --ephemeral` → exit 2 mutex error, `--ephemeral --debug-show-secrets grid …` → exit 2 mutex error, and the control with no `--ephemeral` anywhere → exit 0 `[grid dry-run] 2 cells`. So the sub-position door is proven too, without a second pair of pods. Frame-QA (mandatory) on both cell clips and the composed 960x480 grid: PASS with the usual soft flags — see the Task 6 A2 status update below. Teardown verified from a fresh process after the orchestrator exited: both `kinoforge list` lines, 0 index rows, empty ledger, `modal container list` → `Active Containers in environment: None`, no `deployed` app. **⚠️ One thing did not hold:** no `gpuUtilPercent` reading was obtainable during this cell — `grid` captures each cell subprocess's stderr and writes it only at the end, so the `.modal.run` URL the A1 util probe scraped from a run log does not exist live for a grid cell, and U3 still blocks resolving it from the provider. The 75 s polling loop therefore fell back to a provider-side liveness signal (`modal app list` `state`/`tasks`, never `est_spend`). No new item is filed for this: it is the already-open **U3** (endpoint URL unreachable from a fresh process) meeting `grid`'s deferred stderr capture, and it is recorded on U3's row rather than as a thirtieth item. Follow-ups **U24**, **U25** still stand; the audit behind this fix filed **U27**, **U28** and **U29** (U29 then fixed the same day in `424e52d1`) |
@@ -483,7 +484,7 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | U13 | OPEN | the CLI hangs after `UpscaleFailed`. Holder unidentified; the original suspected site was retracted. A $0 offline first step is written into the entry |
 | U14 | FIXED, LIVE-PROVEN | `49394b1d`, with a review-caught regression corrected in `b00a53d1`. A second upscale attached to the warm A100 with no `✓ App deployed` ($0.12). The vocabulary gap the correction sidesteps is **U19** |
 | U15 | FIXED, LIVE-PROVEN | `ccd4c5e7`; a fresh process attached to a warm pod via `generate --attach-pod` in 38 s with no cold boot (~$0.07). **T2-02's own `upscale` cell has still not been re-run** — the fix is provider- and command-agnostic, so that is inference, not demonstration |
-| U16 | OPEN | the ephemeral launch row is only a PARTIAL handle on RunPod (good name, unusable id). Spun out of U8 |
+| U16 | FIXED, OFFLINE-PROVEN 2026-09-10 | `RunPodProvider._pod_ids_matching` resolves an identifier against the pod listing (`_LIST_PODS_QUERY` already selects `name`; `_pod_to_instance` already tags it), and `destroy_instance` + `probe_runtime` both consume it — the shape U17 used for Modal. **The filing understated the destroy defect:** `destroy --id kinoforge-<8hex>` did not "fail" — the terminate went out with the NAME as `podId`, the poll asked about that same unknown string, got `data.pod = null` and read it as proof of death, so destroy returned CLEANLY while the pod billed on. A false success, worse than the filed failure, and why the fix resolves the identifier for the POLL as well as the terminate. **Sub-case 4 is RETRACTED, not fixed:** under STRICT_POLICY `ledger_record=False` diverts the provisional ledger row to `session.in_memory_ledger`, so it never reaches disk and `cli/_reconcile` (fresh process only) never sees it — nothing to mis-match, nothing to age out. Verified by running it, then pinned by a test and written into `_adopt_or_age_out`'s docstring. **Declined two hazards:** `find_instance_by_tag` was NOT reused (its listing path filters to `status == "ready"` and the window U16 exists for is the cold boot — it would have missed every pod it was written to find; RED confirmed by injecting the filter), and an ambiguous name raises rather than guessing which of two live pods to destroy. **Unchanged on purpose:** an identifier resolving to nothing falls through to today's behaviour (an already-destroyed pod is absent for the same reason a typo is, and teardown idempotency is load-bearing), and an unreadable listing degrades to the plain identifier (U17 round 2's lesson, applied before the fact). **OWED, and the reason this is not called closed: nothing proves RunPod actually RETURNS `name` from `myself { pods }`.** The query selects it, but `fixtures/runpod/list_pods.json` is an empty list and no fixture in the tree carries a pod `name`, so the tests encode the contract in a fake. If RunPod omits it the fix is inert and silent. Pre-existing (the non-ephemeral `_adopt_or_age_out` path already depends on the same field), but load-bearing here. Cheap live check — no ComfyUI/Wan boot needed: cheapest pod, reserved-shaped name, `list_instances` → `probe_runtime(<name>)` → `destroy_instance(<name>)` → zero pods |
 | U17 | FIXED, OFFLINE-PROVEN | `8069f376` + `45f4254c` (Task 4, 2026-09-08; the second is the round-2 review fix). `ModalProvider._find_app_id` looks the app up in the injected listing, matching on `description`, and `destroy_instance` stops by `app_id` when found, falling back to the name (today's behaviour) otherwise; a stopper failure is caught and re-raised as `TeardownError` naming the `app_id` it resolved instead of an unhandled `subprocess.CalledProcessError`, and `default_stop`'s bare `check=True` no longer lets that traceback escape raw. Round 2 kept the lookup OFF the critical path: an unreadable listing degrades to the name path, a malformed record is skipped rather than aborting the scan, and a non-stopped record wins over a stopped namesake — three ways the round-1 lookup could have made a destroy that used to work fail. A non-list/non-dict shape with nothing resolved still raises a `TeardownError` naming what it expected. Proof is offline only (`pixi run pytest tests/providers/test_modal_destroy_by_app_id.py -v` → 10/10; `pixi run pytest tests/providers -q` → 599 passed, 2 skipped, 6 xfailed) — tests inject the listing and the stopper, no live call. A live re-proof means racing the same ~1 s mid-deploy kill window U7 verified, and is a separate follow-up, NOT owed to **Task 6**. Round 3 (`887db3e1`, 2026-09-09): the post-stop confirmation poll's `states_by_name` lookup now tolerates a duplicate app name (one live, one stopped record) regardless of listing order, closing a gap the earlier rounds' `_find_app_id` sort did not carry into the poll — see the detailed entry |
 | U18 | FIXED, LIVE-PROVEN 2026-09-09 | `71582382` + `abe0c21e` (Task 3, 2026-09-08; the second is a review-round-2 fix) — `_cmd_reap`'s short-circuit now gates on the union: `if not ledger.entries():` alone no longer returns early; it also checks `EphemeralIndex(store=ctx.store()).rows()`, **filtered to `--id` when set**, and only short-circuits when both are empty, wording the message for the id it searched for (`--id` case) or "ledger and ephemeral index both empty" (no `--id`). Round-1 review caught that the index check was unscoped by `--id`, so one unrelated ephemeral row could defeat the short-circuit for an id the operator never named — fixed in `abe0c21e`. Proof is offline only (`pixi run pytest tests/cli/test_cmd_reap.py -v` → 22/22; `pixi run pytest tests/cli -q` → 466/466), including a test that writes only an `EphemeralIndex` row and asserts the orphan's id + `LIVE` verdict actually reach the human-format table with `sweep()` unmocked, a test proving `--apply --include-orphans` actually destroys an aged idle index-only row (the act path, not just classification), and a test proving an unrelated index row cannot defeat a scoped `--id` no-op. `sweep()`'s own ephemeral union still does not honour `--id` scoping once it runs — filed separately as **U26** (FIXED 2026-09-09, whole-branch review Finding 1, `a8cbb54c` — see U26's own entry). **LIVE-PROVEN 2026-09-09 (Task 6, B1 — $0.00 extra; it shared A1's pod).** With the ledger genuinely empty (`{"entries": []}`) and a real Modal A10 orphan (`eph-63cda383`) still billing after its controller was SIGKILLed, `pixi run -e live-modal kinoforge reap` from a FRESH process printed the verdict table — `LIVE  eph-63cda383  modal  age_h 0.1` followed by `1 entries classified — pass --apply to act on default policy`, exit 0 — instead of `reap: ledger and ephemeral index both empty (nothing to do)`. Nineteen seconds earlier `kinoforge list` from another fresh process printed BOTH "no instances" lines against the same live pod, so the index really was the only thing that could name it. **One boundary re-confirmed, not a new defect:** `reap -c <cfg: ephemeral_orphan_reap_enabled true, ephemeral_orphan_age_s 60> --apply --include-orphans` against the same pod at age 218 s and idle (a direct `/util` read 6 s earlier gave `gpu_util_percent=0.0, cpu_percent=2.0`) still returned `LIVE` and `acted on 0: 0 destroyed · 0 forgotten · 0 drift-skipped · 0 deferred · 0 failed`. The row's `endpoints` is `{}` (see U23) and `_probe_with_cache` calls `note_endpoints` only when `row.endpoints` is non-empty, so the C1 age+idle predicate has no util reading and is conservative-on-ignorance — the documented starvation path already recorded at matrix T1-24, not something new. Teardown fell to `kinoforge destroy --id eph-63cda383` → `destroyed orphan: eph-63cda383 (no ledger entry, provider=modal)`. `sweep()`'s `--id` scoping gap was **U26**, since FIXED 2026-09-09 (whole-branch review Finding 1, `a8cbb54c`) |
 | U19 | OPEN | the in-pod capability vocabulary has no term for interpolation. Not a duplicate boot today — the U14 carve-out prevents one — but the `/health` refinement is absent on the interpolate path |
@@ -1647,6 +1648,65 @@ per-item entries below.
   defects together are what put two $2.50/hr A100s on the clock in both passes of Tier 2a.
   **Discovered by:** matrix cell T2-02 re-run, 2026-09-06.
 
+- **U16 — FIXED, OFFLINE-PROVEN 2026-09-10 (`__U16SHA__`, $0.00). The ephemeral launch row was
+  only a PARTIAL handle on RunPod; on Modal it was a full one.**
+  **Resolution.** New `RunPodProvider._pod_ids_matching` resolves an identifier against the pod
+  listing — `_LIST_PODS_QUERY` already selects `name` and `_pod_to_instance` already populates
+  `tags["name"]`, so the lookup needed no new query. `destroy_instance` and `probe_runtime` both
+  consume it. Same shape U17 used for Modal, which this entry's own "shape of the fix" predicted.
+  **The filing UNDERSTATED the destroy defect, and the correction is the important part.** It said
+  `kinoforge destroy --id kinoforge-<8hex>` "fails, RunPod has no pod by that id". It did not fail.
+  Reading the code: the terminate went out with the NAME as `podId`, then the confirmation poll
+  asked `pod(input:{podId: <name>})` about that same unknown string, got `data.pod = null`, and
+  took it as proof of death — `destroy_instance` returned **cleanly**. The operator read "destroyed"
+  and the pod kept billing. Confirmed offline by the first RED test, which showed the terminate
+  carrying `<unmatched>` and no exception raised. A false success is strictly worse than the
+  failure that was filed, and it is why the fix resolves the identifier for the poll as well as
+  the terminate — a half-fix that resolved only the terminate would still report success on its
+  first poll no matter what the terminate did (pinned by its own test).
+  **Sub-case 4 is RETRACTED, not fixed.** The filing called routing the provisional LEDGER row
+  through `session.resource_name` "the cheap half of this item". The premise does not hold:
+  STRICT_POLICY sets `ledger_record=False`, so `Ledger._write_entries` diverts that row to
+  `session.in_memory_ledger` and it **never reaches disk** — and `cli/_reconcile` only ever runs in
+  a later, fresh process. There is no row to mis-match and none to age out. Verified empirically
+  before touching anything (`_record_provisional_row` under a live `EphemeralSession` → returned id
+  present in `in_memory_ledger`, `Ledger(...).entries() == []` from a fresh reader), then pinned by
+  `test_the_ephemeral_provisional_row_never_reaches_disk` and written into `_adopt_or_age_out`'s
+  docstring, which had carried the misleading note. The durable handle on that path is the
+  `EphemeralIndex` row, which U8 already keys by `resource_name`. **Generalise: a "known
+  non-matching shape" note is a claim about reachability, and reachability is checked by running
+  it, not by reading the paragraph that describes it.**
+  **Two hazards the fix declined to create.** (1) `find_instance_by_tag` already matches
+  `tags["name"]` and was the obvious thing to reuse — but its listing path filters to
+  `status == "ready"`, and the window U16 exists for IS the cold boot, where the pod is not ready.
+  Reusing it would have produced a resolver that silently misses every pod it was written to find.
+  Rejected in the docstring and pinned by a test whose RED was confirmed by temporarily injecting
+  the status filter. (2) RunPod does not enforce unique pod names, so an ambiguous name raises
+  `TeardownError` naming both candidates rather than terminating an arbitrary one — the
+  duplicate-name hazard U17 had to retrofit in round 3, refused up front here.
+  **Two things deliberately left exactly as they were.** An identifier resolving to nothing falls
+  through to today's behaviour instead of raising, because an already-destroyed pod is absent from
+  the listing for the same reason a typo is, and every `--no-reuse` teardown and reaper act path
+  ends in a destroy that must be safe to repeat. And an unreadable listing degrades to the plain
+  identifier — U17's round-2 lesson (a lookup added for a narrow recovery case must never fail the
+  operation that works today) applied before the fact rather than after.
+  **Proof is OFFLINE ONLY, and one assumption inside it is NOT verified.** Thirteen new tests
+  (twelve in `tests/providers/test_runpod_name_resolution.py`, one in
+  `tests/core/test_provisional_launch_row.py`); five RED before implementation, plus one RED
+  confirmed by injection. `pixi run test` green; ruff, ruff-format, mypy clean. **The unverified
+  assumption: that RunPod's `myself { pods }` actually RETURNS `name`.** The query selects it and
+  `_pod_to_instance` maps it, but the committed real-API capture
+  (`tests/providers/fixtures/runpod/list_pods.json`) is an EMPTY pod list and no fixture in the
+  tree contains a pod `name`, so the offline tests encode that contract in a fake rather than
+  demonstrate it. If RunPod omits `name`, this fix is inert and silently so. Note the
+  non-ephemeral adoption path in `_adopt_or_age_out` already depends on the same field, so the
+  assumption is pre-existing rather than introduced here — but it is load-bearing for U16 and
+  unproven. **A live RunPod run is therefore genuinely owed, and it is cheap: it does not need the
+  filed reproducer's full ComfyUI/Wan boot.** Create the cheapest pod with a reserved-shaped name,
+  read `list_instances()` for `tags["name"]`, `probe_runtime(<name>)`, `destroy_instance(<name>)`,
+  confirm zero pods. Minutes, cents.
+  **Original filing follows, unedited.**
+
 - **U16 — the ephemeral launch row is only a PARTIAL handle on RunPod; on Modal it is a full one.**
   Spun out of U8's fix round (`8403a71c`) on the coordinator's ruling, 2026-09-06: the partial is
   ACCEPTED for this Modal-scoped plan, but it is a partially-addressed finding, not a documented
@@ -2683,33 +2743,52 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 
 ### NEXT ACTION (single, current as of 2026-09-10)
 
-**Do U16 — RunPod's reserved ephemeral-launch name is not a usable pod id.** Offline first;
-its entry has file:line for all three sub-cases. U28 helped it — the row now carries the real id
-and endpoints from the moment the create returns — but did NOT close it: the PRE-CREATE window
-still keys the row by NAME, and RunPod's `destroy_instance` / `probe_runtime` both take RunPod's
-own id. So on RunPod the one durable handle on a pod that is already billing remains a partial
-handle for exactly the window the pre-create row exists to cover.
+**Do the ONE live session that discharges three debts at once.** U16, U22 and U9 each now owe a
+live check that no offline test can supply, and two of the three are near-free once a pod exists.
+Run them in this order, on RunPod (U16 needs RunPod specifically; the other two are
+provider-agnostic and can ride whatever pod is up):
 
-**U22 is FIXED as of 2026-09-10 (offline, $0.00) — do not redo it.** The daemon's orphan verdict
-now rests on three consecutive idle probes; the one-shot CLI deliberately keeps the single-sample
-rule, because a fresh process can never bank a second sample and a permanent no-op is not a safety
-net. Full rationale, the trap the fix walked into (`_update_stall_history`'s maxlen), and the
-operator decision behind the one-shot carve-out are on U22's row in the STATUS INDEX.
+1. **U16's API-contract check — do this FIRST, because the whole fix hangs on it.** Nothing in the
+   tree proves RunPod's `myself { pods }` actually RETURNS `name`. `_LIST_PODS_QUERY` selects it,
+   `_pod_to_instance` maps it, and `_adopt_or_age_out` has depended on it since S5 — but
+   `tests/providers/fixtures/runpod/list_pods.json` is an EMPTY pod list and no fixture in the tree
+   carries a pod `name`, so every offline test encodes that contract in a fake. **If RunPod omits
+   the field, U16's fix is inert and silently so.** Cheap — it does NOT need the filed reproducer's
+   ComfyUI/Wan boot: create the cheapest pod with a reserved-shaped name, then from a fresh process
+   `list_instances()` → is `tags["name"]` populated? → `probe_runtime(<name>)` → `found=True`? →
+   `destroy_instance(<name>)` → pod actually gone? → `kinoforge list` shows zero. Minutes, cents.
+2. **U22's live re-run of the U9 cell.** `sweeper start --include-orphans` with
+   `ephemeral_orphan_age_s: 60`, `interval_s: 20` against one idle ephemeral pod. The 2026-09-07 U9
+   proof reaped on the SECOND tick, 2 s in; with the three-sample window it must now reap on a
+   LATER tick, and watching that deferral happen across real heartbeats is the only thing an
+   offline test cannot do. ~$0.03 as originally run.
+3. **U17's live re-proof** (the mid-create Modal kill window) if a Modal pod is up anyway — it has
+   been offline-proven-only since 2026-09-08.
 
-**What U22 still OWES, and it is the only debt it left: a live re-run of the U9 cell.** No offline
-test can watch the daemon defer a reap across real heartbeats against a real pod, and the 2026-09-07
-U9 proof (`reaping eph-64dac102 … age=119s` on the SECOND tick, 2 s in) is now expected to reap on a
-LATER tick. Cheap: `sweeper start --include-orphans` with `ephemeral_orphan_age_s: 60`,
-`interval_s: 20` against one idle ephemeral pod — the original cell cost ~$0.03. Fold it into the
-next live session rather than booking a pod for it alone.
+**Do NOT book a pod for any ONE of these.** Each alone is a rounding error against the boot cost;
+together they are one session.
 
-**Guards that keep U22's residue from being urgent:** `ORPHAN_REAP` sits outside
-`DEFAULT_APPLY_POLICY` (it needs `--include-orphans` to bite), the age floor is real, and both GPU
-and CPU must read idle.
+**U16 and U22 are both FIXED as of 2026-09-10 (offline, $0.00 each) — do not redo either.** U22:
+the daemon's orphan verdict now rests on three consecutive idle probes, while the one-shot CLI
+deliberately keeps the single-sample rule (a fresh process can never bank a second sample, and a
+permanent no-op is not a safety net). U16: `_pod_ids_matching` resolves a reserved NAME to RunPod's
+own id for both `destroy_instance` and `probe_runtime`, and its fourth sub-case was RETRACTED
+rather than fixed — the provisional ledger row it worried about never reaches disk under
+STRICT_POLICY. Full records, including the traps each fix walked into, are on their STATUS INDEX
+rows.
+
+**The transferable lesson from this pair, and it is the same one twice.** U22's filing did not
+mention that the deque feeding its window collapses to maxlen 1 when stall reaping is off; U16's
+filing said `destroy --id <name>` "fails" when it actually reported SUCCESS, and proposed a fix for
+a fourth sub-case that is unreachable by construction. **Both were settled by running the code, not
+by reading the entry.** Re-verify a filing's mechanism before building on it — the entries are
+good, and they are still one revision behind the file.
+
+**Cheapest remaining offline wins: U2** (`batch --dry-run-swap` never parses the manifest) and
+**U13** (the CLI hangs after `UpscaleFailed`; its entry has a $0 offline first step).
 
 **Do NOT trust any "cheapest remaining wins" line further down this file** — the 2026-09-09 one is
-struck through and marked superseded, and it names U27, which is fixed. The 2026-09-10 one names
-U22, which is now fixed too.
+struck through and names U27, and the 2026-09-10 one names U22 and U16. All three are fixed.
 
 
 **U28 CLOSED — FIXED and LIVE-PROVEN 2026-09-09 for $0.0406.** The `--ephemeral` index row now
@@ -2751,8 +2830,8 @@ passed throughout U28's entire life — which is exactly why the defect survived
 about WHEN something happens, an end-state test is not evidence. This is the same shape as U3's
 trap earlier today (renderer tests that pass `recorded=` in by hand prove nothing about the wire).
 
-**Defect ledger: 29 items — 19 fixed, 2 partly fixed, 8 open** (U1, U2, U6, U13, U16, U19,
-U24, U25). ~~29 items — 18 fixed, 2 partly fixed, 9 open~~ — superseded 2026-09-10 by U22's fix. **U16** is helped by U28 but NOT closed (RunPod's reserved name is still not a usable pod
+**Defect ledger: 29 items — 20 fixed, 2 partly fixed, 7 open** (U1, U2, U6, U13, U19, U24, U25).
+~~29 items — 18 fixed, 2 partly fixed, 9 open~~ — superseded 2026-09-10 by U22's and U16's fixes. **U16** is helped by U28 but NOT closed (RunPod's reserved name is still not a usable pod
 id); **U22** (orphan predicate acts on one probe sample) is untouched, deliberately — U28 removes
 the ignorance rather than licensing action under it. Cheapest remaining wins are now U16 and U22,
 which are adjacent to the machinery just touched. The STATUS INDEX at the top of the URGENT ACTION
@@ -2766,6 +2845,13 @@ consecutive ones (default 3). One-shot `kinoforge reap` deliberately keeps the s
 See U22's STATUS INDEX row for the full record — including the maxlen trap in `_update_stall_history`
 that would have "closed" U22 by making ORPHAN_REAP silently unreachable under
 `stall_reap_enabled: false`, and the live re-run of the U9 cell it still owes.
+
+**U16 CLOSED OFFLINE 2026-09-10 for $0.00.** RunPod now accepts the reserved ephemeral NAME for
+both `destroy_instance` and `probe_runtime`. Two corrections to its own filing are the durable part:
+the by-name destroy did not FAIL, it reported SUCCESS while the pod billed on; and the fourth
+sub-case (the provisional ledger row) is unreachable by construction and was RETRACTED. See U16's
+STATUS INDEX row — including the one assumption the offline proof cannot reach (that RunPod returns
+`name` at all).
 
 **Session spend 2026-09-10: $0.00.**
 
