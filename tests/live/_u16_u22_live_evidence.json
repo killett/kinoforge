@@ -1,27 +1,44 @@
 {
-  "fallback_teardown": "xf5jjm6psazv15",
-  "finished_at_local": "2026-09-10T19:15:24.327348",
+  "finished_at_local": "2026-09-10T19:20:25.531091",
   "listed_tags": {
     "mode": "pod",
-    "name": "kinoforge-6810c7b3"
+    "name": "kinoforge-dceb98ed"
   },
   "offer": {
     "est_usd": 0.0238,
     "id": "NVIDIA GeForce RTX 3070",
     "usd_per_hr": 0.13
   },
+  "pod_gone_after_reap": true,
   "probe_by_name": {
-    "cpu_pct": null,
+    "cpu_pct": 0.0,
     "found": true,
-    "gpu_util_pct": null,
-    "pod_id": "kinoforge-6810c7b3"
+    "gpu_util_pct": 0.0,
+    "pod_id": "kinoforge-dceb98ed"
   },
-  "reserved_name": "kinoforge-6810c7b3",
-  "runpod_id": "xf5jjm6psazv15",
-  "started_at_local": "2026-09-10T19:14:35.183109",
+  "reserved_name": "kinoforge-dceb98ed",
+  "runpod_id": "ohoyddiq4x084g",
+  "started_at_local": "2026-09-10T19:19:13.494232",
+  "tick_readings": [
+    {
+      "cpu": 0.0,
+      "found": true,
+      "gpu": 0.0
+    },
+    {
+      "cpu": 0.0,
+      "found": true,
+      "gpu": 0.0
+    },
+    {
+      "cpu": 0.0,
+      "found": true,
+      "gpu": 0.0
+    }
+  ],
   "ticks": [
     "LIVE",
     "LIVE",
-    "LIVE"
+    "REAPED"
   ]
 }

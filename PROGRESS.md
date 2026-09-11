@@ -500,7 +500,7 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | U26 | FIXED, OFFLINE-PROVEN | `a8cbb54c` (whole-branch review Finding 1, 2026-09-09) — `sweep()` now takes an optional `single_id` kwarg that filters the `EphemeralIndex` union to the one matching row; `_cmd_reap` passes `single_id=single_id`, so `--id X` now restricts BOTH the ledger view AND the ephemeral-index union `sweep()` acts on. Every other caller (notably the `SweeperLoop` daemon) passes no `single_id` and is unaffected — confirmed by the full sweep/sweeper test battery (108 tests) staying green unmodified. RED: `--id target-pod --apply --include-orphans` with an unrelated orphan-eligible `unrelated-pod` row in the index destroyed BOTH pods (`['target-pod', 'unrelated-pod']`) against the pre-fix code. GREEN: only `target-pod`. Filed 2026-09-08, Task 3 review round 2 |
 | U27 | FIXED, OFFLINE-PROVEN + CLI-DEMONSTRATED AT $0.00 | Resolved on the **uniformity** option, not the one-token one, because the contained fix would have deepened the inconsistency that produced the defect. `_propagate_session_globals` walks the parser tree RECURSIVELY and re-declares all five session-globals (`--state-dir`, `--env-file`, `--vault`, `--ephemeral`, `--debug-show-secrets`) on every node with `default=argparse.SUPPRESS`, so both positions work on every subcommand with **no exception list** — the exception list being what shipped U27 in the first place (`--ephemeral` had been hand-added to `grid` alone, so `batch` was never on anybody's list). Recursion, not a leaf walk: `pod` and `sweeper` are intermediate nodes, and a leaf-only pass would leave `kinoforge pod --ephemeral lora ls …` still exiting 2 while every leaf looked covered. The two hand-added copies (`p_batch/--env-file` from U29, `p_grid/--ephemeral` from U11) are DELETED so the propagation is the single source. **This also closed a latent twin nobody had filed**: `kinoforge generate --vault X` was an argparse error too, and would have become U30. `SUPPRESS` remains load-bearing for the reason U11/U29 recorded — argparse copies every key of a subcommand's fresh namespace onto the parent, so an ordinary default CLOBBERS a root-set value; the value nearest the work now wins. Pinned by a 224-test matrix (`tests/cli/test_session_global_flag_positions.py`) that ENUMERATES the parser tree and synthesizes each leaf's required args, so a subcommand added later cannot escape it, and that asserts parsed `args.<dest>` values rather than argv membership — the blindness that shipped U11's regression. **CLI-demonstrated live at $0.00** via the root-only `--debug-show-secrets` mutex, which fires in `main()` after parse and before any dispatch: `batch --ephemeral --debug-show-secrets …`, `--ephemeral batch --debug-show-secrets …`, `generate --vault … --ephemeral --debug-show-secrets …` and `pod --ephemeral --debug-show-secrets lora ls …` all now exit 2 with the MUTEX error where they previously exited 2 with `unrecognized arguments` — same code, different reason, no compute booked. `kinoforge batch --help` now advertises all five. `list --ephemeral` parses and still prints `note: --ephemeral has no effect on read-only subcommands`. One caveat recorded: this is the only production code in the tree that touches argparse internals (`_actions`, `_SubParsersAction`), unavoidable because argparse exposes no public way to enumerate subparsers — the matrix test walks the tree the same way, so a Python release that moved them fails at test COLLECTION rather than silently ceasing to propagate |
 | U28 | FIXED, LIVE-PROVEN 2026-09-09 | `f1e7f1ef`. **The "RESTRUCTURE" assessment below was WRONG and is retained as written, because the mistake is the lesson.** The cross-layer seam it says must be built has existed since C29: `_provision_instance_and_build_backend` fires `on_instance_created` exactly once, right after `create_instance` and before `engine.provision`, with an instance that already carries its endpoints — and `_record_then_install`'s own docstring already read "chain `on_instance_created` callbacks". The missing half was that no CALLER could supply one. The assessment was written from `_cmd_batch`'s frame, where the endpoints genuinely are not available, without checking whether the orchestrator already offered a hook — the exact inference the "verify implementation status from the file, not from reasoning" rule in `CLAUDE.md` exists to prevent. Actual change: one optional param on `deploy_session` chained inside `_record_then_install` (after the ledger record, so a hook that reads the ledger sees the row; containment-wrapped and WARN-logged, because the pod is already billing by then), forwarded by `generate` and `batch_generate`, plus one CLI closure at four call sites. **Two bugs the fix itself introduced, both caught pre-commit:** (1) the hook re-keys the row to the pod's real id, so `--no-reuse` teardown releasing only the LAUNCH id left a row naming a destroyed pod — caught by the EXISTING `test_the_launch_row_is_dropped_when_no_reuse_destroys_the_pod`; (2) the batch variant no test covered, because `_cmd_batch` re-derives its instance from the ledger and that can legitimately return `None`, so releasing "launch id + recovered id" still stranded the row — `_LaunchRow` is now a mutable dataclass whose `upgraded_id` the hook writes back, and the settle drops whichever key the row ended up under. Six red/green tests; the one that matters is TIMING, since the pre-existing `test_ephemeral_row_is_updated_not_duplicated_when_endpoints_arrive` asserts the END state and passed throughout U28's entire life — which is why the defect survived. **LIVE-PROVEN 2026-09-09 ($0.0406, Modal A10 `eph-a6d3b12e`, 2 m 13 s):** mid-run at 28 s the row already carried the real id + endpoints; the process GROUP was SIGKILLed at GPU 100 % and the row survived intact while `kinoforge list` printed both "no instances" lines; `/util` answered from fresh processes on both sides of the kill; and — the criterion that matters — `reap` classified **`ORPHAN_REAP`** and `--apply --include-orphans` reported **`acted on 1: 1 destroyed`**, where Task 6's B1 on this same scenario returned `LIVE` / `acted on 0`. Teardown verified from fresh processes; preflight back to 0 pods. **Helps but does not close U16** (RunPod's reserved name is still not a usable id), and reap semantics are UNCHANGED — the fix removes the ignorance rather than licensing action under it |
-| U30 | FIXED, OFFLINE-PROVEN 2026-09-10 (`__U30SHA__`) | **`_update_stall_history` banked an UNOBSERVABLE utilisation reading as a fully idle one, quietly undoing U22 the same day it shipped.** Found by the U16/U22 live run, not by review: the recorded evidence showed `probe_by_name: {gpu_util_pct: null, cpu_pct: null}`, which forced the question of whether the live test had passed for the right reason. RunPod answers a booting pod with `runtime = null`, so `RuntimeProbe.found` is True → `_synthesize_ephemeral_entry` stamps `probe_state="ok"` → but both readings are `None`, and `float(entry.get("gpu_util_pct") or 0.0)` banked `(0.0, 0.0)`. **Blast radius:** a Wan A14B cold boot spends ~25 minutes in exactly that state, so the sample window filled with fabricated idleness while the pod did the most legitimate work it ever does; the first REAL low reading then reaped it on what was effectively ONE observation — U22 restored in all but name. Worse for STALL_REAP, which reads the same deque and sits INSIDE `DEFAULT_APPLY_POLICY`, so it acts with no operator opt-in. Fix: skip banking when either reading is `None`. **`is None`, not falsiness** — a genuine `0.0` is the commonest honest reading an idle pod gives, and filtering on truthiness would discard every real idle sample and make both reap verdicts permanently unreachable; that guard rail has its own test. Both readings required, because both predicates test GPU *and* CPU — a half-readable pair is a partial observation, not a low-util one. Three tests, two RED before the fix. **The transferable part:** `_ephemeral_orphan_predicate` states and enforces "not observed is never idle" on the CURRENT tick, and the rule was broken one layer away on the banked ones — a stated invariant is only as good as every site that feeds the data it guards |
+| U30 | FIXED, OFFLINE-PROVEN + LIVE-CORROBORATED 2026-09-10 (`7dc6e45b`) | **`_update_stall_history` banked an UNOBSERVABLE utilisation reading as a fully idle one, quietly undoing U22 the same day it shipped.** Found by the U16/U22 live run, not by review: the recorded evidence showed `probe_by_name: {gpu_util_pct: null, cpu_pct: null}`, which forced the question of whether the live test had passed for the right reason. RunPod answers a booting pod with `runtime = null`, so `RuntimeProbe.found` is True → `_synthesize_ephemeral_entry` stamps `probe_state="ok"` → but both readings are `None`, and `float(entry.get("gpu_util_pct") or 0.0)` banked `(0.0, 0.0)`. **Blast radius:** a Wan A14B cold boot spends ~25 minutes in exactly that state, so the sample window filled with fabricated idleness while the pod did the most legitimate work it ever does; the first REAL low reading then reaped it on what was effectively ONE observation — U22 restored in all but name. Worse for STALL_REAP, which reads the same deque and sits INSIDE `DEFAULT_APPLY_POLICY`, so it acts with no operator opt-in. Fix: skip banking when either reading is `None`. **`is None`, not falsiness** — a genuine `0.0` is the commonest honest reading an idle pod gives, and filtering on truthiness would discard every real idle sample and make both reap verdicts permanently unreachable; that guard rail has its own test. Both readings required, because both predicates test GPU *and* CPU — a half-readable pair is a partial observation, not a low-util one. Three tests, two RED before the fix. **The transferable part:** `_ephemeral_orphan_predicate` states and enforces "not observed is never idle" on the CURRENT tick, and the rule was broken one layer away on the banked ones — a stated invariant is only as good as every site that feeds the data it guards. **Live corroboration, unplanned and therefore worth more than a designed one:** with the fix in, the same live scenario on a still-booting pod went `LIVE / LIVE / LIVE` and the test went RED — nothing observed, so nothing banked — where the pre-U30 run had reaped at tick 3 on a window partly filled with fabricated samples. The green run before and the red run after are the same code path either side of this one-line guard |
 | U29 | FIXED, OFFLINE-PROVEN | `424e52d1` (2026-09-09, Task 2 regression fix) — `p_batch` re-declared the ROOT `--env-file` with an implicit `default=None`, and argparse copies every key of a subparser's fresh namespace onto the parent, so `kinoforge --env-file X batch …` parsed to `env_file=None` and `main()` loaded the DEFAULT secrets file instead of `X` — a batch run (which books GPUs) against the wrong credentials or provider account, with no warning and exit 0. Same mechanism and same one-token remedy as the `p_grid`/`--ephemeral` half of U11: `default=argparse.SUPPRESS`. These two were the ONLY root/subparser `dest` collisions in the whole parser, so the class is now closed. Covered by a test that feeds each composed argv through the real `_build_parser().parse_args()` and asserts `args.env_file` — not argv membership — with a `generate` case guarding the path that already worked. RED confirmed first (`args.env_file=None, expected '/x/creds-a'`). Offline-proven; no provider or network call. Filed and fixed the same day, on a controller ruling that a known one-token money hazard should not ship filed-open from the branch that discovered it |
 
 **Live proof cost for the whole money-leak campaign: $0.82** — $0.16 for the four fixes' own live
@@ -2751,25 +2751,40 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 U13: the CLI hangs after `UpscaleFailed`; its entry carries a $0 offline first step and the
 originally-suspected site was RETRACTED, so start from the entry, not from that memory.
 
-**The 2026-09-10 live session is DONE — do not re-run it.** One RunPod pod (`xbvz9cv8w6kpl1`, name
-`kinoforge-5af92f87`, RTX 3070, 60 s, **$0.02**) discharged BOTH owed live checks: U16's API
-contract (RunPod's `myself { pods }` really does return `name`, so the fix is not inert) and U22's
-deferral (three real ticks: `LIVE / LIVE / REAPED`). Teardown verified from a fresh process after
-the orchestrator exited — `kinoforge list` printed both lines, preflight `0 active`.
+**The 2026-09-10 live session is DONE — do not re-run it.** Both owed live checks are discharged
+and a third defect was found and fixed. Final run: RunPod pod `ohoyddiq4x084g`, name
+`kinoforge-dceb98ed`, RTX 3070, 72 s. U16's API contract holds (`myself { pods }` really does
+return `name`, so the fix is not inert); U22's deferral is proven on three RECORDED `gpu=0.0
+cpu=0.0` observations (`LIVE / LIVE / REAPED`); and the reap destroyed the pod BY NAME, which is
+U16c. Teardown verified from a fresh process after every run — `kinoforge list` both lines,
+preflight `0 active`. **Total $0.06 over three pods, not the $0.02 one pod should have cost**, and
+the overrun is on the record below because it was my error, not the provider's.
 
-**That run then found U30, which had quietly undone U22 the same day U22 shipped.** A booting pod
-answers `runtime = null`, so `probe_state` is `"ok"` while both readings are `None`, and
-`_update_stall_history`'s `float(x or 0.0)` banked that as a FULLY IDLE sample. A Wan A14B cold
-boot spends ~25 minutes in that state, so the sample window filled with fabricated idleness and the
-first real low reading reaped the pod on effectively one observation. Filed and fixed the same day.
+**What the session actually taught, in the order it hurt.**
 
-**The lesson worth carrying, and it is about how the live run was read, not about the code.** The
-test PASSED and the tick sequence looked like proof. It was not, entirely: the recorded evidence
-showed `gpu_util_pct: null`, which meant **tick 1 was LIVE for the OLD conservative-on-ignorance
-reason, not because of the new window** — it proved nothing. Only tick 2 is clean (numeric readings,
-age past the gate; the pre-fix predicate replayed on exactly that state returns True where the
-post-fix one returns False). Chasing down *which* tick carried the evidence is what surfaced U30.
-**A green live test is a starting point for reading the evidence, not a substitute for it.**
+1. **The first run was GREEN and nearly worthless.** Its evidence recorded `gpu_util_pct: null` —
+   the pod was still early-boot, so tick 1 was LIVE under the OLD conservative-on-ignorance rule
+   rather than the new window. Only tick 2 carried real evidence. **A green live test is where you
+   start reading the evidence, not a substitute for it.**
+2. **Chasing which tick proved anything found U30**, a defect that had quietly undone U22 the same
+   day U22 shipped: a booting pod answers `runtime = null`, so `probe_state` is `"ok"` while both
+   readings are `None`, and `_update_stall_history`'s `float(x or 0.0)` banked that as a FULLY IDLE
+   sample. A Wan A14B cold boot spends ~25 min in that state, so the window filled with fabricated
+   idleness and the first real low reading reaped the pod on effectively one observation.
+3. **The second pod was booked BY ACCIDENT, by `pixi run test`.** The scaffold carried only a
+   `skipif` and no `live` MARKER — and `pixi run test` is `pytest -m 'not live'`, so the marker is
+   the only thing that deselects it. A routine offline suite run created pod `xf5jjm6psazv15` and
+   billed for it. **If you add a file under `tests/live/`, the marker is the money gate; the skipif
+   is only a courtesy.** Note `tests/live/test_runpod_ephemeral_sweeper_smoke.py` has the same
+   shape — harmless today because it books nothing, and left alone deliberately.
+4. **That accidental run went RED (`LIVE / LIVE / LIVE`) and that was the U30 fix working** —
+   nothing observed, so nothing banked, so no reap. The green run before it and the red run after
+   it are the same code path either side of a one-line guard, which is better corroboration of U30
+   than anything designed on purpose.
+
+The scaffold now waits for a NUMERIC reading before ticking, records what the provider reported at
+each tick, and asserts every tick observed something — so this class of unattributable green cannot
+recur here.
 
 **Still owed, and NOT discharged by this session:** U17's live re-proof of the mid-create Modal kill
 window (offline-proven only since 2026-09-08). Fold it into the next Modal run; do not book a pod
@@ -2844,16 +2859,21 @@ sub-case (the provisional ledger row) is unreachable by construction and was RET
 STATUS INDEX row — including the one assumption the offline proof cannot reach (that RunPod returns
 `name` at all).
 
-**LIVE SESSION 2026-09-10 — $0.02, one RunPod pod, both owed checks discharged and a new defect
-found.** Pod `xbvz9cv8w6kpl1` / name `kinoforge-5af92f87` (RTX 3070 @ $0.13/hr, 60 s). U16's API
-contract PASSED (`myself { pods }` returns `name`, so the fix is not inert); U16b/U16c proven
-through the sweeper's own act path, which destroyed the pod BY NAME; U22's deferral proven at tick
-2. Scaffold committed RED first (`858e6c2e`) per the pre-spend rule; teardown verified from a fresh
-process (`kinoforge list` both lines, preflight `0 active`). Evidence:
-`tests/live/_u16_u22_live_evidence.json`. The run exposed **U30** — `_update_stall_history` banking
-a `None` reading as idle — filed and fixed the same day.
+**LIVE SESSION 2026-09-10 — $0.06 over THREE RunPod pods; both owed checks discharged, one new
+defect found and fixed, one money bug in my own harness found and fixed.** Definitive pod
+`ohoyddiq4x084g` / name `kinoforge-dceb98ed` (RTX 3070 @ $0.13/hr, 72 s): U16's API contract PASSED
+(`myself { pods }` returns `name`, so the fix is not inert); U16b/U16c proven through the sweeper's
+own act path, which destroyed the pod BY NAME; U22's deferral proven on three recorded `gpu=0.0
+cpu=0.0` observations. Scaffold committed RED first (`858e6c2e`) per the pre-spend rule; teardown
+verified from a fresh process after each run (`kinoforge list` both lines, preflight `0 active`).
+Evidence: `tests/live/_u16_u22_live_evidence.json`. **The three pods are itemised because two were
+my error:** run 1 proved U16 but produced unattributable U22 ticks (its readings were `null`);
+run 2 was booked ACCIDENTALLY by `pixi run test`, because the scaffold had a `skipif` but no `live`
+MARKER, which is the thing `-m 'not live'` actually deselects on; run 3 is clean. The session found
+**U30** (`_update_stall_history` banking a `None` reading as idle, undoing U22 the same day it
+shipped) and fixed both it and the harness bug in `7dc6e45b`.
 
-**Session spend 2026-09-10: $0.02.**
+**Session spend 2026-09-10: $0.06.**
 
 **U27 and U3 CLOSED (2026-09-09, $0.00 — no live spend, no pod, no preflight needed).** Two of the
 cheapest remaining wins off the money-leaks list, done offline in one pass on `main`.
