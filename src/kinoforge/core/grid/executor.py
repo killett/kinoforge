@@ -26,11 +26,13 @@ import logging
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.grid.compose import (
     LayoutCell,
     _check_ffmpeg,
@@ -228,6 +230,36 @@ def _resolve_spec_cells(
                 )
             )
     return resolved
+
+
+def _retain_local_intermediates(ephemeral: bool) -> bool:
+    """Return whether this grid run may leave its working tree on disk.
+
+    The active :class:`~kinoforge.core.ephemeral.EphemeralSession`'s policy
+    is the authority when one is bound — which, from the CLI, is always:
+    ``main()`` wraps every dispatch in a session, strict or default. The
+    ``ephemeral`` argument is the fallback for a direct library call that
+    never bound one, because a grid asked to be ephemeral that quietly
+    retained everything for want of a session is U25 again.
+
+    ``policy.ledger_record`` stands in for "is this session strict?", the
+    same proxy the warm-attach matcher already uses
+    (``matcher.py``'s ``always_reprobe``). Grid intermediates are not one of
+    ``EphemeralPolicy``'s five named write gates, and mapping them onto an
+    unrelated gate would read worse than reading strictness directly.
+
+    Args:
+        ephemeral: The caller's own ``--ephemeral`` pass-through.
+
+    Returns:
+        ``True`` when the per-cell working tree may stay under the
+        operator's ``output/``; ``False`` when it must be private and
+        removed.
+    """
+    session = EphemeralSession.current()
+    if session is not None:
+        return session.policy.ledger_record
+    return not ephemeral
 
 
 def _cell_output_dir(grid_id: str, cell_idx: int, output_dir: Path) -> Path:
@@ -1011,161 +1043,190 @@ async def run_grid(
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     grid_id = f"grid_{ts}_{hashlib.sha256(ts.encode()).hexdigest()[:8]}"
     output_dir.mkdir(parents=True, exist_ok=True)
-    tmp_dir = output_dir / f"_grid_{grid_id}"
-
-    resolved = _resolve_spec_cells(spec, grid_id=grid_id, tmp_dir=tmp_dir)
-    groups = group_cells_by_capability_key(resolved)
-
-    # Sidecar is lazily instantiated when a swap group is detected; the
-    # `.cost.json` lives next to the composed mp4.
-    title_slug = _slugify(spec.title or "untitled")
-    composed_path = out_path if out_path else output_dir / f"grid_{ts}_{title_slug}.mp4"
-    sidecar: CostSidecarBuilder | None = None
-    swap_groups_present = any(
-        cells and cells[0].is_lora_swap
-        for key, cells in groups.items()
-        if key != _PATH_GROUP_KEY
+    # U25 — an ephemeral run leaves the deliverable and nothing else. The
+    # per-cell working tree (cfgs carrying the prompt, captured stderr,
+    # per-cell mp4s, provision records) is bookkeeping, and every path in it
+    # is stamped with the local timestamp `--ephemeral` exists to keep out of
+    # durable state. It cannot simply be skipped — ffmpeg composes FROM those
+    # mp4s — so it moves to a private scratch dir and is removed on the way
+    # out, on every exit path.
+    retain_intermediates = _retain_local_intermediates(ephemeral)
+    scratch_root: Path | None = (
+        None
+        if retain_intermediates
+        else Path(tempfile.mkdtemp(prefix="kinoforge-grid-"))
     )
-    if ephemeral and swap_groups_present:
-        # U11 follow-up (review round 1, filed as U24 in PROGRESS.md): a
-        # lora_swap group shares ONE pod across the whole swap chain
-        # (--attach-pod / --emit-provision-record, never --no-reuse), so no
-        # single cell's --ephemeral can own the shared pod's
-        # delete_on_completion without a real executor-shape decision this
-        # task is not making. Controller ruling: REFUSE rather than warn —
-        # a warning still lets the run proceed and leak run id, local
-        # timestamp and workload shape to the provider, which is exactly
-        # U11's original symptom. This check runs before any group is
-        # dispatched, so no cell subprocess is ever spawned on this path.
-        swap_idxs = sorted(
-            cell.idx
+    work_parent = output_dir if scratch_root is None else scratch_root
+    tmp_dir = work_parent / f"_grid_{grid_id}"
+    try:
+        resolved = _resolve_spec_cells(spec, grid_id=grid_id, tmp_dir=tmp_dir)
+        groups = group_cells_by_capability_key(resolved)
+
+        # Sidecar is lazily instantiated when a swap group is detected; the
+        # `.cost.json` lives next to the composed mp4.
+        title_slug = _slugify(spec.title or "untitled")
+        composed_path = (
+            out_path if out_path else output_dir / f"grid_{ts}_{title_slug}.mp4"
+        )
+        sidecar: CostSidecarBuilder | None = None
+        swap_groups_present = any(
+            cells and cells[0].is_lora_swap
             for key, cells in groups.items()
             if key != _PATH_GROUP_KEY
-            for cell in cells
-            if cell.is_lora_swap
         )
-        raise ValueError(
-            f"grid --ephemeral does not support lora_swap cells {swap_idxs}: "
-            "a lora_swap group shares one pod across the whole swap chain, "
-            "so no single cell can own --ephemeral's delete_on_completion "
-            "without leaking the rest of the chain's run id and local "
-            "timestamp to the provider. Filed as U24 (see PROGRESS.md) — "
-            "drop --ephemeral or remove the lora_swap cells to proceed."
-        )
-    if swap_groups_present:
-        sidecar = CostSidecarBuilder(
-            grid_id=grid_id,
-            spec_path=Path(getattr(spec, "_source_path", "")),
-            out_mp4=composed_path,
-            budget_cap_usd=spec.budget_cap_usd,
-        )
+        if ephemeral and swap_groups_present:
+            # U11 follow-up (review round 1, filed as U24 in PROGRESS.md): a
+            # lora_swap group shares ONE pod across the whole swap chain
+            # (--attach-pod / --emit-provision-record, never --no-reuse), so no
+            # single cell's --ephemeral can own the shared pod's
+            # delete_on_completion without a real executor-shape decision this
+            # task is not making. Controller ruling: REFUSE rather than warn —
+            # a warning still lets the run proceed and leak run id, local
+            # timestamp and workload shape to the provider, which is exactly
+            # U11's original symptom. This check runs before any group is
+            # dispatched, so no cell subprocess is ever spawned on this path.
+            swap_idxs = sorted(
+                cell.idx
+                for key, cells in groups.items()
+                if key != _PATH_GROUP_KEY
+                for cell in cells
+                if cell.is_lora_swap
+            )
+            raise ValueError(
+                f"grid --ephemeral does not support lora_swap cells {swap_idxs}: "
+                "a lora_swap group shares one pod across the whole swap chain, "
+                "so no single cell can own --ephemeral's delete_on_completion "
+                "without leaking the rest of the chain's run id and local "
+                "timestamp to the provider. Filed as U24 (see PROGRESS.md) — "
+                "drop --ephemeral or remove the lora_swap cells to proceed."
+            )
+        if swap_groups_present:
+            sidecar = CostSidecarBuilder(
+                grid_id=grid_id,
+                spec_path=Path(getattr(spec, "_source_path", "")),
+                out_mp4=composed_path,
+                budget_cap_usd=spec.budget_cap_usd,
+            )
 
-    sem = asyncio.Semaphore(max_parallel_groups)
-    group_tasks = []
-    for key, cells in groups.items():
-        if key == _PATH_GROUP_KEY:
-            continue
-        if cells and cells[0].is_lora_swap:
-            if sidecar is None:
-                raise RuntimeError(
-                    "internal: swap group detected but sidecar was not pre-allocated"
+        sem = asyncio.Semaphore(max_parallel_groups)
+        group_tasks = []
+        for key, cells in groups.items():
+            if key == _PATH_GROUP_KEY:
+                continue
+            if cells and cells[0].is_lora_swap:
+                if sidecar is None:
+                    raise RuntimeError(
+                        "internal: swap group detected but sidecar was not pre-allocated"
+                    )
+                group_tasks.append(
+                    _run_swap_group(
+                        cells,
+                        on_swap_failure=spec.on_swap_failure,
+                        # work_parent, not output_dir: per-cell dirs belong to
+                        # the working tree, which is private + removed under an
+                        # ephemeral policy and identical to output_dir
+                        # otherwise. (Unreachable while ephemeral, per U24's
+                        # refusal — kept aligned so a future lift of that
+                        # refusal does not silently re-open U25.)
+                        output_dir=work_parent,
+                        grid_id=grid_id,
+                        sidecar=sidecar,
+                        budget_cap_usd=spec.budget_cap_usd,
+                    )
                 )
-            group_tasks.append(
-                _run_swap_group(
-                    cells,
-                    on_swap_failure=spec.on_swap_failure,
-                    output_dir=output_dir,
-                    grid_id=grid_id,
-                    sidecar=sidecar,
-                    budget_cap_usd=spec.budget_cap_usd,
+            else:
+                group_tasks.append(
+                    _run_group(
+                        cells,
+                        grid_id=grid_id,
+                        output_dir=work_parent,
+                        sem=sem,
+                        ephemeral=ephemeral,
+                    )
+                )
+        group_results = await asyncio.gather(*group_tasks) if group_tasks else []
+
+        if sidecar is not None:
+            sidecar.write(composed_path.with_suffix(".cost.json"))
+
+        all_results: list[GridCellResult] = []
+        for sub in group_results:
+            all_results.extend(sub)
+        for cell in groups.get(_PATH_GROUP_KEY, []):
+            if cell.mp4_path is None:
+                continue
+            all_results.append(
+                GridCellResult(
+                    idx=cell.idx,
+                    caption=cell.caption,
+                    status="success",
+                    mp4_path=cell.mp4_path,
+                    sha256=_sha256_file(cell.mp4_path),
+                    cost_usd=0.0,
                 )
             )
-        else:
-            group_tasks.append(
-                _run_group(
-                    cells,
-                    grid_id=grid_id,
-                    output_dir=output_dir,
-                    sem=sem,
-                    ephemeral=ephemeral,
-                )
+        all_results.sort(key=lambda r: r.idx)
+
+        clean, raw = _check_no_residual_pods()
+        if not clean:
+            breadcrumb = raw.strip()[:500]
+            _log.error("grid teardown probe failed: %s", breadcrumb)
+            partial = _move_to_partial_dir(
+                all_results, output_dir=output_dir, grid_id=grid_id
             )
-    group_results = await asyncio.gather(*group_tasks) if group_tasks else []
-
-    if sidecar is not None:
-        sidecar.write(composed_path.with_suffix(".cost.json"))
-
-    all_results: list[GridCellResult] = []
-    for sub in group_results:
-        all_results.extend(sub)
-    for cell in groups.get(_PATH_GROUP_KEY, []):
-        if cell.mp4_path is None:
-            continue
-        all_results.append(
-            GridCellResult(
-                idx=cell.idx,
-                caption=cell.caption,
-                status="success",
-                mp4_path=cell.mp4_path,
-                sha256=_sha256_file(cell.mp4_path),
-                cost_usd=0.0,
+            return GridResult(
+                grid_id=grid_id,
+                status="teardown",
+                cell_results=all_results,
+                partial_dir=partial,
+                teardown_breadcrumb=breadcrumb,
             )
-        )
-    all_results.sort(key=lambda r: r.idx)
 
-    clean, raw = _check_no_residual_pods()
-    if not clean:
-        breadcrumb = raw.strip()[:500]
-        _log.error("grid teardown probe failed: %s", breadcrumb)
-        partial = _move_to_partial_dir(
-            all_results, output_dir=output_dir, grid_id=grid_id
-        )
+        if any(r.status != "success" for r in all_results):
+            partial = _move_to_partial_dir(
+                all_results, output_dir=output_dir, grid_id=grid_id
+            )
+            return GridResult(
+                grid_id=grid_id,
+                status="partial",
+                cell_results=all_results,
+                partial_dir=partial,
+            )
+
+        layout = _resolve_layout(spec.layout, n=len(all_results))
+        inputs = [r.mp4_path for r in all_results if r.mp4_path is not None]
+        probes = probe_inputs(inputs)
+        cells_meta = [LayoutCell(idx=r.idx, caption=r.caption) for r in all_results]
+        composed = composed_path
+        try:
+            compose_grid_mp4(
+                inputs=inputs,
+                probes=probes,
+                cells=cells_meta,
+                layout=layout,
+                out_path=composed,
+            )
+        except FfmpegInvocationError as e:
+            _log.error("ffmpeg compose failed: %s", e)
+            partial = _move_to_partial_dir(
+                all_results, output_dir=output_dir, grid_id=grid_id
+            )
+            return GridResult(
+                grid_id=grid_id,
+                status="ffmpeg",
+                cell_results=all_results,
+                partial_dir=partial,
+            )
         return GridResult(
             grid_id=grid_id,
-            status="teardown",
+            status="full",
             cell_results=all_results,
-            partial_dir=partial,
-            teardown_breadcrumb=breadcrumb,
+            composed_mp4_path=composed,
         )
 
-    if any(r.status != "success" for r in all_results):
-        partial = _move_to_partial_dir(
-            all_results, output_dir=output_dir, grid_id=grid_id
-        )
-        return GridResult(
-            grid_id=grid_id,
-            status="partial",
-            cell_results=all_results,
-            partial_dir=partial,
-        )
-
-    layout = _resolve_layout(spec.layout, n=len(all_results))
-    inputs = [r.mp4_path for r in all_results if r.mp4_path is not None]
-    probes = probe_inputs(inputs)
-    cells_meta = [LayoutCell(idx=r.idx, caption=r.caption) for r in all_results]
-    composed = composed_path
-    try:
-        compose_grid_mp4(
-            inputs=inputs,
-            probes=probes,
-            cells=cells_meta,
-            layout=layout,
-            out_path=composed,
-        )
-    except FfmpegInvocationError as e:
-        _log.error("ffmpeg compose failed: %s", e)
-        partial = _move_to_partial_dir(
-            all_results, output_dir=output_dir, grid_id=grid_id
-        )
-        return GridResult(
-            grid_id=grid_id,
-            status="ffmpeg",
-            cell_results=all_results,
-            partial_dir=partial,
-        )
-    return GridResult(
-        grid_id=grid_id,
-        status="full",
-        cell_results=all_results,
-        composed_mp4_path=composed,
-    )
+    finally:
+        if scratch_root is not None:
+            # ignore_errors: a scratch dir that cannot be removed is a
+            # diagnostic, never a reason to fail a run that already produced
+            # its artifact.
+            shutil.rmtree(scratch_root, ignore_errors=True)

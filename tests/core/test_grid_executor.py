@@ -10,6 +10,7 @@ import asyncio
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -553,3 +554,182 @@ def test_run_grid_non_ephemeral_lora_swap_cells_not_refused(
     )
     assert called["swap"] is True, "non-ephemeral swap group must still be dispatched"
     assert result.status == "full", f"expected status='full', got {result.status!r}"
+
+
+def _strict_session() -> Any:
+    """An active ``--ephemeral`` session, as ``main()`` binds for every run."""
+    from kinoforge.core.ephemeral import EphemeralSession
+
+    return EphemeralSession(enabled=True)
+
+
+def _scratch_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point ``tempfile`` at a directory this test can inspect afterwards."""
+    import tempfile
+
+    root = tmp_path / "tmproot"
+    root.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(root))
+    return root
+
+
+def test_run_grid_ephemeral_leaves_no_intermediates_under_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """U25: an ephemeral grid leaves the composed mp4 and nothing else.
+
+    Bug: nothing under ``core/grid/`` consults the ephemeral policy, so a
+    ``grid --ephemeral`` run writes the whole ``output/_grid_<id>/`` tree —
+    per-cell cfgs (carrying the prompt and the effective cfg), per-cell
+    mp4s, provision records — every path stamped with the local timestamp
+    the flag exists to keep out of durable state, and cleans up none of
+    it. The composed mp4 is asserted present in the same breath because
+    "skip local writes" has never meant skipping the deliverable: a
+    ``generate --ephemeral`` still publishes its clip.
+    """
+    _stub_generate_subprocess(monkeypatch)
+    _stub_compose(monkeypatch)
+    _stub_config_loader(monkeypatch)
+    monkeypatch.setattr(
+        "kinoforge.core.grid.executor._cell_capability_key",
+        lambda cell: "K-same",
+    )
+    out = tmp_path / "out"
+    spec = _make_spec(tmp_path)
+
+    with _strict_session():
+        result = asyncio.run(
+            run_grid(spec=spec, output_dir=out, max_parallel_groups=2, ephemeral=True)
+        )
+
+    assert result.status == "full"
+    assert result.composed_mp4_path is not None
+    assert result.composed_mp4_path.exists()
+    assert not (out / f"_grid_{result.grid_id}").exists()
+    assert [p.name for p in out.iterdir()] == [result.composed_mp4_path.name]
+
+
+def test_run_grid_ephemeral_leaves_no_cell_stderr_dump_on_disk(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A failed cell's captured stderr is not left behind either.
+
+    Bug: ``_run_group`` writes the child's FULL stderr to
+    ``cell_<idx>.stderr.txt`` next to the per-cell tmp cfg — named in U25
+    as the second artifact, and the more sensitive one: it is whatever the
+    child printed, retained verbatim under a local-timestamped path.
+    """
+    _stub_generate_subprocess(monkeypatch, failures={1: "engine boom"})
+    _stub_compose(monkeypatch)
+    _stub_config_loader(monkeypatch)
+    monkeypatch.setattr(
+        "kinoforge.core.grid.executor._cell_capability_key",
+        lambda cell: f"K-{cell.idx}",
+    )
+    out = tmp_path / "out"
+    spec = _make_spec(tmp_path, n_cells=3)
+
+    with _strict_session():
+        result = asyncio.run(
+            run_grid(spec=spec, output_dir=out, max_parallel_groups=2, ephemeral=True)
+        )
+
+    assert result.status == "partial"
+    assert list(out.rglob("*.stderr.txt")) == []
+
+
+def test_run_grid_ephemeral_removes_its_scratch_dir_on_the_failure_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Cleanup covers every exit, not just the composed-successfully one.
+
+    Bug: ``run_grid`` has four return statements (teardown, partial,
+    ffmpeg, full). Cleanup attached to the last one alone leaves the whole
+    working tree — cfgs, stderr, mp4s — behind on exactly the runs that
+    went wrong, which is when there is most to leak.
+    """
+    scratch = _scratch_root(tmp_path, monkeypatch)
+    _stub_generate_subprocess(monkeypatch, failures={1: "engine boom"})
+    _stub_compose(monkeypatch)
+    _stub_config_loader(monkeypatch)
+    monkeypatch.setattr(
+        "kinoforge.core.grid.executor._cell_capability_key",
+        lambda cell: f"K-{cell.idx}",
+    )
+    spec = _make_spec(tmp_path, n_cells=3)
+
+    with _strict_session():
+        result = asyncio.run(
+            run_grid(
+                spec=spec,
+                output_dir=tmp_path / "out",
+                max_parallel_groups=2,
+                ephemeral=True,
+            )
+        )
+
+    assert result.status == "partial"
+    assert list(scratch.iterdir()) == []
+
+
+def test_run_grid_ephemeral_still_publishes_the_partial_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A run that cannot compose still hands over the clips it did make.
+
+    Bug: cleaning the scratch tree BEFORE ``_move_to_partial_dir`` copies
+    out of it. The per-cell mp4s live in that tree, so the ordering error
+    turns a partial run into a total loss — deleting the run's output
+    rather than its traces, which is not what "skip local writes" buys.
+    """
+    _scratch_root(tmp_path, monkeypatch)
+    _stub_generate_subprocess(monkeypatch, failures={1: "engine boom"})
+    _stub_compose(monkeypatch)
+    _stub_config_loader(monkeypatch)
+    monkeypatch.setattr(
+        "kinoforge.core.grid.executor._cell_capability_key",
+        lambda cell: f"K-{cell.idx}",
+    )
+    spec = _make_spec(tmp_path, n_cells=3)
+
+    with _strict_session():
+        result = asyncio.run(
+            run_grid(
+                spec=spec,
+                output_dir=tmp_path / "out",
+                max_parallel_groups=2,
+                ephemeral=True,
+            )
+        )
+
+    assert result.partial_dir is not None
+    assert (result.partial_dir / "cell_0_cell-0.mp4").exists()
+
+
+def test_run_grid_honours_the_session_policy_not_only_the_kwarg(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The policy governs the write gates; the kwarg is the fallback.
+
+    Bug: a fix that reads only ``if ephemeral:`` leaves U25's actual
+    complaint standing — nothing under ``core/grid/`` consults
+    ``EphemeralSession``, so a caller inside a strict session that does
+    not also repeat the kwarg writes the whole tree. ``EphemeralPolicy``
+    is frozen precisely so a caller cannot loosen a gate mid-run; reading
+    the kwarg alone hands that power back.
+    """
+    _stub_generate_subprocess(monkeypatch)
+    _stub_compose(monkeypatch)
+    _stub_config_loader(monkeypatch)
+    monkeypatch.setattr(
+        "kinoforge.core.grid.executor._cell_capability_key",
+        lambda cell: "K-same",
+    )
+    out = tmp_path / "out"
+    spec = _make_spec(tmp_path)
+
+    with _strict_session():
+        result = asyncio.run(run_grid(spec=spec, output_dir=out, max_parallel_groups=2))
+
+    assert result.status == "full"
+    assert not (out / f"_grid_{result.grid_id}").exists()
