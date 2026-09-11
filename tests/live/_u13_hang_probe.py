@@ -34,8 +34,10 @@ which runs BEFORE the exception reaches the top of ``main`` — T2-05b verified
 0 non-stopped apps while the CLI was still hung. The only thing a long hang
 spends is wall-clock, which is why the detector is measured in seconds.
 
-Run:
+Run (cfg optional; defaults to the cheap spandrel one):
     pixi run -e live-modal python tests/live/_u13_hang_probe.py
+    pixi run -e live-modal python tests/live/_u13_hang_probe.py \
+        examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml
 """
 
 from __future__ import annotations
@@ -52,8 +54,11 @@ from pathlib import Path
 _FIXTURE = Path(
     "output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4"
 )
-_CFG = Path("tests/live/_u13_spandrel_modal_cfg.yaml")
-_EVIDENCE = Path("tests/live/_u13_hang_probe_evidence.json")
+#: Default cfg: the cheap T4 spandrel pod. Tier 2 passes the shipped FlashVSR
+#: A100 cfg instead, to rule out engine-specificity before concluding that
+#: U13 does not reproduce — a clean exit on one engine is not a clean exit on
+#: the one where the hang was actually seen.
+_DEFAULT_CFG = Path("tests/live/_u13_spandrel_modal_cfg.yaml")
 
 #: Seconds the child may stay alive AFTER its traceback has been printed
 #: before it is called hung. A clean interpreter exit takes well under a
@@ -150,6 +155,10 @@ def main() -> int:  # noqa: PLR0915 — one linear probe; splitting hides the or
         print(f"fixture missing: {_FIXTURE}", file=sys.stderr)
         return 1
 
+    cfg = Path(sys.argv[1]) if len(sys.argv) > 1 else _DEFAULT_CFG
+    tag = cfg.stem.replace("_u13_", "").replace("modal-diffusers-", "")
+    evidence_path = Path(f"tests/live/_u13_hang_probe_evidence_{tag}.json")
+
     scratch = Path("output/_u13_probe")
     scratch.mkdir(parents=True, exist_ok=True)
     bad = _truncated_input(scratch / "truncated.mp4")
@@ -159,7 +168,7 @@ def main() -> int:  # noqa: PLR0915 — one linear probe; splitting hides the or
     argv = [
         "upscale",
         "--config",
-        str(_CFG),
+        str(cfg),
         "--video",
         str(bad),
         # --no-reuse so the pod dies even though the CLI may hang. T2-05b
@@ -219,6 +228,7 @@ def main() -> int:  # noqa: PLR0915 — one linear probe; splitting hides the or
     stdout, stderr = _tail(out_path, 4000), _tail(err_path, 12000)
     evidence = {
         "probe": "u13-hang",
+        "cfg": str(cfg),
         "local_time": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "elapsed_s": round(elapsed, 1),
         "child_returncode": proc.returncode,
@@ -239,10 +249,10 @@ def main() -> int:  # noqa: PLR0915 — one linear probe; splitting hides the or
         "stderr_tail": stderr,
         "pods_after": _pods_now()[-2000:],
     }
-    _EVIDENCE.write_text(json.dumps(evidence, indent=2) + "\n")
+    evidence_path.write_text(json.dumps(evidence, indent=2) + "\n")
     print(f"verdict: {evidence['verdict']}")
     print(f"upscale_failed_raised: {evidence['upscale_failed_raised']}")
-    print(f"evidence: {_EVIDENCE}")
+    print(f"evidence: {evidence_path}")
     # The child's FULL logs stay on disk. The first run of this probe deleted
     # them and the JSON keeps only a tail — which the base64 echo of the
     # provision script swamps — so the one thing needed to diagnose a build
