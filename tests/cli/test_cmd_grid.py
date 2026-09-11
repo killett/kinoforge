@@ -168,17 +168,23 @@ def test_cmd_grid_forwards_ephemeral_to_run_grid(
     )
 
 
-def test_cmd_grid_ephemeral_lora_swap_refusal_exits_2_no_traceback(
+def test_cmd_grid_surfaces_a_run_grid_valueerror_as_exit_2_no_traceback(
     monkeypatch: pytest.MonkeyPatch,
     ctx: SessionContext,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Review round 2: the ValueError run_grid raises for --ephemeral combined
-    with lora_swap cells (U24) must surface as a clean stderr message + exit
-    2, not an unhandled Python traceback + exit 1 — matching
-    _preflight_ephemeral's fail-closed exit-2 precedent the controller ruling
-    named. Before this fix, _cmd_grid does not catch the ValueError at all,
-    so calling it would propagate the exception out of this test."""
+    """A ValueError out of run_grid is a clean refusal, not a traceback.
+
+    Bug caught: ``_cmd_grid`` not catching ValueError at all, so a
+    spec-level refusal reaches the operator as an unhandled Python traceback
+    and exit 1 instead of a message and exit 2 — the fail-closed presentation
+    ``_preflight_ephemeral`` set the precedent for.
+
+    The message below is the U24 refusal this test was written against; that
+    refusal was LIFTED on 2026-09-11 (its premise was wrong — see U24), so it
+    survives here only as a realistic payload. ``run_grid`` still raises
+    ValueError for real: a cell whose effective cfg carries no top-level
+    ``prompt:`` is refused that way in ``_build_generate_cmd``."""
     fake_spec = MagicMock(cells=[MagicMock()], title="t", layout="1x1")
     fake_spec.budget_cap_usd = 1.0
     monkeypatch.setattr(

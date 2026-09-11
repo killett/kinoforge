@@ -465,6 +465,7 @@ def _build_swap_generate_cmd(
     output_dir: Path,
     attach_pod_id: str | None,
     emit_provision_record: Path | None,
+    ephemeral: bool = False,
 ) -> list[str]:
     """Construct the ``kinoforge generate`` argv for one swap-mode cell.
 
@@ -475,7 +476,11 @@ def _build_swap_generate_cmd(
     swap-mode cells is the entire point.
     """
     cmd = _build_generate_cmd(
-        cell, grid_id=grid_id, output_dir=output_dir, no_reuse=False
+        cell,
+        grid_id=grid_id,
+        output_dir=output_dir,
+        no_reuse=False,
+        ephemeral=ephemeral,
     )
     heredoc = _stack_to_loras_heredoc(cell.lora_swap_stack or [])
     cmd += ["--loras", heredoc]
@@ -493,6 +498,7 @@ async def _run_swap_cell_once(
     output_dir: Path,
     attach_pod_id: str | None,
     emit_provision_record: Path | None,
+    ephemeral: bool = False,
 ) -> tuple[int, str, str]:
     """Invoke one swap-mode cell subprocess; return (rc, stdout, stderr).
 
@@ -506,6 +512,7 @@ async def _run_swap_cell_once(
         output_dir=output_dir,
         attach_pod_id=attach_pod_id,
         emit_provision_record=emit_provision_record,
+        ephemeral=ephemeral,
     )
     proc = await asyncio.to_thread(
         subprocess.run,
@@ -583,6 +590,7 @@ async def _cold_boot_swap_cell(
     record_path: Path,
     pod: _SwapPodHandle,
     sidecar: CostSidecarBuilder,
+    ephemeral: bool = False,
 ) -> tuple[int, str]:
     """Run cell-1's cold boot and register the provisioned pod.
 
@@ -597,6 +605,9 @@ async def _cold_boot_swap_cell(
             pod_id + endpoint_url JSON.
         pod: Shared pod-id slot; set on cold-boot success.
         sidecar: Cost sidecar; group registered via ``start_group``.
+        ephemeral: ``grid --ephemeral`` pass-through (U24). Cell-1 is the
+            cold boot, so this is the cell whose session mints the opaque
+            provider-side name the whole group then runs under.
 
     Returns:
         The subprocess ``(returncode, stderr)`` pair.
@@ -607,6 +618,7 @@ async def _cold_boot_swap_cell(
         output_dir=output_dir,
         attach_pod_id=None,
         emit_provision_record=record_path,
+        ephemeral=ephemeral,
     )
     if rc == 0 and record_path.exists():
         rec = json.loads(record_path.read_text())
@@ -689,6 +701,7 @@ async def _run_swap_cell_attempts(
     output_dir: Path,
     on_swap_failure: Literal["strict", "continue", "classify"],
     sidecar: CostSidecarBuilder,
+    ephemeral: bool = False,
 ) -> tuple[GridCellResult, bool]:
     """Drive one swap cell's attempt loop (cold-boot or attach + retries).
 
@@ -707,6 +720,8 @@ async def _run_swap_cell_attempts(
         grid_id: Stable grid identifier.
         output_dir: Top-level grid output dir.
         on_swap_failure: Spec-level failure policy.
+        ephemeral: ``grid --ephemeral`` pass-through (U24); forwarded to
+            every cell's argv in ROOT position.
         sidecar: Cost sidecar for group/cell records.
 
     Returns:
@@ -736,6 +751,7 @@ async def _run_swap_cell_attempts(
                 record_path=record_path,
                 pod=pod,
                 sidecar=sidecar,
+                ephemeral=ephemeral,
             )
         else:
             if pod.pod_id is None:
@@ -749,6 +765,7 @@ async def _run_swap_cell_attempts(
                 output_dir=output_dir,
                 attach_pod_id=pod.pod_id,
                 emit_provision_record=None,
+                ephemeral=ephemeral,
             )
 
         if rc == 0:
@@ -786,6 +803,7 @@ async def _run_swap_group(
     grid_id: str,
     sidecar: CostSidecarBuilder,
     budget_cap_usd: float,
+    ephemeral: bool = False,
 ) -> list[GridCellResult]:
     """Cold-boot one pod for cell-1; attach for cells 2..N; destroy on exit.
 
@@ -800,6 +818,18 @@ async def _run_swap_group(
     :func:`_check_no_residual_pods` probe surfaces any leak via
     ``teardown_breadcrumb``.
 
+    ``ephemeral`` (U24) is the ``grid --ephemeral`` pass-through for swap
+    cells. This combination was REFUSED until 2026-09-11, on the grounds
+    that no single cell could own the shared pod's ``delete_on_completion``.
+    That reasoning did not hold: ``delete_on_completion`` governs hosted-job
+    deletion and the store scrub, not pod teardown, and the shared pod has
+    always been destroyed by THIS function's finally — the controller owns
+    it, which is precisely the ownership the refusal said was missing. What
+    genuinely blocked it was that cells 2..N resolve ``--attach-pod`` through
+    ``Ledger.read``, and under the strict policy the ledger is a per-process
+    in-memory mirror; ``_resolve_attach_pod`` now falls back to the ephemeral
+    index, which is the cross-process handoff that already existed.
+
     Args:
         group_cells: All cells sharing this swap group (same
             ``WarmAttachKey``). Order is execution order.
@@ -811,6 +841,8 @@ async def _run_swap_group(
         sidecar: A :class:`CostSidecarBuilder` instance. Group is
             registered via ``start_group`` on cold-boot success; cell
             results recorded via ``record_cell`` / ``mark_cell_error``.
+        ephemeral: ``grid --ephemeral`` pass-through (U24); forwarded to
+            every cell's argv in ROOT position.
         budget_cap_usd: Spec-level cap. Re-evaluated between cells via
             ``sidecar.total_cost_usd() >= budget_cap_usd``.
 
@@ -850,6 +882,7 @@ async def _run_swap_group(
                 output_dir=output_dir,
                 on_swap_failure=on_swap_failure,
                 sidecar=sidecar,
+                ephemeral=ephemeral,
             )
             results.append(result)
     finally:
@@ -1074,32 +1107,6 @@ async def run_grid(
             for key, cells in groups.items()
             if key != _PATH_GROUP_KEY
         )
-        if ephemeral and swap_groups_present:
-            # U11 follow-up (review round 1, filed as U24 in PROGRESS.md): a
-            # lora_swap group shares ONE pod across the whole swap chain
-            # (--attach-pod / --emit-provision-record, never --no-reuse), so no
-            # single cell's --ephemeral can own the shared pod's
-            # delete_on_completion without a real executor-shape decision this
-            # task is not making. Controller ruling: REFUSE rather than warn —
-            # a warning still lets the run proceed and leak run id, local
-            # timestamp and workload shape to the provider, which is exactly
-            # U11's original symptom. This check runs before any group is
-            # dispatched, so no cell subprocess is ever spawned on this path.
-            swap_idxs = sorted(
-                cell.idx
-                for key, cells in groups.items()
-                if key != _PATH_GROUP_KEY
-                for cell in cells
-                if cell.is_lora_swap
-            )
-            raise ValueError(
-                f"grid --ephemeral does not support lora_swap cells {swap_idxs}: "
-                "a lora_swap group shares one pod across the whole swap chain, "
-                "so no single cell can own --ephemeral's delete_on_completion "
-                "without leaking the rest of the chain's run id and local "
-                "timestamp to the provider. Filed as U24 (see PROGRESS.md) — "
-                "drop --ephemeral or remove the lora_swap cells to proceed."
-            )
         if swap_groups_present:
             sidecar = CostSidecarBuilder(
                 grid_id=grid_id,
@@ -1122,6 +1129,7 @@ async def run_grid(
                     _run_swap_group(
                         cells,
                         on_swap_failure=spec.on_swap_failure,
+                        ephemeral=ephemeral,
                         # work_parent, not output_dir: per-cell dirs belong to
                         # the working tree, which is private + removed under an
                         # ephemeral policy and identical to output_dir

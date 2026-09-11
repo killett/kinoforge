@@ -7,6 +7,7 @@ or ``kinoforge list`` invoked. Live coverage lives in the smoke tests.
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,6 +33,7 @@ class _SubprocessLog:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
         self.list_calls: int = 0
+        self.destroy_calls: list[list[str]] = []
 
 
 def _stub_generate_subprocess(
@@ -50,6 +52,14 @@ def _stub_generate_subprocess(
         if "list" in cmd:
             log.list_calls += 1
             return subprocess.CompletedProcess(cmd, 0, stdout=list_stdout, stderr="")
+        if "destroy" in cmd:
+            # The swap group's controller-side teardown
+            # (`kinoforge destroy --id <pod>`), which is the ownership U24
+            # claimed no cell could take. Recorded separately: it carries no
+            # --run-id, and folding it into log.calls would corrupt every
+            # per-cell assertion below.
+            log.destroy_calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         log.calls.append(cmd)
         rid = cmd[cmd.index("--run-id") + 1]
         cell_idx = int(rid.split("__cell")[1])
@@ -60,6 +70,20 @@ def _stub_generate_subprocess(
         out_dir = Path(cmd[cmd.index("--output-dir") + 1])
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / f"{rid}.mp4").write_bytes(b"\x00" * 1024 + str(cell_idx).encode())
+        if "--emit-provision-record" in cmd:
+            # A lora_swap group's cell-1 hands cells 2..N its pod through
+            # this file; without it the executor raises its "cell-1 produced
+            # no pod_id" invariant and no swap chain can be exercised at all.
+            rec = Path(cmd[cmd.index("--emit-provision-record") + 1])
+            rec.parent.mkdir(parents=True, exist_ok=True)
+            rec.write_text(
+                json.dumps(
+                    {
+                        "pod_id": "pod-swap-1",
+                        "endpoint_url": "https://pod-swap-1.example.invalid",
+                    }
+                )
+            )
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr("kinoforge.core.grid.executor.subprocess.run", fake_run)
@@ -466,16 +490,28 @@ def _make_lora_swap_spec(tmp_path: Path, n_cells: int = 2) -> GridSpec:
     return GridSpec.model_validate(raw)
 
 
-def test_run_grid_ephemeral_refuses_lora_swap_cells(
+def test_run_grid_ephemeral_runs_lora_swap_cells_with_the_flag_in_root_position(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """U11 follow-up (Important finding, review round 1): a lora_swap group
-    shares ONE pod across the whole swap chain (--attach-pod /
-    --emit-provision-record, never --no-reuse), so no single cell's
-    --ephemeral can own the shared pod's delete_on_completion. Controller
-    ruling: refuse (fail-closed), not warn — a warning still leaks run
-    id/timestamp/workload shape to the provider exactly like U11's original
-    symptom. This must raise BEFORE any cell subprocess is spawned."""
+    """U24: a lora_swap group is ephemeral-capable, not refused.
+
+    Supersedes ``test_run_grid_ephemeral_refuses_lora_swap_cells``, which
+    pinned the fail-closed refusal installed in U11's review round 1. That
+    refusal rested on "no single cell's --ephemeral can own the shared pod's
+    delete_on_completion" — and `delete_on_completion` governs hosted-job
+    deletion and the store scrub, NOT pod teardown. The shared pod has always
+    been destroyed by the CONTROLLER's own finally
+    (``pixi run kinoforge destroy --id``), which is the ownership the refusal
+    said did not exist.
+
+    Bug caught: emitting ``--ephemeral`` AFTER the ``generate`` subcommand.
+    It is declared on the root parser, and appending it after the subcommand
+    made the child exit 2 with `unrecognized arguments` before reaching a
+    provider — observed live in Task 6 cell A2, and the whole reason U11
+    needed a second fix. Every swap cell's argv is checked, so cell 1
+    (cold-boot, --emit-provision-record) and cells 2..N (--attach-pod) are
+    both covered.
+    """
     log = _stub_generate_subprocess(monkeypatch)
     _stub_compose(monkeypatch)
     _stub_config_loader(monkeypatch)
@@ -485,22 +521,48 @@ def test_run_grid_ephemeral_refuses_lora_swap_cells(
     )
     spec = _make_lora_swap_spec(tmp_path, n_cells=2)
 
-    # Pins the offending cell indices into the message, not just the word
-    # "lora_swap" — a regression dropping `{swap_idxs}` from the raise would
-    # not be caught by a looser match (review round 2 finding).
-    with pytest.raises(ValueError, match=r"lora_swap cells \[0, 1\]"):
-        asyncio.run(
-            run_grid(
-                spec=spec,
-                output_dir=tmp_path / "out",
-                max_parallel_groups=2,
-                ephemeral=True,
-            )
+    asyncio.run(
+        run_grid(
+            spec=spec,
+            output_dir=tmp_path / "out",
+            max_parallel_groups=2,
+            ephemeral=True,
         )
-    assert log.calls == [], (
-        f"refusal must happen before any cell subprocess is spawned, "
-        f"got {len(log.calls)} calls: {log.calls}"
     )
+
+    assert log.calls, "no cell subprocess was spawned at all"
+    for cmd in log.calls:
+        assert "--ephemeral" in cmd, f"cell argv lost --ephemeral: {cmd}"
+        assert cmd.index("--ephemeral") < cmd.index("generate"), (
+            f"--ephemeral must precede the subcommand (root parser declares "
+            f"it); got {cmd}"
+        )
+
+
+def test_non_ephemeral_lora_swap_cells_do_not_get_the_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The pass-through is scoped to the flag, not applied unconditionally.
+
+    Bug caught: threading ``ephemeral`` into the swap command builder as a
+    constant ``True`` (or defaulting it there), which would make every plain
+    grid run ephemeral — silently dropping the operator's ledger rows and
+    local artifacts on a run that never asked for it.
+    """
+    log = _stub_generate_subprocess(monkeypatch)
+    _stub_compose(monkeypatch)
+    _stub_config_loader(monkeypatch)
+    monkeypatch.setattr(
+        "kinoforge.core.grid.executor._cell_capability_key",
+        lambda cell: "K-swap",
+    )
+    spec = _make_lora_swap_spec(tmp_path, n_cells=2)
+
+    asyncio.run(run_grid(spec=spec, output_dir=tmp_path / "out", max_parallel_groups=2))
+
+    assert log.calls
+    for cmd in log.calls:
+        assert "--ephemeral" not in cmd, f"plain grid cell went ephemeral: {cmd}"
 
 
 def test_run_grid_non_ephemeral_lora_swap_cells_not_refused(

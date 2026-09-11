@@ -2599,6 +2599,27 @@ def _seed_instance_from_ledger_entry(instance: Instance, entry: dict[str, Any]) 
     instance.endpoints = merged
 
 
+def _ephemeral_index_entry(ctx: SessionContext, pod_id: str) -> dict[str, Any] | None:
+    """Return the ephemeral-index row for ``pod_id`` in ledger-entry shape.
+
+    Args:
+        ctx: The current SessionContext, whose store backs the index.
+        pod_id: Provider-side id to look up.
+
+    Returns:
+        The row as ``EphemeralIndexRow.to_entry_dict()`` — carrying ``id``,
+        ``provider``, ``endpoints``, ``warm_attach_key`` and the
+        ``kinoforge_key`` tag, which is every field the attach gate reads —
+        or ``None`` when the index holds no such pod.
+    """
+    from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
+
+    for row in EphemeralIndex(store=ctx.store()).rows():
+        if row.id == pod_id:
+            return row.to_entry_dict()
+    return None
+
+
 def _resolve_attach_pod(
     ctx: SessionContext, cfg: Config, pod_id: str
 ) -> tuple[Instance | None, int | None]:
@@ -2612,7 +2633,11 @@ def _resolve_attach_pod(
     a deliberate hand-off from a cold-boot to a follow-up generation.
 
     Order:
-      1. ``Ledger.read(pod_id)`` — missing → exit 1.
+      1. ``Ledger.read(pod_id)``, falling back to the ephemeral index —
+         missing from BOTH → exit 1. The fallback is what lets a
+         ``--ephemeral`` process attach to a pod a sibling process created:
+         under that policy the ledger is a per-process in-memory mirror
+         (U24).
       2. ``warm_attach_key`` field on entry matches cfg's derived WAK.
       3. ``provider.get_instance(pod_id).status == "ready"`` (live probe).
     """
@@ -2622,9 +2647,19 @@ def _resolve_attach_pod(
     ledger = ctx.ledger()
     entry = ledger.read(pod_id)
     if entry is None:
+        # U24 — fall back to the ephemeral index. Under ``--ephemeral`` the
+        # ledger is a PER-PROCESS in-memory mirror (``ledger_record=False``
+        # diverts ``Ledger.record`` to ``session.in_memory_ledger``), so a pod
+        # created by a sibling process is invisible to a ledger read even
+        # though it is alive and answering. The index is the cross-process
+        # handoff that exists for exactly this, and it is already unioned in
+        # by ``_scan_warm_candidates`` and by ``kinoforge reap`` (U18); this
+        # was the third read site and the only one still missing it.
+        entry = _ephemeral_index_entry(ctx, pod_id)
+    if entry is None:
         print(
-            f"pod {pod_id} not in ledger; cannot --attach-pod. Run "
-            f"'kinoforge list' to see ledger ids.",
+            f"pod {pod_id} not in ledger or ephemeral index; cannot "
+            f"--attach-pod. Run 'kinoforge list' to see ledger ids.",
             file=sys.stderr,
         )
         return (None, 1)

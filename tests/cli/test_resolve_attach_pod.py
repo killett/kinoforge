@@ -258,3 +258,120 @@ def test_refusal_reports_the_endpoints_it_checked_not_the_tag_keys(
     # offered as such.
     assert "tag" not in err
     assert "kinoforge_key" not in err
+
+
+def _seed_index_only(ctx: SessionContext, *, pod_id: str, url: str) -> None:
+    """Record ``pod_id`` in the EPHEMERAL INDEX and nowhere else.
+
+    This is the state a ``--ephemeral`` sibling process leaves behind: under
+    ``STRICT_POLICY`` ``Ledger.record`` diverts to the session's
+    per-process ``in_memory_ledger``, so a second process reading the ledger
+    sees nothing at all. The index is the cross-process handoff.
+    """
+    from kinoforge.core.warm_reuse.ephemeral_index import (
+        EphemeralIndex,
+        EphemeralIndexRow,
+    )
+
+    cfg = ctx.cfg
+    assert cfg is not None
+    EphemeralIndex(store=ctx.store()).add(
+        EphemeralIndexRow(
+            id=pod_id,
+            warm_attach_key=_cfg_warm_attach_key(cfg),
+            kinoforge_key=cfg.capability_key().derive()[:12],
+            endpoints={"8000": url},
+            provider="local",
+            created_at_local="2026-09-11T00:00:00",
+        )
+    )
+
+
+def test_attach_pod_finds_a_pod_recorded_only_in_the_ephemeral_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U24: an ephemeral sibling's pod is attachable by id.
+
+    Bug caught: step 1 reads ``Ledger.read`` and nothing else. Under
+    ``--ephemeral`` the ledger is a per-process in-memory mirror
+    (``ledger_record=False`` diverts writes to ``session.in_memory_ledger``),
+    so the pod a sibling process created is invisible here and
+    ``--attach-pod`` exits 1 with "not in ledger" about a pod that is alive
+    and answering. That is what makes ``grid --ephemeral`` impossible for
+    ``lora_swap`` cells, which attach to cell 1's pod by id — and why that
+    combination is currently refused outright (U24).
+
+    ``_scan_warm_candidates`` and ``kinoforge reap`` (U18) already union the
+    index in; this is the third read site, and the only one still missing it.
+    """
+    ctx = _make_ctx(tmp_path)
+    _seed_index_only(ctx, pod_id="pod-eph", url=_LEDGER_URL)
+    provider = _install(
+        monkeypatch, _EchoingProvider(_instance(iid="pod-eph", endpoints={}, tags={}))
+    )
+
+    cfg = ctx.cfg
+    assert cfg is not None
+    resolved, rc = _resolve_attach_pod(ctx, cfg, "pod-eph")
+
+    assert rc is None
+    assert resolved is not None
+    assert provider.seen_endpoints == {"8000": _LEDGER_URL}
+
+
+def test_attach_pod_still_checks_the_warm_attach_key_on_an_index_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The index fallback must not smuggle a pod past the WAK gate.
+
+    Bug caught: reaching for the index row and attaching on its existence
+    alone. The WAK check is what stops a cfg attaching to a pod running a
+    different base model / engine / precision — a mismatch that fails deep
+    inside the generation instead of here, on a pod that is already billing.
+    """
+    from kinoforge.core.warm_reuse.ephemeral_index import (
+        EphemeralIndex,
+        EphemeralIndexRow,
+    )
+
+    ctx = _make_ctx(tmp_path)
+    EphemeralIndex(store=ctx.store()).add(
+        EphemeralIndexRow(
+            id="pod-other",
+            warm_attach_key="not-this-cfgs-wak",
+            kinoforge_key="deadbeefdead",
+            endpoints={"8000": _LEDGER_URL},
+            provider="local",
+            created_at_local="2026-09-11T00:00:00",
+        )
+    )
+    _install(
+        monkeypatch, _EchoingProvider(_instance(iid="pod-other", endpoints={}, tags={}))
+    )
+
+    cfg = ctx.cfg
+    assert cfg is not None
+    resolved, rc = _resolve_attach_pod(ctx, cfg, "pod-other")
+
+    assert resolved is None
+    assert rc == 1
+
+
+def test_attach_pod_in_neither_ledger_nor_index_still_refuses(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unknown id keeps its existing refusal.
+
+    Bug caught: a fallback that swallows the miss — returning ``None, None``,
+    or inventing an Instance from the id — so a typo'd ``--attach-pod``
+    proceeds to cold-boot or crashes deeper instead of failing here.
+    """
+    ctx = _make_ctx(tmp_path)
+    cfg = ctx.cfg
+    assert cfg is not None
+
+    resolved, rc = _resolve_attach_pod(ctx, cfg, "pod-does-not-exist")
+
+    assert resolved is None
+    assert rc == 1
+    assert "pod-does-not-exist" in capsys.readouterr().err
