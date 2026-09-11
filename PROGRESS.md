@@ -2959,8 +2959,8 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 **Closed this session: U2, U1, U25, U19, U6, U31 and U24** (U24 offline-only — its live proof
 is owed) — U31 was FILED in this same session, from the
 U13 measurement, and then fixed once it became clear its own "past the one-guard bar" assessment
-was wrong. The ledger went from 7 open to **2 open** (U13, U24). Spend: **$0.05 total** ($0.036
-U19, $0.014 U6); everything else was offline.
+was wrong. The ledger went from **7 open to 1 open** (U13), plus U24 fixed-but-owing-a-live-proof.
+Spend: **$0.05 total** ($0.036 U19, $0.014 U6); everything else was offline.
 
 **The through-line, and the reason each entry is worth re-reading rather than trusting its
 headline: four of the six filings were WRONG about their own scope, and each was narrowed or
@@ -2974,7 +2974,12 @@ retracted with evidence.**
 - **U13**'s $0 first step was run and **did not reproduce the hang**; four mechanisms are now
   eliminated by measurement rather than argument.
 - **U2** turned out to sit next to a second, unfiled defect on the same line (a missing manifest
-  left the CLI through an uncaught `FileNotFoundError`).
+  left the CLI through an uncaught `FileNotFoundError`), and **U6** next to a third (its `creds`
+  parameter was documented and never read).
+- **U31 and U24** were both filed as "past the one-guard bar" and neither was — U31's fix is one
+  line in one kinoforge-owned class, and U24's "cross-process handoff that would need building"
+  already existed as the ephemeral index. With U28 earlier, that label has now been wrong three
+  times out of three.
 
 *Generalise, because it recurred four times in one session: a filing's scope claim is a hypothesis
 written before the fix, and one grep of the thing it says must move usually settles it.*
