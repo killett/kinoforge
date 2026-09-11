@@ -450,7 +450,7 @@ items, not only in the matrix follow-up list. Each carries the symptom, the repr
 suspected site.
 
 **STATUS INDEX (current as of 2026-09-10. Provenance, newest first: U16 fixed 2026-09-10
-(`__U16SHA__`, $0.00 offline, live contract check owed); U22 fixed 2026-09-10
+(`4e8f957b`, $0.00 offline, live contract check owed); U22 fixed 2026-09-10
 (`b6646e37`, $0.00 offline); U28 fixed + LIVE-PROVEN
 2026-09-09 (`f1e7f1ef`, $0.0406); U3 fixed + LIVE-PROVEN and U27 fixed 2026-09-09
 (`e033b170` / `a08b7de6`, $0.055); U26 fixed 2026-09-09 (`a8cbb54c`); U11 LIVE-RE-PROVEN and
@@ -1648,7 +1648,7 @@ per-item entries below.
   defects together are what put two $2.50/hr A100s on the clock in both passes of Tier 2a.
   **Discovered by:** matrix cell T2-02 re-run, 2026-09-06.
 
-- **U16 — FIXED, OFFLINE-PROVEN 2026-09-10 (`__U16SHA__`, $0.00). The ephemeral launch row was
+- **U16 — FIXED, OFFLINE-PROVEN 2026-09-10 (`4e8f957b`, $0.00). The ephemeral launch row was
   only a PARTIAL handle on RunPod; on Modal it was a full one.**
   **Resolution.** New `RunPodProvider._pod_ids_matching` resolves an identifier against the pod
   listing — `_LIST_PODS_QUERY` already selects `name` and `_pod_to_instance` already populates
