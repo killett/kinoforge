@@ -449,7 +449,9 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site.
 
-**STATUS INDEX (current as of 2026-09-10. Provenance, newest first: U16
+**STATUS INDEX (current as of 2026-09-10. Provenance, newest first: U2 fixed 2026-09-10
+(`e7c731f9`, $0.00 offline, CLI-demonstrated — and the same commit fixed an unnumbered adjacent
+defect on the same line, the manifest loader's uncaught `FileNotFoundError`); U16
 (`4e8f957b`) and U22 (`b6646e37`) both LIVE-PROVEN 2026-09-10 ($0.02, one shared RunPod pod);
 U30 filed and fixed 2026-09-10 from that run; U16 fixed 2026-09-10
 (`b6646e37`, $0.00 offline); U28 fixed + LIVE-PROVEN
@@ -458,11 +460,11 @@ U30 filed and fixed 2026-09-10 from that run; U16 fixed 2026-09-10
 U18 LIVE-PROVEN and U21 fixed 2026-09-09; U29 filed and fixed 2026-09-09; U17 fixed 2026-09-08.
 This table is authoritative — every paragraph BELOW it is dated campaign commentary and is not.)**
 
-Thirty items, U1-U30. **Twenty-one are fixed** (U3, U4, U7, U8, U9, U11, U12, U14, U15, U16, U17,
-U18, U20, U21, U22, U23, U26, U27, U28, U29, U30), **two are partly fixed** (U5, U10), **seven are
-open** (U1, U2, U6, U13, U19, U24, U25). **U16 and U22 are LIVE-PROVEN as of 2026-09-10 for $0.02
+Thirty items, U1-U30. **Twenty-two are fixed** (U2, U3, U4, U7, U8, U9, U11, U12, U14, U15, U16,
+U17, U18, U20, U21, U22, U23, U26, U27, U28, U29, U30), **two are partly fixed** (U5, U10), **six
+are open** (U1, U6, U13, U19, U24, U25). **U16 and U22 are LIVE-PROVEN as of 2026-09-10 for $0.02
 total** — one RunPod pod discharged both owed live checks; that run then FOUND **U30**, filed and
-fixed the same day.
+fixed the same day. **U2 was fixed 2026-09-10 for $0.00** — offline, CLI-demonstrated, no pod.
 
 **U11 went OPEN → FIXED again on 2026-09-09**: it
 was moved back to OPEN by Task 6's live disproof, and the regression that disproof found is now
@@ -473,7 +475,7 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | Item | State | Detail |
 |---|---|---|
 | U1 | OPEN | warm-attach matcher is provider-blind; untouched |
-| U2 | OPEN | `batch --dry-run-swap` never parses the manifest; untouched |
+| U2 | FIXED 2026-09-10 (`e7c731f9`, $0.00) | The `dry_run_swap` early return in `_cmd_batch` sat ABOVE `load_manifest`, so a `--manifest` path that does not exist exited 0 with a swap plan. The preview now loads and fully validates the manifest first, prints `manifest: <N> entries`, and only then renders the matcher decision — the count is the only OBSERVABLE proof the parse happened, so without it no test can distinguish "loaded" from "not loaded" on a VALID manifest. The batch subparser's help text **documented the defect** ("without ... loading the manifest") and was rewritten. **An adjacent defect on the same line, fixed in the same commit and deliberately left unnumbered:** the ordinary batch path caught only `ConfigError` + pydantic `ValidationError`, but `load_manifest` reads the path itself and `Path.read_text` on an absent file raises `FileNotFoundError` — an `OSError` — so a missing manifest left the CLI through an uncaught TRACEBACK rather than its documented exit 1. Both paths now share one `_load_manifest_or_report` helper so the error shapes cannot drift apart again. Four tests, all RED first, driven through `main()`: the refusal asserts the `matcher:` line is ABSENT as well as the exit code (a fix that reports AND previews still fails); a mapping-shaped manifest pins the PARSE, not the file's existence, which is what an `exists()`-only fix would have shipped; a valid TWO-entry manifest must still preview, so a truthiness/`1`-hardcoding bug shows as a wrong number; and the normal path's missing file covers the `OSError` half. The pre-existing `test_dry_run_swap_works_on_batch` passed `manifest="ignored"` and went RED on the behaviour change — it now writes a real manifest, point unchanged. CLI-demonstrated at $0.00: exit 1 + `error: manifest:` on a missing path (was exit 0 + a plan), `manifest: 2 entries` + the matcher verdict on a valid one, and the same clean error on the normal path (was a traceback) |
 | U3 | FIXED, LIVE-PROVEN 2026-09-09 | The read paths now consult the ledger row that was always holding the answer. `_merge_recorded_tags` restores the create-time `tags` (RunPod's `endpoints` READS `tags["ports"]`, which `get_instance` never populates) and `_seed_instance_from_ledger_entry` also restores the recorded `endpoints` map (Modal's `.modal.run` URL is derivable from nothing at all). `_cmd_status` seeds tags and passes the recorded map to `_render_endpoints_for_status` as a new `recorded=` argument; `_cmd_pod_lora_ls` seeds both before `ensure_endpoints`. The merge block was EXTRACTED from `_resolve_attach_pod` (the U15 fix, `ccd4c5e7`) rather than re-written, and the four existing tests in `tests/cli/test_resolve_attach_pod.py` stayed green UNMODIFIED — that is the non-regression proof. **A recorded endpoint renders LABELLED** — `{...} (recorded at launch, not verified live)` — because `status` uses the pure read and on SkyPilot the recorded endpoint is routinely a `127.0.0.1:<port>` tunnel that died with the process that opened it; presenting that as live is the F11 failure the S5 read/ensure split exists to prevent. A map the provider COMPUTED from rehydrated tags renders UNLABELLED, because a proxy URL rebuilt from the pod id is derivation, not recollection — that distinction also closes the RunPod-status deferral `_render_endpoints_for_status`'s own docstring had named as out of scope. **The offline proof could not, on its own, establish the claim** — and the reason was structural, not laziness: the claim is about what a FRESH PROCESS can reach, and no offline test can exercise that against a real provider — `LocalProvider` keeps instances in-process (so a fresh process raises `KeyError` before the endpoint render is reached) and Modal/RunPod `get_instance` are network calls. That gap was recorded as an owed debt and has since been paid — see the live proof below. Two of the new tests deliberately pin the CALL SITE through `main()`, not the renderer, because every renderer test passes `recorded=` in by hand and would have stayed green if `_cmd_status` never passed one; RED for both was confirmed by temporarily reverting the call-site wiring. **LIVE-PROVEN 2026-09-09 ($0.055, Modal A10 `run-20260909-182423`, 3 m 03 s)** — this DISCHARGES the offline-only caveat stated above; scaffold committed RED first in `0c8dc571` per the pre-spend rule, preflight PASS on a verified zero-app Modal baseline. From processes that did not create the pod: `status --id` printed the real `.modal.run` URL WITH the `(recorded at launch, not verified live)` label (exit 0) where it previously printed `unknown (no live endpoint)`, and `pod lora ls` reached that same host over HTTP (exit 0, `no LoRAs loaded`) where it previously exited 2 with `no endpoint URL`. Same-host criterion triangulated three ways rather than asserted: the URL Modal's own deploy output created is byte-identical to the one `status` reported; a direct `GET /lora/inventory` on that host returned HTTP 200 `{'inventory': [], ...}`, matching what `pod lora ls` rendered; and a negative control (`pod lora ls run-does-not-exist`) exited 1 `not found in ledger`, proving the command does not fabricate a host — the U4 defect shape. **NOT closed by this fix:** an `--ephemeral` run's index row carries `endpoints: {}` for its whole life (**U28**), so this buys ephemeral runs nothing, and the `grid`-cell monitoring blindness recorded on this row is downstream of U28, not of U3 |
 | U4 | FIXED | `c08c3cce` — `logs` refuses cleanly off RunPod instead of 404ing a fabricated host |
 | U5 | PARTLY FIXED | `c08c3cce` corrected the help text; wiring `vault.positive_prompt` into prompt resolution is still open, and so is failing an empty prompt BEFORE a pod is billed |
@@ -615,13 +617,44 @@ per-item entries below.
   index (backup `/home/claudeuser/kinoforge-matrix/ephemeral-index.backup-20260906.json`). That
   removed the confound for the campaign; **the defect is untouched.**
 
-- **U2 — `batch --dry-run-swap` never parses the manifest.**
+- **U2 — FIXED 2026-09-10 (`e7c731f9`, $0.00 offline) — `batch --dry-run-swap` never parsed the
+  manifest.**
   `pixi run -e live-modal kinoforge batch -c <cfg> --manifest <path> --dry-run-swap` exits 0 and
   prints the single-job swap preview even when `<path>` does not exist. The manifest is never
   read on that path, so the flag validates nothing about the batch it claims to preview.
   **Reproducer (offline, T0-08):** pass a nonexistent `--manifest` — still exit 0.
   **Why urgent:** the one pre-flight check a batch has is inert, so a malformed or missing
   manifest is discovered only after the pod is up and billing.
+  **Fix.** `_cmd_batch`'s `dry_run_swap` early return sat ABOVE `load_manifest`; it now loads and
+  fully validates the manifest first, prints `manifest: <N> entries`, and only then renders the
+  matcher decision. The entry count is not decoration — it is the only OBSERVABLE proof the parse
+  happened, and without it no test can tell "loaded" from "not loaded" on a manifest that is
+  valid. The batch subparser's help text used to promise the preview ran *"without acquiring the
+  pod lock, issuing HTTP, or loading the manifest"* — it **documented the defect**, and was
+  rewritten with the new contract.
+  **A second defect, found while reproducing the first, fixed in the same commit and deliberately
+  NOT given its own U-number** (it is the same line of code in the same pass, so a number would
+  inflate the ledger rather than inform it): the ORDINARY batch path caught only `ConfigError` and
+  pydantic's `ValidationError` around `load_manifest`, but `load_manifest` reads the path itself
+  and `Path.read_text` on an absent file raises `FileNotFoundError` — an `OSError`. A missing
+  manifest therefore left the CLI through an **uncaught traceback** instead of the exit 1 its own
+  docstring promises. Reproduced verbatim before the fix. Both paths now share one
+  `_load_manifest_or_report` helper, so the two error shapes cannot drift apart again.
+  **Four tests, every one RED first** (`tests/test_batch_cli.py`, driven through `main()`):
+  the missing-manifest refusal asserts the `matcher:` line is **ABSENT** as well as the exit code,
+  so a fix that reports the error and previews anyway still fails; a mapping-shaped manifest pins
+  the *parse* rather than the file's existence, which is what an `exists()`-only fix would have
+  shipped; a valid **two**-entry manifest (not one) must still preview, so a truthiness- or
+  `1`-hardcoding bug shows as a wrong number rather than a coincidence; and the normal path's
+  missing file covers the `OSError` half. The pre-existing `test_dry_run_swap_works_on_batch`
+  passed `manifest="ignored"` — a path that does not exist — and went RED on the behaviour change;
+  it now writes a real manifest, with its original point (batch honours the flag symmetrically)
+  unchanged.
+  **CLI-demonstrated at $0.00**, no pod, no preflight: missing manifest + `--dry-run-swap` →
+  `error: manifest: [Errno 2] ...`, exit 1 (was exit 0 + a swap plan); valid 2-entry manifest →
+  `manifest: 2 entries` + `matcher: no warm candidate, would cold-boot`, exit 0; missing manifest
+  on the normal path → the same clean error, exit 1 (was a `FileNotFoundError` traceback).
+  `pixi run test` → 5582 passed / 155 skipped / 21 deselected / 6 xfailed; pre-commit green.
 
 - **U3 — FIXED and LIVE-PROVEN 2026-09-09 — a Modal pod's endpoint URL was unreachable from any fresh process.**
   The ledger entry for a live Modal pod carries
@@ -2747,9 +2780,22 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 
 ### NEXT ACTION (single, current as of 2026-09-10)
 
-**Do U2 or U13 — both offline, both $0.** U2: `batch --dry-run-swap` never parses the manifest.
-U13: the CLI hangs after `UpscaleFailed`; its entry carries a $0 offline first step and the
-originally-suspected site was RETRACTED, so start from the entry, not from that memory.
+**Do U13 — offline, $0.** The CLI hangs after `UpscaleFailed`; its entry carries a $0 offline
+first step (stub an engine that raises `UpscaleFailed`, then dump `threading.enumerate()` +
+`faulthandler.dump_traceback_later` at the hang — that names the holder in one run, no pod). The
+originally-suspected site was RETRACTED in the entry itself, so start from the entry, not from
+that memory. One lead the entry does not record: `pixi run test` now prints a
+`=== POST-SESSION THREAD DUMP ===` line at the end of every run, so a thread-holder harness
+already exists in this repo — find it before writing a new one.
+
+**U2 is CLOSED — FIXED 2026-09-10 for $0.00 (`e7c731f9`), offline and CLI-demonstrated.**
+`batch --dry-run-swap` now parses and validates the manifest before it previews anything, and a
+second defect on the same line went with it: a missing manifest used to leave the ORDINARY batch
+path through an uncaught `FileNotFoundError` traceback, because the handler caught only
+`ConfigError` + pydantic `ValidationError` and `load_manifest` reads the path itself. See U2's
+STATUS INDEX row — including why that second defect was deliberately left unnumbered, and the
+detail that the batch subparser's help text had been *documenting* the defect ("without ...
+loading the manifest") rather than the contract.
 
 **The 2026-09-10 live session is DONE — do not re-run it.** Both owed live checks are discharged
 and a third defect was found and fixed. Final run: RunPod pod `ohoyddiq4x084g`, name
@@ -2790,11 +2836,13 @@ recur here.
 window (offline-proven only since 2026-09-08). Fold it into the next Modal run; do not book a pod
 for it alone.
 
-**Cheapest remaining offline wins: U2** (`batch --dry-run-swap` never parses the manifest) and
-**U13** (the CLI hangs after `UpscaleFailed`; its entry has a $0 offline first step).
+**Cheapest remaining offline win: U13** (the CLI hangs after `UpscaleFailed`; its entry has a $0
+offline first step). ~~Cheapest remaining offline wins: U2 and U13~~ — U2 was fixed 2026-09-10 in
+`e7c731f9`.
 
 **Do NOT trust any "cheapest remaining wins" line further down this file** — the 2026-09-09 one is
-struck through and names U27, and the 2026-09-10 one names U22 and U16. All three are fixed.
+struck through and names U27, and the 2026-09-10 one names U22 and U16. All three are fixed, as is
+U2.
 
 
 **U28 CLOSED — FIXED and LIVE-PROVEN 2026-09-09 for $0.0406.** The `--ephemeral` index row now
