@@ -102,8 +102,18 @@ class SpandrelEngine(PodHTTPClientMixin, UpscalerEngine):
             file_name = sub_path.rsplit("/", 1)[-1]
             url = f"https://huggingface.co/{org}/{repo}/resolve/main/{sub_path}"
             script_lines.append(
+                # ``:-`` is load-bearing (U32). Provision scripts run under
+                # ``set -euo pipefail``, and Modal BAKES this step into the
+                # image, where run secrets do not exist — so the bare
+                # ``${HF_TOKEN}`` aborted the whole image build with
+                # "HF_TOKEN: unbound variable" before any pod was created
+                # (observed live 2026-09-11). An empty Bearer is fine for the
+                # public SR weights these cfgs use, and a gated repo now gets
+                # a clear 401 through --fail-with-body instead of a shell
+                # error. RunPod never saw this: it runs the whole script at
+                # container start, where the env is present.
                 "curl -L --fail-with-body "
-                '-H "Authorization: Bearer ${HF_TOKEN}" '
+                '-H "Authorization: Bearer ${HF_TOKEN:-}" '
                 f"-o {dest_dir}/{file_name} {url}"
             )
         elif model_url.startswith(("http://", "https://")):
