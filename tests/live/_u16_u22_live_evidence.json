@@ -1,0 +1,27 @@
+{
+  "fallback_teardown": "xf5jjm6psazv15",
+  "finished_at_local": "2026-09-10T19:15:24.327348",
+  "listed_tags": {
+    "mode": "pod",
+    "name": "kinoforge-6810c7b3"
+  },
+  "offer": {
+    "est_usd": 0.0238,
+    "id": "NVIDIA GeForce RTX 3070",
+    "usd_per_hr": 0.13
+  },
+  "probe_by_name": {
+    "cpu_pct": null,
+    "found": true,
+    "gpu_util_pct": null,
+    "pod_id": "kinoforge-6810c7b3"
+  },
+  "reserved_name": "kinoforge-6810c7b3",
+  "runpod_id": "xf5jjm6psazv15",
+  "started_at_local": "2026-09-10T19:14:35.183109",
+  "ticks": [
+    "LIVE",
+    "LIVE",
+    "LIVE"
+  ]
+}

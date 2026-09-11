@@ -334,10 +334,25 @@ class SweeperLoop:
             live_ids.add(eid)
             if entry.get("probe_state") != "ok":
                 continue
-            sample = (
-                float(entry.get("gpu_util_pct") or 0.0),
-                float(entry.get("cpu_pct") or 0.0),
-            )
+            # U30 — "not observed" is never "idle". A booting pod answers
+            # `runtime = null`, so RuntimeProbe.found is True (probe_state
+            # "ok") while BOTH readings are None; the previous
+            # `float(x or 0.0)` banked that as a fully idle sample the
+            # provider never reported. A Wan A14B cold boot spends ~25 min in
+            # exactly that state, so the window filled with fabricated
+            # idleness while the pod did the most legitimate work it ever
+            # does — and the first real low reading then reaped it on what was
+            # effectively one observation. Note `is None`, not falsiness: a
+            # genuine 0.0 is the commonest honest reading an idle pod gives,
+            # and discarding it would make STALL_REAP and ORPHAN_REAP
+            # unreachable. Both readings are required because both predicates
+            # test GPU *and* CPU; a half-readable pair is a partial
+            # observation, not a low-util one.
+            gpu_raw = entry.get("gpu_util_pct")
+            cpu_raw = entry.get("cpu_pct")
+            if gpu_raw is None or cpu_raw is None:
+                continue
+            sample = (float(gpu_raw), float(cpu_raw))
             history = self._stall_history.get(eid)
             if history is None or history.maxlen != maxlen:
                 # Initial create or maxlen change (e.g. after reload swapped

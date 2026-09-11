@@ -64,10 +64,21 @@ from kinoforge.core.warm_reuse.ephemeral_index import (
 )
 from kinoforge.stores.local import LocalArtifactStore
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("RUNPOD_API_KEY"),
-    reason="live smoke — requires RUNPOD_API_KEY in env",
-)
+# BOTH gates, deliberately. The `live` MARKER is what `pixi run test`
+# (`pytest -m 'not live'`) deselects on, and it is the only thing standing
+# between this file and a real pod booked by a routine offline test run — which
+# is exactly what happened on 2026-09-10 when the first version of this module
+# carried the skipif alone: `pixi run test` created pod `xf5jjm6psazv15` and
+# billed for it. The skipif keeps an explicitly-requested live run from failing
+# confusingly when creds are absent; it does NOT keep the default run out.
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("KINOFORGE_LIVE_TESTS") != "1"
+        or not os.environ.get("RUNPOD_API_KEY"),
+        reason="live smoke — requires KINOFORGE_LIVE_TESTS=1 and RUNPOD_API_KEY",
+    ),
+]
 
 #: Hard cap. An alpine pod for a handful of ticks costs cents; anything that
 #: would exceed this means the offer search returned something unexpected and
@@ -169,16 +180,30 @@ def test_reserved_name_is_a_real_handle_and_one_sample_does_not_reap() -> None:
         )
 
         # ---- U16b: the name resolves through probe_runtime ---------------
+        # Wait for a NUMERIC reading, not merely for `found`. RunPod answers a
+        # booting pod with `runtime = null`: found is True while both readings
+        # are None, and the 2026-09-10 run that stopped at `found` fed the
+        # sample window nothing but unobservable ticks — which produced a
+        # green result whose tick 1 proved nothing (it was LIVE under the old
+        # conservative-on-ignorance rule, not the new window) and, on the
+        # re-run after U30, a red one. The window under test is about
+        # OBSERVED idleness, so the ticks must not start until the provider is
+        # actually reporting utilisation.
         deadline = time.monotonic() + _BOOT_TIMEOUT_S
         probe = None
         while time.monotonic() < deadline:
             probe = provider.probe_runtime(reserved_name)
-            if probe is not None and probe.found:
+            if probe is not None and probe.found and probe.gpu_util_pct is not None:
                 break
             time.sleep(5.0)
         assert probe is not None and probe.found, (
             f"probe_runtime({reserved_name!r}) never resolved — the name "
             "fallback did not fire against the real API"
+        )
+        assert probe.gpu_util_pct is not None and probe.cpu_pct is not None, (
+            "the pod never reported a utilisation reading within "
+            f"{_BOOT_TIMEOUT_S:.0f}s; the sample window cannot be exercised "
+            "with nothing to observe (see U30)"
         )
         evidence["probe_by_name"] = {
             "pod_id": probe.pod_id,
@@ -235,14 +260,37 @@ def test_reserved_name_is_a_real_handle_and_one_sample_does_not_reap() -> None:
             )
 
             verdicts: list[str] = []
+            readings: list[dict[str, Any]] = []
             for tick in range(3):
                 if tick:
                     time.sleep(_TICK_INTERVAL_S)
+                # Record what the provider reported AT each tick. Without this
+                # the tick sequence is unattributable: a LIVE tick on a null
+                # reading is the OLD conservative-on-ignorance rule, not the
+                # new window, and the 2026-09-10 run could only be read
+                # correctly by reconstructing the readings after the fact.
+                at_tick = provider.probe_runtime(reserved_name)
+                readings.append(
+                    {
+                        "found": None if at_tick is None else at_tick.found,
+                        "gpu": None if at_tick is None else at_tick.gpu_util_pct,
+                        "cpu": None if at_tick is None else at_tick.cpu_pct,
+                    }
+                )
                 loop._tick_once()
                 rows = {r.id for r in EphemeralIndex(store=store).rows()}
                 verdicts.append("REAPED" if reserved_name not in rows else "LIVE")
-                print(f"tick {tick + 1}: {verdicts[-1]}", file=sys.stderr)
+                print(
+                    f"tick {tick + 1}: {verdicts[-1]} {readings[-1]}",
+                    file=sys.stderr,
+                )
             evidence["ticks"] = verdicts
+            evidence["tick_readings"] = readings
+
+            assert all(r["gpu"] is not None for r in readings), (
+                "a tick observed nothing, so its LIVE verdict is the old "
+                f"ignorance rule rather than the sample window: {readings}"
+            )
 
             assert verdicts[0] == "LIVE", (
                 "reaped on the FIRST sample — U22 is not fixed on the live path"

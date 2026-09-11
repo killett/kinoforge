@@ -271,3 +271,89 @@ def test_a_wider_stall_window_still_wins_over_the_orphan_minimum(
     )
     loop._tick_once()
     assert loop._stall_history["pod-1"].maxlen == math.ceil(120.0 / 30.0)
+
+
+# ---------------------------------------------------------------------------
+# U30 — an unobservable reading must not be banked as an idle one
+# ---------------------------------------------------------------------------
+
+
+def test_an_unreadable_utilisation_is_not_banked_as_idle(tmp_path: Any) -> None:
+    """A ``probe_state="ok"`` entry with NULL readings must bank nothing.
+
+    Found by the 2026-09-10 U16/U22 live run. RunPod answers a booting pod
+    with ``runtime = null``: ``RuntimeProbe.found`` is True, so
+    ``_synthesize_ephemeral_entry`` stamps ``probe_state="ok"``, but
+    ``gpu_util_pct`` and ``cpu_pct`` are BOTH ``None``. This function's
+    ``float(entry.get("gpu_util_pct") or 0.0)`` then banks that as ``(0.0,
+    0.0)`` — a fully idle sample the provider never reported.
+
+    Why it matters enough to be its own item: a Wan A14B cold boot spends ~25
+    minutes in exactly this state, so the window fills with fabricated
+    idleness while the pod is doing the most legitimate work it ever does.
+    The moment the first REAL reading arrives at a compute-light instant, N-1
+    banked samples are already waiting and the pod is reaped on what is
+    effectively one observation — U22 restored in all but name. It is worse
+    for STALL_REAP, which reads the same deque and sits INSIDE
+    ``DEFAULT_APPLY_POLICY``, so it acts with no operator opt-in at all.
+
+    "Not observed" is never "idle" — the rule ``_ephemeral_orphan_predicate``
+    states and enforces on the current tick, broken one layer away on the
+    banked ones.
+    """
+
+    def sweep_early_boot(*args: Any, **kw: Any) -> SweepReport:
+        entry = _ephemeral_entry("pod-1", probe_state="ok")
+        entry["gpu_util_pct"] = None
+        entry["cpu_pct"] = None
+        return SweepReport(snapshot={"pod-1": (entry, Verdict.LIVE)}, actions=[])
+
+    loop = _make_loop(tmp_path, sweep_early_boot)
+    for _ in range(3):
+        loop._tick_once()
+
+    assert list(loop._stall_history.get("pod-1", [])) == [], (
+        "a null utilisation reading was banked as an idle sample; the reap "
+        "window now fills while the provider is reporting nothing at all"
+    )
+
+
+def test_a_half_readable_sample_is_not_banked_either(tmp_path: Any) -> None:
+    """One null reading is enough to disqualify the pair.
+
+    The predicates require GPU **and** CPU below threshold, so a sample that
+    can only answer for one of them is not a low-util observation — it is a
+    partial one. Banking ``(0.0, <real cpu>)`` would let a pod with an
+    unreadable GPU accumulate a full window of "idle" GPU evidence.
+    """
+
+    def sweep_half(*args: Any, **kw: Any) -> SweepReport:
+        entry = _ephemeral_entry("pod-1", probe_state="ok")
+        entry["gpu_util_pct"] = None
+        entry["cpu_pct"] = 3.0
+        return SweepReport(snapshot={"pod-1": (entry, Verdict.LIVE)}, actions=[])
+
+    loop = _make_loop(tmp_path, sweep_half)
+    loop._tick_once()
+
+    assert list(loop._stall_history.get("pod-1", [])) == []
+
+
+def test_a_real_zero_reading_is_still_banked(tmp_path: Any) -> None:
+    """A genuine 0.0% is an OBSERVATION and must keep counting.
+
+    The guard rail on the fix above: 0.0 is the single most common honest
+    reading an idle pod gives, and ``or 0.0`` is exactly the idiom that
+    conflates it with ``None``. A fix that filtered on falsiness rather than
+    on ``is None`` would discard every real idle sample and make both
+    STALL_REAP and ORPHAN_REAP permanently unreachable.
+    """
+
+    def sweep_idle(*args: Any, **kw: Any) -> SweepReport:
+        entry = _ephemeral_entry("pod-1", gpu=0.0, cpu=0.0, probe_state="ok")
+        return SweepReport(snapshot={"pod-1": (entry, Verdict.LIVE)}, actions=[])
+
+    loop = _make_loop(tmp_path, sweep_idle)
+    loop._tick_once()
+
+    assert list(loop._stall_history["pod-1"]) == [(0.0, 0.0)]
