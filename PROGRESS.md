@@ -449,7 +449,8 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site.
 
-**STATUS INDEX (current as of 2026-09-11. Provenance, newest first: U19 fixed + LIVE-PROVEN
+**STATUS INDEX (current as of 2026-09-11. Provenance, newest first: U6 fixed + LIVE-PROVEN
+2026-09-11 (`b79e32b0`, $0.014); U19 fixed + LIVE-PROVEN
 2026-09-11 (`96d6920e`, $0.036 on one Modal T4-class pod); U25 fixed 2026-09-10
 (`602c3f7a`, $0.00 offline); U1 fixed 2026-09-10
 (`33a31586`, $0.00 offline, CLI-demonstrated with a negative control); U2 fixed 2026-09-10
@@ -463,10 +464,14 @@ U30 filed and fixed 2026-09-10 from that run; U16 fixed 2026-09-10
 U18 LIVE-PROVEN and U21 fixed 2026-09-09; U29 filed and fixed 2026-09-09; U17 fixed 2026-09-08.
 This table is authoritative — every paragraph BELOW it is dated campaign commentary and is not.)**
 
-Thirty-one items, U1-U31. **Twenty-five are fixed** (U1, U2, U3, U4, U7, U8, U9, U11, U12, U14,
-U15, U16, U17, U18, U19, U20, U21, U22, U23, U25, U26, U27, U28, U29, U30), **two are partly
-fixed** (U5, U10), **four are open** (U6, U13, U24, U31). **U19 is LIVE-PROVEN as of 2026-09-11
-for $0.036** — the first `kinoforge interpolate` warm-attach there has ever been. **U31 was filed 2026-09-10** while measuring
+Thirty-one items, U1-U31. **Twenty-six are fixed** (U1, U2, U3, U4, U6, U7, U8, U9, U11, U12,
+U14, U15, U16, U17, U18, U19, U20, U21, U22, U23, U25, U26, U27, U28, U29, U30), **two are partly
+fixed** (U5, U10), **three are open** (U13, U24, U31). **U19 and U6 are both LIVE-PROVEN as of
+2026-09-11, for $0.036 and $0.014** — the first `kinoforge interpolate` warm-attach there has ever
+been, and the first `kinoforge deploy` that reaches a serving pod. **Every remaining open item is
+one the ledger already says is not a one-guard fix:** U13 needs a LIVE observation of a hung
+process (four offline mechanisms eliminated), U24 is executor-shape work, U31 changes
+process-shutdown semantics for every command. **U31 was filed 2026-09-10** while measuring
 U13 — a daemon pool worker parked mid-item blocks interpreter exit anyway, demonstrated at $0.00;
 it is U13's symptom on `generate` / `batch`, but it is NOT U13's holder (`upscale` submits nothing
 to the pool). **U16 and U22 are LIVE-PROVEN as of 2026-09-10 for $0.02
@@ -486,7 +491,7 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | U3 | FIXED, LIVE-PROVEN 2026-09-09 | The read paths now consult the ledger row that was always holding the answer. `_merge_recorded_tags` restores the create-time `tags` (RunPod's `endpoints` READS `tags["ports"]`, which `get_instance` never populates) and `_seed_instance_from_ledger_entry` also restores the recorded `endpoints` map (Modal's `.modal.run` URL is derivable from nothing at all). `_cmd_status` seeds tags and passes the recorded map to `_render_endpoints_for_status` as a new `recorded=` argument; `_cmd_pod_lora_ls` seeds both before `ensure_endpoints`. The merge block was EXTRACTED from `_resolve_attach_pod` (the U15 fix, `ccd4c5e7`) rather than re-written, and the four existing tests in `tests/cli/test_resolve_attach_pod.py` stayed green UNMODIFIED — that is the non-regression proof. **A recorded endpoint renders LABELLED** — `{...} (recorded at launch, not verified live)` — because `status` uses the pure read and on SkyPilot the recorded endpoint is routinely a `127.0.0.1:<port>` tunnel that died with the process that opened it; presenting that as live is the F11 failure the S5 read/ensure split exists to prevent. A map the provider COMPUTED from rehydrated tags renders UNLABELLED, because a proxy URL rebuilt from the pod id is derivation, not recollection — that distinction also closes the RunPod-status deferral `_render_endpoints_for_status`'s own docstring had named as out of scope. **The offline proof could not, on its own, establish the claim** — and the reason was structural, not laziness: the claim is about what a FRESH PROCESS can reach, and no offline test can exercise that against a real provider — `LocalProvider` keeps instances in-process (so a fresh process raises `KeyError` before the endpoint render is reached) and Modal/RunPod `get_instance` are network calls. That gap was recorded as an owed debt and has since been paid — see the live proof below. Two of the new tests deliberately pin the CALL SITE through `main()`, not the renderer, because every renderer test passes `recorded=` in by hand and would have stayed green if `_cmd_status` never passed one; RED for both was confirmed by temporarily reverting the call-site wiring. **LIVE-PROVEN 2026-09-09 ($0.055, Modal A10 `run-20260909-182423`, 3 m 03 s)** — this DISCHARGES the offline-only caveat stated above; scaffold committed RED first in `0c8dc571` per the pre-spend rule, preflight PASS on a verified zero-app Modal baseline. From processes that did not create the pod: `status --id` printed the real `.modal.run` URL WITH the `(recorded at launch, not verified live)` label (exit 0) where it previously printed `unknown (no live endpoint)`, and `pod lora ls` reached that same host over HTTP (exit 0, `no LoRAs loaded`) where it previously exited 2 with `no endpoint URL`. Same-host criterion triangulated three ways rather than asserted: the URL Modal's own deploy output created is byte-identical to the one `status` reported; a direct `GET /lora/inventory` on that host returned HTTP 200 `{'inventory': [], ...}`, matching what `pod lora ls` rendered; and a negative control (`pod lora ls run-does-not-exist`) exited 1 `not found in ledger`, proving the command does not fabricate a host — the U4 defect shape. **NOT closed by this fix:** an `--ephemeral` run's index row carries `endpoints: {}` for its whole life (**U28**), so this buys ephemeral runs nothing, and the `grid`-cell monitoring blindness recorded on this row is downstream of U28, not of U3 |
 | U4 | FIXED | `c08c3cce` — `logs` refuses cleanly off RunPod instead of 404ing a fabricated host |
 | U5 | PARTLY FIXED | `c08c3cce` corrected the help text; wiring `vault.positive_prompt` into prompt resolution is still open, and so is failing an empty prompt BEFORE a pod is billed |
-| U6 | OPEN | `kinoforge deploy` renders no provision; dead on Modal, books a portless pod on RunPod |
+| U6 | FIXED + LIVE-PROVEN 2026-09-11 (`b79e32b0`, $0.014) | `deploy()` built its `InstanceSpec` from a hard-coded EMPTY `RenderedProvision` and never called `engine.render_provision` at all — no setup steps, no launch, no ports, no env. It now renders exactly as the generate path does (same `cfg_dict["lifecycle"]` lift, same env resolution, same `assert_launch_capabilities` against the authoritative launch), placed BELOW the dry-run return so `deploy --dry-run` stays the one path guaranteed to cost nothing and runnable on a machine holding no secrets. **A second defect in the same function, fixed in the same commit and left unnumbered:** `creds` was declared in the signature and documented as defaulting to `EnvCredentialProvider()` — and never read. That is the exact "present in the signature, absent in effect" shape the code two screens below warns about for `store`. A missing `HF_TOKEN` therefore surfaced on the wire minutes into a BILLING pod; it now raises `AuthError` before create. **Behaviour change on the deploy path, stated plainly:** `kinoforge deploy` now demands whatever env vars the engine's provision declares (`HF_TOKEN` for every diffusers cfg). **The entry's own prediction was wrong on both counts** — "fixing it moves the launch payload for every provider, so the golden suite moves with it, not a one-function change". **Zero goldens moved**, because `tools/snapshot_launch_payloads.py` builds its spec from `render_provision_for` + `build_instance_spec` directly: it models the GENERATE path, so `deploy()`'s blank provision was never in a golden to begin with. *Generalise: a prediction about blast radius is worth one grep of the thing that would have to move.* **LIVE-PROVEN on Modal, $0.014** — the entry's own T1-19 command, which exited 1 with `ValueError: ModalProvider requires spec.setup_steps and spec.launch ... got setup_steps=0 launch=None`, now exits 0: `✓ App deployed in 1.333s`, `deployed: instance='kinoforge-deploy-20260911-002243-33bfd2'`, and — the stronger claim, since Modal accepting a spec is not the same as a pod that works — `GET /health` on the deployed pod returned `{"ready": true, ..., "capabilities":["upload"]}`. The empty `models[]` is CORRECT and is a second reading of U19's honesty rule: nothing is loaded on a fresh RIFE pod until the first job, so it advertises only what it can actually do. Teardown verified from fresh processes. Four tests, three RED first; the spec test asserts against what the engine ACTUALLY rendered rather than literals, so it cannot pass by agreeing with a second hard-coded value, and the credential test uses a provider whose `create_instance` fails the test outright, because "no pod was booked" is the whole claim. CLI-demonstrated at $0.00 first on the local provider |
 | U7 | FIXED, LIVE-PROVEN IN PART | `8191bd1b`; three SIGKILLed provisions each left a durable row naming the app (2026-09-07, $0.00). NOT live-proven: `destroy --id` on a mid-create app — that gap is **U17**, since FIXED offline-proven-only in `8069f376`+`45f4254c`; a live re-proof of the exact mid-create window is a separate follow-up. Teardown when the readiness poll or the weight download fails is now covered offline by **U21**'s fix, not live-proven |
 | U8 | FIXED ON MODAL, LIVE-PROVEN | `9d34d008` + `8403a71c`; index row readable 2.5 s into a live run, pod still reapable after SIGKILL (~$0.06). RunPod half stayed PARTIAL under **U16**, now FIXED offline 2026-09-10 — the name is accepted by `destroy_instance` and `probe_runtime`; the Modal proof never upgraded it and neither does this, which is still offline-only |
 | U9 | FIXED, LIVE-PROVEN | `e582bd0f`; the daemon reaped an idle ephemeral pod at `age=119s idle on probe gpu_util=0.0% cpu=0.0%` (~$0.03). Two boundaries, both filed rather than hidden: a mid-boot row has `endpoints: {}` so the probe returns nulls and the pod stays LIVE (U3's blast radius, since closed for the ephemeral index row by **U28**), and the predicate acts on ONE probe sample (**U22**, FIXED 2026-09-10 — the daemon now needs three consecutive idle probes, so a re-run of this cell reaps on a LATER tick than the 2 s it did on 2026-09-07; that re-run is the live proof U22 still owes) |
@@ -2911,13 +2916,17 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 
 ### NEXT ACTION (single, current as of 2026-09-10)
 
-**Do U6 — it is the only open item that is neither blocked on a live observation nor explicitly
-past the one-guard bar.** U6 is the biggest — fixing `deploy`'s empty `RenderedProvision` moves the launch
-payload for every provider, so the golden suite moves with it. U24 and U31 are both explicitly
-filed as past the one-guard bar (executor-shape work, and process-shutdown semantics for every
-command, respectively) — do not start either without deciding to take the whole shape on.
-~~Do U1, U6, U19, U24 or U25~~ — U1 (`33a31586`), U25 (`602c3f7a`) and U19 (`96d6920e`,
-live-proven) are all fixed.
+**There is no cheap open item left. Each remaining one is a decision to take on a whole shape, not
+a task to pick up:**
+- **U24** — executor-shape work: a `lora_swap` group shares ONE pod across the chain, so deciding
+  which cell's `--ephemeral` owns its `delete_on_completion` needs a cross-process handoff, not a
+  guard.
+- **U31** — changes process-shutdown semantics for EVERY command (bound the atexit join, or make
+  the poll loops interruptible at exit). Demonstrated at $0.00 and deliberately unfixed.
+- **U13** — blocked on a LIVE observation; see the paragraph below.
+
+~~Do U1, U6, U19, U24 or U25~~ — U1 (`33a31586`), U25 (`602c3f7a`), U19 (`96d6920e`) and U6
+(`b79e32b0`) are all fixed, the last two live-proven.
 **Do NOT spend another offline session on U13:** its $0 first step was run on 2026-09-10 and
 **did not reproduce the hang**, and four candidate mechanisms are now eliminated by measurement
 (probes committed in `tools/diagnose_u13_exit_holder.py`, `8bed6296`). The holder appears only on
