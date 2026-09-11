@@ -44,19 +44,24 @@ class _DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
     by overriding the private ``_adjust_thread_count`` hook.
 
     Graceful shutdown is unchanged because ``executor.shutdown(wait=True)``
-    still joins each worker; on ungraceful exit an IDLE worker now dies with
-    the process instead of blocking pytest's interpreter shutdown.
+    still joins each worker; on ungraceful exit a worker now dies with the
+    process instead of blocking interpreter shutdown.
 
-    **The daemon flag does not cover a worker that is mid-work-item (U31).**
-    ``_adjust_thread_count`` below also registers each worker in
-    ``concurrent.futures.thread._threads_queues``, and that module's
+    **The daemon flag alone did not buy that, which is U31.** ``daemon=True``
+    exempts a thread from ``threading._shutdown`` and from nothing else, and
+    ``_adjust_thread_count`` also used to register each worker in
+    ``concurrent.futures.thread._threads_queues``. That module's
     ``_python_exit`` — installed through ``threading._register_atexit``, so it
     runs BEFORE ``threading._shutdown`` — puts a sentinel on every registered
-    queue and then joins every registered thread unboundedly, daemon or not. A
-    worker blocked inside its current item never reaches the sentinel, so the
-    join never returns. ``daemon=True`` exempts a thread from
-    ``threading._shutdown`` and from nothing else. Demonstrated by
-    ``tools/diagnose_u13_exit_holder.py pool-worker``.
+    queue and then joins every registered thread unboundedly, daemon or not.
+    A worker blocked inside its current item never reaches the sentinel, so
+    that join never returned: the process printed its traceback and then hung,
+    which is U13's symptom on whichever command owns the pool. The fix is to
+    skip the registration; see the comment at the call site for what depends
+    on it (nothing) and the trade it accepts (a mid-item worker is killed at
+    exit rather than waited for). Pinned by
+    ``tests/core/test_pool_exit_does_not_hang.py``, which observes a real
+    subprocess because the claim is about interpreter exit.
     """
 
     def _adjust_thread_count(self) -> None:  # noqa: D401, D102
@@ -64,10 +69,7 @@ class _DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
         # the pool has spare capacity. We rebuild the same logic here so we
         # can flip daemon=True before start() -- the only effective moment.
         import weakref
-        from concurrent.futures.thread import (
-            _threads_queues,
-            _worker,
-        )
+        from concurrent.futures.thread import _worker
 
         def _weakref_cb(_: object, q: object = self._work_queue) -> None:
             q.put(None)  # type: ignore[attr-defined]
@@ -88,7 +90,28 @@ class _DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
             )
             t.start()
             self._threads.add(t)  # type: ignore[attr-defined]
-            _threads_queues[t] = self._work_queue  # type: ignore[index]
+            # U31 — deliberately NOT registered in ``_threads_queues``.
+            # ``concurrent.futures.thread`` installs ``_python_exit`` through
+            # ``threading._register_atexit``, and that handler joins every
+            # REGISTERED thread with no timeout, daemon or not. A worker parked
+            # inside its current item never reaches the sentinel the handler
+            # puts on its queue, so the join never returns and the process
+            # cannot exit — U13's symptom, on whichever command owns the pool.
+            # Skipping the registration is what makes ``daemon=True`` mean what
+            # this class's docstring has always claimed it means.
+            #
+            # Nothing else depends on it. ``shutdown(wait=True)`` joins
+            # ``self._threads`` directly, so the graceful path is unchanged;
+            # ``_worker`` consults the module-global ``_shutdown`` flag rather
+            # than this mapping; and ``_weakref_cb`` above still feeds the
+            # queue a sentinel when the executor is collected.
+            #
+            # The trade this accepts, stated: a worker mid-item is now killed
+            # at interpreter exit instead of being waited for. That is safe
+            # here because every durable write in this codebase goes through
+            # tmp + ``os.replace`` (``stores/local.py``), so an abandoned
+            # worker can leave a stray ``.tmp`` file but never a torn ledger —
+            # and the alternative is waiting forever.
 
 
 class SequentialPool(BackendPool):

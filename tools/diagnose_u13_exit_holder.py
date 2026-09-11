@@ -11,6 +11,14 @@ things there can block forever:
      daemon ones, because a daemon flag exempts a thread from (1) and from
      nothing else.
 
+``pool-worker`` found a real instance of (2) — filed as U31 and since FIXED,
+so that probe now exits cleanly where it used to hang. U13's own holder
+remains unidentified: it is not the pool (``upscale`` submits nothing to it),
+not the upscaler engines or ``_pod_http`` (no threads at all), and not the
+Modal SDK (read-only client and a real ``app.deploy()`` both exit clean under
+an uncaught exception). The next U13 observation has to be made on a really
+hung process.
+
 Each probe below is a separate subcommand so a run names exactly one
 mechanism. Every probe arms ``faulthandler.dump_traceback_later(..., exit=True)``
 so a hang self-reports with the holder's own stack instead of needing a
@@ -51,15 +59,22 @@ def _report_threads(label: str) -> None:
 def probe_pool_worker() -> None:
     """Park a DAEMON pool worker mid-item, then exit without shutting down.
 
-    ``_DaemonThreadPoolExecutor``'s docstring claims that on an ungraceful
+    **This probe HUNG when it was written and exits cleanly now — that is the
+    U31 red/green, and it is why the probe is kept rather than deleted.**
+
+    ``_DaemonThreadPoolExecutor``'s docstring claimed that on an ungraceful
     exit "the workers now die with the process instead of blocking pytest's
-    interpreter shutdown". That holds only while a worker is idle. Its
-    ``_adjust_thread_count`` registers each worker in
-    ``concurrent.futures.thread._threads_queues``, and ``_python_exit`` —
-    installed via ``threading._register_atexit`` — puts a sentinel on every
-    registered queue and then **joins every one of those threads**, daemon or
-    not. A worker blocked inside its current work item never reaches the
-    sentinel, so the join never returns.
+    interpreter shutdown", and that held only while a worker was idle:
+    ``_adjust_thread_count`` also registered each worker in
+    ``concurrent.futures.thread._threads_queues``, whose ``_python_exit``
+    handler — installed via ``threading._register_atexit`` — joins every
+    registered thread unboundedly, daemon or not. A worker blocked inside its
+    current work item never reaches the sentinel, so that join never returned.
+
+    The registration is gone (U31), so this now exits immediately. If it ever
+    hangs again, the registration is back. The behaviour is also pinned by
+    ``tests/core/test_pool_exit_does_not_hang.py``; this probe stays because it
+    prints the thread table, which a pass/fail assertion does not.
     """
     from kinoforge.core.pool import _DaemonThreadPoolExecutor
 
