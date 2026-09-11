@@ -1,0 +1,101 @@
+# U13 diagnostic cfg — the CHEAPEST faithful way to reach `UpscaleFailed`.
+#
+# U13: after `UpscaleFailed`, the CLI prints its traceback and then never
+# terminates. The holder is controller-side (the traceback has already reached
+# the top of `main`, so only interpreter shutdown is left), and the 2026-09-10
+# measurement eliminated every offline candidate — so the next observation has
+# to be made on a really hung process.
+#
+# This cfg exists so that observation does not cost A100 money. The shipped
+# Modal upscale cfgs pin A100-80GB / H100 at up to $4.00/hr and carry the
+# FlashVSR bake (BSA wheel + weights, ~19 min re-bake measured 2026-09-06).
+# None of that is load-bearing for U13: both upscaler engines start no thread,
+# subprocess or event loop controller-side, and `_pod_http.submit_and_poll` is
+# plain urllib either way, so spandrel on a T4 reaches the SAME `UpscaleFailed`
+# from the same `make_error` site over the same transport, for ~1/20th the
+# spend.
+#
+# NOT under examples/configs on purpose: that directory is swept by
+# tests/cli/test_shipped_cfg_want_stages_sweep.py and snapshotted into the
+# launch-payload goldens. This is a diagnostic fixture, not a shipped recipe.
+# Same convention as tests/live/_c29_phase_*_cfg.yaml.
+#
+# Usage (driven by tests/live/_u13_hang_probe.py, which supplies a deliberately
+# truncated mp4 so the server errors the job before any real inference):
+#   pixi run -e live-modal python tests/live/_u13_hang_probe.py
+
+engine:
+  kind: diffusers
+  precision: fp16
+  diffusers:
+    # Modal's serialized web_server fn requires image-Python == controller.
+    image: "python:3.13-slim"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      # python:3.13-slim ships no torch (runpod/pytorch did), so it is added
+      # here exactly as the Modal RIFE cfg does. No torchaudio: spandrel's
+      # RealESRGAN path never touches it, and every wheel omitted is bake time
+      # this diagnostic does not pay for.
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      - "spandrel>=0.4.2"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      - "kinoforge.upscalers.spandrel"
+    embed_files:
+      - "kinoforge.core.errors"
+      - "kinoforge.core.scale_target"
+    # No Wan weights: the pod runs only the on-demand spandrel runtime.
+    upscale_only: true
+
+models: []
+
+compute:
+  provider: modal
+  image: "python:3.13-slim"
+  mode: pod
+  placement:
+    # RealESRGAN-x2 on a 480x480 clip fits a T4 several times over. The
+    # shipped FlashVSR cfgs ask for 80GB; that requirement belongs to
+    # FlashVSR, not to reaching UpscaleFailed.
+    min_vram_gb: 16
+    min_cuda: "12.4"
+    max_usd_per_hr: 1.00
+    disk_gb: 40
+    accelerators:
+      - "T4"
+      - "L4"
+      - "A10"
+  lifecycle:
+    heartbeat_interval_s: 30
+    boot_timeout: 30m
+    idle_timeout: 20m
+    # The job is MEANT to fail fast (truncated input). A tight job timeout
+    # keeps a surprise — a server that somehow decodes the file — from
+    # quietly becoming a full inference on the clock.
+    job_timeout: 8m
+    time_buffer: 3m
+    max_lifetime: 45m
+    budget: 0.5
+
+spec:
+  model: "spandrel-realesrgan-fp16"
+
+upscale:
+  engine: spandrel
+  # 2x, not a height target: `scale: 1080p` would route through
+  # `downscale_video_bytes`, adding a controller-side ffmpeg step that is not
+  # on the path U13 was observed on.
+  scale: 2x
+  spandrel:
+    model_url: "hf:ai-forever/Real-ESRGAN/RealESRGAN_x2.pth"
+    arch: realesrgan
+    precision: fp16
+    tile_size: 512
+    batch_size: 4
