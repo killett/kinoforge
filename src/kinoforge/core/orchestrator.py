@@ -67,7 +67,6 @@ from kinoforge.core.interfaces import (
     ModelProfile,
     ModelProfileProvider,
     PipelineState,
-    RenderedProvision,
     Stage,
 )
 from kinoforge.core.lifecycle import (
@@ -2384,17 +2383,49 @@ def deploy(
     tags = _strip_reserved_tags(dict(tags or {}))
     launch_run_id = run_id or _mint_deploy_run_id()
 
+    # U6 — render the engine's provision, exactly as
+    # ``_provision_instance_and_build_backend`` does for the ``generate`` path.
+    # This route used to hand ``create_instance`` a hard-coded EMPTY
+    # ``RenderedProvision``: no setup steps, no launch, no ports, no env. Modal
+    # refuses such a spec outright (as an uncaught ValueError), and RunPod books
+    # it — a pod with no server and no port to reach one through, discovered
+    # only when ``wait_for_ready`` raises after the billing has started.
+    #
+    # Rendering sits BELOW the dry-run return on purpose. ``deploy --dry-run``
+    # is the one path guaranteed to cost nothing, and it is run on machines
+    # that may hold no secrets; resolving ``env_required`` there would make it
+    # raise AuthError for a plan it can print perfectly well without.
+    cfg_dict = _cfg_dict(cfg)
+    # Same lift as the generate path: engines read canonical ``_s``-suffixed
+    # lifecycle keys, which neither cfg.model_dump() shape provides.
+    cfg_dict["lifecycle"] = dataclasses.asdict(lifecycle)
+    rendered = resolved_engine.render_provision(cfg_dict)
+
+    # ``creds`` was declared in this signature and documented as defaulting to
+    # ``EnvCredentialProvider()`` — and never read. A missing token therefore
+    # surfaced on the wire, minutes into a billing pod, instead of here for
+    # free.
+    resolved_creds = creds if creds is not None else EnvCredentialProvider()
+    rendered_env: dict[str, str] = {}
+    for var in rendered.env_required:
+        value = resolved_creds.get(var)
+        if value is None:
+            raise AuthError(f"missing required env var: {var}")
+        rendered_env[var] = value
+
+    # Parity with the generate path: the guardrail check reads the
+    # AUTHORITATIVE launch, which before this fix did not exist on this route.
+    assert_launch_capabilities(cfg, launch=rendered.launch)
+
     def _build_spec() -> InstanceSpec:
         return build_instance_spec(
             cfg=cfg,
-            rendered=RenderedProvision(
-                script="", image=image, ports=[], env_required=[]
-            ),
+            rendered=rendered,
             engine_name=resolved_engine.name,
             key_hash=key_hash,
             image=image,
             lifecycle=lifecycle,
-            env={},
+            env=rendered_env,
             run_id=launch_run_id,
             tags=tags,
         )
