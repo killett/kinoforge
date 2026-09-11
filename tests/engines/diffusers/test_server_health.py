@@ -247,3 +247,52 @@ class TestSpandrelCapability:
             "upload",
             "upscale",
         ]
+
+
+class TestRifeCapability:
+    def test_rife_prefix_yields_interpolate_capability(
+        self, loaded_client: Any
+    ) -> None:
+        # Bug caught (U19): `_capability_for_model`'s prefix map has no term
+        # for interpolation, so a loaded `rife-*` pipeline maps to None and
+        # never reaches /health's capabilities[]. A RIFE pod is then
+        # indistinguishable from one whose interpolator failed to load, and
+        # the T14 pre-flight — the protection every other stage has had
+        # since then — cannot be applied to `kinoforge interpolate` at all.
+        # The registry name comes from the production site
+        # (`model_name = f"rife-{rife.model}"` in `_run_interpolate_job`).
+        _srv, client, set_loaded = loaded_client
+        set_loaded({"rife-rife426": _entry("rife-rife426")})
+        assert client.get("/health").json()["capabilities"] == [
+            "interpolate",
+            "upload",
+        ]
+
+    def test_half_failed_rife_pod_does_not_advertise_interpolate(
+        self, loaded_client: Any
+    ) -> None:
+        # Bug caught: deriving capabilities from cfg intent rather than from
+        # what actually loaded. This is the whole point of teaching the
+        # server the term — a pod whose interpolator never made it onto the
+        # GPU must look different from a healthy one, otherwise the gate
+        # added for U19 gates on a value that is always true.
+        _srv, client, set_loaded = loaded_client
+        set_loaded({})
+        assert client.get("/health").json()["capabilities"] == ["upload"]
+
+    def test_rife_and_wan_yield_sorted_both(self, loaded_client: Any) -> None:
+        # Bug caught: a pod that both generates and interpolates reports one
+        # capability because the loop short-circuits on the first known
+        # prefix. The union must appear, sorted.
+        _srv, client, set_loaded = loaded_client
+        set_loaded(
+            {
+                "wan-t2v-1.3b": _entry("wan-t2v-1.3b"),
+                "rife-rife426": _entry("rife-rife426"),
+            }
+        )
+        assert client.get("/health").json()["capabilities"] == [
+            "interpolate",
+            "t2v",
+            "upload",
+        ]

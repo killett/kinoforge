@@ -773,23 +773,53 @@ def _interpolate_only_cfg() -> Any:
     )
 
 
-def test_interpolate_only_cfg_attaches_to_a_pod_that_cannot_advertise_interpolate(
+def test_interpolate_only_cfg_attaches_to_a_pod_advertising_interpolate(
     tmp_path: Any,
     patched_registry: dict[str, Any],
     fixed_clock: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The /health gate must not be applied to an interpolate cfg.
+    """U19: the gate now applies to interpolate, and a healthy pod passes it.
 
-    Bug caught: deriving the required stages from
-    ``capability_key().stages`` wholesale made a RIFE cfg demand an
-    ``interpolate`` capability that no pod can ever advertise — the in-pod
-    ``_capability_for_model`` prefix map has no term for it, so a
-    ``rife-*`` entry in ``_LOADED`` maps to None and never reaches
-    ``/health``. Every ``kinoforge interpolate`` warm-attach would be
-    refused with ``stage-mismatch`` and cold-boot a duplicate pod, which
-    is U14's money leak moved one command over. The pod payload below is
-    what a live RIFE pod really returns.
+    Bug caught: deleting ``_HEALTH_UNGATEABLE_STAGES`` without teaching the
+    in-pod server the ``rife-`` prefix. The cfg would then demand a term no
+    pod can put in ``capabilities[]``, every candidate would be refused with
+    ``stage-mismatch``, and each ``kinoforge interpolate`` would cold-boot a
+    duplicate beside the idle pod — U14's money leak, one command over. The
+    payload below is what a RIFE pod returns once the server knows the term.
+
+    Supersedes ``...attaches_to_a_pod_that_cannot_advertise_interpolate``,
+    which pinned the carve-out this change removes.
+    """
+    ctx = _make_ctx(tmp_path)
+    cfg = _interpolate_only_cfg()
+    eid = _seed_live_upscale_pod(ctx, cfg)
+    monkeypatch.setattr(
+        "kinoforge.cli._commands._http_get_json",
+        lambda url: {"capabilities": ["interpolate", "upload"]},
+    )
+
+    instance, report = _scan_warm_candidates(ctx, cfg)
+
+    assert report.skipped == []
+    assert report.attached == eid
+    assert instance is not None
+
+
+def test_interpolate_only_cfg_refuses_a_pod_that_lacks_interpolate(
+    tmp_path: Any,
+    patched_registry: dict[str, Any],
+    fixed_clock: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The protection U19 buys: a half-failed RIFE pod is now refused.
+
+    Bug caught: leaving ``"interpolate"`` in ``_HEALTH_UNGATEABLE_STAGES``
+    after the server learns the term. The gate is skipped, so a pod whose
+    interpolator never loaded looks identical to a healthy one and the run
+    attaches to it — the pod then fails the job on the wire instead of at
+    the cheap pre-flight, which is exactly the refinement every other stage
+    has had since T14.
     """
     ctx = _make_ctx(tmp_path)
     cfg = _interpolate_only_cfg()
@@ -801,6 +831,6 @@ def test_interpolate_only_cfg_attaches_to_a_pod_that_cannot_advertise_interpolat
 
     instance, report = _scan_warm_candidates(ctx, cfg)
 
-    assert report.skipped == []
-    assert report.attached == eid
-    assert instance is not None
+    assert instance is None
+    assert report.attached is None
+    assert report.skipped == [(eid, "stage-mismatch")]

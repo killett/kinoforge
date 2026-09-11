@@ -3277,18 +3277,6 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
     return 0
 
 
-# Stages the /health gate must NOT be applied to, because the in-pod
-# capability vocabulary has no term for them. ``_capability_for_model``
-# (engines/diffusers/servers/wan_t2v_server.py) maps only the Wan prefixes
-# to "t2v" and the seedvr2 / flashvsr / spandrel prefixes to "upscale";
-# a ``rife-*`` entry in ``_LOADED`` falls through to None and so never
-# reaches ``/health``'s ``capabilities``. Gating on a term no pod can ever
-# advertise refuses EVERY candidate — the U14 duplicate-boot leak, one
-# command over. Filed as U19; delete this set when the pod advertises the
-# term and a live interpolate warm-attach has proven it.
-_HEALTH_UNGATEABLE_STAGES = frozenset({"interpolate"})
-
-
 def _cfg_want_stages(cfg: Config) -> tuple[str, ...]:
     """Return pipeline stages this cfg will exercise on the pod.
 
@@ -3307,18 +3295,18 @@ def _cfg_want_stages(cfg: Config) -> tuple[str, ...]:
     ``stage-mismatch`` while a duplicate was cold-booted beside it. The
     two derivations gate the same match, so only one of them may exist.
 
-    U19: ``"interpolate"`` is filtered back out of the delegated tuple.
-    The key derives it, but no pod can advertise it (see
-    :data:`_HEALTH_UNGATEABLE_STAGES`), so gating on it would refuse every
-    interpolate warm-attach and cold-boot a duplicate — reintroducing U14's
-    leak on ``kinoforge interpolate``. Filtering restores exactly the
-    pre-delegation behaviour for interpolate cfgs (they bypassed the gate,
-    because the old local derivation only ever looked at ``cfg.upscale``)
-    while keeping the upscale gate intact for cfgs that carry both.
+    U19 (closed 2026-09-10): ``"interpolate"`` used to be filtered back out
+    of the delegated tuple, because the in-pod ``_capability_for_model``
+    had no term for it — gating on a stage no pod can advertise refuses
+    every candidate and cold-boots a duplicate, U14's leak one command
+    over. The server now maps the ``rife-`` prefix to ``"interpolate"``, so
+    the filter is gone and interpolate cfgs get the same ``/health``
+    refinement every other stage has had since T14. The two halves must
+    move together: dropping the filter alone re-creates the refuse-always
+    bug, and ``tests/cli/test_shipped_cfg_want_stages_sweep.py`` fails on
+    exactly that half-done state.
     """
-    return tuple(
-        s for s in cfg.capability_key().stages if s not in _HEALTH_UNGATEABLE_STAGES
-    )
+    return tuple(cfg.capability_key().stages)
 
 
 def _health_preflight_ok(

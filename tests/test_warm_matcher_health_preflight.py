@@ -203,16 +203,17 @@ class TestCfgWantStages:
         # And it must not drift from the key that gates the same match.
         assert _cfg_want_stages(cfg) == cfg.capability_key().stages
 
-    def test_interpolate_only_cfg_is_not_health_gated(self) -> None:
-        # Bug caught: delegating wholesale to `capability_key().stages`
-        # started returning ("interpolate",) for a RIFE cfg that
-        # previously returned () and skipped the /health gate entirely.
-        # The in-pod `_capability_for_model` vocabulary has no term for
-        # interpolation — a `rife-*` entry in _LOADED maps to None and
-        # never reaches /health's capabilities — so the subset check can
-        # never pass and EVERY `kinoforge interpolate` warm-attach would
-        # be refused with `stage-mismatch` and cold-boot a duplicate.
-        # That is U14's money leak relocated one command over.
+    def test_interpolate_only_cfg_is_health_gated_on_interpolate(self) -> None:
+        # Bug caught (U19, closed 2026-09-10): the helper used to filter
+        # "interpolate" back out, because the in-pod vocabulary had no term
+        # for it — a `rife-*` entry in _LOADED mapped to None and never
+        # reached /health's capabilities, so gating would have refused EVERY
+        # `kinoforge interpolate` warm-attach and cold-booted a duplicate:
+        # U14's money leak one command over. The server now maps the `rife-`
+        # prefix, so the filter is gone and the stage is demanded like any
+        # other. Re-adding the filter makes this fail; so does removing the
+        # server prefix, via the sweep in
+        # tests/cli/test_shipped_cfg_want_stages_sweep.py.
         from kinoforge.cli._commands import _cfg_want_stages
         from kinoforge.core.config import Config
 
@@ -242,14 +243,17 @@ class TestCfgWantStages:
             }
         )
         assert cfg.capability_key().stages == ("interpolate",)
-        assert _cfg_want_stages(cfg) == ()
+        assert _cfg_want_stages(cfg) == ("interpolate",)
 
-    def test_interpolate_carve_out_does_not_disable_the_upscale_gate(self) -> None:
-        # Bug caught: carving "interpolate" out by short-circuiting the
-        # whole helper whenever an interpolate block is present would
-        # silently drop the upscale gate too, so a cfg needing upscale
-        # would attach to a pod whose upscaler never loaded — the
-        # half-failed-pod case the T14 gate exists for.
+    def test_a_cfg_that_upscales_and_interpolates_demands_both(self) -> None:
+        # Bug caught: a partial U19 that taught the server the term but left
+        # a filter (or a short-circuit) in place for cfgs carrying an
+        # interpolate block would drop one of the two gates — attaching a
+        # both-stages cfg to a pod whose interpolator, or whose upscaler,
+        # never loaded. That is the half-failed-pod case the T14 gate exists
+        # for, and it is why the order of the tuple is asserted too: it comes
+        # straight from `capability_key().stages`, so a re-derivation
+        # elsewhere would show up here as a reordering.
         from kinoforge.cli._commands import _cfg_want_stages
         from kinoforge.core.config import Config
 
@@ -285,4 +289,4 @@ class TestCfgWantStages:
             }
         )
         assert cfg.capability_key().stages == ("upscale", "interpolate")
-        assert _cfg_want_stages(cfg) == ("upscale",)
+        assert _cfg_want_stages(cfg) == ("upscale", "interpolate")

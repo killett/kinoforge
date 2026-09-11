@@ -1449,6 +1449,15 @@ def _capability_for_model(name: str) -> str | None:
         or name.startswith("spandrel-")
     ):
         return "upscale"
+    if name.startswith("rife-"):
+        # U19. The interpolator registers as ``rife-{model}`` (see
+        # ``_run_interpolate_job``), which fell through to None — so a RIFE
+        # pod could not report the one stage it exists to serve, and
+        # ``kinoforge interpolate`` had to be carved out of the T14
+        # pre-flight entirely. With the term advertised, a pod whose
+        # interpolator never loaded is finally distinguishable from a
+        # healthy one.
+        return "interpolate"
     return None
 
 

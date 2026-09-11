@@ -35,7 +35,7 @@ EXAMPLES_DIR = REPO_ROOT / "examples" / "configs"
 # wan_t2v_server.py) rather than imported, so a change on either side breaks
 # this test instead of the two silently agreeing on a new term.
 # ``"upload"`` is always advertised but is never a stage a cfg *wants*.
-ADVERTISABLE_STAGES = frozenset({"t2v", "upscale"})
+ADVERTISABLE_STAGES = frozenset({"t2v", "upscale", "interpolate"})
 
 # The eight configs the U14 delegation changed, listed by hand from the
 # repo's upscale cfg filenames. Every one is ``upscale_only: true`` with
@@ -52,6 +52,21 @@ U14_CHANGED_CFGS = frozenset(
         "runpod-diffusers-spandrel-x2-upscale.yaml",
         "skypilot-lambda-diffusers-flashvsr-upscale.yaml",
         "skypilot-vast-diffusers-flashvsr-upscale.yaml",
+    }
+)
+
+# The two configs U19 moved on top of that, listed by hand for the same
+# reason. Both are RIFE interpolate cfgs, which the pre-U14 derivation left
+# UNGATED (``()``) because it only ever looked at ``cfg.upscale``, and which
+# U19's carve-out kept ungated afterwards. Teaching the in-pod server the
+# ``rife-`` prefix let the gate apply, so they move from "no /health
+# refinement at all" to demanding the one stage they exist to use. The
+# direction is the opposite of U14's — a gate GAINED, not a phantom dropped —
+# which is why they are enumerated separately rather than folded in.
+U19_CHANGED_CFGS = frozenset(
+    {
+        "modal-diffusers-rife-60fps-interpolate.yaml",
+        "runpod-diffusers-rife-60fps-interpolate.yaml",
     }
 )
 
@@ -148,15 +163,21 @@ def test_no_shipped_cfg_demands_a_stage_no_pod_can_advertise(
     )
 
 
-def test_the_u14_delegation_changed_exactly_the_eight_upscale_only_cfgs(
+def test_exactly_the_enumerated_cfgs_moved_off_the_pre_u14_derivation(
     swept: tuple[dict[str, Any], list[Path]],
 ) -> None:
-    """Pin the enumerated claim in ``PROGRESS.md``'s U14 entry.
+    """Pin the enumerated claims in ``PROGRESS.md``'s U14 and U19 entries.
 
-    Fails if a ninth shipped config enters the changed set (a new
-    ``upscale_only`` cfg added without review, or a widening of
-    ``capability_key().stages`` that starts gating a t2v cfg), and fails with
-    an empty set if the delegation is reverted.
+    Fails if a shipped config enters the changed set unannounced (a new
+    ``upscale_only`` or interpolate cfg added without review, or a widening
+    of ``capability_key().stages`` that starts gating a t2v cfg), and fails
+    with an empty set if either change is reverted.
+
+    The two groups are asserted separately because their DIRECTIONS are
+    opposite, and a test that only counted names would let one silently turn
+    into the other: U14's eight upscale-only cfgs drop a phantom ``t2v`` they
+    could never satisfy, while U19's two RIFE cfgs gain a real
+    ``interpolate`` gate they previously bypassed entirely.
     """
     loaded, _ = swept
     changed = {
@@ -164,14 +185,24 @@ def test_the_u14_delegation_changed_exactly_the_eight_upscale_only_cfgs(
         for name, cfg in loaded.items()
         if _want_stages_pre_u14(cfg) != _cfg_want_stages(cfg)
     }
-    assert changed == set(U14_CHANGED_CFGS), (
-        f"unexpected: {sorted(changed - U14_CHANGED_CFGS)}; "
-        f"no longer changed: {sorted(U14_CHANGED_CFGS - changed)}"
+    expected = set(U14_CHANGED_CFGS) | set(U19_CHANGED_CFGS)
+    assert changed == expected, (
+        f"unexpected: {sorted(changed - expected)}; "
+        f"no longer changed: {sorted(expected - changed)}"
     )
-    # And the direction of every change is the phantom t2v being dropped.
-    for name in sorted(changed):
+    for name in sorted(U14_CHANGED_CFGS):
         assert _cfg_want_stages(loaded[name]) == ("upscale",), (
             f"{name} changed to {_cfg_want_stages(loaded[name])}, not "
             "('upscale',) — the U14 claim is that these cfgs drop their "
             "phantom t2v requirement, nothing more"
+        )
+    for name in sorted(U19_CHANGED_CFGS):
+        assert _want_stages_pre_u14(loaded[name]) == (), (
+            f"{name} was already gated before U14, so U19 did not move it "
+            "from ungated to gated — the entry's claim is wrong"
+        )
+        assert _cfg_want_stages(loaded[name]) == ("interpolate",), (
+            f"{name} changed to {_cfg_want_stages(loaded[name])}, not "
+            "('interpolate',) — the U19 claim is that a RIFE cfg demands "
+            "exactly the stage its pod now advertises"
         )
