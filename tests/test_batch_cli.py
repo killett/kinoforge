@@ -414,3 +414,145 @@ def test_stream_format_invalid_choice_exits_two(
     assert exc_info.value.code == 2
     err = capsys.readouterr().err
     assert "stream-format" in err.lower() or "invalid choice" in err.lower()
+
+
+def test_dry_run_swap_missing_manifest_exits_one_without_preview(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """U2 — the preview must validate the batch it claims to preview.
+
+    Bug catch: ``_cmd_batch`` returns ``_dry_run_swap_preview`` BEFORE
+    ``load_manifest``, so a manifest path that does not exist still exits 0
+    and prints a swap preview. The one pre-flight check a batch has is then
+    inert, and a missing manifest is discovered only after the pod is up
+    and billing. Asserting the preview line is ABSENT as well as the exit
+    code keeps a fix that reports the error and previews anyway from
+    passing.
+    """
+    cfg_path = _write_local_fake_cfg(tmp_path)
+    missing = tmp_path / "not-written.yaml"
+
+    rc = main(
+        [
+            "--state-dir",
+            str(tmp_path / "state"),
+            "batch",
+            "-c",
+            str(cfg_path),
+            "--manifest",
+            str(missing),
+            "--dry-run-swap",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "error: manifest:" in captured.err
+    assert "matcher:" not in captured.out
+
+
+def test_dry_run_swap_malformed_manifest_exits_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A manifest that parses as YAML but is not a list is refused.
+
+    Bug catch: a fix that only checks ``path.exists()`` rather than running
+    ``load_manifest``. That fix passes the missing-file test above and
+    still lets a mapping-shaped manifest through the preview, which is the
+    malformed-manifest half of U2.
+    """
+    cfg_path = _write_local_fake_cfg(tmp_path)
+    manifest_path = tmp_path / "m.yaml"
+    manifest_path.write_text(yaml.safe_dump({"prompt": "a", "mode": "t2v"}))
+
+    rc = main(
+        [
+            "--state-dir",
+            str(tmp_path / "state"),
+            "batch",
+            "-c",
+            str(cfg_path),
+            "--manifest",
+            str(manifest_path),
+            "--dry-run-swap",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "error: manifest:" in captured.err
+    assert "must be a YAML list" in captured.err
+    assert "matcher:" not in captured.out
+
+
+def test_dry_run_swap_valid_manifest_reports_entry_count_and_previews(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A valid manifest still previews, and the parse is observable.
+
+    Bug catch: an over-strict fix that refuses valid manifests, or one that
+    loads the manifest but drops the matcher preview the flag exists for.
+    The entry count is the only observable proof the manifest was read at
+    all; two entries rather than one so a truthiness- or ``1``-hardcoding
+    bug shows up as a wrong number rather than a coincidence.
+    """
+    cfg_path = _write_local_fake_cfg(tmp_path)
+    manifest_path = tmp_path / "m.yaml"
+    manifest_path.write_text(
+        yaml.safe_dump(
+            [
+                {"prompt": "a", "mode": "t2v", "run_id": "x"},
+                {"prompt": "b", "mode": "t2v", "run_id": "y"},
+            ]
+        )
+    )
+
+    rc = main(
+        [
+            "--state-dir",
+            str(tmp_path / "state"),
+            "batch",
+            "-c",
+            str(cfg_path),
+            "--manifest",
+            str(manifest_path),
+            "--dry-run-swap",
+        ]
+    )
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "manifest: 2 entries" in out
+    assert "matcher:" in out
+
+
+def test_missing_manifest_file_exits_one_not_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The ordinary batch path reports a missing manifest, it does not raise.
+
+    Bug catch: ``_cmd_batch`` catches only ``ConfigError`` and pydantic's
+    ``ValidationError`` around ``load_manifest``, but ``Path.read_text`` on
+    an absent file raises ``FileNotFoundError`` — an ``OSError`` — so the
+    CLI exits through an uncaught traceback instead of the documented
+    exit 1. The config loader already reports its own missing file as
+    ``error: config: [Errno 2] ...`` and exits 1; the manifest must match.
+    """
+    cfg_path = _write_local_fake_cfg(tmp_path)
+    missing = tmp_path / "not-written.yaml"
+
+    rc = main(
+        [
+            "--state-dir",
+            str(tmp_path / "state"),
+            "batch",
+            "-c",
+            str(cfg_path),
+            "--manifest",
+            str(missing),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "error: manifest:" in captured.err

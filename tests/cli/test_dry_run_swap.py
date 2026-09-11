@@ -14,9 +14,11 @@ Pins:
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from kinoforge.cli._commands import _cmd_batch, _cmd_generate
 from kinoforge.cli._main import _build_parser
@@ -288,16 +290,26 @@ def test_dry_run_swap_skips_preflight_and_backend(
 
 
 def test_dry_run_swap_works_on_batch(
+    tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """``_cmd_batch`` honors --dry-run-swap symmetrically.
 
     Bug: dispatch only patched on generate; batch goes through full
-    manifest-load + warm-scan path even in preview mode.
+    warm-scan + deploy path even in preview mode.
+
+    The manifest is a real file since the U2 fix: the preview validates
+    the batch it previews, so a placeholder path would exit 1 here and
+    prove nothing about the matcher. The refusal itself is pinned
+    end-to-end in ``tests/test_batch_cli.py``.
     """
+    manifest_path = tmp_path / "m.yaml"
+    manifest_path.write_text(
+        yaml.safe_dump([{"prompt": "a", "mode": "t2v", "run_id": "x"}])
+    )
     cfg = _FakeCfg(_key_two_loras())
     ctx = _FakeCtx(cfg, _FakeLedger([]))
-    rc = _cmd_batch(_batch_args(), ctx)  # type: ignore[arg-type]
+    rc = _cmd_batch(_batch_args(manifest=str(manifest_path)), ctx)  # type: ignore[arg-type]
     out = capsys.readouterr().out
     assert rc == 0
     assert "cold-boot" in out

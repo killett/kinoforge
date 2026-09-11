@@ -974,9 +974,10 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         dest="dry_run_swap",
         help=(
             "preview the warm-attach matcher decision without acquiring "
-            "the pod lock, issuing HTTP, or loading the manifest. Prints "
-            "the chosen pod + swap plan (evict/download) or the cold-boot "
-            "fall-through reason. Exits 0."
+            "the pod lock or issuing HTTP. Validates the manifest first "
+            "(exit 1 if it is missing or malformed), then prints its entry "
+            "count and the chosen pod + swap plan (evict/download) or the "
+            "cold-boot fall-through reason. Exits 0."
         ),
     )
 

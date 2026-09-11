@@ -53,6 +53,7 @@ from kinoforge.stores.local import LocalArtifactStore
 
 if TYPE_CHECKING:
     from kinoforge.core.balance_endpoints import BalanceEndpoint, ProviderBalance
+    from kinoforge.core.batch_models import BatchManifest
     from kinoforge.core.cost import CostSnapshot
     from kinoforge.core.interfaces import Lifecycle
     from kinoforge.core.reaper_actor import SweepReport
@@ -1377,7 +1378,33 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
         raise RuntimeError("_cmd_batch requires --config")
     cfg = ctx.cfg
 
+    def _load_manifest_or_report() -> BatchManifest | None:
+        """Load the manifest, reporting a bad one the way the CLI does.
+
+        ``OSError`` is caught alongside the two validation errors because
+        ``load_manifest`` reads the path itself: a manifest that does not
+        exist raises ``FileNotFoundError``, which is neither a
+        ``ConfigError`` nor a pydantic ``ValidationError`` and used to
+        leave the CLI through an uncaught traceback.
+
+        Returns:
+            The validated manifest, or ``None`` once the operator-facing
+            error has been printed and the caller should return 1.
+        """
+        try:
+            return load_manifest(Path(args.manifest))
+        except (ConfigError, PydanticValidationError, OSError) as exc:
+            print(f"error: manifest: {exc}", file=sys.stderr)
+            return None
+
     if getattr(args, "dry_run_swap", False):
+        # U2 — the preview validates the batch it claims to preview. A
+        # manifest that is missing or malformed is an operator error worth
+        # surfacing now, not after the pod is up and billing.
+        preview_manifest = _load_manifest_or_report()
+        if preview_manifest is None:
+            return 1
+        print(f"manifest: {len(preview_manifest.entries)} entries")
         return _dry_run_swap_preview(ctx)
 
     if args.env_file is not None:
@@ -1393,10 +1420,8 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
         )
         return 1
 
-    try:
-        manifest = load_manifest(Path(args.manifest))
-    except (ConfigError, PydanticValidationError) as exc:
-        print(f"error: manifest: {exc}", file=sys.stderr)
+    manifest = _load_manifest_or_report()
+    if manifest is None:
         return 1
 
     store = ctx.store()
