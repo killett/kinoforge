@@ -44,8 +44,19 @@ class _DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
     by overriding the private ``_adjust_thread_count`` hook.
 
     Graceful shutdown is unchanged because ``executor.shutdown(wait=True)``
-    still joins each worker; on ungraceful exit the workers now die with
+    still joins each worker; on ungraceful exit an IDLE worker now dies with
     the process instead of blocking pytest's interpreter shutdown.
+
+    **The daemon flag does not cover a worker that is mid-work-item (U31).**
+    ``_adjust_thread_count`` below also registers each worker in
+    ``concurrent.futures.thread._threads_queues``, and that module's
+    ``_python_exit`` — installed through ``threading._register_atexit``, so it
+    runs BEFORE ``threading._shutdown`` — puts a sentinel on every registered
+    queue and then joins every registered thread unboundedly, daemon or not. A
+    worker blocked inside its current item never reaches the sentinel, so the
+    join never returns. ``daemon=True`` exempts a thread from
+    ``threading._shutdown`` and from nothing else. Demonstrated by
+    ``tools/diagnose_u13_exit_holder.py pool-worker``.
     """
 
     def _adjust_thread_count(self) -> None:  # noqa: D401, D102
