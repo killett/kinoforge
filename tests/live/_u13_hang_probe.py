@@ -41,7 +41,6 @@ Run:
 from __future__ import annotations
 
 import json
-import shutil
 import signal
 import subprocess
 import sys
@@ -244,7 +243,12 @@ def main() -> int:  # noqa: PLR0915 — one linear probe; splitting hides the or
     print(f"verdict: {evidence['verdict']}")
     print(f"upscale_failed_raised: {evidence['upscale_failed_raised']}")
     print(f"evidence: {_EVIDENCE}")
-    shutil.rmtree(scratch, ignore_errors=True)
+    # The child's FULL logs stay on disk. The first run of this probe deleted
+    # them and the JSON keeps only a tail — which the base64 echo of the
+    # provision script swamps — so the one thing needed to diagnose a build
+    # failure was destroyed by the probe itself. Only the throwaway input goes.
+    bad.unlink(missing_ok=True)
+    print(f"child logs kept: {out_path} {err_path}")
     return 0
 
 
