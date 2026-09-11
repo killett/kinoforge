@@ -2912,9 +2912,47 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-09-10 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-11 — read this, then STOP; below is history)
 
-### NEXT ACTION (single, current as of 2026-09-10)
+### SESSION 2026-09-10/11 — six defects closed, $0.05 of live spend, ledger down to three
+
+**Closed this session: U2, U1, U25, U19, U6** (and **U31 filed** from the U13 measurement).
+The ledger went from 7 open to **3 open**, and every one of those three is already recorded as
+past the one-guard bar — so the next session's job is to CHOOSE a shape, not to look for a cheap
+win. Spend: **$0.05 total** ($0.036 U19, $0.014 U6). Everything else was offline.
+
+**The through-line, and the reason each entry is worth re-reading rather than trusting its
+headline: four of the six filings were WRONG about their own scope, and each was narrowed or
+retracted with evidence.**
+- **U1** claimed the matcher "tries to attach" across providers. The function that would attach
+  has no production caller (23 test references, zero in `src/`), and the auto-discovery path
+  `generate` / `upscale` / `interpolate` actually use has filtered on provider all along. One code
+  path had the hole, not all of warm reuse.
+- **U6** predicted "the golden suite moves with it — not a one-function change". **Zero goldens
+  moved** (the snapshot tool models the generate path), and it was a one-function change.
+- **U13**'s $0 first step was run and **did not reproduce the hang**; four mechanisms are now
+  eliminated by measurement rather than argument.
+- **U2** turned out to sit next to a second, unfiled defect on the same line (a missing manifest
+  left the CLI through an uncaught `FileNotFoundError`).
+
+*Generalise, because it recurred four times in one session: a filing's scope claim is a hypothesis
+written before the fix, and one grep of the thing it says must move usually settles it.*
+
+**Two proofs in this session were designed around a trap that would otherwise have banked a false
+green**, and both are worth copying:
+- **U19** — "run interpolate twice, show the second attaches" proves NOTHING, because the old
+  carve-out skipped the `/health` gate entirely and the attach would have happened either way.
+  The evidence is the pod's own `GET /health` → `capabilities: ["interpolate","upload"]`.
+- **U6** — Modal accepting the spec is not the claim; a spec can be acceptable and still produce a
+  pod that serves nothing. The evidence is `GET /health` → `ready: true` on the deployed pod.
+- **U1** used a negative control (the same index row with one field changed) so the refusal could
+  not be an unmatchable fixture, and **U25** falsified two tests that were passing vacuously by
+  deliberately breaking the implementation. *A guard that has never failed is not yet a guard.*
+
+**Teardown was verified from fresh processes after every live run** (`kinoforge list` both lines,
+zero non-stopped Modal apps, preflight PASS), and no pod outlived its run.
+
+### NEXT ACTION (single, current as of 2026-09-11)
 
 **There is no cheap open item left. Each remaining one is a decision to take on a whole shape, not
 a task to pick up:**
