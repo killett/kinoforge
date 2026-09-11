@@ -449,7 +449,8 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site.
 
-**STATUS INDEX (current as of 2026-09-10. Provenance, newest first: U2 fixed 2026-09-10
+**STATUS INDEX (current as of 2026-09-10. Provenance, newest first: U1 fixed 2026-09-10
+(`33a31586`, $0.00 offline, CLI-demonstrated with a negative control); U2 fixed 2026-09-10
 (`e7c731f9`, $0.00 offline, CLI-demonstrated — and the same commit fixed an unnumbered adjacent
 defect on the same line, the manifest loader's uncaught `FileNotFoundError`); U16
 (`4e8f957b`) and U22 (`b6646e37`) both LIVE-PROVEN 2026-09-10 ($0.02, one shared RunPod pod);
@@ -460,9 +461,9 @@ U30 filed and fixed 2026-09-10 from that run; U16 fixed 2026-09-10
 U18 LIVE-PROVEN and U21 fixed 2026-09-09; U29 filed and fixed 2026-09-09; U17 fixed 2026-09-08.
 This table is authoritative — every paragraph BELOW it is dated campaign commentary and is not.)**
 
-Thirty-one items, U1-U31. **Twenty-two are fixed** (U2, U3, U4, U7, U8, U9, U11, U12, U14, U15,
-U16, U17, U18, U20, U21, U22, U23, U26, U27, U28, U29, U30), **two are partly fixed** (U5, U10),
-**seven are open** (U1, U6, U13, U19, U24, U25, U31). **U31 was filed 2026-09-10** while measuring
+Thirty-one items, U1-U31. **Twenty-three are fixed** (U1, U2, U3, U4, U7, U8, U9, U11, U12, U14,
+U15, U16, U17, U18, U20, U21, U22, U23, U26, U27, U28, U29, U30), **two are partly fixed** (U5,
+U10), **six are open** (U6, U13, U19, U24, U25, U31). **U31 was filed 2026-09-10** while measuring
 U13 — a daemon pool worker parked mid-item blocks interpreter exit anyway, demonstrated at $0.00;
 it is U13's symptom on `generate` / `batch`, but it is NOT U13's holder (`upscale` submits nothing
 to the pool). **U16 and U22 are LIVE-PROVEN as of 2026-09-10 for $0.02
@@ -477,7 +478,7 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 
 | Item | State | Detail |
 |---|---|---|
-| U1 | OPEN | warm-attach matcher is provider-blind; untouched |
+| U1 | FIXED 2026-09-10 (`33a31586`, $0.00) | `find_warm_attach_candidate` never read `provider`, so a Modal cfg and a RunPod pod running the same model hashed to the same `WarmAttachKey` and the RunPod row won. Candidates must now declare the cfg's provider, on BOTH halves of the list — the ledger lookup and the ephemeral-index union appended after it, which is where it was actually observed (the stale 2026-07-13 RunPod rows cleared by hand on 2026-09-06 were index rows). **Strict on a MISSING provider**, matching `_resolve_warm_instance`'s step-2 refusal on the explicit `--instance-id` path: a row that does not declare a provider is not evidence of the right one. A cfg that names no provider (the signature is duck-typed, `Config.compute` is optional) yields `_cfg_provider(cfg) is None` and the pre-U1 behaviour, rather than an unguarded `cfg.compute.provider` raising `AttributeError` out of the matcher — one of the six tests exists only for that. **Two corrections to the filing, both narrowing it.** (a) "tries to attach to it" was overstated: `try_warm_attach_with_swap`, the only thing that would attach, has **no production caller** — 23 test references, zero in `src/` — so today's sole live consumer is the `--dry-run-swap` preview, which is exactly what T0-07 saw (a *wrong preview*, not a wrong attach). The fix still matters unchanged: it is what makes the integration correct at the moment it IS wired. (b) The auto-discovery path used by `generate` / `upscale` / `interpolate` — `_scan_warm_candidates` — has filtered on `provider` all along and records `provider-mismatch` in its skip reasons, so the blast radius was one code path, not all of warm reuse. **CLI-demonstrated at $0.00** on the entry's own reproducer: a seeded index row `provider: runpod` against the Modal cfg → `matcher: no warm candidate, would cold-boot`; the same row with one field changed to `provider: modal` → `matcher: selected pod runpod-ghost-1`. The control is the point — it proves the refusal came from the provider filter and not from an unmatchable fixture. **A test-design note worth carrying:** the one neighbour that broke, `test_matcher_probe_404_silently_skips_and_removes_row`, drives the matcher with a bare `MagicMock()` cfg whose auto-created `compute.provider` matches nothing — an over-mocked fake hiding behind attribute auto-creation. Its fake was corrected to name a provider; its assertion was not touched |
 | U2 | FIXED 2026-09-10 (`e7c731f9`, $0.00) | The `dry_run_swap` early return in `_cmd_batch` sat ABOVE `load_manifest`, so a `--manifest` path that does not exist exited 0 with a swap plan. The preview now loads and fully validates the manifest first, prints `manifest: <N> entries`, and only then renders the matcher decision — the count is the only OBSERVABLE proof the parse happened, so without it no test can distinguish "loaded" from "not loaded" on a VALID manifest. The batch subparser's help text **documented the defect** ("without ... loading the manifest") and was rewritten. **An adjacent defect on the same line, fixed in the same commit and deliberately left unnumbered:** the ordinary batch path caught only `ConfigError` + pydantic `ValidationError`, but `load_manifest` reads the path itself and `Path.read_text` on an absent file raises `FileNotFoundError` — an `OSError` — so a missing manifest left the CLI through an uncaught TRACEBACK rather than its documented exit 1. Both paths now share one `_load_manifest_or_report` helper so the error shapes cannot drift apart again. Four tests, all RED first, driven through `main()`: the refusal asserts the `matcher:` line is ABSENT as well as the exit code (a fix that reports AND previews still fails); a mapping-shaped manifest pins the PARSE, not the file's existence, which is what an `exists()`-only fix would have shipped; a valid TWO-entry manifest must still preview, so a truthiness/`1`-hardcoding bug shows as a wrong number; and the normal path's missing file covers the `OSError` half. The pre-existing `test_dry_run_swap_works_on_batch` passed `manifest="ignored"` and went RED on the behaviour change — it now writes a real manifest, point unchanged. CLI-demonstrated at $0.00: exit 1 + `error: manifest:` on a missing path (was exit 0 + a plan), `manifest: 2 entries` + the matcher verdict on a valid one, and the same clean error on the normal path (was a traceback) |
 | U3 | FIXED, LIVE-PROVEN 2026-09-09 | The read paths now consult the ledger row that was always holding the answer. `_merge_recorded_tags` restores the create-time `tags` (RunPod's `endpoints` READS `tags["ports"]`, which `get_instance` never populates) and `_seed_instance_from_ledger_entry` also restores the recorded `endpoints` map (Modal's `.modal.run` URL is derivable from nothing at all). `_cmd_status` seeds tags and passes the recorded map to `_render_endpoints_for_status` as a new `recorded=` argument; `_cmd_pod_lora_ls` seeds both before `ensure_endpoints`. The merge block was EXTRACTED from `_resolve_attach_pod` (the U15 fix, `ccd4c5e7`) rather than re-written, and the four existing tests in `tests/cli/test_resolve_attach_pod.py` stayed green UNMODIFIED — that is the non-regression proof. **A recorded endpoint renders LABELLED** — `{...} (recorded at launch, not verified live)` — because `status` uses the pure read and on SkyPilot the recorded endpoint is routinely a `127.0.0.1:<port>` tunnel that died with the process that opened it; presenting that as live is the F11 failure the S5 read/ensure split exists to prevent. A map the provider COMPUTED from rehydrated tags renders UNLABELLED, because a proxy URL rebuilt from the pod id is derivation, not recollection — that distinction also closes the RunPod-status deferral `_render_endpoints_for_status`'s own docstring had named as out of scope. **The offline proof could not, on its own, establish the claim** — and the reason was structural, not laziness: the claim is about what a FRESH PROCESS can reach, and no offline test can exercise that against a real provider — `LocalProvider` keeps instances in-process (so a fresh process raises `KeyError` before the endpoint render is reached) and Modal/RunPod `get_instance` are network calls. That gap was recorded as an owed debt and has since been paid — see the live proof below. Two of the new tests deliberately pin the CALL SITE through `main()`, not the renderer, because every renderer test passes `recorded=` in by hand and would have stayed green if `_cmd_status` never passed one; RED for both was confirmed by temporarily reverting the call-site wiring. **LIVE-PROVEN 2026-09-09 ($0.055, Modal A10 `run-20260909-182423`, 3 m 03 s)** — this DISCHARGES the offline-only caveat stated above; scaffold committed RED first in `0c8dc571` per the pre-spend rule, preflight PASS on a verified zero-app Modal baseline. From processes that did not create the pod: `status --id` printed the real `.modal.run` URL WITH the `(recorded at launch, not verified live)` label (exit 0) where it previously printed `unknown (no live endpoint)`, and `pod lora ls` reached that same host over HTTP (exit 0, `no LoRAs loaded`) where it previously exited 2 with `no endpoint URL`. Same-host criterion triangulated three ways rather than asserted: the URL Modal's own deploy output created is byte-identical to the one `status` reported; a direct `GET /lora/inventory` on that host returned HTTP 200 `{'inventory': [], ...}`, matching what `pod lora ls` rendered; and a negative control (`pod lora ls run-does-not-exist`) exited 1 `not found in ledger`, proving the command does not fabricate a host — the U4 defect shape. **NOT closed by this fix:** an `--ephemeral` run's index row carries `endpoints: {}` for its whole life (**U28**), so this buys ephemeral runs nothing, and the `grid`-cell monitoring blindness recorded on this row is downstream of U28, not of U3 |
 | U4 | FIXED | `c08c3cce` — `logs` refuses cleanly off RunPod instead of 404ing a fabricated host |
@@ -602,7 +603,8 @@ daemon covers a pod abandoned after a generation but not one abandoned during it
 evidence in `.superpowers/sdd/2026-09-06-modal-money-leaks/task-5-report.md` (untracked) and in the
 per-item entries below.
 
-- **U1 — the warm-attach matcher is provider-blind (cross-provider attach risk).**
+- **U1 — FIXED 2026-09-10 (`33a31586`, $0.00 offline) — the warm-attach matcher was
+  provider-blind.**
   `WarmAttachKey` (`src/kinoforge/core/interfaces.py:649`) carries base_model / engine /
   precision / stages / upscaler only — no provider — and
   `find_warm_attach_candidate` (`src/kinoforge/core/warm_reuse/matcher.py`) never references
@@ -619,7 +621,53 @@ per-item entries below.
   match site; adding a provider field to the key itself would move every warm-attach hash.
   **Mitigation applied 2026-09-06:** three stale 2026-07-13 RunPod rows were cleared from the
   index (backup `/home/claudeuser/kinoforge-matrix/ephemeral-index.backup-20260906.json`). That
-  removed the confound for the campaign; **the defect is untouched.**
+  removed the confound for the campaign; ~~the defect is untouched~~ — fixed 2026-09-10.
+  **Fix.** Candidates must declare the cfg's provider, applied to BOTH halves of the candidate
+  list — `ledger.find_pods_by_warm_attach_key`'s result AND the `ephemeral_index` rows unioned in
+  after it. The second half is not an afterthought: it is where this was observed, since the three
+  stale rows above were index rows, and a fix that filtered only the ledger would have left the
+  reproducer working exactly as filed.
+  **Strict on a MISSING provider**, and the precedent decided it rather than taste:
+  `_resolve_warm_instance` step 2 has refused `entry.get("provider", "") != cfg.compute.provider`
+  on the explicit `--instance-id` path since D1, so an automatic path that waved through rows of
+  unknown provenance would be laxer than the one the operator drives by hand. The one case where
+  no rule can be applied is a cfg naming no provider — the matcher's signature is duck-typed and
+  `Config.compute` is itself optional — so `_cfg_provider` returns `None` there and the pre-U1
+  behaviour stands. That is not a formality: an unguarded `cfg.compute.provider` would raise
+  `AttributeError` out of the matcher for every structural caller, and one of the six tests exists
+  only to catch that.
+  **Two corrections to this entry's own filing, both NARROWING it — recorded because the mistake
+  is the transferable part.**
+  1. *"tries to attach to it"* was overstated. `try_warm_attach_with_swap` — the only function
+     that would actually attach — has **no production caller**: 23 references across `tests/`,
+     zero in `src/`. Today's only live consumer of the matcher is `_dry_run_swap_preview`, so what
+     T0-07 measured was a **wrong preview**, not a wrong attach. The fix is unchanged in value:
+     it is what makes the integration correct at the moment it is wired, and a preview that names
+     a pod on another provider is itself the defect the cell recorded.
+  2. The auto-discovery path that `generate` / `upscale` / `interpolate` actually use —
+     `_scan_warm_candidates` — has filtered on `provider` all along and records `provider-mismatch`
+     among its skip reasons. So the blast radius was ONE code path, not all of warm reuse.
+     *Generalise: before writing "the matcher is X-blind", grep for the other place that does the
+     same job — this repo has two candidate scans, and only one had the hole.*
+  **Six tests, three RED first at the matcher and one RED-verified at the CLI by reverting the
+  fix** (`tests/core/warm_reuse/test_matcher_provider_scope.py`, plus the wire test in
+  `tests/cli/test_dry_run_swap.py`). They pin the rule in both directions, because a
+  refuse-everything filter is as broken as no filter and costs a cold boot per run: the
+  same-provider candidate must still match; the index row's same-provider SIBLING must be the one
+  chosen (a fix that dropped the whole union would satisfy a weaker "not the RunPod pod"
+  assertion); the undeclared-provider row must be refused, which is what separates the strict rule
+  from a permissive `if p and p != want`; and a cfg with no compute block must still match.
+  **CLI-demonstrated at $0.00** on this entry's own reproducer, with the control that makes it
+  mean something: a seeded index row `provider: runpod` against the Modal cfg gives
+  `matcher: no warm candidate, would cold-boot`, and **the same row with one field changed** to
+  `provider: modal` gives `matcher: selected pod runpod-ghost-1`. Without the second run, the
+  first proves only that some fixture failed to match.
+  **A test-design note.** The single neighbour that broke,
+  `test_matcher_probe_404_silently_skips_and_removes_row`, drives the matcher with a bare
+  `MagicMock()` cfg — so `cfg.compute.provider` auto-created itself as a mock that equals nothing,
+  and the row was skipped before the re-probe the test is about. Its FAKE was corrected to name
+  the provider its own fixture writes; its assertion was not touched. Attribute auto-creation is
+  how an over-mocked fake goes stale without ever going red.
 
 - **U2 — FIXED 2026-09-10 (`e7c731f9`, $0.00 offline) — `batch --dry-run-swap` never parsed the
   manifest.**
@@ -2784,7 +2832,13 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 
 ### NEXT ACTION (single, current as of 2026-09-10)
 
-**Do U1, U6, U19, U24 or U25 — pick from the STATUS INDEX, and read the row before starting.**
+**Do U19, U25 or U6 — in that order, and read the row before starting.** U19 needs a live RIFE
+T4 proof (~$0.03) after a small in-pod change; U25 is offline but touches the grid executor's
+write paths; U6 is the biggest — fixing `deploy`'s empty `RenderedProvision` moves the launch
+payload for every provider, so the golden suite moves with it. U24 and U31 are both explicitly
+filed as past the one-guard bar (executor-shape work, and process-shutdown semantics for every
+command, respectively) — do not start either without deciding to take the whole shape on.
+~~Do U1, U6, U19, U24 or U25~~ — U1 was fixed 2026-09-10 in `33a31586`.
 **Do NOT spend another offline session on U13:** its $0 first step was run on 2026-09-10 and
 **did not reproduce the hang**, and four candidate mechanisms are now eliminated by measurement
 (probes committed in `tools/diagnose_u13_exit_holder.py`, `8bed6296`). The holder appears only on
