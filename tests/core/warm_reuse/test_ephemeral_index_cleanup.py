@@ -105,6 +105,11 @@ def test_matcher_probe_404_silently_skips_and_removes_row(
         "wak-X"
     )
     cfg.capability_key.return_value.lora_stack.return_value.refs = []
+    # U1 — the matcher scopes candidates to the cfg's provider, so this cfg
+    # has to name the one `_seed` writes or the row is skipped before the
+    # re-probe that this test is about ever runs. A bare MagicMock would
+    # auto-create `compute.provider` as a mock that matches nothing.
+    cfg.compute.provider = "runpod"
 
     class _FakeLedger:
         def find_pods_by_warm_attach_key(self, wak: str) -> list[dict[str, Any]]:

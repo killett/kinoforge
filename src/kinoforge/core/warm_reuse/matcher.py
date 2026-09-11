@@ -145,6 +145,28 @@ def _stages_subset_match(
     return True
 
 
+def _cfg_provider(cfg: Any) -> str | None:  # noqa: ANN401 — duck-typed Config
+    """Return the provider kind ``cfg`` runs on, or ``None`` when unknown.
+
+    ``None`` means "no rule can be applied", not "reject everything":
+    ``cfg`` is structurally typed here and ``Config.compute`` is itself
+    optional, so a caller may legitimately supply a cfg that names no
+    provider. Those keep the pre-U1 behaviour.
+
+    Args:
+        cfg: Duck-typed Config; only ``compute.provider`` is consulted.
+
+    Returns:
+        The provider kind, or ``None`` when the cfg carries no compute
+        block or an empty provider.
+    """
+    compute = getattr(cfg, "compute", None)
+    if compute is None:
+        return None
+    provider = getattr(compute, "provider", None)
+    return str(provider) if provider else None
+
+
 def find_warm_attach_candidate(
     cfg: Any,  # noqa: ANN401 — duck-typed Config; structural protocol
     ledger: Any,  # noqa: ANN401 — duck-typed Ledger; structural protocol
@@ -195,9 +217,20 @@ def find_warm_attach_candidate(
             if row.id not in ledger_ids:  # ledger wins on overlap
                 candidates.append(row.to_entry_dict())
 
+    cfg_provider = _cfg_provider(cfg)
+
     eligible: list[dict[str, Any]] = []
     for entry in candidates:
         if entry.get("status") == "degraded":
+            continue
+        if cfg_provider is not None and str(entry.get("provider", "")) != cfg_provider:
+            # U1 — WarmAttachKey carries no provider, so a Modal cfg and a
+            # RunPod pod running the same model hash to the same key. Every
+            # candidate row records the provider it belongs to; scope the
+            # match to this cfg's. Strict on a MISSING provider, matching
+            # ``_resolve_warm_instance``'s step-2 refusal on the explicit
+            # ``--instance-id`` path: a row that does not declare a provider
+            # is not evidence of the right one.
             continue
         if entry["id"] in pod_lock_registry:
             continue

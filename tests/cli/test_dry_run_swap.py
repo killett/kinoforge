@@ -313,3 +313,46 @@ def test_dry_run_swap_works_on_batch(
     out = capsys.readouterr().out
     assert rc == 0
     assert "cold-boot" in out
+
+
+class _FakeCfgOnProvider(_FakeCfg):
+    """A cfg that names the provider it runs on (real Configs always do)."""
+
+    def __init__(self, key: CapabilityKey, provider: str) -> None:
+        super().__init__(key)
+        self.compute = type("C", (), {"provider": provider})()
+
+
+def test_dry_run_swap_does_not_preview_a_pod_on_another_provider(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """U1 at the wire: the preview is scoped to the cfg's own provider.
+
+    Bug: ``WarmAttachKey`` carries no provider, so a Modal cfg and a
+    RunPod pod running the same model hash to the same key and the
+    preview names the RunPod pod — the T0-07 observation, and the only
+    production consumer of the matcher today. The matcher-level rule is
+    pinned in tests/core/warm_reuse/test_matcher_provider_scope.py; this
+    test exists because that rule proves nothing about whether
+    ``_dry_run_swap_preview`` passes a cfg the matcher can read a
+    provider off at all.
+    """
+    key = _key_two_loras()
+    ledger = _FakeLedger(
+        [
+            {
+                "id": "runpod-pod-1",
+                "provider": "runpod",
+                "warm_attach_key_hex": key.warm_attach_key().derive(),
+                "capability_key_hex": key.derive(),
+            }
+        ]
+    )
+    ctx = _FakeCtx(_FakeCfgOnProvider(key, "modal"), ledger)
+
+    rc = _cmd_generate(_generate_args(), ctx)  # type: ignore[arg-type]
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "runpod-pod-1" not in out
+    assert "cold-boot" in out
