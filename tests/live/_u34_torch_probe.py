@@ -66,8 +66,20 @@ def _fetch(url: str) -> tuple[str | None, str]:
     Returns:
         ``(body, reason)``. Body is None unless a non-empty 200 came back.
     """
+    # The User-Agent is load-bearing, not decoration. RunPod fronts its pod
+    # proxy with Cloudflare, which answers the default ``Python-urllib/X.Y``
+    # UA with a 403 — the engine already documents this (see
+    # ``_KINOFORGE_USER_AGENT`` in engines/diffusers, and ``kinoforge logs``,
+    # which sends its own). The 2026-09-11 capture attempt on pod
+    # ywkjjlf36330ne got 403 on port 8001 AND on the :8000 control, while the
+    # orchestrator pulled the artifact off :8000 on that same host seconds
+    # later — which is exactly how the control proved the fault was in this
+    # client rather than in the sidecar or the proxy window.
+    req = urllib.request.Request(  # noqa: S310 — pod proxy URL only
+        url, headers={"User-Agent": "kinoforge-u34-probe/0.1"}
+    )
     try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
             body = resp.read().decode("utf-8", "replace")
             code = resp.status
     except urllib.error.HTTPError as exc:
