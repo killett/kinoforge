@@ -1595,6 +1595,7 @@ class RunPodBootLivenessProbe:
         self._clock = clock if clock is not None else RealClock()
         self._start = self._clock.now()
         self._prev_snap: UtilSnapshot | None = None
+        self._prev_log_tail: str | None = None
         self._consecutive_flat = 0
 
     def check(self, instance_id: str) -> BootVerdict:  # noqa: D102
@@ -1609,6 +1610,7 @@ class RunPodBootLivenessProbe:
         result = classify_boot_liveness(
             exists=exists,
             log_tail=log_tail,
+            prev_log_tail=self._prev_log_tail,
             snap=snap,
             prev_snap=self._prev_snap,
             consecutive_flat=self._consecutive_flat,
@@ -1619,6 +1621,11 @@ class RunPodBootLivenessProbe:
         self._consecutive_flat = result.consecutive_flat
         if snap is not None:
             self._prev_snap = snap
+        # Only remember a tail we actually read. Storing None on a failed fetch
+        # would make the NEXT probe compare against nothing and forfeit its
+        # progress signal at exactly the moment the sidecar is flaky.
+        if log_tail is not None:
+            self._prev_log_tail = log_tail
         return result.verdict
 
 

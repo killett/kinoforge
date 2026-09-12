@@ -70,6 +70,7 @@ def classify_boot_liveness(
     exists: bool,
     log_tail: str | None,
     snap: UtilSnapshot | None,
+    prev_log_tail: str | None = None,
     prev_snap: UtilSnapshot | None,
     consecutive_flat: int,
     elapsed_s: float,
@@ -79,11 +80,25 @@ def classify_boot_liveness(
     """Decide the boot verdict from raw signals. See module docstring.
 
     Precedence: GONE (unambiguous) > trap-rc!=0 (ground truth) > grace window
-    (suppress) > util flatline (counted) > progress (reset) > unknown.
+    (suppress) > LOG PROGRESS (reset) > util flatline (counted) > util progress
+    (reset) > unknown.
+
+    Log progress sits ABOVE the flatline count because on RunPod the util
+    signals cannot distinguish a model download from a corpse: an HF fetch is
+    CPU-idle (network-bound) and memory-flat (it streams to disk), and
+    ``disk_percent`` is always None there by documented provider limitation, so
+    ``_is_flat`` degenerates to "CPU 0 and memory flat" — which a healthy
+    download satisfies exactly. It sits BELOW the trap-rc check because a
+    crashing provision GROWS its log at the moment it dies (the trap appends
+    ``[bootstrap-trap] rc=<N>``), so growth alone must never outrank ground
+    truth. Cost of not having this: pod rohjrsmre9obsp, killed 2026-09-12 while
+    its log was actively fetching 19 model files.
 
     Args:
         exists: Whether the provider still knows the pod.
         log_tail: Tail of the pod's bootstrap.log (or None if unavailable).
+        prev_log_tail: The previous probe's tail, for progress comparison.
+            None on the first probe, which makes no progress claim either way.
         snap: Latest util snapshot (or None on probe error).
         prev_snap: Prior util snapshot for delta comparison (or None).
         consecutive_flat: Flatline count accumulated so far.
@@ -106,6 +121,13 @@ def classify_boot_liveness(
 
     if snap is None:
         return BootLivenessResult(BootVerdict.UNKNOWN, consecutive_flat)
+
+    # A log that gained bytes since the last probe is direct evidence that the
+    # provision is still executing, whatever the util numbers say. Absence of
+    # growth is NOT evidence of death (output buffers, quiet phases), so it only
+    # falls through to the util logic rather than deciding anything itself.
+    if prev_log_tail is not None and log_tail is not None and log_tail != prev_log_tail:
+        return BootLivenessResult(BootVerdict.ALIVE, 0)
 
     if prev_snap is not None and _is_flat(snap, prev_snap):
         n = consecutive_flat + 1
