@@ -1401,16 +1401,30 @@ def _log_torch_build() -> None:
     absent from the dev environment, and a diagnostic line must not be able to
     take down the server it was added to explain.
     """
+    build = _torch_build()
+    if build["version"] is None:
+        _log.info("startup: torch build unreadable")
+    else:
+        _log.info("startup: torch %s (cuda build %s)", build["version"], build["cuda"])
+
+
+def _torch_build() -> dict[str, str | None]:
+    """Return the installed torch version and CUDA build tag.
+
+    Both keys are None when torch cannot be imported. This never raises: it
+    feeds ``/health``, which is the readiness gate, so an exception here would
+    not merely lose a diagnostic — it would strand the pod as un-ready while it
+    bills.
+
+    Returns:
+        ``{"version": <torch.__version__>, "cuda": <torch.version.cuda>}``.
+    """
     try:
         import torch
 
-        _log.info(
-            "startup: torch %s (cuda build %s)",
-            torch.__version__,
-            torch.version.cuda,
-        )
-    except Exception as exc:  # noqa: BLE001 — a diagnostic must never be fatal
-        _log.info("startup: torch build unreadable (%s)", type(exc).__name__)
+        return {"version": str(torch.__version__), "cuda": torch.version.cuda}
+    except Exception:  # noqa: BLE001 — a diagnostic must never be fatal
+        return {"version": None, "cuda": None}
 
 
 @app.on_event("startup")
@@ -1533,6 +1547,10 @@ def health() -> dict[str, Any]:
             for entry in _LOADED.values()
         ],
         "capabilities": _capabilities_from_loaded(),
+        # Which torch wheel this pod actually runs. On Modal the startup log is
+        # unreadable once an ephemeral app stops, so the log line alone cannot
+        # answer "which torch?" there; /health can, on every provider.
+        "torch": _torch_build(),
     }
 
 

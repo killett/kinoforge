@@ -211,3 +211,49 @@ class TestTorchBuildIsLogged:
         assert _torch_lines(caplog), (
             "an absent torch must still be reported, not silent"
         )
+
+
+class TestTorchBuildOnHealth:
+    """The wheel must also be QUERYABLE, not only logged.
+
+    The startup log line is the right idea on the wrong channel for Modal: its
+    container stdout is not retrievable once an ephemeral app has stopped, and
+    ``modal app logs`` on a stopped app returns the image build, not the
+    container. Proven the hard way on app ``ap-KlBlrRvxoQ7gz992RdrB6f`` — a
+    green RIFE run whose torch build was still unreadable afterwards. ``/health``
+    is the one surface every provider exposes and kinoforge already gates
+    readiness on, so it is where a fact about the pod belongs.
+    """
+
+    def test_health_reports_the_installed_torch_build(
+        self, server: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``/health`` carries the version string and CUDA build.
+
+        Catches the diagnostic existing only in the log: a stopped Modal app
+        leaves no readable stdout, so a log-only implementation answers
+        "which torch?" on RunPod and not on Modal — which is exactly the gap
+        (U37) that 19 unproven cfgs sit in.
+        """
+        monkeypatch.setitem(sys.modules, "torch", _fake_torch("9.9.9+cu999", "99.9"))
+
+        payload = server.health()
+
+        assert payload["torch"] == {"version": "9.9.9+cu999", "cuda": "99.9"}, payload
+
+    def test_health_still_serves_when_torch_is_absent(
+        self, server: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing torch degrades the field, never the endpoint.
+
+        Catches an unguarded import inside the handler: /health is the
+        readiness gate, so raising there does not merely lose a diagnostic —
+        it makes every wait_for_ready poll fail and strands the pod as
+        un-ready while it bills.
+        """
+        monkeypatch.setitem(sys.modules, "torch", None)  # import raises
+
+        payload = server.health()
+
+        assert payload["torch"] == {"version": None, "cuda": None}, payload
+        assert "ready" in payload, "the readiness contract must survive"
