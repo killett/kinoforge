@@ -1,0 +1,37 @@
+# U24 PROBE grid spec — copy of examples/configs/grids/wan-2_1-1_3b-loras-swap.grid.yaml
+# pointed at the probe base cfg (which differs only in max_usd_per_hr; see U36).
+#
+# This is the shape U24's owed live proof needs, and grid --dry-run is explicitly
+# NOT accepted as that proof: it returns before run_grid and never reaches the
+# changed code. What must be observed:
+#   1. cell 1 cold-boots under an opaque `kinoforge-eph-<8hex>` name
+#   2. cell 2 ATTACHES from a separate process (no second cold boot)
+#   3. the controller's destroy fires
+#   4. the ephemeral index is empty afterwards
+
+allow_in_repo: true
+title: "Wan 2.1 1.3B — LoRA stack swap"
+layout: "1x3"
+budget_cap_usd: 0.50
+on_swap_failure: classify
+cells:
+  - lora_swap:
+      config: tests/live/probes/u24-swap-base.yaml
+      stack:
+        - ref: "civitai:1479320@1673265"
+          strength: 1.0
+    caption: "Static Rotation only"
+  - lora_swap:
+      config: tests/live/probes/u24-swap-base.yaml
+      stack:
+        - ref: "civitai:1595383@1805395"
+          strength: 1.0
+    caption: "Pokemon only"
+  - lora_swap:
+      config: tests/live/probes/u24-swap-base.yaml
+      stack:
+        - ref: "civitai:1479320@1673265"
+          strength: 1.0
+        - ref: "civitai:1595383@1805395"
+          strength: 1.0
+    caption: "both stacked"
