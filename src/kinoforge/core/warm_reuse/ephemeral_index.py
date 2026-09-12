@@ -95,12 +95,30 @@ class EphemeralIndexRow:
         :attr:`Instance.endpoints` after ``provider.get_instance``
         returns a sparse Instance.
         """
+        tags: dict[str, Any] = {"kinoforge_key": self.kinoforge_key}
+        if self.endpoints:
+            # ``--attach-pod`` hands the seeded Instance to ``ensure_endpoints``
+            # — the REPAIRING door — and RunPod derives its proxy URLs from
+            # ``tags["ports"]``, not from the recorded map. Without this the
+            # provider is asked to rebuild endpoints without being told which
+            # ports to rebuild, returns {}, and the attach refuses. Observed
+            # live 2026-09-11 on pod 85ms24bc6kuc1m: every swap-group cell
+            # 2..N under ``--ephemeral`` failed there, with both URLs sitting
+            # recorded in this very row.
+            #
+            # Derived from the recorded endpoint keys rather than stored
+            # separately, so the two cannot disagree. Comma-separated because
+            # that is the provider's parser contract (``ports_raw.split(",")``).
+            # Omitted entirely when nothing was recorded — a mid-boot row (spec
+            # A2 writes before create returns) legitimately has no endpoints,
+            # and an empty-but-present field would read as a real answer.
+            tags["ports"] = ",".join(self.endpoints)
         return {
             "id": self.id,
             "provider": self.provider,
             "endpoints": dict(self.endpoints),
             "warm_attach_key": self.warm_attach_key,
-            "tags": {"kinoforge_key": self.kinoforge_key},
+            "tags": tags,
         }
 
 
