@@ -1,0 +1,132 @@
+# U34 ARM B — the cu124 index, everything else held constant.
+#
+# Paired with u34-spandrel-no-pytorch-index.yaml (ARM A). The ONLY difference
+# between the two files is the `pytorch_extra_index_url` line: arm A pins it to
+# PyPI itself (making the flag a no-op, i.e. pre-U33 behaviour), arm B omits it
+# so the engine supplies its documented cu124 default (post-U33 behaviour).
+# Accelerator ORDER is held identical on purpose — the 4090 leads in both, so
+# the two arms cannot differ by landing on different hardware.
+#
+# ARM A measured 2026-09-11 on pod 67k6ihp9w1usli: both pip invocations report
+# every pin "Requirement already satisfied", ZERO Collecting/Downloading lines,
+# and torch resolves to bare 2.6.0 / torchvision 0.21.0. So this image already
+# satisfies the pins and arm A installs no torch at all.
+#
+# This arm exists because the reference cu124 reading (pod h0921u4lt7bmln,
+# "already satisfied ... (2.6.0+cu124)") came from a PRIOR session and is
+# inconsistent with arm A's image contents — same image tag, different torch
+# build. Rather than trust a cross-session comparison, measure both arms here.
+#
+# v1-default upscale-only cfg for `kinoforge upscale`.
+#
+# Per-frame super-resolution via the spandrel library (chaiNNer + ComfyUI's
+# SR runtime; auto-detects RealESRGAN / ESRGAN / SwinIR / OmniSR architectures
+# from weights). Drop-in replacement for the seedvr2 cfg under examples/configs/
+# extras/ — flicker tradeoff documented in docs/engines.md §Upscalers.
+#
+# Usage:
+#   pixi run kinoforge upscale \
+#     --config examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml \
+#     --video /path/to/clip.mp4 \
+#     --no-reuse
+
+engine:
+  kind: diffusers
+  precision: fp16
+  diffusers:
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      - "spandrel>=0.4.2"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      # SpandrelRuntime + SpandrelEngine for the on-pod /upscale handler.
+      - "kinoforge.upscalers.spandrel"
+    embed_files:
+      # SpandrelRuntime imports kinoforge.core.errors + .scale_target at
+      # the first /upscale call. Single-file embeds keep the bootstrap
+      # script under RunPod's 64KB env-var ceiling (kinoforge.core has
+      # ~15K lines total — embedding the whole package would balloon
+      # the script past 200KB even after gzip).
+      - "kinoforge.core.errors"
+      - "kinoforge.core.scale_target"
+    # Skip the eager WanPipeline.from_pretrained at server startup. The pod
+    # runs only the on-demand spandrel runtime via the LRU registry — no Wan
+    # weights ever load. Cuts cold-boot from ~30min (full Wan 14B download)
+    # to ~3min (pip install + RealESRGAN_x2 weights only).
+    upscale_only: true
+
+# No models[] required — upscale_only=true means the server doesn't
+# eager-load any model. spandrel weights are fetched via
+# `upscale.spandrel.model_url` at provision time (T7 _fetch_weights CLI).
+models: []
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  mode: pod
+  placement:
+    min_vram_gb: 16
+    disk_gb: 40
+    # Pin NVIDIA — without an explicit preference the offer chooser can pick
+    # an AMD Instinct that RunPod's create-pod mutation rejects with HTTP
+    # 500. Covers cheap 16-24GB consumer + datacenter cards that comfortably
+    # run RealESRGAN-x2 inference.
+    #
+    # ORDER MATTERS, and it is the U36 dodge. `accelerators` is a PREFERENCE
+    # RANKING, not an allowlist (`kinoforge.core.offers.filter_offers` sorts
+    # by it; it does not drop unlisted types), and `_create_pod` walks the
+    # ranked list in order, falling through only on CapacityError. The
+    # 2026-09-11 attempt to place this probe left L4 first: RunPod advertises
+    # it at $0.44/hr and it realizes at $2.39/hr, over the $2.20 default cap,
+    # so S4 destroyed the pod and raised RateCapExceeded — seven times, at
+    # ~$0.008 a turn. The RTX 4090 is advertised at $0.34/hr and realized
+    # $0.74/hr on the one green run (pod h0921u4lt7bmln), comfortably under
+    # the cap, so it leads here. The cap is deliberately NOT raised: the
+    # guard is correct, the ordering was what cost money.
+    accelerators:
+      - "NVIDIA GeForce RTX 4090"
+      - "NVIDIA GeForce RTX 3090"
+      - "NVIDIA RTX A4000"
+      - "NVIDIA RTX A5000"
+      - "NVIDIA L4"
+  lifecycle:
+    # spandrel install pulls torch (~2GB), torchvision, torchaudio, fastapi,
+    # uvicorn, imageio[ffmpeg], spandrel. Cold pull from PyPI on a fresh
+    # pod sustains ~10-15min on average; default 15m boot_timeout is
+    # borderline. Bumped to 30m for the upscale-only path so a slow PyPI
+    # day doesn't trip wait_for_ready.
+    boot_timeout: 30m
+    idle_timeout: 30m
+    job_timeout: 10m
+    time_buffer: 3m
+    max_lifetime: 60m
+    budget: 1.0
+    heartbeat_interval_s: 30
+
+# spec.model is informational only for upscale-only cfgs (no /generate
+# call fires) but the integration test_no_unknown_slug_for_example_configs
+# regression lock asserts DiffusersEngine.model_identity returns
+# non-empty for every example. Use the spandrel 3-token slug so the
+# value is at least meaningful.
+spec:
+  model: "spandrel-realesrgan-fp16"
+
+upscale:
+  engine: spandrel
+  scale: 2x
+  spandrel:
+    model_url: "hf:ai-forever/Real-ESRGAN/RealESRGAN_x2.pth"
+    arch: realesrgan
+    precision: fp16
+    tile_size: 512
+    batch_size: 4

@@ -44,7 +44,10 @@ import urllib.request
 from pathlib import Path
 
 _POD_ID_RE = re.compile(r"for instance ([a-z0-9]{10,})\b")
-_EVIDENCE = Path(__file__).with_name("_u34_torch_probe_evidence.log")
+#: Evidence is named per-POD and ends in .txt, not .log: `.gitignore` has a
+#: blanket `*.log` rule, and a single fixed name would let a second arm
+#: silently overwrite the first arm it is supposed to be compared against.
+_EVIDENCE_DIR = Path(__file__).parent
 _POLL_S = 2.0
 _UTIL_EVERY = 5  # every 5th poll -> ~10 s; the pod lives under 60 s
 
@@ -204,8 +207,9 @@ def main(argv: list[str]) -> int:
         )
         return rc
 
-    _EVIDENCE.write_text(captured, encoding="utf-8")
-    print(f"[u34] ✓ captured {len(captured)} B -> {_EVIDENCE}", flush=True)
+    evidence = _EVIDENCE_DIR / f"_u34_torch_probe_evidence_{state['pod_id']}.txt"
+    evidence.write_text(captured, encoding="utf-8")
+    print(f"[u34] ✓ captured {len(captured)} B -> {evidence}", flush=True)
     for ln in captured.splitlines():
         low = ln.lower()
         if "torch" in low and (
