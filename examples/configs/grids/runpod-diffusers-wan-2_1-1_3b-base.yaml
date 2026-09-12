@@ -44,7 +44,24 @@ compute:
   placement:
     min_vram_gb: 24
     min_cuda: "12.4"
-    max_usd_per_hr: 0.40
+    # Raised 0.40 -> 0.60 by operator decision 2026-09-12, on this cap's own
+    # merits rather than as a workaround for U36.
+    #
+    # At $0.40 this config was UNPLACEABLE on RunPod: the pre-book filter reads
+    # the advertised `lowestPrice` (RTX 4090 $0.34), the pod then bills its real
+    # rate, and the realized rate measured $0.49/hr on 2026-09-11 (pods
+    # 85ms24bc6kuc1m and kp4d0mcqvfa4zj) — so S4's realized-rate check destroyed
+    # every pod with `RateCapExceeded` before cell 0 could run. A cap no current
+    # offer can satisfy is not a guard, it is an outage.
+    #
+    # $0.60 clears the observed $0.49 with modest headroom and still refuses the
+    # tier that actually needs refusing: the L4 realized $2.39/hr on the same
+    # day. The guard stays a guard.
+    #
+    # This does NOT close U36 — the advertised-vs-realized gap is still there and
+    # still needs the in-provider retry its entry describes. Do not read this as
+    # licence to raise other shipped caps; U36's entry says in terms not to.
+    max_usd_per_hr: 0.60
     accelerators:
       - "NVIDIA RTX A5000"
       - "NVIDIA RTX 4090"
