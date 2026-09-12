@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from kinoforge.core.balance_endpoints import BalanceEndpoint, ProviderBalance
     from kinoforge.core.batch_models import BatchManifest
     from kinoforge.core.cost import CostSnapshot
+    from kinoforge.core.grid.executor import GridResult
     from kinoforge.core.interfaces import Lifecycle
     from kinoforge.core.reaper_actor import SweepReport
 
@@ -3642,6 +3643,47 @@ def _cmd_logs(args: argparse.Namespace, ctx: SessionContext) -> int:
     return 0
 
 
+def _report_grid_result(result: GridResult) -> None:
+    """Print a grid's outcome, including WHY any cell failed.
+
+    A grid that does not finish used to print only its status and a partial
+    directory — which, when no cell produced an mp4, is an empty path. The
+    cause was never lost, only unprinted: the executor builds a
+    ``GridCellFailure`` holding the cell's stderr tail for exactly this. Found
+    live 2026-09-11, when U24's swap-group proof aborted on cell 0 after 30 s
+    and left the operator nothing to read and nothing to act on.
+
+    Args:
+        result: The :class:`~kinoforge.core.grid.executor.GridResult` to render.
+    """
+    if result.status == "full" and result.composed_mp4_path is not None:
+        print(f"[grid summary] composed mp4 → {result.composed_mp4_path}")
+        return
+
+    print(
+        f"[grid summary] status={result.status}; partial mp4s → {result.partial_dir}",
+        file=sys.stderr,
+    )
+    # Every failed cell, not just the first: a swap group aborts its remaining
+    # cells as a unit, and the difference between one bad LoRA ref and a wholly
+    # wrong config is visible only when all the causes are shown.
+    for cell in result.cell_results:
+        if cell.status != "failed":
+            continue
+        failure = cell.error
+        cause = (
+            repr(failure.exception_chain)
+            if failure is not None
+            else "no cause captured"
+        )
+        print(f"[grid summary] failed cell {cell.idx}: {cause}", file=sys.stderr)
+    if result.teardown_breadcrumb:
+        print(
+            f"[grid summary] residual pod breadcrumb:\n{result.teardown_breadcrumb}",
+            file=sys.stderr,
+        )
+
+
 def _cmd_destroy(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``destroy`` subcommand.
 
@@ -4876,17 +4918,5 @@ def _cmd_grid(args: argparse.Namespace, ctx: SessionContext) -> int:
         "teardown": 5,
     }
     code = status_to_exit[result.status]
-    if result.status == "full" and result.composed_mp4_path is not None:
-        print(f"[grid summary] composed mp4 → {result.composed_mp4_path}")
-    else:
-        print(
-            f"[grid summary] status={result.status}; "
-            f"partial mp4s → {result.partial_dir}",
-            file=sys.stderr,
-        )
-        if result.teardown_breadcrumb:
-            print(
-                f"[grid summary] residual pod breadcrumb:\n{result.teardown_breadcrumb}",
-                file=sys.stderr,
-            )
+    _report_grid_result(result)
     return code
