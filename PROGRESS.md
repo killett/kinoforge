@@ -449,7 +449,10 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site.
 
-**STATUS INDEX (current as of 2026-09-11. Provenance, newest first: U6 fixed + LIVE-PROVEN
+**STATUS INDEX (current as of 2026-09-11. Provenance, newest first: U33 fixed 2026-09-11
+($0.00 offline) — and it was three defects on one model, two of them unfiled, one of them found
+by the new class guard rather than by reading; U34 and U35 filed from that fix; U6 fixed +
+LIVE-PROVEN
 2026-09-11 (`b79e32b0`, $0.014); U19 fixed + LIVE-PROVEN
 2026-09-11 (`96d6920e`, $0.036 on one Modal T4-class pod); U25 fixed 2026-09-10
 (`602c3f7a`, $0.00 offline); U1 fixed 2026-09-10
@@ -464,10 +467,13 @@ U30 filed and fixed 2026-09-10 from that run; U16 fixed 2026-09-10
 U18 LIVE-PROVEN and U21 fixed 2026-09-09; U29 filed and fixed 2026-09-09; U17 fixed 2026-09-08.
 This table is authoritative — every paragraph BELOW it is dated campaign commentary and is not.)**
 
-Thirty-three items, U1-U33. **Twenty-nine are fixed** (U1, U2, U3, U4, U6, U7, U8, U9, U11,
+Thirty-five items, U1-U35. **Thirty are fixed** (U1, U2, U3, U4, U6, U7, U8, U9, U11,
 U12, U14, U15, U16, U17, U18, U19, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U30, U31,
-U32), **two are
-partly fixed** (U5, U10), **one is fixed but OWES a live proof** (U24), and **U13 is NOT
+U32, U33), **two are
+partly fixed** (U5, U10), **one is fixed but OWES a live proof** (U24), **two are newly OPEN**
+(U34 — the FlashVSR x4 cfg claims cu128 and renders cu124, one live build settles it; U35 — the
+serverless cfg renders now but the snapshot harness cannot capture its create call, so it is
+still unfrozen), and **U13 is NOT
 REPRODUCIBLE at HEAD** — hunted live on 2026-09-11 across two engines, both reaching a real
 server-side `UpscaleFailed` and exiting cleanly; nothing was fixed, so it is a negative result
 rather than a closure. **U32 was found and fixed during that hunt** (the spandrel weights fetch
@@ -523,7 +529,9 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | U30 | FIXED, OFFLINE-PROVEN + LIVE-CORROBORATED 2026-09-10 (`7dc6e45b`) | **`_update_stall_history` banked an UNOBSERVABLE utilisation reading as a fully idle one, quietly undoing U22 the same day it shipped.** Found by the U16/U22 live run, not by review: the recorded evidence showed `probe_by_name: {gpu_util_pct: null, cpu_pct: null}`, which forced the question of whether the live test had passed for the right reason. RunPod answers a booting pod with `runtime = null`, so `RuntimeProbe.found` is True → `_synthesize_ephemeral_entry` stamps `probe_state="ok"` → but both readings are `None`, and `float(entry.get("gpu_util_pct") or 0.0)` banked `(0.0, 0.0)`. **Blast radius:** a Wan A14B cold boot spends ~25 minutes in exactly that state, so the sample window filled with fabricated idleness while the pod did the most legitimate work it ever does; the first REAL low reading then reaped it on what was effectively ONE observation — U22 restored in all but name. Worse for STALL_REAP, which reads the same deque and sits INSIDE `DEFAULT_APPLY_POLICY`, so it acts with no operator opt-in. Fix: skip banking when either reading is `None`. **`is None`, not falsiness** — a genuine `0.0` is the commonest honest reading an idle pod gives, and filtering on truthiness would discard every real idle sample and make both reap verdicts permanently unreachable; that guard rail has its own test. Both readings required, because both predicates test GPU *and* CPU — a half-readable pair is a partial observation, not a low-util one. Three tests, two RED before the fix. **The transferable part:** `_ephemeral_orphan_predicate` states and enforces "not observed is never idle" on the CURRENT tick, and the rule was broken one layer away on the banked ones — a stated invariant is only as good as every site that feeds the data it guards. **Live corroboration, unplanned and therefore worth more than a designed one:** with the fix in, the same live scenario on a still-booting pod went `LIVE / LIVE / LIVE` and the test went RED — nothing observed, so nothing banked — where the pre-U30 run had reaped at tick 3 on a window partly filled with fabricated samples. The green run before and the red run after are the same code path either side of this one-line guard |
 | U31 | FIXED 2026-09-11 (`952869a4`, $0.00) | A DAEMON `ConcurrentPool` worker parked mid-work-item blocked interpreter exit: `_adjust_thread_count` registered every worker in `concurrent.futures.thread._threads_queues`, whose `_python_exit` — installed through `threading._register_atexit`, so it runs BEFORE `threading._shutdown` — joins every registered thread with no timeout, daemon or not. `daemon=True` exempts a thread from `threading._shutdown` and from nothing else. **Fix: drop the registration**, which makes the flag mean what `_DaemonThreadPoolExecutor`'s docstring had claimed since it was written. Nothing else depends on it — `shutdown(wait=True)` joins `self._threads` directly, `_worker` consults the module-global `_shutdown`, and the weakref callback still feeds the queue a sentinel on collection. **The trade, stated at the call site rather than left implicit:** a worker mid-item is now killed at exit instead of waited for; safe here because every durable write goes through tmp + `os.replace` (`stores/local.py`), so an abandoned worker can leave a stray `.tmp` but never a torn ledger — and the alternative is waiting forever. **This entry's own "past the one-guard bar" assessment was WRONG, and the reason is the keeper:** it assumed any fix must change process-shutdown semantics for EVERY command. It changes them for one kinoforge-owned class, in the direction that class was written for. The assessment was reasoned from the shape of the stdlib mechanism without checking which threads actually pass through it. **Two SUBPROCESS tests** — the claim is about interpreter exit and cannot be observed from inside the interpreter making it. One parks a worker and exits without `shutdown()` (RED before: the child never terminated and the test failed on its timeout); the other pins what the fix must NOT break — `shutdown(wait=True)` still waits for the in-flight item, because a pool item is a generation's poll-and-publish and abandoning one discards a result the pod was already paid for. The committed U13 probe is the same red/green from the other side: `tools/diagnose_u13_exit_holder.py pool-worker` hung for its full 15 s budget before and exits in **0.55 s** after; its docstring was updated so the tool does not keep claiming a hang it no longer reproduces. **U13 is NOT closed by this** — `upscale` submits nothing to the pool, so this was never its holder |
 | U32 | FIXED + LIVE-PROVEN 2026-09-11 (`7bd528e3`) | **The spandrel weights fetch aborted the Modal image build.** `bash: line 40: HF_TOKEN: unbound variable` — two Modal builds died there before any pod existed, while standing up the U13 probe. The spandrel upscaler is the ONLY place in kinoforge that interpolates `${HF_TOKEN}` straight into shell (every other engine hands the token to a Python fetcher that reads it with `os.environ.get` and tolerates absence), and it did so unguarded — under `set -euo pipefail`. RunPod never saw it because the whole script runs at container start with the env present; **Modal BAKES the weights fetch into the image, where run secrets do not exist**. Fix: `${HF_TOKEN:-}`. An empty Bearer is fine for the public SR weights these cfgs use, and a gated repo now gets a clear 401 through `--fail-with-body` instead of a shell error; a present token is still sent, which the second test pins (dropping the header instead would keep every existing test AND the RunPod path green while a gated repo starts 401ing on a billing pod). The first test drives real `bash` with the variable genuinely unset and `curl` shadowed by a no-op, so its RED output is the live error verbatim — reproduced offline for $0. Two goldens moved (both spandrel cfgs), reviewed by decoding the bootstrap: the `:-` plus the embedded spandrel module payload. **Blast radius beyond the probe: any Modal spandrel cfg was unbuildable**, which is why this is a defect and not a fixture wrinkle. **LIVE-PROVEN incidentally but completely:** the same command that had failed TWICE with `unbound variable` then built the image and ran a pod to a real server-side `UpscaleFailed` (U13 tier 1). Same cfg, same argv, red → green across the one-token change, so no separate proof run was needed or booked |
-| U33 | OPEN — filed 2026-09-11, currently MASKED | **Every diffusers build passes `pip install -q --extra-index-url None`, so the PyTorch CUDA index is never applied.** `engines/diffusers/__init__.py` reads `diffusers_cfg.get("pytorch_extra_index_url", _PYTORCH_EXTRA_INDEX_URL)` — but pydantic's `model_dump()` emits the key with value `None`, so **the `.get` default never fires**: the key is present, just null. Measured on the shipped cfgs — `'pytorch_extra_index_url' in dumped == True`, value `None`, and `.get(key, DEFAULT)` returns `None`. **No shipped cfg sets it**, so the literal string `None` reaches pip on EVERY diffusers cfg, and `_PYTORCH_EXTRA_INDEX_URL = "https://download.pytorch.org/whl/cu124"` is dead code. The code's own comment says the override is *"required by the FlashVSR x4 cfg which needs cu128 to match the prebuilt BSA wheel"* — that cfg does not set the key either, and renders `--extra-index-url None torch==2.6.0`, so the documented mechanism for pinning a CUDA build is not merely unused, it cannot work. **Why it is masked and not yet biting:** PyPI's default torch 2.6.0 linux wheels already bundle a CUDA 12.4 runtime, so builds succeed by luck, and `pip` treats the junk index as an unreachable URL rather than an error. **Why it still matters:** the moment a cfg genuinely needs a non-default CUDA build (the BSA-wheel case the comment describes), the pin will silently not apply — and if pip ever validates the argument, every diffusers build breaks at once. **Found** 2026-09-11 while diagnosing U32's build failure, where `--extra-index-url None` was the first suspect and was cleared by observing that the RIFE cfg carries the same line and built fine. Fix shape: read the key with an explicit `None` check (`or _PYTORCH_EXTRA_INDEX_URL`), plus a test that renders every shipped cfg and asserts no provision line contains the literal `None` as a flag value. Goldens WILL move for every diffusers cfg |
+| U33 | FIXED 2026-09-11, OFFLINE-PROVEN — and it was THREE defects, not one | **Every diffusers build passed `pip install -q --extra-index-url None`, so the PyTorch CUDA index was never applied.** `model_dump()` emits an unset `str | None = None` field as a PRESENT key whose value is `None`, so `.get(key, DEFAULT)` returns `None` and the default is dead code. Measured before the fix on all 20 shipped diffusers cfgs: key present `True`, value `None`, `.get(key, DEFAULT)` → `None`. **The `or` rewrite is the fix** (`diffusers_cfg.get(k) or DEFAULT`), and it had to be applied at every site on that model, because the filing named one and there were three. **(a)** `pytorch_extra_index_url` — U33 as filed; `_PYTORCH_EXTRA_INDEX_URL` (cu124) was dead code and the cu128 pin the code's comment calls *"required by the FlashVSR x4 cfg"* could not have worked. Masked because PyPI's torch 2.6.0 wheels already bundle cu124. **(b)** `image`, on the same model and the same call shape, LATENT and NOT masked: a diffusers cfg that omits `engine.diffusers.image` got the literal string `'None'` as its container image. Proven in the RED run (`assert rp.image == 'None'`). It has never bitten only because every shipped cfg happens to set `image` explicitly — so the documented default has never once been reachable. **(c)** one level up, `engine_block.get("diffusers", {})`: `runpod-diffusers-serverless.yaml` comments its whole `diffusers:` block out, so the block itself dumps as present-and-`None` and `render_provision` died on a bare `AttributeError: 'NoneType' object has no attribute 'get'` — on the `kinoforge deploy` path, AFTER cfg validation passed. This one was found by the new class guard, not by reading, and `tools/snapshot_launch_payloads.py` had been carrying an `EXCLUDED_CONFIGS` entry describing it as an un-deployable config whose fix would be *"the config grows an `engine.diffusers` block"* — the wrong diagnosis of a real crash, now corrected in place. **Blast radius, as the filing predicted:** 20 launch-payload goldens + `tests/engines/diffusers/_golden_provision.json` moved. Every changed line in every golden — base64+gzip env payloads, Modal `image_build_script`, SkyPilot `task_config/setup` — was decoded and diffed: **26 changed script lines, all of them the `--extra-index-url` line, zero others.** Full suite 5613 → green, 21 golden failures before regeneration and none after. Tests: `tests/engines/test_diffusers_optional_cfg_defaults.py` (25), which goes through `load_config(...).model_dump()` rather than a hand-built dict — **that is the whole defect, and why the existing `test_render_provision_pip_install_includes_pytorch_extra_index_url` passed against broken code for months: its `_minimal_cfg()` omits the key, so `.get`'s default fires in the test and never in production.** *Generalise: a fixture that is not the production shape is not a test of the production path.* Fix + tests `?`, follow-ups U34/U35 below |
+| U34 | OPEN — filed 2026-09-11, offline, needs ONE live build to settle | **The FlashVSR x4 cfg claims cu128 and renders cu124.** With U33 fixed the `pytorch_extra_index_url` override finally works — and that exposes the fact that the cfg the override was BUILT for does not set it. `examples/configs/*-flashvsr-x4-upscale.yaml` pins a cu128 IMAGE (`runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04`) and a prebuilt BSA wheel tagged `bsa-cu128-torch2.8-v1`, but installs `torch==2.6.0` and, with no `pytorch_extra_index_url` in the cfg, now resolves it from the **cu124** index. So the code comment (*"required by the FlashVSR x4 cfg which needs cu128 to match the prebuilt BSA wheel"*) describes an intent no cfg expresses, and the wheel tag names torch 2.8 while the cfg pins 2.6. **U33's fix is a real behaviour change on this path** and should not be reported as inert: before, pip got a junk index and fell through to PyPI's default torch 2.6.0 wheel; now it resolves against `download.pytorch.org/whl/cu124`. For torch 2.6.0 those are normally the same cu124 build, which is why every offline test agrees — but *normally* is an argument, not a measurement. **Settle it with one FlashVSR upscale-only run** (~4 min / ~$0.08 per the CLAUDE.md upscale-only rule, fixture `output/20260630-221857_..._Photorealistic-cinem.mp4`): capture `python -c 'import torch;print(torch.__version__, torch.version.cuda)'` on the pod, and frame-QA the output per the visual-QA rule. Then decide whether the cfg should carry `pytorch_extra_index_url: .../cu128` or whether the comment is what is wrong |
+| U35 | OPEN — filed 2026-09-11, harness gap, no product defect | **`runpod-diffusers-serverless.yaml` still has no frozen launch payload, for a new reason.** U33(c) fixed the `AttributeError` that used to stop it rendering, and the exclusion was dropped to add its golden — the capture then died on `ValueError: RunPod create-serverless returned no endpoint id; full response: {'data': {'podFindAndDeployOnDemand': {'id': 'pod-golden'}}}`. `mode: serverless` routes to RunPod's create-serverless mutation and the snapshot harness's stub transport answers every mutation with the on-demand shape. So the config is deployable now and simply unfrozen: the ratchet cannot see a wire change to the only serverless cfg shipped. Fix shape: teach `tools/snapshot_launch_payloads.py`'s stub the serverless mutation response, then delete the `EXCLUDED_CONFIGS` entry — whose text was rewritten to say this rather than the old, now-false claim that the config does not render |
 | U29 | FIXED, OFFLINE-PROVEN | `424e52d1` (2026-09-09, Task 2 regression fix) — `p_batch` re-declared the ROOT `--env-file` with an implicit `default=None`, and argparse copies every key of a subparser's fresh namespace onto the parent, so `kinoforge --env-file X batch …` parsed to `env_file=None` and `main()` loaded the DEFAULT secrets file instead of `X` — a batch run (which books GPUs) against the wrong credentials or provider account, with no warning and exit 0. Same mechanism and same one-token remedy as the `p_grid`/`--ephemeral` half of U11: `default=argparse.SUPPRESS`. These two were the ONLY root/subparser `dest` collisions in the whole parser, so the class is now closed. Covered by a test that feeds each composed argv through the real `_build_parser().parse_args()` and asserts `args.env_file` — not argv membership — with a `generate` case guarding the path that already worked. RED confirmed first (`args.env_file=None, expected '/x/creds-a'`). Offline-proven; no provider or network call. Filed and fixed the same day, on a controller ruling that a known one-token money hazard should not ship filed-open from the branch that discovered it |
 
 **Live proof cost for the whole money-leak campaign: $0.82** — $0.16 for the four fixes' own live
@@ -2986,7 +2994,35 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-09-11 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-11, second session — read this, then STOP; below is history)
+
+### SESSION 2026-09-11 (second) — U33 closed offline at $0.00, and it was three defects
+
+**One item was picked up and it tripled on inspection.** U33 was filed as a single masked defect
+(`--extra-index-url None` on every diffusers build). Measuring it first, on the shipped cfgs rather
+than from the code, showed the same present-but-None trap at two more sites on the same model:
+`image`, where a cfg omitting it gets the literal string `'None'` as its container image — NOT
+masked, just never exercised because every shipped cfg sets it — and the `diffusers` block itself,
+where a cfg that comments the block out crashes `kinoforge deploy` with a bare `AttributeError`
+after validation has already passed. The third was found by the new class guard, not by reading.
+
+**The class sweep U32 implied also shipped** (`tests/engines/test_bakeable_steps_set_u_safe.py`):
+every shipped cfg's BAKEABLE steps, every expansion run verbatim through real `bash -u` with an
+empty environment. Zero violations today — the point is the next one.
+
+**Two process notes worth more than the fix:**
+- **The test that was supposed to cover U33 already existed and passed against broken code.** Its
+  fixture is a hand-built dict where the optional key is ABSENT, so `.get`'s default fires in the
+  test and never in production. *A fixture that is not the production shape is not a test of the
+  production path.*
+- **The falsification test caught a dead guard within one run.** The new checker was written
+  without `set -u` in its bash probe, so it silently passed everything, including the literal
+  pre-U32 line it exists to flag. The deliberate "this MUST be reported" test failed immediately.
+
+**Spend: $0.00.** Two items were FILED rather than fixed, both honestly scoped: **U34** (the
+FlashVSR x4 cfg claims cu128 and renders cu124 — and U33's fix IS a real behaviour change on that
+path, not an inert one; one ~$0.08 upscale-only run settles it) and **U35** (the serverless cfg
+renders now, but the snapshot harness cannot model its create call, so it stays unfrozen).
 
 ### SESSION 2026-09-10/11 — six defects closed, $0.05 of live spend, ledger down to three
 
@@ -3036,33 +3072,62 @@ green**, and both are worth copying:
 **Teardown was verified from fresh processes after every live run** (`kinoforge list` both lines,
 zero non-stopped Modal apps, preflight PASS), and no pod outlived its run.
 
-### NEXT ACTION (single, current as of 2026-09-11)
+### NEXT ACTION (single, current as of 2026-09-11, second session)
 
-**There is no cheap open item left. Each remaining one is a decision to take on a whole shape, not
-a task to pick up:**
-### START HERE (2026-09-11): the U32 family
+**Both remaining items need a pod. There is nothing cheap left offline:** U34 wants one ~$0.08
+FlashVSR upscale-only run, U24 wants one cheap 1.3B swap group, and U35 is harness work with no
+product defect behind it.
 
-**U32 itself is DONE — fixed AND live-proven (`7bd528e3`). Do not re-fix it.** The same command
-that failed twice with `HF_TOKEN: unbound variable` then built the image and ran a pod to a real
-`UpscaleFailed`, so the red → green is already on the record. What is left is the family around
-it, in this order:
+### START HERE (2026-09-12): U34, then U24's live proof
 
-1. **U33 (filed, masked, offline)** — every diffusers build passes
-   `pip install -q --extra-index-url None`, because `model_dump()` emits
-   `pytorch_extra_index_url` as a present-but-`None` key and `.get(key, DEFAULT)` therefore never
-   returns the default. `_PYTORCH_EXTRA_INDEX_URL` (cu124) is dead code, and the cu128 pin the
-   code's comment calls "required by the FlashVSR x4 cfg" cannot work. Masked today only because
-   PyPI's torch wheels already bundle CUDA 12.4. Fix shape and the trap are in its row. **Goldens
-   will move for every diffusers cfg** — regenerate deliberately and review the decoded diff, as
-   U19 and U32 both did.
-2. **The class sweep U32 implies, which is the durable part.** U32 was one unguarded `${VAR}` in
-   one bakeable step; nothing stops another. Worth a test that renders every shipped cfg, pulls
-   the BAKEABLE steps, and asserts each survives `bash -euo pipefail` with an empty environment —
-   the same shape as `tests/upscalers/test_spandrel_provision_set_u_safe.py`, generalised. That
-   closes the CLASS rather than the instance, which is how U29 was handled.
-   **Note the asymmetry that makes this worth doing:** RunPod runs the whole script at container
-   start with the env present, so it cannot catch these; only Modal's bake can, and only for cfgs
-   anyone actually builds.
+**The U32 family is DONE — both items.** Do not re-open either.
+
+- **U32** — fixed AND live-proven (`7bd528e3`), 2026-09-11.
+- **U33** — fixed offline `?`. Read its STATUS INDEX row before doing
+  anything near the diffusers engine: **it was three defects, not the one that was filed**, and
+  only one of them was masked. `pytorch_extra_index_url` (filed) rendered
+  `--extra-index-url None` on every diffusers cfg; `image` (unfiled, same model, same call shape)
+  hands the provider the literal string `'None'` for any cfg that omits it — so the documented
+  default image has never once been reachable; and `engine_block.get("diffusers", {})` returned
+  None for a cfg that comments the block out, crashing `kinoforge deploy` with a bare
+  `AttributeError` after validation passed. 20 launch-payload goldens plus
+  `tests/engines/diffusers/_golden_provision.json` moved, and every changed line in every one of
+  them was decoded and diffed: 26 lines, all the same `--extra-index-url` line, zero others.
+- **The class sweep U32 implied is DONE** — `tests/engines/test_bakeable_steps_set_u_safe.py`
+  renders every shipped provisioning cfg, pulls the BAKEABLE steps, and asserts no expansion
+  aborts `bash -u` with an empty environment. **bash decides what counts as guarded, not a
+  regex** — each expansion is run verbatim. The allowlist of bake-time variables is deliberately
+  EMPTY, because nothing today needs one.
+
+**Two lessons from U33 worth carrying, both cheap to act on:**
+
+1. ***A fixture that is not the production shape is not a test of the production path.*** The
+   existing `test_render_provision_pip_install_includes_pytorch_extra_index_url` asserted the
+   cu124 index was on the pip line and passed for months while production rendered
+   `--extra-index-url None` — because its `_minimal_cfg()` is a hand-built dict where the key is
+   ABSENT, so `.get`'s default fires in the test and never in production. Every test in the new
+   file goes through `load_config(...).model_dump()` for exactly that reason. Worth a look
+   wherever else a hand-built dict stands in for a dumped model.
+2. **The falsification test earned its place inside one run.** `_unguarded_expansions` was
+   written without `set -u` in the probe, so it returned "clean" for every input including the
+   literal pre-U32 spandrel line; the deliberate "this MUST be flagged" test caught it
+   immediately. *A guard that has never failed is not yet a guard* — U25's lesson, now twice
+   proven.
+
+**Next, in order:**
+
+1. **U34 (filed 2026-09-11, offline, one live build settles it).** The FlashVSR x4 cfg pins a
+   cu128 image and a `bsa-cu128-torch2.8-v1` wheel, installs `torch==2.6.0`, and — because it
+   never sets `pytorch_extra_index_url` — now resolves torch from the **cu124** index. **State
+   U33's behaviour change honestly rather than calling it inert:** pip used to get a junk index
+   and fall through to PyPI's default wheel; it now resolves against
+   `download.pytorch.org/whl/cu124`. For torch 2.6.0 those are normally the same cu124 build,
+   which is why every offline test agrees — but *normally* is an argument, not a measurement. Use
+   the **upscale-only** path (~4 min / ~$0.08), print `torch.__version__` / `torch.version.cuda`
+   from the pod, frame-QA the output, then decide whether the cfg gains
+   `pytorch_extra_index_url: .../cu128` or the code comment is what is wrong.
+2. **U24's live proof** — unchanged, see below.
+3. **U35** — harness-only, no product defect, do it when the serverless cfg next matters.
 
 **One live debt, unchanged.**
 - **U24's live proof** — the fix shipped 2026-09-11 offline; what is owed is one real swap group:

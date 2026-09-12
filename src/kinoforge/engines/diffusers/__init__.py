@@ -1062,15 +1062,24 @@ class DiffusersEngine(GenerationEngine):
             A :class:`RenderedProvision` ready for orchestrator wiring.
         """
         engine_block = cfg.get("engine", {})
+        # U33: read every optional key with `or`, never with `.get`'s
+        # default. `Config.model_dump()` emits an unset `X | None = None`
+        # field as a PRESENT key whose value is None, so `.get(k, DEFAULT)`
+        # returns None and the default is dead code. That applies to the
+        # `diffusers` block itself — `runpod-diffusers-serverless.yaml`
+        # comments the whole block out, and `.get("diffusers", {})` handed
+        # back None until this line used `or`.
         diffusers_cfg: dict[str, Any] = (
-            engine_block.get("diffusers", {}) if isinstance(engine_block, dict) else {}
+            (engine_block.get("diffusers") or {})
+            if isinstance(engine_block, dict)
+            else {}
         )
-        pip_deps: list[str] = list(diffusers_cfg.get("pip", []))
-        server_cmd: list[str] = list(diffusers_cfg.get("server_cmd", []))
-        base_url: str = str(diffusers_cfg.get("base_url", ""))
-        image: str = str(diffusers_cfg.get("image", _DEFAULT_RUNPOD_IMAGE))
-        embed_modules: list[str] = list(diffusers_cfg.get("embed_modules", []))
-        embed_files: list[str] = list(diffusers_cfg.get("embed_files", []))
+        pip_deps: list[str] = list(diffusers_cfg.get("pip") or [])
+        server_cmd: list[str] = list(diffusers_cfg.get("server_cmd") or [])
+        base_url: str = str(diffusers_cfg.get("base_url") or "")
+        image: str = str(diffusers_cfg.get("image") or _DEFAULT_RUNPOD_IMAGE)
+        embed_modules: list[str] = list(diffusers_cfg.get("embed_modules") or [])
+        embed_files: list[str] = list(diffusers_cfg.get("embed_files") or [])
         # Derive WAN_MODEL_ID from cfg.models[<first-base>].ref so the
         # wan_t2v_server loads the actual cfg-declared repo rather than
         # its hardcoded 14B fallback. Without this, a Wan 2.1 1.3B cfg
@@ -1201,8 +1210,14 @@ class DiffusersEngine(GenerationEngine):
             # lets a cfg pin a different CUDA build — required by the
             # FlashVSR x4 cfg which needs cu128 to match the prebuilt
             # BSA wheel (`bsa-cu128-torch2.8-v1`).
+            # `or`, not `.get`'s default — see the U33 note at the top of
+            # this method. A cfg that omits the key dumps it as
+            # present-and-None, and `str(None)` rendered the literal
+            # `--extra-index-url None` on every diffusers cfg there has
+            # ever been, so the cu128 pin this override exists for could
+            # not have worked either.
             extra_index_url = str(
-                diffusers_cfg.get("pytorch_extra_index_url", _PYTORCH_EXTRA_INDEX_URL)
+                diffusers_cfg.get("pytorch_extra_index_url") or _PYTORCH_EXTRA_INDEX_URL
             )
             _add(
                 "build", f"pip install -q --extra-index-url {extra_index_url} {quoted}"
@@ -1367,7 +1382,10 @@ class DiffusersEngine(GenerationEngine):
         # the provider at create_instance time. Task 8 attempt #24
         # surfaced this gap with a Connection refused error on
         # http://localhost:8000/generate from the workspace container.
-        cfg_base_url: str = str(diffusers_cfg.get("base_url", _DEFAULT_BASE_URL))
+        # `or`, not `.get`'s default — U33. `base_url` dumps as `""` when
+        # unset (its declared default), so the `.get` default was dead
+        # here too and a cfg omitting it fell through to an empty URL.
+        cfg_base_url: str = str(diffusers_cfg.get("base_url") or _DEFAULT_BASE_URL)
         if instance is not None and instance.provider != "local" and instance.endpoints:
             port = _extract_port_from_base_url(cfg_base_url)
             base_url = instance.endpoints.get(port) or instance.endpoints.get(

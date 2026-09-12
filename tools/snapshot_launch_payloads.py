@@ -72,12 +72,20 @@ STUB_DIAG_BUCKET = "example-diag-bucket"
 #: mapping and reports the config + reason when it skips one.
 EXCLUDED_CONFIGS: dict[str, str] = {
     "runpod-diffusers-serverless.yaml": (
-        "does not render today, with or without this snapshot: its engine "
-        "block has `diffusers:` commented out, so DiffusersEngine."
-        "render_provision raises AttributeError on `diffusers_cfg.get('pip')` "
-        "(engines/diffusers/__init__.py, `pip_deps` line). The config is "
-        "un-deployable as shipped, so there is no wire payload to freeze. "
-        "Delete this entry once the config grows an `engine.diffusers` block."
+        "the capture harness cannot model this one's create call: `mode: "
+        "serverless` routes to RunPod's create-serverless path, and the stub "
+        "transport answers every mutation with the on-demand shape "
+        "(`podFindAndDeployOnDemand`), so the capture dies on `RunPod "
+        "create-serverless returned no endpoint id`. Teaching the stub the "
+        "serverless mutation shape is what this entry is waiting on; delete it "
+        "then. NOTE the previous reason here was that `render_provision` "
+        "raised AttributeError because the config comments out its whole "
+        "`engine.diffusers` block — that was real, and it was U33 one level "
+        "up: `model_dump()` emits the commented-out block as a "
+        "present-and-None key, so `engine_block.get('diffusers', {})` returned "
+        "None rather than `{}`. The engine reads it with `or` now, the config "
+        "renders, and `tests/engines/test_diffusers_optional_cfg_defaults.py` "
+        "covers it. The config no longer needs to grow a `diffusers:` block."
     ),
 }
 
