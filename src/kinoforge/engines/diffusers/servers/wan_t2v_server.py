@@ -1388,6 +1388,31 @@ def _worker_loop() -> None:
             state.finished_at = time.time()
 
 
+def _log_torch_build() -> None:
+    """Log the installed torch wheel so the pod can say what it is running.
+
+    Reports ``torch.__version__`` verbatim — the local version tag is the whole
+    point, since ``2.6.0`` and ``2.6.0+cu124`` are different wheels with
+    different CUDA vendoring and are otherwise indistinguishable in a log — plus
+    ``torch.version.cuda``, which is the wheel's own build tag rather than a
+    fact about the hardware.
+
+    Never raises. torch is imported lazily throughout this module because it is
+    absent from the dev environment, and a diagnostic line must not be able to
+    take down the server it was added to explain.
+    """
+    try:
+        import torch
+
+        _log.info(
+            "startup: torch %s (cuda build %s)",
+            torch.__version__,
+            torch.version.cuda,
+        )
+    except Exception as exc:  # noqa: BLE001 — a diagnostic must never be fatal
+        _log.info("startup: torch build unreadable (%s)", type(exc).__name__)
+
+
 @app.on_event("startup")
 def _startup() -> None:
     """Load the pipeline, spawn worker, mark server ready.
@@ -1405,6 +1430,13 @@ def _startup() -> None:
     runpod-diffusers-spandrel-x2-upscale.yaml``).
     """
     global pipe, _worker_thread
+    # FIRST, before anything that can fail or return early. U34 spent three
+    # sessions, six pods and a race-the-teardown harness answering "which torch
+    # wheel is this pod running?", because the only witness was pip's
+    # incidental chatter in a RunPod-only sidecar log that lives ~100 s. On
+    # Modal that sidecar does not exist at all. One line here makes the wheel
+    # readable from every provider's ordinary log surface.
+    _log_torch_build()
     if os.environ.get("KINOFORGE_SKIP_WAN_LOAD"):
         _log.info("startup: KINOFORGE_SKIP_WAN_LOAD=1; skipping Wan pipeline load")
         ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
