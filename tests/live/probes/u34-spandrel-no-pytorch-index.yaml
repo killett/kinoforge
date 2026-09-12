@@ -90,16 +90,28 @@ compute:
   placement:
     min_vram_gb: 16
     disk_gb: 40
-    # Pin NVIDIA — without an explicit allowlist the offer chooser can pick
+    # Pin NVIDIA — without an explicit preference the offer chooser can pick
     # an AMD Instinct that RunPod's create-pod mutation rejects with HTTP
-    # 500. Allowlist covers cheap 16-24GB consumer + datacenter cards that
-    # comfortably run RealESRGAN-x2 inference.
+    # 500. Covers cheap 16-24GB consumer + datacenter cards that comfortably
+    # run RealESRGAN-x2 inference.
+    #
+    # ORDER MATTERS, and it is the U36 dodge. `accelerators` is a PREFERENCE
+    # RANKING, not an allowlist (`kinoforge.core.offers.filter_offers` sorts
+    # by it; it does not drop unlisted types), and `_create_pod` walks the
+    # ranked list in order, falling through only on CapacityError. The
+    # 2026-09-11 attempt to place this probe left L4 first: RunPod advertises
+    # it at $0.44/hr and it realizes at $2.39/hr, over the $2.20 default cap,
+    # so S4 destroyed the pod and raised RateCapExceeded — seven times, at
+    # ~$0.008 a turn. The RTX 4090 is advertised at $0.34/hr and realized
+    # $0.74/hr on the one green run (pod h0921u4lt7bmln), comfortably under
+    # the cap, so it leads here. The cap is deliberately NOT raised: the
+    # guard is correct, the ordering was what cost money.
     accelerators:
+      - "NVIDIA GeForce RTX 4090"
+      - "NVIDIA GeForce RTX 3090"
       - "NVIDIA RTX A4000"
       - "NVIDIA RTX A5000"
       - "NVIDIA L4"
-      - "NVIDIA GeForce RTX 4090"
-      - "NVIDIA GeForce RTX 3090"
   lifecycle:
     # spandrel install pulls torch (~2GB), torchvision, torchaudio, fastapi,
     # uvicorn, imageio[ffmpeg], spandrel. Cold pull from PyPI on a fresh
