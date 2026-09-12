@@ -1,0 +1,12 @@
+{
+  "ready": true,
+  "model": "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
+  "models": [],
+  "capabilities": [
+    "upload"
+  ],
+  "torch": {
+    "version": "2.6.0+cu124",
+    "cuda": "12.4"
+  }
+}
