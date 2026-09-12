@@ -45,25 +45,40 @@ from pathlib import Path
 
 _POD_ID_RE = re.compile(r"for instance ([a-z0-9]{10,})\b")
 _EVIDENCE = Path(__file__).with_name("_u34_torch_probe_evidence.log")
-_POLL_S = 3.0
-_UTIL_EVERY = 10  # every 10th poll -> ~30 s, inside the 60-90 s cadence
+_POLL_S = 2.0
+_UTIL_EVERY = 5  # every 5th poll -> ~10 s; the pod lives under 60 s
 
 
-def _fetch(url: str) -> str | None:
-    """GET *url*, returning its body or None when it is not (yet) servable.
+def _fetch(url: str) -> tuple[str | None, str]:
+    """GET *url*, returning its body and a REASON when there is no body.
+
+    The reason is not a nicety. The 2026-09-11 capture attempt reported
+    ``not servable yet`` on every one of eighteen polls and that string was
+    worth nothing: it collapsed 404, DNS failure, TLS error and an empty body
+    into one word, so it could not say whether the sidecar was missing, the
+    RunPod proxy had not registered the port yet, or the fetch never left the
+    box. *A negative result that cannot name its own cause is not a
+    measurement.*
 
     Args:
         url: The absolute URL to fetch.
 
     Returns:
-        The decoded response body, or None on any transport error or empty body.
+        ``(body, reason)``. Body is None unless a non-empty 200 came back.
     """
     try:
         with urllib.request.urlopen(url, timeout=10) as resp:
             body = resp.read().decode("utf-8", "replace")
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError):
-        return None
-    return body or None
+            code = resp.status
+    except urllib.error.HTTPError as exc:
+        return None, f"HTTP {exc.code}"
+    except urllib.error.URLError as exc:
+        return None, f"URLError {exc.reason!r}"
+    except OSError as exc:
+        return None, f"OSError {exc!r}"
+    if not body:
+        return None, f"HTTP {code} but empty body"
+    return body, f"HTTP {code}"
 
 
 def _probe_util(pod_id: str) -> str:
@@ -132,14 +147,24 @@ def main(argv: list[str]) -> int:
                 done.wait(_POLL_S)
                 continue
             tick += 1
-            body = _fetch(f"https://{pod_id}-8001.proxy.runpod.net/bootstrap.log")
+            body, why = _fetch(f"https://{pod_id}-8001.proxy.runpod.net/bootstrap.log")
             if body:
                 # Keep the LATEST copy: the log grows, and the last read before
                 # teardown is the most complete one.
                 state["captured"] = body
             if tick % _UTIL_EVERY == 1:
-                got = f"bootstrap.log {len(body)} B" if body else "not servable yet"
-                print(f"[u34] poll {tick}: {got}, {_probe_util(pod_id)}", flush=True)
+                # CONTROL: the main server's port proves whether the RunPod
+                # proxy is registering this pod's ports at all. If 8000 answers
+                # and 8001 does not, the fault is the sidecar; if neither
+                # answers, it is the proxy window and the pod simply dies too
+                # young. Without this the sidecar result is uninterpretable.
+                _, ctl = _fetch(f"https://{pod_id}-8000.proxy.runpod.net/health")
+                got = f"bootstrap.log {len(body)} B" if body else f"no log ({why})"
+                print(
+                    f"[u34] poll {tick}: {got} | control :8000/health -> {ctl} | "
+                    f"{_probe_util(pod_id)}",
+                    flush=True,
+                )
             done.wait(_POLL_S)
 
     watcher = threading.Thread(target=_poller, name="u34-poller", daemon=True)
