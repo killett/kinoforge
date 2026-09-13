@@ -292,6 +292,44 @@ def _make_default_http_seams(
 # ---------------------------------------------------------------------------
 
 
+#: Boot-stall grace bounds. The flat 90 s floor is the pre-2026-09-12 constant
+#: and is preserved as a MINIMUM so no previously-working cfg gets a shorter
+#: grace than it had. The 900 s ceiling keeps the fast-fail a fast-fail: without
+#: it a cfg declaring `boot_timeout: 24h` would buy a 6-hour grace and silently
+#: disable the stall guard, restoring exactly the 40-minute-dead-pod bill the
+#: probe exists to prevent.
+_BOOT_GRACE_MIN_S: float = 90.0
+_BOOT_GRACE_MAX_S: float = 900.0
+#: Fraction of the declared boot budget spent before a flatline may count.
+_BOOT_GRACE_FRACTION: float = 0.25
+
+
+def boot_grace_seconds(boot_timeout_s: float | None) -> float:
+    """Return the boot-stall grace for a cfg declaring *boot_timeout_s*.
+
+    A flat 90 s grace was calibrated for pods whose work shows up in CPU. A Wan
+    1.3B cold boot spends minutes in an HF download that is CPU-idle
+    (network-bound) and memory-flat (it streams to disk), and RunPod reports no
+    ``disk_percent``, so the util signals cannot tell it from a dead container.
+    Two live runs on 2026-09-12 (pods ``rohjrsmre9obsp`` and ``e7wo3ffamgiqln``)
+    were killed ~3 min into a boot their own cfg budgeted 30 min for.
+
+    So the grace scales with what the operator declared: a config that says its
+    boot takes up to 30 minutes is believed, within bounds.
+
+    Args:
+        boot_timeout_s: The cfg's declared boot budget, or None when the caller
+            has none — in which case the documented 90 s default is kept.
+
+    Returns:
+        Grace in seconds, clamped to [90, 900].
+    """
+    if boot_timeout_s is None:
+        return _BOOT_GRACE_MIN_S
+    scaled = boot_timeout_s * _BOOT_GRACE_FRACTION
+    return max(_BOOT_GRACE_MIN_S, min(_BOOT_GRACE_MAX_S, scaled))
+
+
 class RunPodProvider(ComputeProvider):
     """ComputeProvider for RunPod — pod and serverless modes.
 
@@ -1041,15 +1079,26 @@ class RunPodProvider(ComputeProvider):
         )
 
     def make_boot_liveness_probe(
-        self, instance: Instance
+        self, instance: Instance, boot_timeout_s: float | None = None
     ) -> RunPodBootLivenessProbe | None:
-        """Fresh boot-liveness probe for this pod, or None if no util endpoint."""
+        """Fresh boot-liveness probe for this pod, or None if no util endpoint.
+
+        Args:
+            instance: The pod being booted.
+            boot_timeout_s: The cfg's declared boot budget, used to scale the
+                stall grace (see :func:`boot_grace_seconds`). Optional so
+                existing callers keep the documented 90 s default.
+
+        Returns:
+            The probe, or None when no util endpoint is configured.
+        """
         if self._util_endpoint is None:
             return None
         return RunPodBootLivenessProbe(
             instance_id=instance.id,
             util_endpoint=self._util_endpoint,
             fetch_bootstrap_log=lambda _iid: _fetch_bootstrap_log_tail(instance),
+            grace_s=boot_grace_seconds(boot_timeout_s),
         )
 
     def set_heartbeat_endpoint(

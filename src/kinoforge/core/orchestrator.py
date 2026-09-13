@@ -1571,10 +1571,19 @@ def _provision_instance_and_build_backend(
 
     # 2026-07-07: give the engine a boot-liveness probe when the provider
     # supplies one (RunPod). Providers without one → None → no boot-stall check.
+    # The cfg's declared boot budget scales the stall grace: a flat 90 s killed
+    # pods rohjrsmre9obsp and e7wo3ffamgiqln (2026-09-12) ~3 min into a boot
+    # their own cfg budgeted 30 min for. Passed positionally-by-keyword so a
+    # provider whose factory predates the parameter still works.
     _make_probe = getattr(resolved_provider, "make_boot_liveness_probe", None)
-    resolved_engine.attach_boot_liveness_probe(
-        _make_probe(instance) if _make_probe is not None else None
-    )
+    if _make_probe is None:
+        _probe = None
+    else:
+        try:
+            _probe = _make_probe(instance, boot_timeout_s=lifecycle.boot_timeout_s)
+        except TypeError:
+            _probe = _make_probe(instance)
+    resolved_engine.attach_boot_liveness_probe(_probe)
 
     try:
         _provision_compute_once(
