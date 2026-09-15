@@ -3027,7 +3027,7 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-09-11, THIRD session — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-12 — read this, then STOP; below is history)
 
 ### SESSION 2026-09-11 (third) — U34 ANSWERED for ~$0.05, and the answer needed BOTH arms
 
