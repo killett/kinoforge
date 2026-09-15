@@ -648,7 +648,7 @@ class RunPodProvider(ComputeProvider):
                     id=gpu_id,
                     gpu_type=gpu_id,
                     vram_gb=vram_gb,
-                    cuda="12.8",  # RunPod standard image baseline (CUDA 12.8+)
+                    cuda=_cuda_for(gpu_id),
                     cost_rate_usd_per_hr=cost,
                     mode="pod",
                 )
@@ -1617,6 +1617,42 @@ class RunPodProvider(ComputeProvider):
 # rate-capped on a number it was never going to be billed — a 4090 offered at
 # $0.34 that bills $0.74.  Realized equals advertised-for-the-pool EXACTLY on
 # every arm measured, so once the pools match there is nothing left to retry.
+# U44: RunPod's catalog carries non-NVIDIA accelerators — `AMD Instinct MI300X
+# OAM` and `AMD Instinct MI350 OAM` as of 2026-09-14 — and its GraphQL schema
+# exposes no vendor field, so the id prefix is the only signal available.
+#
+# The rule names the non-CUDA VENDORS rather than assuming every CUDA card says
+# "NVIDIA": RunPod also lists `Tesla V100-PCIE-16GB` and `Tesla V100-SXM2-16GB`,
+# which are NVIDIA cards with CUDA and which a brand-prefix allowlist would
+# silently drop. An unrecognised id keeps the CUDA baseline, so a new NVIDIA
+# product line is offered rather than quietly excluded; a new non-CUDA vendor
+# needs a line here, which is the trade — under-blocking is recoverable at the
+# engine, over-blocking removes capacity nobody can see was removed.
+_NON_CUDA_VENDOR_PREFIXES: tuple[str, ...] = ("AMD ", "Intel ")
+
+#: Reported for every CUDA-capable RunPod offer: the standard image baseline.
+#: RunPod's catalog does not report a CUDA version, so this is an assertion
+#: about the IMAGE, not a measurement of the GPU.
+_RUNPOD_CUDA_BASELINE: str = "12.8"
+
+
+def _cuda_for(gpu_id: str) -> str:
+    """Return the CUDA version to report for *gpu_id*.
+
+    Args:
+        gpu_id: A RunPod catalog id.
+
+    Returns:
+        The image CUDA baseline for a CUDA-capable GPU, or ``"0"`` for one whose
+        vendor ships no CUDA — which loses every ``min_cuda`` comparison, so
+        ``filter_offers`` drops it rather than offering an AMD card to a CUDA
+        workload.
+    """
+    if gpu_id.startswith(_NON_CUDA_VENDOR_PREFIXES):
+        return "0"
+    return _RUNPOD_CUDA_BASELINE
+
+
 _POOL_FILTER: dict[str, str] = {
     # "any" books `cloudType: ALL`, which may land in either pool, so its price
     # query must span both — sending `secureCloud: false` here would drop every

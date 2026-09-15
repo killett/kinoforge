@@ -2238,3 +2238,78 @@ def test_create_instance_passes_the_cfg_cloud_type_to_the_catalog_query(
         "the create books cloudType: SECURE, so the price it filters on must "
         f"come from the secure pool; asked instead: {catalog[0]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# U44: a GPU with no CUDA must not satisfy a CUDA requirement
+# ---------------------------------------------------------------------------
+
+
+def _catalog_response(*gpus: tuple[str, int, float]) -> dict[str, Any]:
+    """Build a gpuTypes response from ``(id, vram_gb, price)`` triples."""
+    return {
+        "data": {
+            "gpuTypes": [
+                {
+                    "id": gpu_id,
+                    "displayName": gpu_id,
+                    "memoryInGb": vram,
+                    "secureCloud": True,
+                    "communityCloud": True,
+                    "lowestPrice": {
+                        "minimumBidPrice": price,
+                        "uninterruptablePrice": price,
+                    },
+                }
+                for gpu_id, vram, price in gpus
+            ]
+        }
+    }
+
+
+def test_an_amd_gpu_is_not_offered_for_a_cuda_workload() -> None:
+    """U44: RunPod's catalog carries AMD cards, which have no CUDA at all.
+
+    Bug catch: ``find_offers`` stamped ``cuda="12.8"`` on every offer regardless
+    of GPU, so the AMD Instinct MI300X passed ``min_cuda`` unchallenged. In the
+    shipped 1.3B grid cfg it ranked SECOND — ahead of every NVIDIA card the cfg
+    named — and at $2.39/hr secure it is also the most expensive way to fail.
+    A diffusers engine booked onto it cannot run.
+
+    RunPod's GraphQL catalog exposes no vendor field, so the id prefix is the
+    only signal available; ``AMD Instinct MI300X OAM`` is the real id, read from
+    the live catalog on 2026-09-14.
+    """
+    http_post = HttpPostSpy(
+        response=_catalog_response(
+            ("AMD Instinct MI300X OAM", 192, 0.50),
+            ("NVIDIA GeForce RTX 4090", 24, 0.34),
+        )
+    )
+    provider = RunPodProvider(http_post=http_post)
+
+    offers = provider.find_offers(Placement(min_vram_gb=24, min_cuda="12.4"))
+
+    assert [o.gpu_type for o in offers] == ["NVIDIA GeForce RTX 4090"]
+
+
+def test_a_tesla_v100_is_still_offered() -> None:
+    """A CUDA card that does not say "NVIDIA" in its id must survive.
+
+    Bug catch: the obvious rule — "exclude anything whose id does not start with
+    NVIDIA" — silently drops RunPod's ``Tesla V100-PCIE-16GB`` and
+    ``Tesla V100-SXM2-16GB``, which are NVIDIA cards with CUDA. That is the same
+    false-positive shape U43's first cut shipped, where a real A5000 was called
+    a typo; the fix must name the non-CUDA VENDORS, not assume a brand prefix on
+    everything it keeps.
+
+    Both Tesla ids are live RunPod catalog entries, read 2026-09-14.
+    """
+    http_post = HttpPostSpy(
+        response=_catalog_response(("Tesla V100-PCIE-16GB", 16, 0.19))
+    )
+    provider = RunPodProvider(http_post=http_post)
+
+    offers = provider.find_offers(Placement(min_vram_gb=16, min_cuda="12.4"))
+
+    assert [o.gpu_type for o in offers] == ["Tesla V100-PCIE-16GB"]
