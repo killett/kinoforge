@@ -410,10 +410,16 @@ class RunPodProvider(ComputeProvider):
         idle detection — RunPod idle reaping is controller-side only, which the
         design doc rules out as risk coverage.
 
-        RATE_DETERMINISTIC: the pod is booked on the ``gpuTypeId`` kinoforge
+        RATE_DETERMINISTIC: measured 2026-09-14 across four pods, RunPod's
+        realized rate equals its advertised rate EXACTLY — there is no placement
+        variance to model. The pod is booked on the ``gpuTypeId`` kinoforge
         selected from RunPod's own catalog, so the price that survived the
-        pre-book filter is the price billed. CATALOG_ENUMERATION: that catalog
-        is real and listable, which is what ``kinoforge offers`` prints.
+        pre-book filter is the price billed **provided the filter priced the
+        pool the create books** — which is the whole of U36, and which this
+        justification previously asserted rather than measured while
+        :meth:`find_offers` was reading the community pool for a secure create.
+        CATALOG_ENUMERATION: that catalog is real and listable, which is what
+        ``kinoforge offers`` prints.
         """
         return frozenset(
             {
@@ -585,21 +591,33 @@ class RunPodProvider(ComputeProvider):
     # ComputeProvider interface
     # ------------------------------------------------------------------
 
-    def find_offers(self, placement: Placement) -> list[Offer]:
-        """Return RunPod GPU offers that satisfy ``reqs``.
+    def find_offers(self, placement: Placement, cloud_type: str = "any") -> list[Offer]:
+        """Return RunPod GPU offers that satisfy ``placement``, priced per pool.
 
         Calls the RunPod GraphQL API once to fetch available GPU types, converts
         them to :class:`~kinoforge.core.interfaces.Offer` objects, then delegates
         filtering and sorting to :func:`~kinoforge.core.offers.filter_offers`.
 
+        ``cloud_type`` must match what the create will book (U36). RunPod prices
+        each GPU per host pool — a 4090 is $0.34 community and $0.74 secure —
+        and an unfiltered ``lowestPrice`` answers for the community pool. Asking
+        the wrong pool here does not produce a wrong-looking number; it produces
+        a plausible one that the pre-book price ceiling and ``placement``
+        ranking then both act on, and that the pod never bills.
+
         Args:
             placement: The portable resource block to filter against.
+            cloud_type: Host pool the caller will book into — ``"any"``,
+                ``"secure"`` or ``"community"``. Defaults to ``"any"``, which
+                spans both pools, matching ``Options.cloud_type``'s own default.
 
         Returns:
             Filtered and sorted list of :class:`~kinoforge.core.interfaces.Offer`
-            objects.
+            objects, priced for ``cloud_type``'s pool.
         """
-        response = self._http_post(self._base_url, {"query": _GPU_TYPES_QUERY})
+        response = self._http_post(
+            self._base_url, {"query": _gpu_types_query(cloud_type)}
+        )
         data = _unwrap_graphql_response(response, context="find offers")
         gpu_types: list[dict[str, Any]] = data.get("gpuTypes") or []
         raw_offers: list[Offer] = []
@@ -698,7 +716,10 @@ class RunPodProvider(ComputeProvider):
                 trying another offer — every offer would fail it identically,
                 and retrying turns one clear error into N confusing ones.
         """
-        candidates = self.find_offers(spec.placement)
+        # U36: the pool the create will book into decides the price, so the
+        # catalog must be enumerated for THAT pool and not for the default.
+        opts = RunPodProvider.validate_options(spec.backend_options.get("runpod", {}))
+        candidates = self.find_offers(spec.placement, cloud_type=opts.cloud_type)
         last_capacity_exc: CapacityError | None = None
         for offer in candidates:
             try:
@@ -1583,11 +1604,43 @@ class RunPodProvider(ComputeProvider):
 # to return real prices for currently-available GPU types and null for
 # unavailable ones — `find_offers` filters out null-priced offers so the
 # caller never tries to create a pod on a GPU that has no live capacity.
-_GPU_TYPES_QUERY: str = (
-    "{ gpuTypes { id displayName memoryInGb secureCloud communityCloud "
-    "lowestPrice(input: { gpuCount: 1 }) "
-    "{ minimumBidPrice uninterruptablePrice } } }"
-)
+#
+# U36 (measured 2026-09-14, four pods, ~$0.01): the `input` must ALSO pin the
+# host pool, because `lowestPrice` prices per pool and an unfiltered query
+# answers for the COMMUNITY pool wherever a community offer exists.  A create
+# that books `cloudType: SECURE` against a community-derived price filtered and
+# rate-capped on a number it was never going to be billed — a 4090 offered at
+# $0.34 that bills $0.74.  Realized equals advertised-for-the-pool EXACTLY on
+# every arm measured, so once the pools match there is nothing left to retry.
+_POOL_FILTER: dict[str, str] = {
+    # "any" books `cloudType: ALL`, which may land in either pool, so its price
+    # query must span both — sending `secureCloud: false` here would drop every
+    # secure-only GPU (L4, A40, MI300X) from a catalog that can legitimately
+    # book them.
+    "any": "",
+    "secure": ", secureCloud: true",
+    "community": ", secureCloud: false",
+}
+
+
+def _gpu_types_query(cloud_type: str = "any") -> str:
+    """Return the catalog query, priced for *cloud_type*'s host pool.
+
+    Args:
+        cloud_type: ``"any"``, ``"secure"`` or ``"community"`` — the same
+            vocabulary as ``Options.cloud_type``, which is what the create
+            mutation translates into ``cloudType``.
+
+    Returns:
+        The ``gpuTypes`` GraphQL document whose ``lowestPrice`` is resolved for
+        that pool.
+    """
+    return (
+        "{ gpuTypes { id displayName memoryInGb secureCloud communityCloud "
+        f"lowestPrice(input: {{ gpuCount: 1{_POOL_FILTER[cloud_type]} }}) "
+        "{ minimumBidPrice uninterruptablePrice } } }"
+    )
+
 
 # ``name`` is selected for compute-seam S5: the orchestrator's pre-launch
 # provisional ledger row is keyed by the client-side ``run_id``, which RunPod

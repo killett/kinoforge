@@ -2036,3 +2036,205 @@ def test_stop_instance_returns_none_on_clean_response() -> None:
     provider.stop_instance("pod-abc123")
     assert len(spy.calls) == 1
     assert "pod-abc123" in spy.calls[0][1]["query"]
+
+
+# ---------------------------------------------------------------------------
+# U36: the catalog price must come from the pool the create will book into
+# ---------------------------------------------------------------------------
+
+
+class PoolPricedCatalogSpy:
+    """Catalog transport that prices each GPU per pool, as RunPod really does.
+
+    Measured live 2026-09-14 across four pods: RunPod's realized rate equals its
+    advertised rate for the pool EXACTLY, and the pools are priced differently —
+    a 4090 is $0.34 in the community pool and $0.74 in the secure pool, while an
+    L4 exists only in the secure pool and reads ``null`` under
+    ``secureCloud: false``.  The unfiltered query returns the community floor
+    wherever a community offer exists.
+
+    Faking this at the transport is the right boundary: the behaviour under test
+    is which question the provider ASKS, and a spy with one fixed response
+    cannot tell a right question from a wrong one.
+    """
+
+    # (community, secure) advertised rates; None == no capacity in that pool.
+    PRICES: dict[str, tuple[float | None, float | None]] = {
+        "NVIDIA GeForce RTX 4090": (0.34, 0.74),
+        "NVIDIA L4": (None, 0.49),
+    }
+    VRAM = {"NVIDIA GeForce RTX 4090": 24, "NVIDIA L4": 24}
+
+    def __init__(self, response: dict[str, Any] | None = None) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self._response: dict[str, Any] = response or {}
+
+    def __call__(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append((url, body))
+        query = str(body.get("query", ""))
+        if "gpuTypes" not in query:
+            return self._response
+        if "secureCloud: true" in query:
+            pick = lambda c, s: s  # noqa: E731
+        elif "secureCloud: false" in query:
+            pick = lambda c, s: c  # noqa: E731
+        else:
+            # Unfiltered: RunPod returns the cheapest across pools, which is the
+            # community price wherever a community offer exists.
+            pick = lambda c, s: s if c is None else min(c, s)  # noqa: E731
+        gpu_types = []
+        for gpu_id, (community, secure) in self.PRICES.items():
+            price = pick(community, secure)
+            gpu_types.append(
+                {
+                    "id": gpu_id,
+                    "displayName": gpu_id,
+                    "memoryInGb": self.VRAM[gpu_id],
+                    "secureCloud": secure is not None,
+                    "communityCloud": community is not None,
+                    "lowestPrice": (
+                        None
+                        if price is None
+                        else {"minimumBidPrice": price, "uninterruptablePrice": price}
+                    ),
+                }
+            )
+        return {"data": {"gpuTypes": gpu_types}}
+
+    def catalog_queries(self) -> list[str]:
+        """Return every gpuTypes query string this spy was asked."""
+        return [
+            str(body.get("query", ""))
+            for _, body in self.calls
+            if "gpuTypes" in str(body.get("query", ""))
+        ]
+
+
+def test_find_offers_prices_a_secure_cfg_from_the_secure_pool() -> None:
+    """U36: a secure cfg's offers carry the SECURE rate, not the community one.
+
+    Bug catch: ``find_offers`` sends ``lowestPrice(input: { gpuCount: 1 })`` with
+    no pool filter, which answers for the COMMUNITY pool, while ``_create_pod``
+    books ``cloudType: SECURE``. The 4090 is then offered at $0.34 and bills
+    $0.74 — the 2.18x gap measured live on pod ``exvygkl1bqcgwv``.
+
+    Expected value is RunPod's published secure 4090 rate, measured to the cent
+    on a real pod, not derived from the code under test.
+    """
+    http_post = PoolPricedCatalogSpy()
+    provider = RunPodProvider(http_post=http_post)
+
+    offers = provider.find_offers(
+        Placement(min_vram_gb=24, max_usd_per_hr=10.0), cloud_type="secure"
+    )
+
+    by_gpu = {o.gpu_type: o.cost_rate_usd_per_hr for o in offers}
+    assert by_gpu["NVIDIA GeForce RTX 4090"] == 0.74
+    assert by_gpu["NVIDIA L4"] == 0.49
+
+
+def test_secure_cfg_refuses_an_over_cap_gpu_before_booking_it() -> None:
+    """U36's actual cost: the pre-book filter must see the price that will bill.
+
+    Bug catch: with ``max_usd_per_hr: 0.60`` the secure 4090 at $0.74 is over
+    cap and must never be offered. Reading the community price instead offers it
+    at $0.34, books it, and leaves S4's ``_enforce_rate_cap`` to destroy an
+    already-running pod — the create-then-destroy loop U36 was filed for, which
+    cost nine attempts and ~$0.07 on 2026-09-11 for zero output.
+
+    $0.60 is the shipped 1.3B grid cfg's real cap; $0.74 is the measured secure
+    rate. 0.74 > 0.60 is hand-checked, not computed by the filter.
+    """
+    http_post = PoolPricedCatalogSpy()
+    provider = RunPodProvider(http_post=http_post)
+
+    offers = provider.find_offers(
+        Placement(min_vram_gb=24, max_usd_per_hr=0.60), cloud_type="secure"
+    )
+
+    assert [o.gpu_type for o in offers] == ["NVIDIA L4"], (
+        "the secure 4090 bills $0.74 and must not survive a $0.60 cap; "
+        "the L4 bills $0.49 and must"
+    )
+
+
+def test_community_cfg_is_not_offered_a_secure_only_gpu() -> None:
+    """A GPU with no community capacity must drop out of a community cfg.
+
+    Bug catch: mapping ``community`` to the unfiltered query would offer an L4 at
+    its secure-derived price to a cfg that books ``cloudType: COMMUNITY``, where
+    no L4 exists at all — a create that can only fail with "no instances
+    available". Measured live: ``secureCloud: false`` returns null for the L4,
+    the A40 and the MI300X.
+
+    This is also the null-price boundary: the L4's community entry is ``None``,
+    not a number, which is the shape ``find_offers`` must skip rather than read
+    as $0.
+    """
+    http_post = PoolPricedCatalogSpy()
+    provider = RunPodProvider(http_post=http_post)
+
+    offers = provider.find_offers(
+        Placement(min_vram_gb=24, max_usd_per_hr=10.0), cloud_type="community"
+    )
+
+    assert [o.gpu_type for o in offers] == ["NVIDIA GeForce RTX 4090"]
+    assert offers[0].cost_rate_usd_per_hr == 0.34
+
+
+def test_cloud_type_any_still_spans_both_pools() -> None:
+    """``any`` books ``cloudType: ALL``, so its price query must not pin a pool.
+
+    Bug catch: a fix that sends ``secureCloud: false`` whenever the cfg is not
+    secure would silently drop every secure-only GPU — L4, A40, MI300X — from
+    the catalog of an ``any`` cfg, which can legitimately book them. The
+    unfiltered query is correct HERE and wrong only where the create pins a
+    pool, so this test pins the half of the behaviour that must NOT change.
+    """
+    http_post = PoolPricedCatalogSpy()
+    provider = RunPodProvider(http_post=http_post)
+
+    offers = provider.find_offers(
+        Placement(min_vram_gb=24, max_usd_per_hr=10.0), cloud_type="any"
+    )
+
+    by_gpu = {o.gpu_type: o.cost_rate_usd_per_hr for o in offers}
+    assert by_gpu == {"NVIDIA GeForce RTX 4090": 0.34, "NVIDIA L4": 0.49}
+    # Pin the INPUT clause, not the substring "secureCloud" — that also names a
+    # selected field, so a looser assertion passes on a query that filters.
+    assert "lowestPrice(input: { gpuCount: 1 })" in http_post.catalog_queries()[0]
+
+
+def test_create_instance_passes_the_cfg_cloud_type_to_the_catalog_query(
+    pod_spec: InstanceSpec,
+) -> None:
+    """The PRODUCTION call site must supply the pool, not just the signature.
+
+    Bug catch: ``find_offers`` gains a ``cloud_type`` parameter, every unit test
+    above passes it by hand, and ``_create_with_offer_retry`` never does — the
+    fix is then entirely inert in production while the suite stays green. This
+    is the exact failure mode recorded for U3, where two tests had to pin the
+    call site because the renderer tests all passed ``recorded=`` themselves.
+
+    Asserted on the wire because that is the only place the two implementations
+    differ: a threaded cloud_type and a dropped one produce the same Offer
+    objects here, and different GraphQL documents.
+    """
+    http_post = PoolPricedCatalogSpy(
+        response={"data": {"podFindAndDeployOnDemand": {"id": "pod-u36"}}}
+    )
+    provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
+    spec = dataclasses.replace(
+        pod_spec,
+        placement=Placement(min_vram_gb=24, max_usd_per_hr=10.0),
+        backend_options={"runpod": {"cloud_type": "secure"}},
+    )
+
+    provider.create_instance(spec)
+
+    catalog = http_post.catalog_queries()
+    assert catalog, "create must enumerate the catalog before booking"
+    assert "secureCloud: true" in catalog[0], (
+        "the create books cloudType: SECURE, so the price it filters on must "
+        f"come from the secure pool; asked instead: {catalog[0]}"
+    )
