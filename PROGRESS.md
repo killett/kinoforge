@@ -3369,6 +3369,15 @@ serverless GPU vocabulary is its own — `ADA_24`-style CLASSES, not the `gpuTyp
 pod path books — so that mapping needs its own free probe before it is written, and U36's
 pool-correct pricing does not transfer to it unexamined.
 
+**One design decision this does NOT settle, and should not be guessed: template LIFECYCLE.** The pod
+path creates one disposable thing per run and destroys it. A two-mutation serverless path creates
+TWO objects with different lifetimes — a template (free metadata, but it persists and the account
+already carries 14) and an endpoint. Creating a fresh template per run leaks one per run forever
+unless something deletes it, and `destroy_instance` currently knows only about the endpoint id.
+Decide deliberately: reuse a template keyed by the image+provision hash, or create-and-delete it
+around the endpoint, or accept the leak and say so. `EphemeralSession` naming applies to both objects
+either way. Note the ephemeral sweeper and `kinoforge list` have no notion of templates at all.
+
 **Do not validate by creating an endpoint until the template half works** — an endpoint with no
 template is exactly the created-but-imageless failure this was deliberately not half-fixed into. The
 $0.00 technique that mapped the schema keeps working: send a mutation with `input: {}` and read the
