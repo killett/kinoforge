@@ -63,7 +63,7 @@ compute:
     max_usd_per_hr: 1.00
     accelerators:
       - "NVIDIA RTX A5000"
-      - "NVIDIA RTX 4090"
+      - "NVIDIA GeForce RTX 4090"
       - "NVIDIA L4"
     disk_gb: 40
   lifecycle:

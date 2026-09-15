@@ -621,6 +621,11 @@ class RunPodProvider(ComputeProvider):
         data = _unwrap_graphql_response(response, context="find offers")
         gpu_types: list[dict[str, Any]] = data.get("gpuTypes") or []
         raw_offers: list[Offer] = []
+        # U43: every id RunPod carries, including the null-priced ones dropped
+        # below. Without it a GPU that is merely out of stock this minute is
+        # indistinguishable from a misspelled name, and the operator gets told
+        # to rename a correct entry.
+        known: set[str] = {str(g.get("id", "")) for g in gpu_types}
         for gpu in gpu_types:
             gpu_id: str = str(gpu.get("id", ""))
             vram_gb: int = int(gpu.get("memoryInGb", 0))
@@ -648,7 +653,7 @@ class RunPodProvider(ComputeProvider):
                     mode="pod",
                 )
             )
-        return filter_offers(raw_offers, placement)
+        return filter_offers(raw_offers, placement, known_accelerators=known)
 
     def create_instance(self, spec: InstanceSpec) -> Instance:
         """Create a RunPod pod or serverless endpoint from ``spec``.

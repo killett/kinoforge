@@ -22,7 +22,7 @@
       }
     ],
     "gpuCount": 1,
-    "gpuTypeId": "A100 80GB",
+    "gpuTypeId": "NVIDIA A100 80GB PCIe",
     "imageName": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
     "minMemoryInGb": 32,
     "minVcpuCount": 2,

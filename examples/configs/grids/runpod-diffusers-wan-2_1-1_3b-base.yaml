@@ -55,26 +55,28 @@ compute:
     min_vram_gb: 24
     min_cuda: "12.4"
     # Raised 0.40 -> 0.60 by operator decision 2026-09-12, on this cap's own
-    # merits rather than as a workaround for U36.
+    # merits. At $0.40 this config was UNPLACEABLE: the pre-book filter read an
+    # advertised 4090 at $0.34, the pod billed more, and S4's realized-rate
+    # check destroyed every pod with `RateCapExceeded` before cell 0 could run.
+    # A cap no current offer can satisfy is not a guard, it is an outage.
     #
-    # At $0.40 this config was UNPLACEABLE on RunPod: the pre-book filter reads
-    # the advertised `lowestPrice` (RTX 4090 $0.34), the pod then bills its real
-    # rate, and the realized rate measured $0.49/hr on 2026-09-11 (pods
-    # 85ms24bc6kuc1m and kp4d0mcqvfa4zj) — so S4's realized-rate check destroyed
-    # every pod with `RateCapExceeded` before cell 0 could run. A cap no current
-    # offer can satisfy is not a guard, it is an outage.
+    # U36 is now FIXED (2026-09-14, `cd133238`) and the numbers above have a
+    # different explanation than the one first written here. The gap was never
+    # RunPod pricing variance: `find_offers` was reading the COMMUNITY price
+    # while this cfg books `cloud_type: secure`, and realized equals
+    # advertised-for-the-pool EXACTLY on every arm measured. What this cap now
+    # filters on is the secure price the pod will actually bill — so $0.60
+    # currently admits the A5000 ($0.270), L4 ($0.490), A40 ($0.490) and 3090
+    # ($0.500), and correctly refuses the secure 4090 ($0.740) BEFORE booking it
+    # rather than after.
     #
-    # $0.60 clears the observed $0.49 with modest headroom and still refuses the
-    # tier that actually needs refusing: the L4 realized $2.39/hr on the same
-    # day. The guard stays a guard.
-    #
-    # This does NOT close U36 — the advertised-vs-realized gap is still there and
-    # still needs the in-provider retry its entry describes. Do not read this as
-    # licence to raise other shipped caps; U36's entry says in terms not to.
+    # Still not licence to raise other shipped caps: the right fix for an
+    # unplaceable cfg is to check what its pool really charges, which is now
+    # what `kinoforge offers` shows you.
     max_usd_per_hr: 0.60
     accelerators:
       - "NVIDIA RTX A5000"
-      - "NVIDIA RTX 4090"
+      - "NVIDIA GeForce RTX 4090"
       - "NVIDIA L4"
     disk_gb: 40
   lifecycle:

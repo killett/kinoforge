@@ -1,5 +1,7 @@
 """Tests for the pure offer-filtering helper."""
 
+import pytest
+
 from kinoforge.core.interfaces import Offer, Placement
 from kinoforge.core.offers import filter_offers
 
@@ -162,3 +164,194 @@ def test_hardware_requirements_is_gone_from_the_seam() -> None:
     import kinoforge.core.interfaces as interfaces
 
     assert not hasattr(interfaces, "HardwareRequirements")
+
+
+# ---------------------------------------------------------------------------
+# U43: an accelerator name the catalog does not carry must not be silent
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_accelerator_name_warns_and_names_the_id_it_probably_meant(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """U43: a preference matching nothing in the catalog is reported, with a hint.
+
+    Bug caught: ``rank()`` scores an unmatched name at ``len(accelerators)`` —
+    the same rank as a GPU nobody asked for — so a wrong id is INERT and looks
+    identical to a working cfg. Seven shipped cfgs name GPUs RunPod does not
+    have; the 1.3B grid cfg's `NVIDIA RTX 4090` left the L4 leading its offer
+    list, which is the whole of U36's nine-attempt create-then-destroy loop.
+
+    The expected pair is RunPod's real catalog id, measured live 2026-09-14:
+    the cfgs write ``NVIDIA RTX 4090`` and the catalog carries
+    ``NVIDIA GeForce RTX 4090``. The suggestion is what makes the warning
+    actionable rather than merely true — the two strings differ by one word in
+    the middle, which is exactly the diff an operator's eye skips.
+    """
+    catalog = [
+        _o("a", "NVIDIA GeForce RTX 4090", 24, "12.8", 0.74),
+        _o("b", "NVIDIA L4", 24, "12.8", 0.49),
+    ]
+    placement = Placement(
+        min_vram_gb=24,
+        max_usd_per_hr=10.0,
+        accelerators=(
+            "NVIDIA RTX 4090",
+            "NVIDIA L4",
+        ),
+    )
+
+    with caplog.at_level("WARNING"):
+        kept = filter_offers(catalog, placement)
+
+    assert [o.gpu_type for o in kept] == ["NVIDIA L4", "NVIDIA GeForce RTX 4090"], (
+        "ranking behaviour is unchanged by the warning — the unmatched name "
+        "still sorts last, which is precisely why it needs saying out loud"
+    )
+    assert "NVIDIA RTX 4090" in caplog.text
+    assert "NVIDIA GeForce RTX 4090" in caplog.text
+
+
+def test_a_known_accelerator_priced_out_of_range_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A name the catalog DOES carry must stay silent, however it was filtered.
+
+    Bug caught: computing the unknown set from the KEPT offers instead of the
+    input catalog warns every time a named GPU is merely over cap or too small
+    — which is the shipped 1.3B grid cfg's normal, correct behaviour, since its
+    secure 4090 bills $0.74 against a $0.60 cap. A warning that fires on correct
+    configs is worse than no warning: the operator learns to ignore it, and the
+    real typo goes past just as silently as before.
+    """
+    catalog = [
+        _o("a", "NVIDIA GeForce RTX 4090", 24, "12.8", 0.74),
+        _o("b", "NVIDIA L4", 24, "12.8", 0.49),
+    ]
+    placement = Placement(
+        min_vram_gb=24,
+        max_usd_per_hr=0.60,
+        accelerators=(
+            "NVIDIA GeForce RTX 4090",
+            "NVIDIA L4",
+        ),
+    )
+
+    with caplog.at_level("WARNING"):
+        kept = filter_offers(catalog, placement)
+
+    assert [o.gpu_type for o in kept] == ["NVIDIA L4"]
+    assert caplog.text == "", f"expected silence, got: {caplog.text!r}"
+
+
+def test_no_warning_when_every_name_matches_the_catalog(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A correct cfg is silent.
+
+    Bug caught: an implementation that warns unconditionally, or one that keys
+    off "my first preference is not first in the result" — which is a routine,
+    correct outcome whenever the preferred GPU is out of stock.
+    """
+    catalog = [_o("a", "NVIDIA L4", 24, "12.8", 0.49)]
+    placement = Placement(
+        min_vram_gb=24, max_usd_per_hr=10.0, accelerators=("NVIDIA L4",)
+    )
+
+    with caplog.at_level("WARNING"):
+        filter_offers(catalog, placement)
+
+    assert caplog.text == ""
+
+
+def test_an_empty_catalog_does_not_warn_about_names(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An empty catalog is evidence about CAPACITY, not about names.
+
+    Bug caught: comparing names against an empty ``available`` set makes every
+    requested accelerator "unknown", so a provider whose catalog read returned
+    nothing — every GPU null-priced, which RunPod does routinely — would accuse
+    a perfectly correct cfg of naming GPUs that do not exist. The operator is
+    then sent to fix a spelling that was never wrong while the real problem
+    (no capacity) goes unmentioned.
+    """
+    placement = Placement(
+        min_vram_gb=24, max_usd_per_hr=10.0, accelerators=("NVIDIA L4",)
+    )
+
+    with caplog.at_level("WARNING"):
+        assert filter_offers([], placement) == []
+
+    assert caplog.text == ""
+
+
+def test_a_real_gpu_that_is_merely_out_of_stock_is_not_called_a_typo(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Absence from the priced catalog is CAPACITY, not a spelling mistake.
+
+    Bug caught, and caught live: ``find_offers`` drops null-priced GPUs before
+    ``filter_offers`` ever sees them, so a GPU with no stock this minute looks
+    exactly like a name that does not exist. On 2026-09-14 the first cut of this
+    warning told the operator that ``NVIDIA RTX A5000`` — a real RunPod id,
+    priced at $0.270 twenty minutes earlier — "matches nothing in this
+    provider's catalog", and suggested renaming it to ``NVIDIA RTX A6000``.
+    Advice to break a correct config is worse than silence.
+
+    ``known_accelerators`` is the provider's FULL id set, including the
+    unavailable ones, and it is the authority on whether a name exists.
+    """
+    priced = [_o("a", "NVIDIA L4", 24, "12.8", 0.49)]
+    placement = Placement(
+        min_vram_gb=24,
+        max_usd_per_hr=10.0,
+        accelerators=(
+            "NVIDIA RTX A5000",
+            "NVIDIA L4",
+        ),
+    )
+
+    with caplog.at_level("WARNING"):
+        filter_offers(
+            priced,
+            placement,
+            known_accelerators={"NVIDIA RTX A5000", "NVIDIA L4", "NVIDIA A40"},
+        )
+
+    assert caplog.text == "", (
+        "the A5000 is a real catalog id with no current stock; naming it a typo "
+        f"is the cry-wolf failure this guard exists to avoid. Got: {caplog.text!r}"
+    )
+
+
+def test_the_suggestion_prefers_the_gpu_the_operator_actually_meant(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The hint must point at the same MODEL, not the nearest string.
+
+    Bug caught, and caught live: plain ``difflib`` ranks ``NVIDIA RTX A4000``
+    above ``NVIDIA GeForce RTX 4090`` as the closest match for
+    ``NVIDIA RTX 4090``, because the shorter candidate scores better on raw
+    character overlap. That hint sends the operator to a different GPU of a
+    different generation — the warning is then not just unhelpful but wrong,
+    and acting on it silently changes which hardware the cfg books.
+
+    ``NVIDIA RTX 4090``'s tokens are a strict subset of
+    ``NVIDIA GeForce RTX 4090``'s, which is the signal that separates "the same
+    card, written loosely" from "a different card that looks similar".
+    """
+    priced = [
+        _o("a", "NVIDIA GeForce RTX 4090", 24, "12.8", 0.74),
+        _o("b", "NVIDIA RTX A4000", 16, "12.8", 0.30),
+    ]
+    placement = Placement(
+        min_vram_gb=16, max_usd_per_hr=10.0, accelerators=("NVIDIA RTX 4090",)
+    )
+
+    with caplog.at_level("WARNING"):
+        filter_offers(priced, placement)
+
+    assert "did you mean 'NVIDIA GeForce RTX 4090'?" in caplog.text, (
+        f"expected the 4090 suggestion, got: {caplog.text!r}"
+    )
