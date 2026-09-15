@@ -50,6 +50,20 @@ def _configs_for(engine_kind: str | None = None) -> list[Path]:
 _DIFFUSERS_CONFIGS = _configs_for("diffusers")
 _ALL_CONFIGS = _configs_for()
 
+#: The reproduce-the-script invariant only has meaning for a config that HAS a
+#: launch to append. U35 brought ``runpod-diffusers-serverless`` into
+#: ``compute_configs()`` — it had been hidden behind the snapshot harness's
+#: exclusion list — and it renders ``launch=None``, because its
+#: ``engine.diffusers`` block is commented out so no ``server_cmd`` exists.
+#: That is a real property of the config, not a filename, so it is computed by
+#: asking the renderer rather than by listing names; the split is pinned by
+#: :func:`test_exactly_one_shipped_config_renders_no_launch`, so a POD config
+#: that ever loses its launch fails loudly instead of quietly dropping out of
+#: the parametrization it used to be covered by.
+_RENDERED_BY_CONFIG = {p: render_for_config(p) for p in _ALL_CONFIGS}
+_LAUNCHING_CONFIGS = [p for p, r in _RENDERED_BY_CONFIG.items() if r.launch is not None]
+_LAUNCHLESS_CONFIGS = [p for p, r in _RENDERED_BY_CONFIG.items() if r.launch is None]
+
 
 def test_the_config_sets_are_not_empty_and_cover_more_than_one_engine() -> None:
     """Tripwire.
@@ -63,15 +77,40 @@ def test_the_config_sets_are_not_empty_and_cover_more_than_one_engine() -> None:
     assert len(_ALL_CONFIGS) > len(_DIFFUSERS_CONFIGS)
     kinds = {load_config(str(p)).engine.kind for p in _ALL_CONFIGS}
     assert "comfyui" in kinds
+    # The launch-bearing split must not be where the coverage quietly goes.
+    assert len(_LAUNCHING_CONFIGS) >= len(_ALL_CONFIGS) - 1
 
 
-@pytest.mark.parametrize("cfg_path", _ALL_CONFIGS, ids=lambda p: p.stem)
+def test_exactly_one_shipped_config_renders_no_launch() -> None:
+    """Pins which configs sit outside the reproduce-the-script invariant.
+
+    Bug caught: a real pod config stops rendering a launch — a lost
+    ``server_cmd``, an engine block that stops being read — and simply
+    disappears from ``_LAUNCHING_CONFIGS``. The parametrized test above would
+    then pass with one fewer case and nothing would say so; this is the same
+    silent-narrowing risk the fake-engine exclusion is pinned against.
+
+    The one legitimate member is the serverless config, whose
+    ``engine.diffusers`` block is commented out, so there is no server command
+    to launch. Note it is also the config whose create sends no ``env`` at all
+    (U45), so nothing it renders reaches RunPod on that path anyway.
+    """
+    assert [p.name for p in _LAUNCHLESS_CONFIGS] == ["runpod-diffusers-serverless.yaml"]
+
+
+@pytest.mark.parametrize("cfg_path", _LAUNCHING_CONFIGS, ids=lambda p: p.stem)
 def test_steps_plus_launch_reproduce_the_script(cfg_path: Path) -> None:
-    """The ordering invariant, over every shipped config but the fake one.
+    """The ordering invariant, over every shipped config that has a launch.
 
     Bug caught: a step emitted out of declaration order, a dropped newline
     between the last step and the launch, or a launch that no longer renders
     back to the line it replaced — each silently rewrites a RunPod boot script.
+
+    Narrowed from "every config but the fake one" when U35 added the serverless
+    config, which renders no launch at all. The narrowing is safe only because
+    :func:`test_exactly_one_shipped_config_renders_no_launch` pins exactly which
+    configs are outside it — otherwise a pod config could lose its launch and
+    leave this parametrization without a word.
     """
     rendered = render_for_config(cfg_path)
     assert rendered.launch is not None, f"{cfg_path} rendered no launch"

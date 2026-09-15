@@ -1,0 +1,14 @@
+{
+  "input": {
+    "executionTimeoutMs": 1200000,
+    "gpuIds": "ADA_24",
+    "idleTimeout": 3600,
+    "imageName": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+    "maxJobsPerWorker": 1,
+    "name": "golden-run",
+    "workersMax": 1,
+    "workersMin": 0
+  },
+  "provider": "runpod",
+  "seam": "http_post -> saveTemplate variables.input"
+}

@@ -136,6 +136,30 @@ def _payloads_by_provider(provider: str) -> list[tuple[Path, dict[str, Any]]]:
     return out
 
 
+def _runpod_goldens_by_mutation(mutation: str) -> list[tuple[Path, dict[str, Any]]]:
+    """Return the RunPod goldens whose ``seam`` names *mutation*.
+
+    U35 brought ``runpod-diffusers-serverless`` into the ratchet, and a
+    serverless payload is a DIFFERENT mutation with a different schema —
+    ``saveTemplate`` sends no ``cloudType``, no ``dockerArgs``, no ``ports`` and
+    no ``env``. Splitting on the recorded seam lets each shape be checked
+    against its own contract instead of the pod contract being loosened until a
+    serverless payload squeezes through it, which would gut the pod guard for
+    the 31 configs that actually are pods.
+
+    Args:
+        mutation: ``"podFindAndDeployOnDemand"`` or ``"saveTemplate"``.
+
+    Returns:
+        Matching ``(path, payload)`` pairs.
+    """
+    return [
+        (path, payload)
+        for path, payload in _payloads_by_provider("runpod")
+        if mutation in str(payload.get("seam", ""))
+    ]
+
+
 def _require(
     path: Path, payload: dict[str, Any], checks: dict[str, Callable[[Any], bool]]
 ) -> None:
@@ -159,10 +183,14 @@ def test_runpod_goldens_carry_a_real_create_pod_input() -> None:
     ``create_instance``, a provider that starts batching creates, a fake that
     swallows the call) and the goldens regenerate to ``{}``. Byte-identity
     would still pass on the empty tree while covering nothing.
+
+    Scoped to POD goldens since U35 (see :func:`_runpod_goldens_by_mutation`);
+    the serverless shape has its own guard below rather than being waved
+    through this one.
     """
-    goldens = _payloads_by_provider("runpod")
+    goldens = _runpod_goldens_by_mutation("podFindAndDeployOnDemand")
     assert len(goldens) >= 5, (
-        f"expected the RunPod configs to be covered, got {goldens}"
+        f"expected the RunPod pod configs to be covered, got {goldens}"
     )
     for path, payload in goldens:
         _require(
@@ -196,8 +224,12 @@ def test_runpod_goldens_carry_the_provision_script_on_the_wire() -> None:
     import base64
     import gzip
 
+    goldens = _runpod_goldens_by_mutation("podFindAndDeployOnDemand")
+    assert len(goldens) >= 5, (
+        f"scoping to pod goldens must not empty this guard, got {goldens}"
+    )
     longest = 0
-    for path, payload in _payloads_by_provider("runpod"):
+    for path, payload in goldens:
         env = {e["key"]: e["value"] for e in payload["input"]["env"]}
         assert "KINOFORGE_PROVISION_SCRIPT" in env, (
             f"{path.name}: no provision script on the wire"
@@ -215,6 +247,55 @@ def test_runpod_goldens_carry_the_provision_script_on_the_wire() -> None:
     # script had collapsed to a stub would still pass the per-file checks above.
     assert longest > 20_000, (
         f"no RunPod golden carries a full engine bootstrap (longest {longest} chars)"
+    )
+
+
+def test_runpod_serverless_golden_carries_a_real_save_template_input() -> None:
+    """The one serverless config shipped has a populated, plausible payload.
+
+    Bug caught: U35 existed because this config was OUTSIDE the ratchet, so a
+    wire change to the only serverless path kinoforge has was invisible.
+    Bringing it in and then letting it sit in a golden that nothing inspects
+    would rebuild the same hole one level down — byte-identity on a payload
+    that had silently collapsed to ``{}`` still passes
+    ``test_launch_payload_matches_golden``.
+
+    The lifecycle numbers are derived, so they are asserted as derived: the
+    config sets ``job_timeout: 20m`` and ``idle_timeout: 1h``, which must reach
+    the wire as ``executionTimeoutMs == 1_200_000`` and ``idleTimeout == 3600``.
+    Hand-computed from the config, not read back off the implementation — a
+    unit slip (seconds sent where milliseconds are meant) is exactly the bug
+    this catches, and it would be invisible to a "field is present" check.
+
+    ``gpuIds`` is asserted to be the literal ``"ADA_24"`` because that is what
+    the provider hardcodes today, NOT because it is right: the serverless path
+    discards ``placement`` entirely (**U45**). Freezing the constant is what
+    makes the eventual fix show up as a golden diff instead of slipping in.
+    """
+    goldens = _runpod_goldens_by_mutation("saveTemplate")
+    assert len(goldens) == 1, (
+        f"expected exactly the one shipped serverless config, got {goldens}"
+    )
+    path, payload = goldens[0]
+    _require(
+        path,
+        payload,
+        {
+            "input/name": lambda v: v == GOLDEN_RUN_ID,
+            "input/imageName": lambda v: isinstance(v, str) and ":" in v,
+            "input/gpuIds": lambda v: v == "ADA_24",
+            "input/workersMin": lambda v: v == 0,
+            "input/workersMax": lambda v: isinstance(v, int) and v >= 1,
+            "input/maxJobsPerWorker": lambda v: isinstance(v, int) and v >= 1,
+            # 20m and 1h from the config, in the units each field expects.
+            "input/executionTimeoutMs": lambda v: v == 1_200_000,
+            "input/idleTimeout": lambda v: v == 3600,
+        },
+    )
+    assert "env" not in payload["input"], (
+        "serverless sends no env today (U45 — no provision script, no "
+        "RUNPOD_TERMINATE_KEY). If that changed, this golden and U45 both need "
+        "updating; it is not a free pass."
     )
 
 

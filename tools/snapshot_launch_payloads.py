@@ -70,24 +70,14 @@ STUB_DIAG_BUCKET = "example-diag-bucket"
 #: Configs deliberately outside the ratchet, mapped to the reason. An entry
 #: here is a reviewed decision, not a silent hole: the golden test reads this
 #: mapping and reports the config + reason when it skips one.
-EXCLUDED_CONFIGS: dict[str, str] = {
-    "runpod-diffusers-serverless.yaml": (
-        "the capture harness cannot model this one's create call: `mode: "
-        "serverless` routes to RunPod's create-serverless path, and the stub "
-        "transport answers every mutation with the on-demand shape "
-        "(`podFindAndDeployOnDemand`), so the capture dies on `RunPod "
-        "create-serverless returned no endpoint id`. Teaching the stub the "
-        "serverless mutation shape is what this entry is waiting on; delete it "
-        "then. NOTE the previous reason here was that `render_provision` "
-        "raised AttributeError because the config comments out its whole "
-        "`engine.diffusers` block — that was real, and it was U33 one level "
-        "up: `model_dump()` emits the commented-out block as a "
-        "present-and-None key, so `engine_block.get('diffusers', {})` returned "
-        "None rather than `{}`. The engine reads it with `or` now, the config "
-        "renders, and `tests/engines/test_diffusers_optional_cfg_defaults.py` "
-        "covers it. The config no longer needs to grow a `diffusers:` block."
-    ),
-}
+#: U35 closed 2026-09-14: the last entry here was
+#: ``runpod-diffusers-serverless.yaml``, whose capture died because the stub
+#: transport answered every mutation with the on-demand shape while
+#: ``mode: serverless`` routes to ``saveTemplate``. The stub now knows both, so
+#: the only serverless config shipped is inside the ratchet rather than beside
+#: it. Empty is the correct state; an entry here is a config whose wire NOTHING
+#: is watching.
+EXCLUDED_CONFIGS: dict[str, str] = {}
 
 
 class _StubCreds:
@@ -449,11 +439,21 @@ def _capture_runpod(
     def _http_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
         del url
         captured.append(body)
-        if "gpuTypes" in str(body.get("query", "")):
+        query = str(body.get("query", ""))
+        if "gpuTypes" in query:
             # compute-seam S4: RunPod selects from its own catalog inside
             # create_instance. Frozen here so the captured payload still
             # depends only on the config, never on live catalog contents.
             return _FROZEN_RUNPOD_CATALOG
+        if "saveTemplate" in query:
+            # U35: `mode: serverless` routes to a DIFFERENT mutation, and a
+            # stub that answered every mutation with the on-demand shape made
+            # the only serverless config shipped uncapturable — so the ratchet
+            # could not see a wire change to it. The id is the endpoint id
+            # `_create_serverless` reads back; a distinct literal from
+            # "pod-golden" so a golden can never be ambiguous about which
+            # mutation produced it.
+            return {"data": {"saveTemplate": {"id": "endpoint-golden"}}}
         return {"data": {"podFindAndDeployOnDemand": {"id": "pod-golden"}}}
 
     provider = RunPodProvider(
@@ -465,7 +465,15 @@ def _capture_runpod(
     return (
         {
             "provider": "runpod",
-            "seam": "http_post -> podFindAndDeployOnDemand variables.input",
+            # U35: name the mutation the payload actually went to. A
+            # serverless config's input is `saveTemplate`'s, and labelling it
+            # `podFindAndDeployOnDemand` would make the golden lie about which
+            # wire it froze.
+            "seam": (
+                "http_post -> saveTemplate variables.input"
+                if spec.tags.get("mode") == "serverless"
+                else "http_post -> podFindAndDeployOnDemand variables.input"
+            ),
             # The create mutation, not the catalog read that now precedes it
             # (compute-seam S4): the ratchet is about the payload, and index 0
             # stopped being the payload the moment selection moved inside the
