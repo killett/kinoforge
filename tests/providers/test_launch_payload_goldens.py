@@ -271,6 +271,15 @@ def test_runpod_serverless_golden_carries_a_real_save_template_input() -> None:
     the provider hardcodes today, NOT because it is right: the serverless path
     discards ``placement`` entirely (**U45**). Freezing the constant is what
     makes the eventual fix show up as a golden diff instead of slipping in.
+
+    **This golden freezes a payload RunPod REJECTS** (**U46**, probed against
+    the live schema 2026-09-14 at $0.00): the mutation declares
+    ``EndpointInput!`` but calls ``saveTemplate``, which takes
+    ``SaveTemplateInput``, so the API answers ``GRAPHQL_VALIDATION_FAILED``
+    before executing anything. That does not make the golden wrong — its job is
+    to freeze what kinoforge SENDS, and a wire nobody watched is how this went
+    unnoticed in the first place. It does mean nothing here should be read as a
+    claim that the payload works.
     """
     goldens = _runpod_goldens_by_mutation("saveTemplate")
     assert len(goldens) == 1, (
