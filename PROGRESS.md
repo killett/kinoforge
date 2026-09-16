@@ -449,7 +449,15 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site.
 
-**STATUS INDEX (current as of 2026-09-14. Provenance, newest first: **U35 FIXED — `EXCLUDED_CONFIGS`
+**STATUS INDEX (current as of 2026-09-15. Provenance, newest first: **U47 FIXED** — `CheckRegistry.
+applicable` crashed with `RuntimeError: dictionary changed size during iteration` before ANY check
+ran, whenever validation fired before the providers were imported; confirmed pre-existing on clean
+HEAD and fixed by draining to a fixed point, not by snapshotting (which would silently skip the two
+checks that register mid-pass). **Operator ruling 2026-09-14 on `mode: serverless`: refuse loudly at
+validation**, rather than building or deleting it — a RunPod serverless cfg now fails `generate`
+pre-flight with the reason and the fix, while still LOADING so the golden stays in the ratchet (the
+check is PREFLIGHT for exactly that reason; a STATIC ERROR would reject the load and undo U35).
+Before that: **U35 FIXED — `EXCLUDED_CONFIGS`
 is EMPTY for the first time since the Modal command matrix opened, so every shipped compute config is
 inside the launch-payload ratchet (31 -> 32 goldens). Bringing the serverless config in immediately
 filed TWO defects off its own golden: **U46** — the serverless create is **invalid GraphQL** and has
@@ -512,12 +520,15 @@ U30 filed and fixed 2026-09-10 from that run; U16 fixed 2026-09-10
 U18 LIVE-PROVEN and U21 fixed 2026-09-09; U29 filed and fixed 2026-09-09; U17 fixed 2026-09-08.
 This table is authoritative — every paragraph BELOW it is dated campaign commentary and is not.)**
 
-Forty-six items, U1-U46. **Forty-two are fixed or answered** (U1, U2, U3, U4, U6, U7, U8, U9,
+Forty-seven items, U1-U47. **Forty-three are fixed or answered** (U1, U2, U3, U4, U6, U7, U8, U9,
 U11, U12, U14, U15, U16, U17, U18, U19, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U30,
-U31, U32, U33, U34, U36, U37, U38, U39, U35, U40, U41, U42, U43, U44), **two are
+U31, U32, U33, U34, U36, U37, U38, U39, U35, U40, U41, U42, U43, U44, U47), **two are
 partly fixed** (U5, U10), **NO live proof is owed** (U24 discharged 2026-09-11), **two are OPEN, both on the serverless path and both found by the golden U35 brought into
 existence** (U45 — that path discards `placement` and sends no `env`; U46 — its mutation is INVALID
-GRAPHQL and has never worked, proven for $0.00 against the live schema. U43 and U44 were both filed AND fixed on 2026-09-14, hours apart, out of U36's root cause. U37 — CLOSED the same day it was filed: the FlashVSR cu128 half
+GRAPHQL and has never worked, proven for $0.00 against the live schema. **Both are now REFUSED
+rather than left to fail obscurely**: operator ruling 2026-09-14 chose "refuse loudly at validation"
+over building or deleting the mode, so a RunPod `mode: serverless` cfg fails `generate` pre-flight
+with the reason and the one-line fix, while still LOADING so the golden stays in the ratchet. U43 and U44 were both filed AND fixed on 2026-09-14, hours apart, out of U36's root cause. U37 — CLOSED the same day it was filed: the FlashVSR cu128 half
 was never real (those cfgs pin no torch), and the Modal half is now MEASURED — pod `eph-aab25c06`
 reports `torch 2.6.0+cu124` on `/health`, so the index decides the build on both providers),
 and
@@ -585,6 +596,7 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | U44 | **FIXED 2026-09-14**, filed the same day while root-causing U36 | **`find_offers` hardcodes `cuda="12.8"` on every RunPod offer** (`providers/runpod/__init__.py:628`, commented "RunPod standard image baseline") regardless of what the GPU actually is. RunPod's catalog carries **AMD Instinct MI300X OAM**, which has no CUDA at all; it passes `min_cuda: "12.4"` unchallenged and is offered for a CUDA workload. In the shipped 1.3B grid cfg it currently ranks **second** — ahead of every NVIDIA GPU the cfg named — because U43 makes the intended 4090 preference inert. Advertised $0.500 unfiltered, **$2.390 secure**, so it is also the most expensive way to fail. The offer's `cuda` field is the only thing standing between a CUDA-only engine and an AMD card, and today it is a constant. **FIXED 2026-09-14**: `_cuda_for(gpu_id)` reports `"0"` for a non-CUDA vendor, which loses every `min_cuda` comparison (the field defaults to `"12.8"`, so it is always an active filter) and `filter_offers` drops the offer. **The rule names the non-CUDA VENDORS rather than allowlisting a brand prefix, and that distinction is load-bearing**: RunPod's catalog also carries `Tesla V100-PCIE-16GB` and `Tesla V100-SXM2-16GB` — NVIDIA cards with CUDA that an "id must start with NVIDIA" rule silently drops. That false positive is the same shape as U43's A5000, one item earlier on the same day, so it got its own test; falsifying the rule to the brand allowlist fails exactly that test. An unrecognised id keeps the CUDA baseline, so a new NVIDIA product line is offered rather than quietly excluded — under-blocking is recoverable at the engine, over-blocking removes capacity nobody can see was removed. **Live after the fix**: the MI300X is gone from the shipped 1.3B grid cfg's offer list under both pools. **Still owed**: `Offer.cuda` is a provider-asserted constant on the other enumerating providers too and that was not audited here |
 | U45 | OPEN — filed 2026-09-14, found by U35's own golden | **The serverless create path discards `placement` entirely, and sends no `env`.** `_create_serverless` hardcodes `"gpuIds": "ADA_24"` (`providers/runpod/__init__.py:1566`), so `accelerators`, `min_vram_gb`, `min_cuda` and `max_usd_per_hr` are enumerated, filtered, rate-capped and ranked by `_create_with_offer_retry` — and then thrown away. The chosen `offer` is passed into `_create_serverless` as a parameter and **never read**; the returned `Instance` hardcodes `cost_rate_usd_per_hr=0.0`. **Deliberately NOT claimed here:** that the 0.0 is wrong. RunPod serverless bills per execution rather than per hour, so a 0/hr rate may be honest — but it does mean `_enforce_rate_cap` is satisfied vacuously (`0.0 <= cap` for any cap), and nobody has measured what a serverless endpoint actually costs. That measurement should come before any fix. **The `env` gap is the sharper half**: the pod path injects `KINOFORGE_PROVISION_SCRIPT` and `RUNPOD_TERMINATE_KEY`; the serverless mutation carries neither, so there is no provision script and no terminate key on that path at all. Both facts are now FROZEN in a golden with a guard that asserts them as the current truth (`test_runpod_serverless_golden_carries_a_real_save_template_input`), which is the point of U35 — the eventual fix shows up as a golden diff instead of slipping in. Note this also makes U43's rename of that cfg's two accelerator names cosmetic ON THIS PATH, and U36's pool-correct pricing moot for it, since the offer is discarded either way |
 | U46 | OPEN — filed 2026-09-14, the serverless create is INVALID GRAPHQL and has never worked | **`_CREATE_SERVERLESS_MUTATION` declares `EndpointInput!` and calls `saveTemplate`, which takes `SaveTemplateInput`.** RunPod answers `GRAPHQL_VALIDATION_FAILED` — *"Variable $input of type EndpointInput! used in position expecting type SaveTemplateInput"* — as a raw **HTTP 400**, before executing anything. So every `mode: serverless` create has always failed, and it fails in the shape CLAUDE.md already warns reads as an outage rather than a malformed request. **Probed against the live schema for $0.00 and creating nothing**: GraphQL validates the document and coerces variables before the resolver runs, so an empty `input: {}` returns the schema's verdict with no side effect. Three facts came back from the same free probe. (1) The correct field is **`saveEndpoint(input: EndpointInput!)`** — kinoforge already declares the right TYPE and names the wrong FIELD, which is why this looks so nearly right. (2) `EndpointInput` requires only `name` and **accepts `templateId`**; a longer name reaches RunPod's own resolver (`Name must be longer than 2 characters`, `extensions.code: RUNPOD`), which is where the probe deliberately STOPPED rather than create a real endpoint. (3) `saveTemplate(SaveTemplateInput!)` requires `containerDiskInGb`, `dockerArgs`, `env` and `name` — **which explains U45's missing `env`**: on RunPod, image/env/dockerArgs live on a TEMPLATE, and an endpoint references it by `templateId`. A correct implementation is therefore TWO mutations (template carrying the provision script + env, then endpoint referencing it), not one with more fields. `_create_serverless` also reads its id back from `resp["data"]["saveTemplate"]["id"]`, so the response path is template-shaped too. **Deliberately NOT half-fixed**: renaming the field to `saveEndpoint` would take this from a loud 400 to a created-but-imageless endpoint, which is worse. The golden added by U35 freezes the rejected payload, and its guard now says so in terms **The read surface is mapped too, also free** (`myself { endpoints { id name gpuIds templateId workersMin workersMax idleTimeout } }` and `myself { podTemplates { id name imageName containerDiskInGb dockerArgs isServerless } }` both validate, so every field the fix needs exists under those names). Two things came back. **The account has ZERO endpoints, ever** — corroborating from the other side that this path has never once succeeded, rather than having worked and regressed. And **templates carry an `isServerless` boolean**, which the fix must set: all 14 existing templates are RunPod's stock pod images with `isServerless: false`. **CORRECTION to this row, same day, before any fix was written: the two-mutation repair is mechanically right and strategically INCOMPLETE.** Fixing the mutations would create an endpoint **nothing can use**. Three checks, all free: (1) there is **no serverless handler anywhere** in `src/` (`rg 'runpod\.serverless|serverless\.start|def handler'` is empty) and **no `runpod` SDK dependency** in `pixi.toml` or `pyproject.toml`; (2) **nothing CONSUMES a serverless instance** — every other `"serverless"` reference in `src/` is this provider's own create path and `mode` plumbing, with no engine branch, no submit/result path and no orchestrator handling; (3) `_create_serverless` returns an `Instance` with **no `endpoints` at all**, so even a successful create hands the caller nothing to talk to. The deeper reason is a protocol mismatch, not a missing field: a RunPod serverless worker polls RunPod's job queue via `runpod.serverless.start({"handler": ...})`, whereas every kinoforge engine is an HTTP server reached through the POD proxy. The shipped cfg cannot even produce a working template — its `engine.diffusers` block is commented out, so it renders steps with no launch, which is the shape `_create_pod` deliberately REFUSES ('a pod that provisions and then exits, billing with nothing listening, is worse than a loud failure'). **So `mode: serverless` is not a broken feature, it is an unbuilt one with a create stub in front of it**, and the decision it needs is product-level: build it (SDK + handler shim + engine protocol adapter + template/endpoint lifecycle), delete it (the routing, the cfg, the golden), or keep it and refuse it loudly at config-validation time instead of via a malformed mutation's HTTP 400. **Also found while checking**: `destroy_instance` is entirely pod-shaped — it resolves pod names, posts `podTerminate`, then polls `pod(input:{podId})`, which returns null for an endpoint id and reports **confirmed gone on the first poll**. That is the same false-success U16 fixed for by-name destroys; it is moot only because no endpoint has ever existed. **Free lifecycle facts already probed, for whichever way this goes**: `deleteEndpoint(id:)` and `deleteTemplate(templateName:)` both exist — note the template deletes by NAME, not id, so teardown must carry the name — and `saveEndpoint` can select `id templateId gpuIds` back. |
+| U47 | **FIXED 2026-09-14**, found while wiring U46's refusal | **`CheckRegistry.applicable` crashed with `RuntimeError: dictionary changed size during iteration` whenever validation ran before the providers were imported.** A check's `applies_to` may REGISTER another check: `provider_capabilities.applies_to` reaches the provider registry, and importing it self-registers `skypilot_cloud_pin_supported` and `runpod_capacity_hint`. `applicable` iterated `self._checks.values()` directly, so `validate_for_generate` died on a Python-internals traceback **before a single `CheckResult` existed** — no check had run, and the operator sees no report at all. **Confirmed PRE-EXISTING on clean HEAD** by stashing the U46 work and reproducing it there, so it is not fallout from the new check; U46's check merely ran validation from a lean entrypoint where the providers had not yet been imported, which is what exposed it. In the usual CLI flow the providers are already loaded by the time validation iterates, which is why it stayed hidden. **Fixed by draining to a fixed point, NOT by snapshotting the dict** — the obvious `list(self._checks.values())` stops the crash and silently SKIPS whatever registered during the pass, so those two real checks would never run on the first validation, and for `validate_for_load` the first validation is the only one there is. *Trading a loud crash for silent under-validation is the worse bug, because nothing reports it.* Two tests: one drives a check that registers during `applies_to` and asserts no raise, the other asserts the late arrival is actually CONSULTED (it declines to apply, and the only way to know that is to have asked) — which is precisely what a snapshot-based fix would never do |
 | U37 | **CLOSED — filed, CORRECTED, and ANSWERED LIVE the same day (2026-09-11).** The Modal half is measured; the FlashVSR-cu128 half was never real | **ANSWERED LIVE 2026-09-11 on Modal pod `eph-aab25c06`** (`python:3.13-slim`, RIFE 60fps interpolate, `--no-reuse --ephemeral`): `GET /health` -> **`{"version": "2.6.0+cu124", "cuda": "12.4"}`**. That is the other half of U34's A/B, on the provider U34's resolution named as the real exposure: RunPod's image already shipped bare `2.6.0` so its pin was *already satisfied* and nothing downloaded, whereas `python:3.13-slim` ships no torch at all — so **Modal genuinely downloads the wheel U33 switched, and it downloads the cu124 one.** **The index decides the build on BOTH providers.** No harm observed: run green (304 frames at `60/1` from an 81-frame source), frame QA PASS, teardown verified from a fresh process on both surfaces (no non-stopped Modal app; both `kinoforge list` lines clean). Evidence `tests/live/_u37_modal_torch_evidence.json`; probe `tests/live/_u37_modal_torch_probe.py`. **U33 is now live-proven on two of the twenty cfgs it changes, one per provider.** **How the reading was obtained, because the first Modal attempt FAILED to obtain it** (app `ap-KlBlrRvxoQ7gz992RdrB6f`, green run, nothing learned): Modal has no post-hoc channel for this — container stdout is not streamed to the CLI, the engine's pip step runs `-q` so nothing is printed, and `modal app logs` on a STOPPED ephemeral app returns the image build rather than the container. The startup log line added in `01e8fdaa` was therefore the right fact on the wrong channel; `/health` now carries it too (`1f7e568c`), which is the one surface every provider exposes and kinoforge already gates readiness on. *A diagnostic is only as good as the channel it lands on — check the channel exists on the provider you need it for.* **The 18 cfgs still unproven are inferred-safe, not demonstrated-safe**, and that is a deliberate stopping point rather than an oversight: the mechanism is now proven on both providers and the wheel is byte-identical in output on the one path measured twice (U34) | **Filed claim (inherited verbatim from U34's 'secondary, unchanged' note): 'the x4 cfg pins a cu128 image and a `bsa-cu128-torch2.8-v1` wheel while installing `torch==2.6.0`, so it now gets `2.6.0+cu124`.' That is FALSE, and one read of the cfg settles it.** `runpod-diffusers-flashvsr-x4-upscale.yaml` installs **no torch at all** — its `pip:` list is `fastapi` / `uvicorn` / `imageio[ffmpeg]` / `modelscope`, and a long comment explains exactly why (the BSA wheel's `cu128-torch2.8` tag is itself misleading; the wheel is really cu124/torch2.4 because `build_bsa_wheel.py` never pip-installs torch, so **reinstalling** torch is what breaks BSA's c10 ABI). So U33's cu124 index has no torch to resolve there and CANNOT change it. Checked the one way it could sneak back in: `modelscope` declares `torch*` only under EXTRAS (`cv`, `all`, `multi-modal`, `audio`) and the cfg installs it bare, so nothing pulls torch transitively. Same for `imageio` (no torch in `requires_dist`). **The real blast radius, measured rather than guessed** (`load_config` + `DiffusersEngine().render_provision` over every shipped cfg, $0.00): **20 diffusers cfgs pin `torch==` and therefore DO get a wheel changed by U33**; **5 pin none and are untouched** — and the untouched five are precisely the cu128/BSA ones the filing accused (`runpod-diffusers-flashvsr-x4-upscale`, `runpod-diffusers-flashvsr-1080p-upscale`, the two `skypilot-*-flashvsr-*`, and `runpod-diffusers-rife-60fps-interpolate`). Every FlashVSR cfg renders `--extra-index-url .../whl/cu124`; none renders cu128. **What is genuinely open, and it is the exposure U34's own resolution predicted: MODAL.** `modal-diffusers-flashvsr-x4-upscale.yaml` and `modal-diffusers-flashvsr-1080p-upscale.yaml` (plus the other modal diffusers cfgs) pin `torch==2.6.0` on base image **`python:3.13-slim`**, which ships NO torch — so unlike RunPod, where arm A proved the pin was already satisfied by the image, Modal genuinely DOWNLOADS torch, and U33 changed WHICH wheel it downloads (bare `2.6.0` -> `2.6.0+cu124`, whose CUDA vendoring and dependency closure differ). **U34's live proof does not transfer:** it proved cu124-vs-bare is byte-identical on a RunPod pod whose image already had torch; it says nothing about a py3.13-slim image installing a `+cu124` wheel from scratch. **Next step:** one cheap Modal diffusers run (the RIFE 60fps interpolate cfg is the cheapest that pins torch), capturing the installed `torch.__version__` the same way U34's arms did. Until then U33 is proven on ONE of the 20 affected cfgs. **Lesson, and it is the fourth time in this ledger:** the filing's scope claim was a hypothesis written from a sibling entry's prose, and one grep of the cfg it named settled it — this time against the filing |
 | U38 | FIXED 2026-09-11 (`35dc8c69`, $0.00 offline; found by a live run) | **A grid that did not finish said `status=partial` and nothing else.** Found running U24's proof: the 1x3 swap grid aborted on a cell after 30 s and the operator's ENTIRE output was `[grid summary] status=partial; partial mp4s → output/_grid_..._partial` — pointing at an EMPTY directory, with no pod created, so there was nothing anywhere to read. The cause was never lost, only unprinted: `_run_swap_cell` builds a `GridCellFailure` holding the cell's stderr tail for exactly this, and `_cmd_grid` threw it away. `_report_grid_result` now names every failed cell and its captured cause — EVERY one, not just the first, because a swap group aborts its remaining cells as a unit and telling "one bad LoRA ref" from "wholly wrong config" needs all of them; a cell marked failed with no error object is still listed, since dropping it reproduces the original bug for that case. Four tests, RED first, falsified (restricting the loop to the first failed cell fails the multi-cell test); a `full` grid prints no failure block. **This fix paid for itself on its first re-run**, which immediately named `RateCapExceeded` (U36) and then, after that was dodged, the `ensure_endpoints` refusal that became U39. *A live run that produces no diagnostic is a live run spent twice.* mypy also caught that the success fixture used `status="ok"`, not a valid `_CellStatus` — it passed anyway because the dataclass does not validate, the same fixture-not-production shape recorded on U33 |
 | U39 | FIXED 2026-09-11 (`8be27067`, $0.00 offline; found live) | **An ephemeral index row could not be attached to, because it never told the provider which ports to rebuild.** `EphemeralIndexRow.to_entry_dict()` emitted `tags={"kinoforge_key": ...}` only, and its docstring claimed it carried "every field the attach gate reads" — false, because the gate then calls `ensure_endpoints`, and RunPod derives `https://{id}-{port}.proxy.runpod.net` from `tags["ports"]`. Observed live on pod `85ms24bc6kuc1m`: the row held BOTH URLs, `_seed_instance_from_ledger_entry` replayed them (that is what `ports=['8000','8001']` in the refusal message reports), and `ensure_endpoints` still returned `{}` because it re-derives rather than recollects — so every swap-group cell 2..N under `--ephemeral` failed. **Fixed at the tag, not by falling back to the recorded map, deliberately:** a proxy URL rebuilt from pod id + port is DERIVATION, not recollection (U3's distinction), so the repairing door keeps its meaning and SkyPilot's dead `127.0.0.1` tunnels still get refused. Derived from the recorded endpoint KEYS so the two cannot disagree, comma-separated because that is the provider's own parser contract, and omitted entirely when nothing was recorded (a mid-boot row legitimately has none, and an empty-but-present field reads as a real answer). **The load-bearing test drives the REAL `RunPodProvider.endpoints` off the entry dict** — a string-equality test on `"8000,8001"` passes against a provider expecting another shape, and that mismatch is exactly how the bug presented: everything looked recorded and the derivation still produced `{}`. Falsified both ways (space separator; unconditional emit) |
@@ -3313,6 +3325,50 @@ and U46's schema were all free. The four pods cost a cent and told us nothing th
 already said — except the one thing no read could establish, that realized really does equal
 advertised.
 
+### SESSION 2026-09-14 (continued) — operator ruling on serverless, and a crash it uncovered
+
+**Operator ruling: `mode: serverless` is REFUSED at validation, not built and not deleted.** Asked
+directly, given U46's finding that the mode is an unbuilt feature with a broken create stub in front
+of it. The choice keeps the cfg, the golden and the ratchet as the record of what exists, so building
+it later starts from a frozen wire rather than from nothing, and nothing is half-built in the
+meantime.
+
+**The implementation had one real constraint, and it decided the design.** The invariant is internal
+cfg consistency, which is `CheckCategory.STATIC` — but a STATIC ERROR **rejects `load_config`
+itself**, which would break `capture_payload`, force the cfg back into `EXCLUDED_CONFIGS` and
+silently undo U35 hours after it landed. So the check is **PREFLIGHT**: it fails `generate`
+pre-flight and `doctor`, while the cfg still LOADS. *Refusing the operator and freezing the wire are
+different jobs, and only the first belongs at generate time.* The check's docstring says so in terms,
+because "correcting" the category to STATIC is exactly the tidy-looking change that would undo U35.
+
+**The third over-blocking guard in two days.** Modal's entire catalog is built from offers carrying
+`mode="serverless"` (`Offer.mode`), which is a DIFFERENT field from the operator's
+`cfg.compute.mode`. A check keyed on the string rather than on the (provider, mode) pair would refuse
+perfectly good Modal work. That has its own test, after U43 called a real GPU a typo and U44 nearly
+dropped the CUDA-capable Tesla V100s.
+
+**Wiring it uncovered U47, a live crash that predates all of this.** `CheckRegistry.applicable`
+iterated `self._checks.values()` while a check's `applies_to` could register more —
+`provider_capabilities` reaches the provider registry, whose import self-registers two further
+checks. `validate_for_generate` therefore died with `RuntimeError: dictionary changed size during
+iteration` **before a single `CheckResult` existed**: no report, no check run, just a Python-internals
+traceback. **Confirmed pre-existing by stashing the whole U46 branch and reproducing it on clean
+HEAD** — the new check only exposed it, by running validation from a lean entrypoint where the
+providers had not yet been imported. In the usual CLI flow they already are, which is why it hid.
+
+**Fixed by draining to a fixed point rather than snapshotting the dict**, and the difference matters:
+`list(self._checks.values())` stops the crash and silently skips whatever registered during the pass,
+so those two real checks would never run on the first validation — and for `validate_for_load` the
+first validation is the only one there is. *A loud crash traded for silent under-validation is the
+worse bug, because nothing reports it.* The second test asserts the late arrival is actually
+CONSULTED, which a snapshot fix would never do.
+
+**One test-hygiene note worth carrying.** The built-in checks self-register through a function-local
+import inside `load_config`, so a test module that builds a `Config` directly runs against an EMPTY
+registry — where every `assert report.ok` passes for the wrong reason. Three of the four new tests
+were briefly green that way before the explicit `import kinoforge.validation.checks` was added.
+*A negative assertion against an empty registry is not a test, it is a tautology.*
+
 **The 2026-09-12 "secure is cheaper" reading was CORRECT, and its interpretation was the error — and
 this correction is itself a correction.** Mid-session this entry said the $0.27 "does not reproduce"
 and that "no GPU in the catalog advertises $0.27 in either pool". Both were wrong, and wrong for an
@@ -3344,56 +3400,30 @@ spend anyway was that the offline half is a claim about a *mechanism* and U36 is
 *outcome*; the arms were picked so the two hypotheses disagree on a field (the realized number)
 rather than agreeing on a shape. That is the U34 lesson applied before paying rather than after.
 
-### NEXT ACTION (single, current as of 2026-09-14, fourth update)
+### NEXT ACTION (single, current as of 2026-09-15)
 
-**U46 — rebuild the RunPod serverless create as TWO mutations, `saveTemplate` then `saveEndpoint`.**
-The schema is already mapped, for free, so this is mechanical rather than exploratory:
+**Nothing is blocked, and no item is mid-flight.** The Modal command matrix is discharged: U35 closed
+it, `EXCLUDED_CONFIGS` is empty, and the two items it exposed (U45, U46) are OPEN-but-CONTAINED by
+operator ruling — a RunPod `mode: serverless` cfg is now refused at `generate` pre-flight with the
+reason and the one-line fix, so neither can bite anyone silently. Pick up whichever of these matters
+most to the next piece of work:
 
-1. `saveTemplate(input: SaveTemplateInput!)` — requires `name`, `containerDiskInGb`, `dockerArgs`,
-   `env`. This is where the image, the env and the gzipped provision script belong, and building it
-   is what closes **U45**'s missing-`env` half: reuse the pod path's `_assemble_create_env` and its
-   `dockerArgs` construction rather than re-deriving them.
-2. `saveEndpoint(input: EndpointInput!)` — requires only `name`, accepts `templateId` plus the
-   worker/timeout fields `_create_serverless` already sends. Read the id back from
-   `data.saveEndpoint.id`, not `data.saveTemplate.id`.
+1. **`Offer.cuda` is a provider-asserted constant on the other enumerating providers.** U44 fixed
+   RunPod's — an AMD MI300X was passing `min_cuda` — but Modal, SkyPilot and Local were not audited.
+   Same question, three more places: does anything in that catalog fail to satisfy what the field
+   claims? Cheap, offline, and the RunPod answer says the shape is worth checking.
+2. **RunPod's catalog carries a bookable GPU type whose id is the literal string `unknown`.** U44
+   leaves it on the CUDA baseline rather than widening its vendor blocklist to cover it. Nothing
+   anywhere decides what booking `unknown` should mean.
+3. **U45/U46 proper**, if serverless is ever wanted for real. Both rows carry the full schema already
+   probed at $0.00 (`saveTemplate` then `saveEndpoint`, `isServerless: true`, delete-by-NAME, the
+   endpoints list as a free 0 -> 1 success signal) plus the template-lifecycle decision named and
+   left deliberately open. The protocol gap is the real work, not the mutations.
 
-Set `isServerless: true` on the template — all 14 existing templates on the account are RunPod's
-stock pod images with it false. Verify from the read side, which is also free and already mapped:
-`myself { endpoints { id name gpuIds templateId workersMin workersMax idleTimeout } }` validates,
-and it currently returns **zero endpoints**, which is independent corroboration that this path has
-never once succeeded rather than having worked and regressed. A first successful create is therefore
-visible as that list going from 0 to 1, with no billing until a job runs.
-
-Then feed `placement` in rather than hardcoding `"gpuIds": "ADA_24"` (U45's other half). RunPod's
-serverless GPU vocabulary is its own — `ADA_24`-style CLASSES, not the `gpuTypeId` catalog ids the
-pod path books — so that mapping needs its own free probe before it is written, and U36's
-pool-correct pricing does not transfer to it unexamined.
-
-**One design decision this does NOT settle, and should not be guessed: template LIFECYCLE.** The pod
-path creates one disposable thing per run and destroys it. A two-mutation serverless path creates
-TWO objects with different lifetimes — a template (free metadata, but it persists and the account
-already carries 14) and an endpoint. Creating a fresh template per run leaks one per run forever
-unless something deletes it, and `destroy_instance` currently knows only about the endpoint id.
-Decide deliberately: reuse a template keyed by the image+provision hash, or create-and-delete it
-around the endpoint, or accept the leak and say so. `EphemeralSession` naming applies to both objects
-either way. Note the ephemeral sweeper and `kinoforge list` have no notion of templates at all.
-
-**Do not validate by creating an endpoint until the template half works** — an endpoint with no
-template is exactly the created-but-imageless failure this was deliberately not half-fixed into. The
-$0.00 technique that mapped the schema keeps working: send a mutation with `input: {}` and read the
-validation error, since RunPod validates and coerces before the resolver runs. Stop before any
-`name` longer than two characters, which is where the resolver takes over and things become real.
-
-The golden added by U35 freezes the currently-rejected payload, so the fix will show as a diff, and
-`test_runpod_serverless_golden_carries_a_real_save_template_input` needs its `seam` and assertions
-updated in the same commit.
-
-Two smaller things this session surfaced and did not fix, neither urgent:
-
-- **`Offer.cuda` is a provider-asserted constant on the other enumerating providers too.** U44 fixed
-  RunPod's; Modal, SkyPilot and Local were not audited.
-- **RunPod's catalog contains a GPU type whose id is the literal string `unknown`**, priced and
-  bookable. U44 leaves it on the CUDA baseline rather than widening its vendor blocklist.
+**What this session's evidence says about how to start any of them:** the cheap read contained the
+answer four times running — U36's pool prices, U43's catalog ids, U44's vendor list, U46's schema,
+all $0.00. The single thing that genuinely needed spending was proving realized == advertised, which
+no read could establish. Probe before building; the ledger has now paid for that lesson twice over.
 
 ~~**U24's live proof — one cheap 1.3B swap group**~~ — DONE, see above. (`examples/configs/grids/wan-2_1-1_3b-loras-swap
 .grid.yaml`), per the unchanged description below: cell 1 cold-boots under an opaque

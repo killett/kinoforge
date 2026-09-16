@@ -46,11 +46,36 @@ class CheckRegistry:
         Returns:
             List of applicable Check instances in registration order.
         """
-        return [
-            c
-            for c in self._checks.values()
-            if (categories is None or c.category in categories) and c.applies_to(cfg)
-        ]
+        # U47: a check's ``applies_to`` may REGISTER another check — that is not
+        # hypothetical, ``provider_capabilities.applies_to`` reaches the provider
+        # registry and importing it self-registers
+        # ``skypilot_cloud_pin_supported`` and ``runpod_capacity_hint``. Iterating
+        # ``self._checks.values()`` directly then raised
+        # ``RuntimeError: dictionary changed size during iteration`` straight out
+        # of ``validate_for_generate``, before a single CheckResult existed.
+        #
+        # Draining to a fixed point rather than iterating a snapshot, deliberately:
+        # a snapshot stops the crash and silently SKIPS whatever registered during
+        # the pass, so those two real checks would never run on the first
+        # validation — and for ``validate_for_load`` the first validation is the
+        # only one there is. Insertion order is preserved because ``dict`` keeps
+        # it and the pending slice is taken in that order.
+        out: list[Check] = []
+        evaluated: set[str] = set()
+        while True:
+            pending = [
+                (name, c)
+                for name, c in list(self._checks.items())
+                if name not in evaluated
+            ]
+            if not pending:
+                return out
+            for name, check in pending:
+                evaluated.add(name)
+                if (
+                    categories is None or check.category in categories
+                ) and check.applies_to(cfg):
+                    out.append(check)
 
     def all_names(self) -> list[str]:
         """Return all registered check names in registration order."""
