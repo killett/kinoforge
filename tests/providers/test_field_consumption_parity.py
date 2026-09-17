@@ -930,7 +930,10 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
         ),
         "accelerators": _orders_by_preference(),
         "min_vram_gb": _filters(_above_every_vram, axis="min_vram_gb"),
-        "min_cuda": _filters(_above_every_cuda, axis="min_cuda"),
+        # U48: no proof, because the field is no longer CONSUMED. sky
+        # publishes no CUDA version (InstanceTypeInfo has no such field),
+        # so the old proof only ever demonstrated that a fabricated
+        # constant could be filtered against itself.
     },
     "modal": {
         "image": _tracks(

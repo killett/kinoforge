@@ -182,6 +182,22 @@ class _SkyClientProtocol(Protocol):
 # ---------------------------------------------------------------------------
 
 
+#: Reported as every SkyPilot offer's CUDA version, because sky does not tell
+#: us one (U48). It is deliberately high enough to clear any realistic
+#: ``min_cuda`` floor rather than low enough to fail one: the field is declared
+#: UNSUPPORTED in :meth:`SkyPilotProvider.consumes`, so the operator is WARNED
+#: that their floor is not enforced instead of having a correct config silently
+#: refused by a comparison against a number sky never supplied. Filtering on a
+#: fabricated value is the harm; the previous "12.0" wiped out every offer for
+#: any cfg that left ``min_cuda`` at its 12.8 default.
+#: Not "99.0" — that is the exact floor
+#: ``tests/providers/test_field_consumption_parity.py::_above_every_cuda`` uses
+#: to mean "no real catalog entry can meet this", and a sentinel that collides
+#: with a guard's impossible-value fixture is a trap. "9999" cannot be mistaken
+#: for a CUDA version anyone ships.
+_SKY_CUDA_UNKNOWN: str = "9999"
+
+
 def _record_field(record: Any, field: str, default: str = "") -> str:  # noqa: ANN401
     """Read ``field`` from a SkyPilot cluster / accelerator record.
 
@@ -778,7 +794,12 @@ class SkyPilotProvider(ComputeProvider):
             "accelerators": c,  # find_offers ranks the catalog by preference
             "accelerator_count": u,  # accelerators=f"{gpu_type}:1", hardcoded
             "min_vram_gb": c,  # filter_offers floor + the CPU short-circuit
-            "min_cuda": c,  # filter_offers excludes below the floor
+            # U48: sky's InstanceTypeInfo carries NO cuda field, so every offer
+            # reports the same constant and the floor can only pass everything
+            # or nothing — it never discriminates between two GPUs. Claiming
+            # CONSUMED kept UnsupportedFieldCheck quiet while a cfg leaving
+            # min_cuda at its 12.8 default had its whole catalog filtered away.
+            "min_cuda": u,
             "disk_gb": u,  # disk_size is 60/30 by fiat
             "region": c,  # resources["region"], via the _adapters wiring
             "spot": c,  # resources["use_spot"]
@@ -955,7 +976,11 @@ class SkyPilotProvider(ComputeProvider):
                     id=gpu_name,
                     gpu_type=gpu_name,
                     vram_gb=_coerce_vram_gb(info),
-                    cuda=_record_field(info, "cuda", default="12.0"),
+                    # U48: NOT read from the record — sky does not publish a
+                    # CUDA version (InstanceTypeInfo._fields has no `cuda`), and
+                    # the old `_record_field(info, "cuda", default="12.0")` read
+                    # like a lookup while only ever yielding its default.
+                    cuda=_SKY_CUDA_UNKNOWN,
                     cost_rate_usd_per_hr=(
                         _coerce_float_field(info, "price")
                         or _coerce_float_field(info, "cost_rate_usd_per_hr")

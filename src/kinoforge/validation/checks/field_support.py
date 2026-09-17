@@ -236,6 +236,32 @@ def _runpod_disk(cfg: Config) -> str:
     )
 
 
+def _skypilot_min_cuda(cfg: Config) -> str:
+    """Name what really constrains the GPU when sky publishes no CUDA version.
+
+    U48: ``sky.list_accelerators`` returns ``InstanceTypeInfo`` records with no
+    ``cuda`` field, so kinoforge cannot compare a floor against anything real.
+    What DOES pin the hardware on this provider is naming the accelerator —
+    ``_select_accelerator`` returns ``placement.accelerators[0]`` before the
+    catalog is consulted at all — with ``min_vram_gb`` narrowing the field when
+    no name is given.
+
+    Args:
+        cfg: The loaded Config.
+
+    Returns:
+        A phrase naming the substitute and the bound it actually enforces.
+    """
+    named = ""
+    if cfg.compute is not None and cfg.compute.placement.accelerators:
+        named = f" (you name {cfg.compute.placement.accelerators[0]!r})"
+    return (
+        "compute.placement.accelerators, which sky books by name and which "
+        f"bypasses the catalog floor entirely{named}; min_vram_gb narrows the "
+        "choice when no accelerator is named"
+    )
+
+
 def _skypilot_disk(cfg: Config) -> str:
     """Name the ``disk_size`` SkyPilot really pins for THIS cfg.
 
@@ -515,6 +541,7 @@ _SUBSTITUTE: dict[tuple[str, str], Callable[[Config], str]] = {
     ("runpod", "spot"): _runpod_spot,
     ("skypilot", "disk_gb"): _skypilot_disk,
     ("skypilot", "max_usd_per_hr"): _skypilot_rate_cap,
+    ("skypilot", "min_cuda"): _skypilot_min_cuda,
     ("modal", "disk_gb"): _modal_disk,
     ("modal", "spot"): _modal_spot,
     ("modal", "max_usd_per_hr"): _modal_rate_cap,
