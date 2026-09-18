@@ -19,6 +19,13 @@
 #   * Audio: FlashVSR writes frames only (upscalers/flashvsr/_runtime.py), so an
 #     H3 soundtrack does NOT survive this stage. Re-mux it from the source with
 #     ffmpeg after the chain — the duration is preserved, so it lines up.
+#   * SOURCE DIMS MUST BE MULTIPLES OF 32 on both axes. The block-sparse
+#     attention window (8 latent tokens) must divide the latent grid, which
+#     is output/16 = source/4 per axis; a 640x360 source dies on the booked
+#     card with "Dims must divide by window size" (2026-09-18). Pre-downscale
+#     with `scale=640:-2,crop=640:352` (crop, don't squeeze) or generate at a
+#     legal canvas. The ~640x360 area ceiling above is a TOKEN budget; the
+#     32-multiple rule is a separate, hard constraint.
 #
 # NO `backend_options.skypilot` block — those keys are SkyPilot-only and
 # fail validation here (the owning provider validates its own namespace).
