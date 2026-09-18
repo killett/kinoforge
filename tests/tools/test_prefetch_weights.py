@@ -130,3 +130,146 @@ def test_the_default_timeout_survives_a_144gb_fetch() -> None:
     # than anything about the download.
     plan = build_plan(_H3, ("model_index.json", "FL2VA/*"))
     assert plan.timeout_s >= 3600
+
+
+# ---------------------------------------------------------------------------
+# Durability — the fourth way this silently saves nothing
+# ---------------------------------------------------------------------------
+#
+# The module docstring above names three failure modes: wrong bytes, wrong
+# place, wrong card. It missed the one that actually happened on 2026-09-17.
+#
+# `cdbd9087` removed the controller-side `volume.commit()` after Modal answered
+# it with `ConflictError: commit() can only be called on a mounted volume
+# inside a container`, and concluded "Modal commits the volume itself when the
+# function returns". The tool then reported a successful 144.05 GB fetch, and
+# PROGRESS.md recorded Sub-project B as complete and live-proven.
+#
+# Measured against the Volume on 2026-09-18, the H3 blob store held **1.96 GB**
+# with a largest blob of 0.67 GB — i.e. the configs, tokenizer and processor
+# landed and every safetensors shard did not. The control is what makes this
+# conclusive rather than a measurement artifact: on the same Volume, by the
+# same listing call, Wan 2.2 A14B holds 126.20 GB with 4.98 GB shards.
+#
+# The error message was the instruction: `commit()` has to be called INSIDE the
+# container, not deleted. And because the tool's whole purpose is to keep a 124
+# GiB download off a $4.54/hr card, "reported success" is not good enough —
+# after the run it re-reads the Volume from the controller and compares.
+
+
+class _FakeVolume:
+    """Records commits; stands in for a mounted modal.Volume."""
+
+    def __init__(self) -> None:
+        self.commits = 0
+
+    def commit(self) -> None:
+        self.commits += 1
+
+
+def _fake_entry(path: str, size: int) -> object:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(path=path, size=size)
+
+
+def test_the_fetch_commits_the_volume_from_inside_the_container() -> None:
+    # Bug caught: THE 2026-09-17 defect. Without an explicit commit the writes
+    # are not durable, the tool reports a 144.05 GB success, and the next H200
+    # run re-downloads all of it at $4.54/hr — which is the entire cost this
+    # tool exists to avoid. Modal's own error names the fix: inside a container.
+    from tools.prefetch_weights import fetch_snapshot
+
+    volume = _FakeVolume()
+    path, size = fetch_snapshot(
+        "MiniMaxAI/MiniMax-H3",
+        ["model_index.json", "transformer/*"],
+        "/cache/hf",
+        volume,
+        download=lambda *a, **k: "/cache/hf/snap",
+        measure=lambda _p: 144_050_000_000,
+    )
+    assert volume.commits == 1, "the volume was never committed inside the container"
+    assert path == "/cache/hf/snap"
+    assert size == 144_050_000_000
+
+
+def test_the_fetch_commits_even_when_measuring_raises() -> None:
+    # Bug caught: the commit is placed after the size walk, an os.walk error on
+    # one file aborts the function, and a completed 144 GiB download is thrown
+    # away for a diagnostic. The expensive work must be made durable BEFORE
+    # anything optional runs against it.
+    from tools.prefetch_weights import fetch_snapshot
+
+    volume = _FakeVolume()
+
+    def boom(_path: str) -> int:
+        raise OSError("stat failed")
+
+    with pytest.raises(OSError):
+        fetch_snapshot(
+            "MiniMaxAI/MiniMax-H3",
+            ["model_index.json"],
+            "/cache/hf",
+            volume,
+            download=lambda *a, **k: "/cache/hf/snap",
+            measure=boom,
+        )
+    assert volume.commits == 1, "a completed download was discarded uncommitted"
+
+
+def test_durable_bytes_sums_only_the_requested_repo() -> None:
+    # Bug caught: the verification sums every blob on the shared Volume, so the
+    # 126.20 GB of Wan 2.2 already resident makes a completely failed H3 fetch
+    # look like a 128 GB success.
+    from tools.prefetch_weights import durable_bytes
+
+    listing = {
+        "hub/models--MiniMaxAI--MiniMax-H3/blobs": [
+            _fake_entry("hub/models--MiniMaxAI--MiniMax-H3/blobs/a", 1_000),
+            _fake_entry("hub/models--MiniMaxAI--MiniMax-H3/blobs/b", 2_000),
+        ],
+        "hub/models--Wan-AI--Wan2.2-T2V-A14B-Diffusers/blobs": [
+            _fake_entry("hub/models--Wan-AI--Wan2.2-T2V-A14B-Diffusers/blobs/c", 9_999),
+        ],
+    }
+    total = durable_bytes("MiniMaxAI/MiniMax-H3", lister=lambda p: listing.get(p, []))
+    assert total == 3_000
+
+
+def test_verify_resident_refuses_the_real_partial_commit() -> None:
+    # Bug caught: exactly the 2026-09-17 state. The remote reported 144.05 GB;
+    # the Volume durably held 1.96 GB. The tool must exit non-zero on that,
+    # because the alternative is discovering it as a 124 GiB re-download on the
+    # H200 — and, worse, recording Sub-project B as complete in PROGRESS.md.
+    from tools.prefetch_weights import PrefetchNotDurable, verify_resident
+
+    with pytest.raises(PrefetchNotDurable) as exc:
+        verify_resident(
+            "MiniMaxAI/MiniMax-H3",
+            reported_bytes=144_050_000_000,
+            lister=lambda _p: [
+                _fake_entry("hub/models--MiniMaxAI--MiniMax-H3/blobs/a", 1_960_000_000)
+            ],
+        )
+    message = str(exc.value)
+    # Both numbers must appear: "it did not persist" is unactionable without
+    # the gap, and the gap is what says re-run rather than debug the loader.
+    assert "144" in message and "1.9" in message
+    assert "MiniMaxAI/MiniMax-H3" in message
+
+
+def test_verify_resident_accepts_a_fetch_that_actually_landed() -> None:
+    # Bug caught: the tolerance is too tight (exact equality), so the normal
+    # case — the controller's blob sum differing slightly from the container's
+    # symlink-following walk — fails every healthy run and the guard gets
+    # deleted as noise.
+    from tools.prefetch_weights import verify_resident
+
+    verify_resident(
+        "MiniMaxAI/MiniMax-H3",
+        reported_bytes=144_050_000_000,
+        lister=lambda _p: [
+            _fake_entry("hub/models--MiniMaxAI--MiniMax-H3/blobs/a", 143_900_000_000)
+        ],
+    )

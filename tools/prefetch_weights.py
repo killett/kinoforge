@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import Any
 
 from kinoforge.providers.modal._app import _VOLUME_NAME
 from kinoforge.providers.modal._catalog import MODAL_GPU_CATALOG
@@ -43,6 +45,16 @@ VOLUME_MOUNT = "/cache/hf"
 #: floor is deliberately generous — a prefetch that dies at 95% has bought
 #: nothing but still billed.
 DEFAULT_TIMEOUT_S = 7200
+
+
+class PrefetchNotDurable(RuntimeError):
+    """The download succeeded in the container but did not persist.
+
+    Distinct from :class:`PrefetchPlanError`, which is a bad request caught for
+    $0 before anything is booked. This one means real money was spent and the
+    bytes are not there — so the next run on the expensive card would download
+    them again.
+    """
 
 
 class PrefetchPlanError(ValueError):
@@ -217,8 +229,155 @@ def _render(plan: PrefetchPlan) -> str:
     )
 
 
+def _blob_dir(repo_id: str) -> str:
+    """Return the Volume-relative blob directory HF uses for *repo_id*.
+
+    Args:
+        repo_id: HuggingFace repo id, e.g. ``"MiniMaxAI/MiniMax-H3"``.
+
+    Returns:
+        The path, e.g. ``"hub/models--MiniMaxAI--MiniMax-H3/blobs"``. The
+        snapshot directory is only symlinks into here, so this is where the
+        bytes actually are — and the only place that can answer "did the fetch
+        persist?".
+    """
+    return f"hub/models--{repo_id.replace('/', '--')}/blobs"
+
+
+def durable_bytes(repo_id: str, *, lister: Callable[[str], Iterable[Any]]) -> int:
+    """Sum the bytes the Volume DURABLY holds for *repo_id*.
+
+    Scoped to one repo's blob directory on purpose. ``kinoforge-hf-cache`` is
+    shared — it already carries 126.20 GB of Wan 2.2 — so a Volume-wide sum
+    would make a completely failed fetch look like a 128 GB success.
+
+    Args:
+        repo_id: HuggingFace repo id.
+        lister: ``(path) -> entries`` with ``.size``; injected so this is
+            testable without Modal, and so the caller owns the SDK import.
+
+    Returns:
+        Total bytes, or 0 when the directory does not exist.
+    """
+    return sum(int(getattr(e, "size", 0) or 0) for e in lister(_blob_dir(repo_id)))
+
+
+def verify_resident(
+    repo_id: str,
+    *,
+    reported_bytes: int,
+    lister: Callable[[str], Iterable[Any]],
+    tolerance: float = 0.98,
+) -> int:
+    """Confirm the container's reported fetch is durable on the Volume.
+
+    Two independent observations, which is the whole point: the container walks
+    the snapshot tree and reports a size; the controller then re-reads the blob
+    store afterwards, through a separate connection, and compares. A commit that
+    did not persist shows up as a gap between them.
+
+    This exists because "the remote returned a size" is NOT evidence of
+    durability. On 2026-09-17 the tool reported 144.05 GB and PROGRESS.md
+    recorded Sub-project B as complete; measured on 2026-09-18 the Volume held
+    **1.96 GB** for this repo, largest blob 0.67 GB — configs and tokenizer, no
+    shards. The next step would have been a 124 GiB re-download on an H200 at
+    $4.54/hr, which is the exact cost this tool exists to avoid.
+
+    Args:
+        repo_id: HuggingFace repo id.
+        reported_bytes: What the remote function measured.
+        lister: ``(path) -> entries`` with ``.size``.
+        tolerance: Fraction of *reported_bytes* that must be durable. Slightly
+            below 1.0 because the two measurements are not the same walk — the
+            container follows symlinks through the snapshot tree, the controller
+            sums the blob store — so exact equality would fail healthy runs and
+            the guard would be deleted as noise.
+
+    Returns:
+        The durable byte count.
+
+    Raises:
+        PrefetchNotDurable: Less than *tolerance* of the reported bytes are
+            durably resident.
+    """
+    durable = durable_bytes(repo_id, lister=lister)
+    if durable < reported_bytes * tolerance:
+        raise PrefetchNotDurable(
+            f"{repo_id}: the container reported {reported_bytes / 1e9:.2f} GB but the "
+            f"Volume durably holds {durable / 1e9:.2f} GB. The fetch did not persist — "
+            "re-run it here rather than discovering it as a re-download on the "
+            "expensive card. Check that the remote function calls volume.commit() "
+            "before returning."
+        )
+    return durable
+
+
+def fetch_snapshot(  # noqa: ANN401 — `volume` is a modal.Volume; modal is pod-side only
+    repo_id: str,
+    patterns: list[str],
+    mount: str,
+    volume: Any,  # noqa: ANN401 — a modal.Volume; modal is not importable in the default env
+    *,
+    download: Callable[..., str] | None = None,
+    measure: Callable[[str], int] | None = None,
+) -> tuple[str, int]:
+    """Download *patterns* of *repo_id* into *mount* and COMMIT the Volume.
+
+    Runs INSIDE the Modal container. Extracted from the remote function body so
+    the commit is reachable from a test with a fake volume — the 2026-09-17
+    defect was an absent commit, and an absent call is exactly what a test of
+    the enclosing ``run_prefetch`` could not see.
+
+    The commit is deliberately in a ``finally``: the download is the expensive
+    part, so once it has happened the bytes are made durable before anything
+    optional (the size walk) can raise and discard them.
+
+    Args:
+        repo_id: HuggingFace repo id.
+        patterns: ``allow_patterns`` for ``snapshot_download``.
+        mount: Where the Volume is mounted; also ``HF_HOME``.
+        volume: The mounted ``modal.Volume``.
+        download: Download seam; defaults to ``snapshot_download``.
+        measure: Size seam; defaults to a symlink-following walk of the
+            snapshot tree.
+
+    Returns:
+        ``(snapshot_path, total_bytes)``.
+    """
+    import os
+
+    # hf_transfer gives a large speedup on multi-GB pulls; the whole point of
+    # this tool is minimising billed seconds.
+    os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+    os.environ["HF_HOME"] = mount
+
+    if download is None:
+        from huggingface_hub import snapshot_download
+
+        download = snapshot_download
+    if measure is None:
+
+        def measure(path: str) -> int:
+            return sum(
+                os.path.getsize(os.path.join(r, f))
+                for r, _, fs in os.walk(path)
+                for f in fs
+            )
+
+    path = download(repo_id, allow_patterns=patterns)
+    try:
+        return path, measure(path)
+    finally:
+        # INSIDE the container, which is what Modal's own error message said:
+        # "commit() can only be called on a mounted volume inside a container".
+        # `cdbd9087` read that as "do not commit" and deleted the call; the
+        # instruction was to MOVE it. Without it the writes are not durable and
+        # the tool reports a success that leaves the Volume nearly empty.
+        volume.commit()
+
+
 def run_prefetch(plan: PrefetchPlan) -> str:
-    """Execute *plan* on Modal and commit the Volume.
+    """Execute *plan* on Modal, commit the Volume, and verify it persisted.
 
     Imports ``modal`` lazily so the plan-building path — and its tests — stay
     importable in the default pixi env, which has no ``modal``.
@@ -227,7 +386,10 @@ def run_prefetch(plan: PrefetchPlan) -> str:
         plan: The validated plan.
 
     Returns:
-        The remote function's summary string.
+        The remote function's summary string, plus the verified durable size.
+
+    Raises:
+        PrefetchNotDurable: The download did not persist to the Volume.
     """
     import modal
 
@@ -247,35 +409,46 @@ def run_prefetch(plan: PrefetchPlan) -> str:
         serialized=True,
         secrets=[modal.Secret.from_dict({"HF_HOME": plan.volume_mount})],
     )
-    def _fetch(repo_id: str, patterns: list[str], mount: str) -> str:
-        import os
-
-        # hf_transfer gives a large speedup on multi-GB pulls; the whole point
-        # of this tool is minimising billed seconds.
-        os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
-        os.environ["HF_HOME"] = mount
-        from huggingface_hub import snapshot_download
-
-        path = snapshot_download(repo_id, allow_patterns=patterns)
-        total = sum(
-            os.path.getsize(os.path.join(r, f))
-            for r, _, fs in os.walk(path)
-            for f in fs
-        )
-        return f"{path} :: {total / 1e9:.2f} GB"
+    def _fetch(repo_id: str, patterns: list[str], mount: str) -> tuple[str, int]:
+        return fetch_snapshot(repo_id, patterns, mount, volume)
 
     with app.run():
-        result: str = _fetch.remote(
+        path, reported = _fetch.remote(
             plan.repo_id, list(plan.allow_patterns), plan.volume_mount
         )
-    # NO controller-side volume.commit(). Modal raises
-    # "commit() can only be called on a mounted volume inside a container"
-    # — observed live 2026-09-17, AFTER a successful 144.1 GB download, so
-    # the crash reported failure on work that had actually succeeded and
-    # swallowed the size line. Modal commits the volume itself when the
-    # function returns; the fetched tree was verified present afterwards via
-    # `modal volume ls`. Committing here is neither needed nor permitted.
-    return result
+
+    # The commit now happens INSIDE the container (see fetch_snapshot). It is
+    # still not trusted on its own: this re-reads the blob store from the
+    # controller, through a separate connection, after the app has stopped. On
+    # 2026-09-17 a reported 144.05 GB success left 1.96 GB on the Volume and was
+    # recorded in PROGRESS.md as complete — a second, independent observation is
+    # what makes that impossible to repeat.
+    durable = verify_resident(
+        plan.repo_id,
+        reported_bytes=reported,
+        lister=lambda p: _list_volume(volume, p),
+    )
+    return (
+        f"{path} :: reported {reported / 1e9:.2f} GB, "
+        f"durable on {plan.volume_name} {durable / 1e9:.2f} GB"
+    )
+
+
+def _list_volume(volume: Any, path: str) -> list[Any]:  # noqa: ANN401 — as above
+    """List *path* on *volume*, treating a missing directory as empty.
+
+    Args:
+        volume: A ``modal.Volume``.
+        path: Volume-relative directory.
+
+    Returns:
+        The entries, or ``[]`` when the path does not exist — which is itself a
+        legitimate answer here (a fetch that persisted nothing at all).
+    """
+    try:
+        return list(volume.listdir(path))
+    except Exception:  # noqa: BLE001 — absent path is data, not an error
+        return []
 
 
 def main(argv: list[str] | None = None) -> int:
