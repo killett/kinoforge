@@ -77,6 +77,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
       ```bash
       (
           eval "$(pixi shell-hook -e live-modal)"
+32. `2026-09-18 15:38:21` — [MiniMax-H3 max-length clip → FlashVSR 1080p (temporally chunked) → RIFE 60 fps → soundtrack re-mux, on Modal — upscale+interpolate (long-clip chain)](#32-2026-09-18-153821--minimax-h3-max-length-clip--flashvsr-1080p-temporally-chunked--rife-60-fps--soundtrack-re-mux-on-modal--upscaleinterpolate-long-clip-chain)
 
           python -m kinoforge generate \
               --config examples/configs/modal-diffusers-minimax-h3-t2va-long-640.yaml \
@@ -3309,3 +3310,191 @@ both were caught by the pod and both are now regression-tested:
    on a machine that has ffmpeg.
 
 Same tuple `(modal, DiffusersEngine, MiniMaxAI/MiniMax-H3, t2va)`.
+
+## 32. `2026-09-18 15:38:21` — MiniMax-H3 max-length clip → FlashVSR 1080p (temporally chunked) → RIFE 60 fps → soundtrack re-mux, on Modal — upscale+interpolate (long-clip chain)
+
+**First 14-second clip through the upscale + interpolate chain, and the first
+chunked upscale.** Every prior FlashVSR entry (§13, §14, §19, §21, §24, §27) is
+≤ 81 frames; this one is 345 frames / 14.375 s, which OOM'd the 80 GB A100
+un-chunked and had to be split in time (`pipeline/chunk.py`, new). Two defects
+in the FlashVSR path were found and fixed on the way — see "Failure modes".
+The chain's source is the 640x352 MiniMax-H3 max-length clip logged as a
+See-also under §31 (its soundtrack is what gets re-muxed at the end).
+
+| | |
+|---|---|
+| **Stack triple** | `Modal / DiffusersEngine (FlashVSR upscaler, temporally chunked) + DiffusersEngine (RIFE interpolator) / JunhaoZhuang/FlashVSR-v1.1 + hzwer/RIFE RIFEv4.26` |
+| **Mode** | upscale (640x352 → 2560x1408 native 4x → 1964x1080 height target, 5 chunks) → interpolate (24 → 60 fps) → local ffmpeg audio re-mux |
+| **New capability axis** | **Temporal chunking** (`upscale.chunk_frames` / `chunk_overlap`, commit `2d468143`), **8n+1 stream-length padding** in the FlashVSR pod (`7580ee58`), the two `-long` lifecycle siblings (`a34d654b`), and the first clip longer than 81 frames through FlashVSR and RIFE. Also the first output of this chain that carries audio (restored from the H3 source — FlashVSR and RIFE both write frames only). |
+| **First-success SHA** | `9684af4e` (code; docs commits followed) |
+| **Date (local TZ)** | 2026-09-18 15:38:21 |
+| **GPU** | Stage 1: Modal `A100-80GB` (serverless, `accelerators: [A100-80GB, H100]`). Stage 2: Modal T4-class (`accelerators: [T4, L4, A10]`; the log names the T4-first preference). |
+| **Wall clock** | Stage 1: `App deployed` 2.0 s (cached bake), provision 15:24:06, chunks 1-5 started 15:24:16 / 15:25:32 / 15:26:32 / 15:27:31 / 15:28:30 (**~60-77 s per 77-frame chunk**, upload → render → fetch), local join 15:29:30, 1080p downscale 15:30:46, published 15:31:24, destroyed 15:31:29 — **7.4 min pod**. Stage 2: bake 240 s (embedded servers package changed since §25), `/health` + GPU 87 % at 15:36:27, published 15:38:21, destroyed 15:38:27 — **~2.5 min of GPU**. Re-mux < 2 s. |
+| **Est. spend** | ~$0.31 (A100 7.4 min) + ~$0.05 (T4-class) ≈ **$0.36** for the chain; the five failed upscale attempts before it ≈ $0.70 (see below). |
+| **Layer / phase** | Operator brief 2026-09-18 (three verified commands: H3 max-length → 1080p → 60 fps). Brainstorm decisions in `PROGRESS.md` RESUME SNAPSHOT (second 2026-09-18 session). |
+
+### Exact command (from `/workspace`; this is the operator's "command B" shape plus the re-mux)
+
+```bash
+(
+    eval "$(pixi shell-hook -e live-modal)"
+    set -euo pipefail
+
+    SRC="/workspace/output/20260918-152249_diffusers_MiniMax-H3_A-giant-chocolate-vo.mp4"
+    MARK="$(mktemp)"
+
+    python -m kinoforge upscale \
+        --config examples/configs/modal-diffusers-flashvsr-1080p-upscale-long.yaml \
+        --video "$SRC" \
+        --no-reuse
+
+    UPSCALED="$(find /workspace/output -name '*upscaled*.mp4' -newer "$MARK" \
+        | sort | tail -1)"
+    test -n "$UPSCALED" || { echo "stage 1 published no new file"; exit 1; }
+
+    python -m kinoforge interpolate \
+        --config examples/configs/modal-diffusers-rife-60fps-interpolate-long.yaml \
+        --video "$UPSCALED" \
+        --fps 60 \
+        --no-reuse
+
+    INTERPOLATED="$(find /workspace/output -name '*interpolated*.mp4' -newer "$MARK" \
+        | sort | tail -1)"
+    test -n "$INTERPOLATED" || { echo "stage 2 published no new file"; exit 1; }
+
+    FINAL="${INTERPOLATED%.mp4}_with-audio.mp4"
+    ffmpeg -y -loglevel error -i "$INTERPOLATED" -i "$SRC" \
+        -map 0:v:0 -map 1:a:0 -c:v copy -c:a copy -shortest "$FINAL"
+    echo "final: $FINAL"
+)
+```
+
+### YAML config(s)
+
+Both files are committed at `9684af4e`; the load-bearing deltas from their
+short-clip siblings (`modal-diffusers-flashvsr-1080p-upscale.yaml`,
+`modal-diffusers-rife-60fps-interpolate.yaml`) are:
+
+```yaml
+# modal-diffusers-flashvsr-1080p-upscale-long.yaml
+engine:
+  diffusers:
+    server_cmd:            # expandable_segments: the 69-frame attempt died with
+      - "env"              # 10 GiB "reserved but unallocated" (fragmentation)
+      - "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+compute:
+  lifecycle:
+    job_timeout: 45m       # NOT enforced on Modal —
+    boot_timeout: 60m      # THIS is @app.function(timeout=): boot AND render
+    max_lifetime: 90m
+    budget: 5.0
+upscale:
+  engine: flashvsr
+  scale: 1080p
+  chunk_frames: 69         # 69 kept + 8 warm-up = 77 rendered, padded on the
+  chunk_overlap: 8         # pod to 81 = §24's exact envelope; 5 chunks / 345 f
+```
+
+```yaml
+# modal-diffusers-rife-60fps-interpolate-long.yaml
+compute:
+  lifecycle:
+    boot_timeout: 60m      # same Modal rule; 30m on the sibling
+    job_timeout: 40m
+    max_lifetime: 90m
+    budget: 2.0
+```
+
+### Prompt
+
+None (upscale/interpolate are video-in / video-out). Source clip prompt: §31's
+second See-also (the operator's chocolate-volcano prompt).
+
+### Env vars / secret names (names only — never values)
+
+`MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, `HF_TOKEN` (FlashVSR + RIFE weight fetch).
+
+### Output artifacts
+
+| Stage | Path | Dimensions | Size / SHA-256 |
+|---|---|---|---|
+| source (§31 See-also) | `output/20260918-152249_diffusers_MiniMax-H3_A-giant-chocolate-vo.mp4` | 640x352, 24 fps, 345 f, 14.375 s, aac stereo 32 kHz | 4,429,166 B / `3651e5e632d5b83037aac4aa0370fba5c298d13fc11dbed2d304516c0c878892` |
+| 1 — upscaled | `output/20260918-153124_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4` | **1964x1080**, 24 fps, 345 f (`nb_frames=N/A` — fragmented mp4 from the pipe:1 downscale; `-count_frames` gives 345), 14.375 s, no audio | 19,064,026 B / `650375af40d1531ff12959672708ace6734c380fb0c851d6d0cf757e037fb866` |
+| 2 — interpolated | `output/20260918-153821_interpolated_rife_interp_interpolate.mp4` | 1964x1080, **60 fps, 862 f**, 14.367 s, no audio | 30,385,960 B / `709234079e1c110f8b5b883ba97dddee8baf8a7d0a10e58ec82f3cf5122f43eb` |
+| final — re-muxed | `output/20260918-153821_interpolated_rife_interp_interpolate_with-audio.mp4` | 1964x1080, 60 fps, 862 f, 14.367 s, **aac stereo 32 kHz** (stream copy) | 30,733,468 B / `c19f0000b98bf35064306beb2b9332010237d0878eb561b972443c0dd126cf5c` |
+
+### Frame math
+
+345 source frames → `plan_chunks(345, chunk_frames=69, overlap=8)` = (0,69,0)
+(61,77,8) (130,77,8) (199,77,8) (268,77,8); each chunk padded on the pod to
+the smallest 8n+1 whose output covers it (69 → 73, 77 → 81), rendered, trimmed
+back to 69/77, then the join drops 8 warm-up frames from chunks 2-5 →
+69 + 4×69 = **345**. FlashVSR 4x: 640x352 → 2560x1408; lanczos to height 1080
+→ 1964x1080 (width auto, even). RIFE: round(14.375 s × 60) = 862.5 → **862**
+frames at 60 fps = 14.367 s; `-shortest` trims the 14.375 s soundtrack to
+14.336 s (AAC frame granularity), within `av_qa`'s duration gate.
+
+### Success criterion
+
+Exit 0 through all three stages; final clip 1080p-height, 60 fps, carrying the
+H3 soundtrack; `tools/av_qa.py --expect-rate 32000 --cut-scan` PASS on the
+final and `--no-audio --cut-scan` PASS on the upscale (no delta spike at any
+chunk seam — frames 69/138/207/276); frame QA PASS; teardown verified from
+fresh processes after each orchestrator exit.
+
+### QA verdicts
+
+- **Upscale (1964x1080): PASS, high quality.** Contact sheet: same composition
+  as the source, sharper candy / fur / lava-crack detail, no false colour.
+  Native-res crop at frame 300 (lanczos'd source vs FlashVSR, same crop):
+  FlashVSR resolves individual candies and ground grain the source smears, no
+  invented structure — and the figure sits in the same place in both, so the
+  padded-then-trimmed output is **frame-aligned** (no ±4-frame streaming
+  offset). `--cut-scan`: **no hard cuts — no seam detectable at any of the
+  four chunk boundaries.**
+- **Interpolate (60 fps): PASS.** Sheet identical in content; three consecutive
+  native-res frames (750/751/752) show a clean in-between with mild motion
+  blur on the fast-moving legs, no double-image ghosting. Honest limit as in
+  §25: sampled frames cannot prove inter-frame smoothness.
+- **Final: PASS.** Audio identical to the source (peak 0.858, rms 0.153, L/R
+  corr 0.812 — a stream copy), duration within 31 ms of the video.
+
+### Failure modes encountered before success (all torn down, verified)
+
+1. **345 frames un-chunked → CUDA OOM** on the A100-80GB (77.8 GiB in use) —
+   FlashVSR holds the whole clip on the GPU. → temporal chunking (`2d468143`).
+2. **69-frame chunk at 960x544 → OOM** with 10.07 GiB reserved-but-unallocated
+   → `expandable_segments` (`6e6eefb3`).
+3. **40-frame chunk → `Kernel size (4x3x3) can't be greater than actual input
+   size (3x…)`** — the pipeline rounds `num_frames` to 4k+1 WITHOUT padding the
+   LQ tensor. Read from upstream source: it returns `8*((n-1)//8) - 3` frames,
+   so **every earlier FlashVSR run had silently lost its tail** (§24: 81 in, 77
+   out). → pad to the smallest 8n+1 whose output covers the source, trim back
+   (`7580ee58`).
+4. **41-frame chunk at 960x544 → OOM on a single 40.34 GiB allocation** (an S×S
+   block mask, S≈208k) over a ~69 GiB baseline that was the same for 345, 69
+   and 41 frames. **Frame count was never the driver — the 4x OUTPUT canvas
+   is.** 960x544 → 3840x2176 fits no Modal card. → generate the source at
+   640x352 (2560x1408 out, token window 84,480 < §24's proven 86,400), the
+   §31 See-also above. `tile_size` does not help: it reaches the pipeline as a
+   bare `tiled=True`.
+5. One launch against an uncommitted tree (process error, no pod work lost;
+   orphan destroyed by hand) — memory `precommit-all-files-ignores-untracked`.
+
+### Notes
+
+- **Audio must be re-muxed by the caller.** `upscalers/flashvsr/_runtime.py`
+  and `interpolators/rife/_runtime.py` both `iio.imwrite` a frame array; a
+  joint-audio source loses its track at stage 1. Both stages preserve the
+  wall-clock duration, so `-map 1:a:0 -c:a copy` from the source lines up.
+- **Modal does not enforce `job_timeout`**: `boot_timeout` is
+  `@app.function(timeout=)` and must cover boot AND render (the validator
+  says so on every dry-run). Both `-long` cfgs set 60m.
+- **Spatial tiling is the open follow-up** for upscaling a 960x544 source
+  without pre-downscaling: split each frame into pieces whose 4x canvas fits,
+  upscale, stitch locally, re-mux — the operator's step 3.
+- `_flash_3_hub` on the H3 source run: `/health` read `attention_backend:
+  default` (see the §31 See-also).
