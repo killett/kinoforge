@@ -3425,6 +3425,41 @@ improvement. And the sentinel is `"9999"` rather than the obvious `"99.0"`, beca
 value `test_field_consumption_parity::_above_every_cuda` uses to mean "no entry can meet this". *A
 sentinel that collides with a guard's impossible-value fixture is a trap set for the next reader.*
 
+### SESSION 2026-09-17 — the `unknown` GPU type: no defect, and a claim this ledger invented
+
+**Investigated, nothing to fix, and the interesting part is why the question existed at all.** The
+previous NEXT ACTION described RunPod's `unknown` GPU type as "a bookable GPU type ... priced and
+bookable". Read verbatim, it is neither:
+
+```
+{"id": "unknown", "displayName": "unknown", "memoryInGb": 0,
+ "secureCloud": false, "communityCloud": false,
+ "manufacturer": "unknown", "cudaCores": 0,
+ "lowestPrice": {"minimumBidPrice": null, "uninterruptablePrice": null}}
+```
+
+**Three independent things exclude it**, verified by running the real `find_offers` against the live
+catalog rather than reasoned from the schema: the null-price guard drops it before an `Offer` exists;
+`memoryInGb: 0` loses to any `min_vram_gb > 0` and no shipped RunPod cfg sets 0; and it is in
+**neither pool**, which every real GPU contradicts by being in at least one. A deliberately wide-open
+placement (`min_vram_gb=0, min_cuda="0", max_usd_per_hr=100`) returns **31 offers with `unknown`
+absent**.
+
+**Where the false claim came from is the lesson, and it is a distinct failure shape from
+over-blocking.** The probe that first surfaced the id listed only ids — it was hunting non-NVIDIA
+vendor prefixes for U44. The probe that listed prices filtered to `memoryInGb >= 24`, which excludes
+this row at 0. So the id was seen in one place, prices in another, and "priced" was filled in across
+the gap by assumption. *Two probes that never overlapped are not corroboration.* Same shape as U36's
+"realized $2.39 on the L4", which was the MI300X all along: both were inferences stitched between
+measurements that did not actually touch.
+
+**No code change, deliberately, and that is the harder call.** A pool-flag filter — skip any row in
+neither pool — is defensible and could not false-positive the way U43's name match or U44's vendor
+prefix could. But it guards a case two existing filters already cover and that has never been
+observed, and it would be the third new guard in three days on a codebase that just recorded four
+over-blocking near-misses. The pool flags are written into U49's row as the REASON it is safe, so the
+next reader does not re-derive it — documentation where a guard would have been accretion.
+
 
 **The 2026-09-12 "secure is cheaper" reading was CORRECT, and its interpretation was the error — and
 this correction is itself a correction.** Mid-session this entry said the $0.27 "does not reproduce"
