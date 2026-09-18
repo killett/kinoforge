@@ -95,6 +95,15 @@ spec:
 upscale:
   engine: flashvsr
   scale: 1080p
+  # TEMPORAL CHUNKING — the load-bearing difference from the sibling. FlashVSR
+  # holds the whole clip on the GPU, so memory grows with the frame count:
+  # the un-chunked 345-frame run OOM'd the 80 GB A100 on 2026-09-18 (77.8 GiB
+  # in use at frame ~130, ~200 GB extrapolated). 69 kept frames + 8 warm-up =
+  # 77 rendered per chunk, the same count §24 proved, at 2.3x the pixels
+  # (~50 GB est). Five chunks for 345 frames, each upscaled on the same pod,
+  # joined on the controller (pipeline/chunk.py).
+  chunk_frames: 69
+  chunk_overlap: 8
   flashvsr:
     weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
     # cp313 BSA wheel — built on Modal (tools/build_bsa_wheel_modal.py) against

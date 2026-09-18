@@ -2899,6 +2899,8 @@ def generate(
                     instance=session.instance,
                     cfg=cfg_dict,
                     cancel_token=cancel_token,
+                    chunk_frames=cfg.upscale.chunk_frames,
+                    chunk_overlap=cfg.upscale.chunk_overlap,
                 )
             )
 
@@ -2996,12 +2998,21 @@ def generate(
         # returns "clip" but still needs the upscaled file on disk).
         upscaled = state.artifacts.get("upscaled")
         _downscale_to = upscaled.meta.get("downscale_to") if upscaled else None
+        # A chunked upscale joins its chunks into a controller-local file://
+        # and marks it `materialize`, so it is published like a pod URL would
+        # be even when no height-target downscale is pending.
         _needs_materialize = (
             upscaled is not None
             and sink is not None
             and (
                 upscaled.uri.startswith(("http://", "https://"))
-                or (_downscale_to is not None and upscaled.uri.startswith("file://"))
+                or (
+                    upscaled.uri.startswith("file://")
+                    and (
+                        _downscale_to is not None
+                        or bool(upscaled.meta.get("materialize"))
+                    )
+                )
             )
         )
         if _needs_materialize and upscaled is not None and sink is not None:

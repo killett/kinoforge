@@ -806,6 +806,16 @@ class UpscaleConfig(BaseModel):
         seedvr2: SeedVR2-specific block; required when ``engine == "seedvr2"``.
         spandrel: Spandrel-specific block; required when ``engine == "spandrel"``.
         flashvsr: FlashVSR-specific block; required when ``engine == "flashvsr"``.
+        chunk_frames: When set, UpscaleStage splits the source into chunks
+            that each KEEP this many frames, upscales them one at a time on
+            the same pod and joins the results — the only way a clip longer
+            than the card's memory allows (FlashVSR holds the whole clip on
+            the GPU; 345 frames at 960x544 OOM'd an 80 GB A100). ``None``
+            (default) keeps the single-call path every short-clip recipe was
+            proven on. Clips no longer than ``chunk_frames`` are never split.
+        chunk_overlap: Warm-up frames rendered before each chunk's kept range
+            and discarded, so the streaming model has temporal context at
+            every seam. Must be below ``chunk_frames``.
     """
 
     engine: str
@@ -813,6 +823,26 @@ class UpscaleConfig(BaseModel):
     seedvr2: SeedVR2EngineConfig | None = None
     spandrel: SpandrelEngineConfig | None = None
     flashvsr: FlashVSREngineConfig | None = None
+    chunk_frames: int | None = None
+    chunk_overlap: int = 8
+
+    @model_validator(mode="after")
+    def _validate_chunking(self) -> Self:
+        if self.chunk_frames is not None and self.chunk_frames <= 0:
+            raise ConfigError(
+                f"upscale.chunk_frames must be positive, got {self.chunk_frames}"
+            )
+        if self.chunk_overlap < 0:
+            raise ConfigError(
+                f"upscale.chunk_overlap must be >= 0, got {self.chunk_overlap}"
+            )
+        if self.chunk_frames is not None and self.chunk_overlap >= self.chunk_frames:
+            raise ConfigError(
+                "upscale.chunk_overlap must be below chunk_frames (every chunk "
+                f"would keep nothing); got overlap={self.chunk_overlap} "
+                f"chunk_frames={self.chunk_frames}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_flashvsr_wiring(self) -> Self:

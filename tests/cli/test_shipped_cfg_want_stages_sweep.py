@@ -44,6 +44,7 @@ ADVERTISABLE_STAGES = frozenset({"t2v", "upscale", "interpolate"})
 # report and made the pod structurally unattachable.
 U14_CHANGED_CFGS = frozenset(
     {
+        "modal-diffusers-flashvsr-1080p-upscale-long.yaml",
         "modal-diffusers-flashvsr-1080p-upscale.yaml",
         "modal-diffusers-flashvsr-x4-upscale.yaml",
         "runpod-diffusers-flashvsr-1080p-upscale.yaml",
@@ -65,6 +66,7 @@ U14_CHANGED_CFGS = frozenset(
 # which is why they are enumerated separately rather than folded in.
 U19_CHANGED_CFGS = frozenset(
     {
+        "modal-diffusers-rife-60fps-interpolate-long.yaml",
         "modal-diffusers-rife-60fps-interpolate.yaml",
         "runpod-diffusers-rife-60fps-interpolate.yaml",
     }
