@@ -73,6 +73,10 @@ ignore_missing_imports = true
 module = ["imageio", "imageio.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]  # huggingface_hub: installed on the prefetch container only, never locally.
+module = ["huggingface_hub", "huggingface_hub.*"]
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]  # Modal SDK lives only in the live-modal env; lazy-imported in provider seams.
 module = ["modal", "modal.*"]
 ignore_missing_imports = true

@@ -416,10 +416,11 @@ exits.
    this must not perturb the Wan image — verify the two images stay independent.
 4. **Image bake cost.** The first deploy of any new Modal config pays a full
    image build (356 s observed for FlashVSR on 2026-09-17). Budget it once.
-5. **License.** `minimax-h3-community-license-agreement`. No gating notice was
-   visible on the repo, but acceptance may still be required for download — a
-   prefetch that 401s is the cheapest possible place to discover that, which is
-   another argument for B preceding C.
+5. ~~**License gating.**~~ **RETIRED 2026-09-17 by measurement.** The HF API
+   reports `gated=False, private=False` for `MiniMaxAI/MiniMax-H3`, both
+   anonymously and with our token, at 4.58M downloads. The
+   `minimax-h3-community-license-agreement` governs USE, not download access.
+   No acceptance step is needed.
 6. **H200 now makes an under-capped config launch-then-die instead of fail-free.**
    Every Modal offer is `mode="serverless"`, so `filter_offers` skips the
    `max_usd_per_hr` ceiling at selection time — but `_enforce_rate_cap`
