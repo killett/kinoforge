@@ -1,0 +1,155 @@
+# MiniMax-H3 text-to-video-AND-AUDIO (t2va) on Modal H200.
+#
+# First joint-audio model in kinoforge, first H200 config, first `mode: t2va`.
+# Design: docs/superpowers/specs/2026-09-17-minimax-h3-t2va-design.md
+# Plan:   docs/superpowers/plans/2026-09-17-minimax-h3-sub-project-c.md
+#
+# Weights are ALREADY on the `kinoforge-hf-cache` Modal Volume (Sub-project B:
+# fetched on a T4 for ~$0.08 instead of ~$3.94 on this card). The provider
+# mounts that Volume at HF_HOME=/cache/hf, so from_pretrained READS rather than
+# downloads. Do not delete the Volume expecting a cheap re-fetch.
+#
+# Five things here are load-bearing and cost real money if edited carelessly:
+#
+#  1. `capability.supported_modes: [t2va]` — the diffusers engine's shared probe
+#     declares t2v only, so without this block `validate_request` refuses the
+#     run AFTER the pod is booked. Never widen the shared probe instead: cached
+#     Wan profiles say ["t2v"] and `verify` tears their pods down on a mismatch.
+#
+#  2. `max_usd_per_hr: 5.00` — H200 is $4.54/hr and every Modal offer is
+#     serverless, so `filter_offers` SKIPS the cap at select time and
+#     `_enforce_rate_cap` applies it AFTER launch. A lower cap pays for a boot
+#     it cannot keep. Frozen by tests/providers/modal/test_h200_rate_cap.py.
+#
+#  3. `diffusers==0.40.0` exactly — 0.39.0 and 0.38.0 do not export
+#     MiniMaxH3ModularPipeline. This pin is H3's alone; the Wan images keep
+#     `diffusers>=0.32` and must not be dragged along.
+#
+#  4. `boot_timeout: 45m` — ~124 GiB of weights come off the Volume into HOST
+#     RAM (the components manager holds them there and moves one component at a
+#     time onto the card). It is ALSO the Modal function `timeout`, so it has to
+#     cover boot AND generation, not just boot.
+#
+#  5. 1344x768 / 124 frames is the model's own trained canvas and its shortest
+#     legal clip: 5.17 s of the 5-15 s window, `17*n+5` aligned. If a run OOMs,
+#     drop to 960x544 — the diffusers H3 doc measures it at ~2.3x faster per
+#     step — before touching hardware. height and width must stay multiples
+#     of 32 and fps must stay 24; the server refuses violations at the HTTP edge
+#     rather than letting the pipeline raise on the booked card.
+#
+# Modal cfgs need the live-modal env: `pixi run -e live-modal ...`. The default
+# env has no `modal` module and dies with ModuleNotFoundError.
+#
+# NO `backend_options.skypilot` block — those keys are SkyPilot-only and fail
+# validation here (the owning provider validates its own namespace).
+#
+# Usage (one-shot; --no-reuse so the pod auto-destroys, then ALWAYS verify with
+# a fresh `pixi run kinoforge list` — a mid-run "No running instances" line is
+# not proof):
+#   pixi run -e live-modal kinoforge generate \
+#     --config examples/configs/modal-diffusers-minimax-h3-t2va.yaml \
+#     --mode t2va \
+#     --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+#     --no-reuse
+#
+# `prompt:` carries the standard video-gen smoke prompt (verbatim from
+# examples/configs/prompts/field-realistic.txt) per feedback_standard_test_prompt.
+
+mode: t2va
+prompt: "Photorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace — luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking."
+
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    # Modal's serialized web_server fn requires image-Python == controller
+    # (live-modal env = 3.13). python:3.13-slim matches; the provision step
+    # pip-installs the cu124 cp313 torch wheels, which bundle the CUDA runtime.
+    image: "python:3.13-slim"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.minimax_h3_server"
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      # EXACT pin — see note 3 in the header.
+      - "diffusers==0.40.0"
+      # Qwen3VLForConditionalGeneration is H3's conditioner (MiniMax-H3 reads
+      # its 50th decoder layer's unnormalized hidden state, so the full released
+      # checkpoint is used with its LM head unused). Qwen3-VL lands in
+      # transformers 4.57; on an older release the component class cannot be
+      # resolved at all.
+      - "transformers>=4.57"
+      # accelerate is not optional here: ComponentsManager.enable_auto_cpu_offload
+      # raises ImportError without it, and that is the whole memory strategy.
+      - "accelerate>=1.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      # Util-probe deps: psutil -> cpu/mem/disk %, nvidia-ml-py -> pynvml GPU%.
+      # Load-bearing, not optional: the CLAUDE.md live-smoke rule requires
+      # polling gpuUtilPercent, and a ~10-minute generation with no util signal
+      # is exactly the 2026-07-05 RIFE failure (12 min at 0% GPU, unnoticed).
+      - "psutil>=5.9"
+      - "nvidia-ml-py>=12"
+    base_url: "http://localhost:8000"
+    prompt_body_key: "prompt"
+    embed_modules: ["kinoforge.engines.diffusers.servers"]
+    capability:
+      # See note 1 in the header. `supports_joint_audio: true` is the first
+      # `true` in the repo — and it is a DECLARATION, not a mechanism: the
+      # `_audio_mode` marker it feeds (core/strategy.py:55) is read nowhere.
+      # H3's soundtrack reaches the MP4 through
+      # servers/_av_io.write_mp4_with_audio, on the pod.
+      supported_modes: ["t2va"]
+      max_frames: 360          # 15 s at 24 fps, the checkpoint's ceiling
+      fps: 24                  # fixed by the checkpoint, not a preference
+      max_resolution: [1344, 768]
+      supports_joint_audio: true
+
+models:
+  # Repo ROOT, not FL2VA/. The nested FL2VA manifest declares
+  # `_class_name: MiniMaxH3Pipeline`, a class diffusers does not export at all;
+  # only the root-level modular layout (MiniMaxH3ModularPipeline) is loadable.
+  # This ref is also what render_provision turns into the server's model id.
+  - ref: "hf:MiniMaxAI/MiniMax-H3"
+    kind: base
+    target: checkpoints  # informational; diffusers manages the HF cache
+
+compute:
+  provider: modal
+  image: "python:3.13-slim"
+  mode: pod
+  placement:
+    # ~124 GiB of bf16 weights (transformer 61.7 + Qwen3-VL conditioner 62.1).
+    # H200 (141 GB = 131.3 GiB) is the only card in the Modal catalog above
+    # 80 GB, deliberately — Modal does not publish B200/B300 VRAM and inventing
+    # the constant is the U48 defect.
+    min_vram_gb: 120
+    min_cuda: "12.4"
+    max_usd_per_hr: 5.00  # >= 4.54; see note 2 in the header
+    accelerators:
+      - "H200"
+  lifecycle:
+    heartbeat_interval_s: 30  # required when warm_reuse_auto_attach=true
+    idle_timeout: 20m
+    job_timeout: 30m
+    time_buffer: 3m
+    max_lifetime: 75m
+    boot_timeout: 45m  # see note 4 in the header
+    budget: 6.0
+
+spec:
+  model: "MiniMax-H3"
+  pipeline: "MiniMaxH3ModularPipeline"
+  # Two schedulers stepped inside a single transformer call: shift=12.0 for the
+  # video rows, shift=3.0 for the audio rows. Both are MiniMaxH3Scheduler, and
+  # this key takes one name, so it names the class.
+  scheduler: "MiniMaxH3Scheduler"
+  width: 1344
+  height: 768
+  num_frames: 124
+  fps: 24
+  num_inference_steps: 50
