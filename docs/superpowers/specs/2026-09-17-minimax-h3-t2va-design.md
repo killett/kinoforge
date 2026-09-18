@@ -291,7 +291,8 @@ None of this was in the spec, and each is a `ValueError` raised from
 |---|---|
 | `height`/`width` multiples of **32** | `canvas_multiple` = VAE spatial compression 16 x `patch_size[2]` 2 |
 | `num_frames` snapped up to `17 * n + 5` | the video VAE's `clip_length` / `tokens_chunk_size` |
-| duration in **5.0-15.0 s** at 24 fps, i.e. 120-360 frames | `min_duration` / `max_duration`; checked on the ALIGNED count |
+| duration in **5.0-15.0 s** at 24 fps, checked on the ALIGNED count | `min_duration` / `max_duration` |
+| **15 s is unreachable; the ceiling is 345 frames = 14.375 s** | 360 aligns to 362 = 15.083 s, so 346-360 look legal and are not |
 | 24 fps, fixed | `MINIMAX_H3_FPS`; everything is resampled onto it |
 | `num_inference_steps` defaults to 50 | `InputParam.template`; guidance-distilled is not step-distilled |
 
@@ -299,6 +300,10 @@ Trained canvas is 1344x768 (`canvas_short_edge` 768 at 16:9, which is also the
 `canvas_max_pixels` budget); 960x544 is measured at ~2.3x faster per step and is
 the first mitigation if anything OOMs. Default `num_frames` is **124** — the
 shortest legal clip, and the only `17n+5` value in the 120-126 range.
+
+**Clip lengths are DISCRETE**, one per `17n+5`: 124 (5.167 s), 141, 158, 175,
+192 (exactly 8.000 s), 209, 226, 243, 260, 277, 294, 311, 328, 345 (14.375 s).
+Nothing between them exists, and nothing above 345 does either.
 
 The server re-states all of it and refuses violations at the HTTP edge, so a bad
 number costs nothing instead of costing a load.

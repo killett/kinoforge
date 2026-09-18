@@ -3232,6 +3232,23 @@ is the decoded frames and is a usable "denoise finished" marker.
 at module import and that module is imported lazily inside the `/util` handler,
 so it counts from the first `/util` call. Affects `wan_t2v_server` too.
 
+**Operator question answered 2026-09-18, and it found a defect.** "Can this
+model produce 15-second clips?" — **No. The ceiling is 345 frames = 14.375 s.**
+The count is snapped UP to the next `17*n+5` the video VAE can decode and the
+5-15 s window is checked against the ALIGNED value, so 360 frames (a naive
+"15 s") aligns to 362 = 15.083 s and is refused. Lengths are DISCRETE: 124
+(5.167 s), 141, 158, 175, 192 (exactly 8.000 s), 209, 226, 243, 260, 277, 294,
+311, 328, 345. **The defect:** the server bounded `num_frames` at `le=360`, so
+all 15 values in 346-360 passed the HTTP gate and would have raised inside
+`before_denoise` — on a booked H200, which is the precise failure the gate
+exists to prevent. Raw bounds were also too STRICT at the bottom (120, 119 and
+even 108 all align to 124 = 5.167 s and are fine). Fixed by validating the
+ALIGNED duration exactly as the pipeline does, rather than approximating it with
+frame bounds; the cfg's `capability.max_frames` was also lying at 360 and is now
+345. Cost warning for long clips: 345 frames is 102 latent frames against 124's
+37, i.e. 2.8x the video rows through a superlinear attention, so budget well
+above the ~8.5 min the 124-frame clip took.
+
 **Spend on H3: ~$1.3 of the $20** across three live attempts (~$0.19 + ~$0.97 +
 ~$0.8) plus ~$0.15 of T4/CPU probes. **Next action: nothing is blocked.** Optional
 follow-ups, cheapest first — (a) human listen on the soundtrack, (b) try

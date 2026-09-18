@@ -91,12 +91,46 @@ _CANVAS_MULTIPLE = 32
 #: ``MINIMAX_H3_FPS``. Fixed by the checkpoint: everything H3 generates and
 #: conditions on is resampled onto 24 fps. Not a preference, not overridable.
 _FPS = 24
-#: ``min_duration`` 5.0 s and ``max_duration`` 15.0 s at ``_FPS``. The pipeline
-#: checks the duration of the ALIGNED frame count, so a request just inside the
-#: window can still be rejected after rounding; these are the bounds the
-#: pipeline itself reports in its error message.
-_MIN_FRAMES = int(5.0 * _FPS)
-_MAX_FRAMES = int(15.0 * _FPS)
+#: The video VAE encodes ``clip_length`` 17 pixel frames per chunk and keeps
+#: ``tokens_chunk_size`` 5 latents, so a frame count is snapped UP to the next
+#: ``17 * n + 5`` it can decode.
+_FRAMES_PER_CHUNK = 17
+_LATENTS_PER_CHUNK = 5
+
+
+def _align_frames(num_frames: int) -> int:
+    """Snap *num_frames* up to the next count the video VAE can decode.
+
+    Mirrors ``diffusers.modular_pipelines.minimax_h3.align_num_frames``.
+
+    Args:
+        num_frames: The requested count.
+
+    Returns:
+        The next value congruent to 5 mod 17, at or above *num_frames*.
+    """
+    return num_frames + (_LATENTS_PER_CHUNK - num_frames) % _FRAMES_PER_CHUNK
+
+
+#: ``min_duration`` / ``max_duration``. The gate below checks the duration of
+#: the ALIGNED count, which is what the pipeline itself checks — not the raw
+#: request. Approximating it with raw frame bounds is wrong in BOTH directions:
+#:
+#: * too permissive at the top — the raw edge is 360 frames, but 360 aligns up
+#:   to 362 = 15.083 s and is refused, so 346..360 would pass a naive bound and
+#:   then raise ValueError inside ``before_denoise``, on a booked H200 minutes
+#:   after a 124 GiB load. The diffusers source names this exact trap in a
+#:   comment. **15.0 s is not reachable; the ceiling is 345 frames = 14.375 s.**
+#: * too strict at the bottom — 120 (and 119, and 108) all align up to 124 =
+#:   5.167 s, which the model accepts happily.
+_MIN_DURATION_S = 5.0
+_MAX_DURATION_S = 15.0
+#: The longest clip that actually exists, for the error message and the docs.
+_MAX_FRAMES = max(
+    a
+    for a in (_align_frames(n) for n in range(1, int(_MAX_DURATION_S * _FPS) + 1))
+    if a / _FPS <= _MAX_DURATION_S
+)
 #: The blocks' own default for ``num_frames``: the shortest legal clip, and the
 #: only ``17 * n + 5`` value in the 120-126 range.
 _DEFAULT_FRAMES = 124
@@ -169,7 +203,7 @@ class GenerateRequest(BaseModel):
     prompt: str
     width: int = Field(_DEFAULT_WIDTH, ge=_CANVAS_MULTIPLE, le=4096)
     height: int = Field(_DEFAULT_HEIGHT, ge=_CANVAS_MULTIPLE, le=4096)
-    num_frames: int = Field(_DEFAULT_FRAMES, ge=_MIN_FRAMES, le=_MAX_FRAMES)
+    num_frames: int = Field(_DEFAULT_FRAMES, ge=1, le=4096)
     num_inference_steps: int = Field(_DEFAULT_STEPS, ge=1, le=200)
     seed: int | None = None
 
@@ -211,6 +245,38 @@ class GenerateRequest(BaseModel):
             raise ValueError(
                 f"must be a multiple of {_CANVAS_MULTIPLE} "
                 f"(MiniMax-H3 canvas_multiple), got {v}"
+            )
+        return v
+
+    @field_validator("num_frames")
+    @classmethod
+    def _check_aligned_duration(cls, v: int) -> int:
+        """Reject a count whose ALIGNED duration falls outside the window.
+
+        This is the pipeline's own check, not an approximation of it: the count
+        is snapped up to the next ``17 * n + 5`` and the duration of THAT is
+        what has to land in 5-15 s. Doing it any other way is wrong at both
+        ends — see the note on ``_MIN_DURATION_S``.
+
+        Args:
+            v: The requested frame count.
+
+        Returns:
+            *v* unchanged.
+
+        Raises:
+            ValueError: The aligned duration is outside the window.
+        """
+        aligned = _align_frames(v)
+        duration = aligned / _FPS
+        if not _MIN_DURATION_S <= duration <= _MAX_DURATION_S:
+            raise ValueError(
+                f"num_frames={v} aligns up to {aligned} ({duration:.3f} s at "
+                f"{_FPS} fps), outside MiniMax-H3's {_MIN_DURATION_S:g}-"
+                f"{_MAX_DURATION_S:g} s window. The frame count is snapped to the "
+                f"next 17*n+5 the video VAE can decode, so the longest clip that "
+                f"exists is {_MAX_FRAMES} frames ({_MAX_FRAMES / _FPS:.3f} s) — "
+                f"{_MAX_DURATION_S:g} s itself is not reachable."
             )
         return v
 

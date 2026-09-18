@@ -101,8 +101,11 @@ def test_generate_refuses_what_a_distilled_checkpoint_cannot_use(
     [
         ({"prompt": "x", "width": 1000}, "width is not a multiple of 32"),
         ({"prompt": "x", "height": 100}, "height is not a multiple of 32"),
-        ({"prompt": "x", "num_frames": 119}, "under 5 s at 24 fps"),
-        ({"prompt": "x", "num_frames": 361}, "over 15 s at 24 fps"),
+        # 107 is itself 17*6+5, so it does NOT align up — 4.458 s, under the
+        # window. 119 and 120 would be WRONG here: both align to 124 = 5.167 s,
+        # which the model accepts.
+        ({"prompt": "x", "num_frames": 107}, "aligns to 4.458 s, under the window"),
+        ({"prompt": "x", "num_frames": 361}, "aligns to 15.083 s, over the window"),
         ({"prompt": "x", "num_inference_steps": 0}, "zero steps"),
         ({"prompt": "x", "fps": 30}, "fps is fixed at 24 by the checkpoint"),
     ],
@@ -420,3 +423,44 @@ def test_the_shipped_cfg_spec_block_is_accepted_verbatim(
     # "Unexpected input" on every generation.
     call = h3_stub_pipe.STATE["pipe"].calls[0]
     assert "_audio_mode" not in call
+
+
+@pytest.mark.parametrize("frames", [346, 352, 360])
+def test_generate_rejects_frame_counts_that_align_past_the_window(
+    server: Any, frames: int
+) -> None:
+    """A count that is in range but ALIGNS out of range is refused here.
+
+    Bug caught: the schema bounds num_frames by the duration window's raw edges
+    (120..360 = 5..15 s at 24 fps), but the pipeline snaps the count up to the
+    next `17 * n + 5` and checks the duration of the ALIGNED value. The largest
+    aligned count inside 15.0 s is 345 (14.375 s); the next is 362 (15.083 s).
+    So every request in 346..360 passes a naive bound and then raises ValueError
+    from `before_denoise` — on a booked H200, minutes after a 124 GiB load.
+
+    The diffusers source calls out this exact trap in a comment: "346 frames
+    would otherwise pass the check and then be rounded up to 362, i.e. 15.083
+    seconds."
+    """
+    with TestClient(server.app) as client:
+        resp = client.post("/generate", json={"prompt": "x", "num_frames": frames})
+    assert resp.status_code == 422, (
+        f"num_frames={frames} accepted, but it aligns to "
+        f"{frames + (5 - frames % 17) % 17} and the pipeline rejects it: {resp.text}"
+    )
+
+
+def test_generate_accepts_the_longest_legal_clip(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """345 frames — 14.375 s — is the maximum and must be accepted.
+
+    Bug caught: the bound is tightened to the wrong side (e.g. 344, or the raw
+    14 s) and the model's longest clip becomes unreachable through kinoforge.
+    """
+    monkeypatch.setattr(server, "write_mp4_with_audio", lambda *a, **k: None)
+    with TestClient(server.app) as client:
+        resp = client.post("/generate", json={"prompt": "x", "num_frames": 345})
+        assert resp.status_code == 200, resp.text
+        assert _wait_done(client, resp.json()["job_id"])["status"] == "done"
+    assert h3_stub_pipe.STATE["pipe"].calls[0]["num_frames"] == 345

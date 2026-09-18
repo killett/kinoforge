@@ -37,6 +37,17 @@
 #     of 32 and fps must stay 24; the server refuses violations at the HTTP edge
 #     rather than letting the pipeline raise on the booked card.
 #
+#  6. **15 s is NOT reachable — the ceiling is 345 frames = 14.375 s.** The
+#     frame count is snapped UP to the next `17*n+5` the video VAE can decode,
+#     and the 5-15 s window is checked against the ALIGNED value. 360 frames
+#     (a naive "15 s") aligns to 362 = 15.083 s and is refused, so the whole
+#     346-360 range looks legal and is not. Durations are therefore DISCRETE:
+#     124 (5.167 s), 141, 158, 175, 192 (exactly 8.000 s), 209, 226, 243, 260,
+#     277, 294, 311, 328, 345 (14.375 s). Cost scales hard with length — 345
+#     frames is 102 latent frames against 124's 37, i.e. 2.8x the video rows
+#     through an attention that is superlinear in sequence length, so budget
+#     well above the ~8.5 min/$0.65 that 124 frames took, or drop to 960x544.
+#
 # Modal cfgs need the live-modal env: `pixi run -e live-modal ...`. The default
 # env has no `modal` module and dies with ModuleNotFoundError.
 #
@@ -104,7 +115,7 @@ engine:
       # H3's soundtrack reaches the MP4 through
       # servers/_av_io.write_mp4_with_audio, on the pod.
       supported_modes: ["t2va"]
-      max_frames: 360          # 15 s at 24 fps, the checkpoint's ceiling
+      max_frames: 345          # 14.375 s — see note 6; NOT 360
       fps: 24                  # fixed by the checkpoint, not a preference
       max_resolution: [1344, 768]
       supports_joint_audio: true
