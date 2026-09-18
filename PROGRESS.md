@@ -3347,12 +3347,39 @@ frame bounds; the cfg's `capability.max_frames` was also lying at 360 and is now
 37, i.e. 2.8x the video rows through a superlinear attention, so budget well
 above the ~8.5 min the 124-frame clip took.
 
-**Spend on H3: ~$1.3 of the $20** across three live attempts (~$0.19 + ~$0.97 +
-~$0.8) plus ~$0.15 of T4/CPU probes. **Next action: nothing is blocked.** Optional
-follow-ups, cheapest first — (a) human listen on the soundtrack, (b) try
-`KINOFORGE_H3_ATTENTION_BACKEND=_flash_3_hub`, documented at ~3x faster on
-Hopper and already wired behind that env var, on a warm pod, (c) delete the
-dead-weight `FL2VA/` half from the Volume (144.05 GB, nothing loads it).
+**Spend on H3 this session: ~$2.8 of the $20** — five live attempts
+(~$0.19 + ~$0.97 + ~$0.8 reference, ~$0.16 aborted + ~$1.33 max-length) plus
+~$0.15 of T4/CPU probes.
+
+**NEXT ACTION: nothing is blocked; Sub-project C is done.** The three follow-ups
+this snapshot used to list are all now RESOLVED — do not re-run them from an
+older reading:
+
+- **Soundtrack quality: CONFIRMED FINE by the operator 2026-09-18.** The §31
+  spectral flag (72 % of energy in one octave near 589 Hz, atypical for a
+  waterfall scene) is closed. No further action.
+- **`_flash_3_hub`: TRIED, still UNVERIFIED.** It is no longer a "try this" —
+  it is wired, cfg-declared, boot-safe and already requested by
+  `modal-diffusers-minimax-h3-t2va-long.yaml`. The only open piece is *evidence*,
+  and it is free: see the ⚠️ note at the TOP of this file.
+- **Deleting `FL2VA/`: INVESTIGATED AND DECLINED — do NOT do it on the old
+  rationale.** My earlier framing ("144.05 GB, nothing loads it") was wrong on
+  both counts that matter. (1) It saves **$0**: Modal volumes include 1 TiB/mo
+  free and the volume holds ~443 GB. (2) Deleting the directory would not even
+  free the bytes — snapshot entries are symlinks into a SHARED, two-level-sharded
+  store at `hub/blobs/<xx>/<sha>`, so removing them orphans blobs rather than
+  reclaiming them, and hand-deleting from a content-addressed cache risks the
+  root layout the proven recipe depends on. The two halves are also only
+  *partly* redundant: unique-inode total is **223.28 GB**, not 288.10. If the
+  space is ever actually wanted, the safe route is deleting the whole H3 model
+  dir and re-fetching only the t2va set with `tools/prefetch_weights.py`
+  (~$0.50, ~40 min on a T4, verified by its durability check) — operator
+  go-ahead and an idle volume first.
+
+**Genuinely open, all optional and none urgent:** the `$0` doctor check for
+stale capability profiles (see the GOTCHA below), and whether H3's `fl2va`
+(keyframe) or `ref2va` (omni-reference) workflows are worth a sub-project —
+`ref2va` needs `transformer_ref/`, another 66.28 GB fetch, so price it first.
 
 
 ### SESSION 2026-09-17 (third) — H3 engine route RESOLVED, Sub-project B built
