@@ -3081,7 +3081,7 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-09-17 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-17 third session — read this, then STOP; below is history)
 
 ### SESSION 2026-09-17 (third) — H3 engine route RESOLVED, Sub-project B built
 
@@ -3150,13 +3150,55 @@ the size line with it. Modal commits the volume itself on function return. Fixed
 `cdbd9087`. *A crash after the expensive part is not proof the expensive part
 failed — check the durable side before re-running anything costly.*
 
-**Next action: Sub-project C** — the H3 t2va server. Two constraints already
-established that C must honour or it will fail expensively:
-- **`max_usd_per_hr >= 4.54`**, or `_enforce_rate_cap` destroys the H200 after
-  launch (it is `mode="serverless"`, so the ceiling does not filter at select
-  time — it reaps after).
-- **`enable_model_cpu_offload` is mandatory** — ~133 GB of weights on a 141 GB
-  card leaves ~8 GB for activations and will OOM.
+**The FL2VA fetch was the WRONG LAYOUT, and the correction cost $0.08 instead of
+$4 precisely because B existed.** `MiniMaxH3Pipeline` — the `_class_name` in
+`FL2VA/model_index.json` — **is not exported by diffusers at all.** The diffusers
+class docstring says it outright: *"MiniMax-H3 is modular only … there is no
+`DiffusionPipeline` half."* The loadable path is the ROOT-level modular layout.
+Both are now cached (288.10 GB total on the volume); the FL2VA half is dead
+weight that can be deleted once C is green.
+
+### Sub-project C — IN PROGRESS. Read this before writing any code.
+
+**Done and committed:** `src/kinoforge/engines/diffusers/servers/_av_io.py`
+(`ea4843dc`) — `write_mp4_with_audio()` + `write_wav()`, 8 tests. It is a
+SIBLING of `_video_io.write_mp4`, which takes `(T,H,W,3)` and nothing else and
+is therefore the exact line where H3's audio would vanish. The tests were
+**falsified before being trusted**: removing the audio input from the mux fails
+three of them. Do that again if you change the module.
+
+**Still to do:** `MODE_ROLE_REQUIREMENTS["t2va"] = {}` in `core/interfaces.py`;
+`servers/minimax_h3_server.py`; the config YAML; `supports_joint_audio=True`
+with the inert-seam comments (see the Decisions log); golden-ratchet entry;
+live run + frame QA + **audio QA**; `successful-generations.md` entry.
+
+**Five constraints C must honour. Each is a live failure if missed — the first
+two cost real money.**
+
+1. **`ModularPipeline.from_pretrained(repo, workflow="t2va")` — the `workflow`
+   kwarg is MANDATORY.** The diffusers blocks module states that without it,
+   `load_components` pulls **both** 61.7 GB transformer partitions. We did NOT
+   prefetch `transformer_ref/`, so omitting it pulls 66 GB **on the H200 at
+   $4.54/hr**. One missing kwarg is the most expensive failure available here.
+2. **`max_usd_per_hr >= 4.54`** or `_enforce_rate_cap` destroys the H200 *after*
+   launch — Modal offers are `mode="serverless"`, so the ceiling does not filter
+   at select time, it reaps afterwards.
+3. **`enable_model_cpu_offload` is mandatory** — ~133 GB of weights on a 141 GB
+   card leaves ~8 GB for activations and will OOM.
+4. **Pin `diffusers==0.40.0` minimum** — 0.39.0 and 0.38.0 do not export
+   `MiniMaxH3ModularPipeline`. Far above the `>=0.32` the Wan configs use, so H3
+   pins its own and must not perturb the Wan images.
+5. **No `guidance_scale`, no `negative_prompt`** — the checkpoint is
+   guidance-distilled. A request schema offering them offers what the model
+   cannot use.
+
+**The full API contract is in the spec** under "The pipeline API, read from
+diffusers v0.40.0 source" — outputs are `videos` / `audio` / `sampling_rate`
+(32 kHz), and `_workflow_map` declares `"t2va": {"prompt": True}`, which is what
+makes the empty role map correct.
+
+**Spend so far on H3: ~$0.10 of the $20.** Nothing is running; `kinoforge list`
+and the Modal app list are both clean.
 
 ### SESSION 2026-09-17 (second) — MiniMax-H3 Sub-project A done, $0 spent
 
