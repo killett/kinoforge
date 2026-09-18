@@ -418,6 +418,50 @@ class HostedEngineConfig(BaseModel):
         return v
 
 
+class DiffusersCapabilityConfig(BaseModel):
+    """Per-config override of the diffusers engine's capability probe.
+
+    ``DiffusersEngine`` ships ONE ``_DEFAULT_PROBE`` shared by every diffusers
+    config — ``supported_modes={"t2v"}``, 81 frames, 24 fps, 1280x720. That was
+    fine while every diffusers config was a Wan t2v config. MiniMax-H3 is a
+    ``t2va`` model, and widening the shared constant would change what every Wan
+    config reports: ``JsonProfileCache.verify`` compares ``supported_modes``
+    against the live probe and raises ``CapabilityMismatch``, which the
+    orchestrator handles by destroying the instance. Cached Wan profiles already
+    on disk say ``["t2v"]``, so a global widening is a teardown on the next warm
+    run — after the boot has been paid for.
+
+    Every field is optional and an absent field falls through to the module
+    default, so a config declaring only ``supported_modes`` does not zero the
+    rest.
+
+    ``extra="forbid"`` is load-bearing: pydantic's default would drop a typo
+    silently, and the mistake would resurface as "mode 't2va' not in
+    supported_modes" on a pod that is already billing.
+
+    Attributes:
+        supported_modes: Modes this config's model serves, e.g. ``["t2va"]``.
+        max_frames: Longest clip in frames.
+        fps: Frame rate the model generates at.
+        max_resolution: ``[width, height]`` ceiling.
+        supports_joint_audio: Whether the model emits a soundtrack jointly with
+            its frames. **A declaration, not a mechanism** — see the note at
+            ``core/strategy.py:55``: the ``_audio_mode`` marker it feeds is read
+            nowhere. MiniMax-H3's audio reaches the output through
+            ``engines/diffusers/servers/_av_io.write_mp4_with_audio``, on the pod.
+        supports_native_extension: Whether one job can carry every segment.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    supported_modes: list[str] | None = None
+    max_frames: int | None = None
+    fps: int | None = None
+    max_resolution: tuple[int, int] | None = None
+    supports_joint_audio: bool | None = None
+    supports_native_extension: bool | None = None
+
+
 class DiffusersEngineConfig(BaseModel):
     """DiffusersEngine-specific parameters.
 
@@ -435,6 +479,9 @@ class DiffusersEngineConfig(BaseModel):
             the spec does not carry an explicit ``"prompt"``. Defaults
             to ``"prompt"``; set to ``None`` (YAML ``null``) to disable
             routing for endpoints that reject unknown top-level fields.
+        capability: Per-config capability-probe override. ``None`` means the
+            engine's shared ``_DEFAULT_PROBE``, which is what every Wan config
+            uses and must keep using. See :class:`DiffusersCapabilityConfig`.
 
     See :class:`HostedEngineConfig` for the rationale behind declaring
     every YAML-consumed field: without this model, ``EngineConfig``
@@ -447,6 +494,10 @@ class DiffusersEngineConfig(BaseModel):
     server_cmd: list[str] = Field(default_factory=list)
     asset_paths: dict[str, str] = Field(default_factory=dict)
     prompt_body_key: str | None = "prompt"
+    capability: DiffusersCapabilityConfig | None = None  # Per-config capability
+    # probe override; None => the engine's shared _DEFAULT_PROBE. Needed because
+    # that probe declares supported_modes={"t2v"} for EVERY diffusers config, and
+    # widening it would make verify() tear down every warm Wan pod.
     embed_modules: list[str] = Field(default_factory=list)
     embed_files: list[str] = Field(default_factory=list)  # Single-file
     # embeds for dotted module paths whose leaf is a .py file (e.g.

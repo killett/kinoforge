@@ -10,6 +10,7 @@ the ``"diffusers"`` key so that ``registry.get_engine("diffusers")()`` works.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import gzip
 import importlib.resources
 import json
@@ -332,6 +333,59 @@ _DEFAULT_PROBE = ModelProfile(
     supports_native_extension=False,
     supports_joint_audio=False,
 )
+
+
+def _probe_with_cfg_capability(
+    probe: ModelProfile, diffusers_cfg: dict[str, Any]
+) -> ModelProfile:
+    """Return *probe* with any cfg-declared capability fields applied.
+
+    :data:`_DEFAULT_PROBE` is one constant shared by every diffusers config, and
+    it declares ``supported_modes={"t2v"}``. A config may declare
+    ``engine.diffusers.capability`` to describe its own model instead — which is
+    how MiniMax-H3 reports ``t2va`` and ``supports_joint_audio=True`` without
+    changing what any Wan config reports. That distinction is not cosmetic:
+    ``JsonProfileCache.verify`` compares ``supported_modes`` against the live
+    probe and raises ``CapabilityMismatch``, and the orchestrator answers that by
+    destroying the instance. Widening the shared constant would therefore tear
+    down every warm Wan pod whose cached profile says ``["t2v"]``.
+
+    Absent fields fall through to *probe*, so a partial declaration cannot zero
+    the rest — a config declaring only ``supported_modes`` keeps the default
+    ``fps``, which ``ModelProfile.max_segment_seconds`` divides by.
+
+    Args:
+        probe: The engine's default ``ModelProfile``.
+        diffusers_cfg: The resolved ``engine.diffusers`` block.
+
+    Returns:
+        *probe* itself when no capability block is declared, else a NEW
+        ``ModelProfile`` carrying the declared fields. Never mutates *probe* —
+        several backends are built in one interpreter (batch runs, the golden
+        harness), so an in-place edit would leak one config's capability into
+        every other.
+    """
+    # `or {}`, not `.get`'s default — U33: `Config.model_dump()` emits an unset
+    # `X | None = None` field as a PRESENT key whose value is None, so the
+    # `.get(k, DEFAULT)` default is dead code and the caller gets None.
+    declared = diffusers_cfg.get("capability") or {}
+    if not declared:
+        return probe
+    overrides: dict[str, Any] = {}
+    if declared.get("supported_modes"):
+        overrides["supported_modes"] = set(declared["supported_modes"])
+    if declared.get("max_resolution"):
+        overrides["max_resolution"] = tuple(declared["max_resolution"])
+    for key in (
+        "max_frames",
+        "fps",
+        "supports_joint_audio",
+        "supports_native_extension",
+    ):
+        value = declared.get(key)
+        if value is not None:
+            overrides[key] = value
+    return dataclasses.replace(probe, **overrides)
 
 
 # ---------------------------------------------------------------------------
@@ -1413,7 +1467,7 @@ class DiffusersEngine(GenerationEngine):
             http_post=self._http_post,
             http_get=self._http_get,
             base_url=base_url,
-            probe_profile=self._probe,
+            probe_profile=_probe_with_cfg_capability(self._probe, diffusers_cfg),
             sleep=self._sleep,
             asset_paths=asset_paths,
             prompt_body_key=prompt_body_key,
