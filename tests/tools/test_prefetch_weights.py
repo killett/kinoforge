@@ -13,7 +13,11 @@ import pytest
 
 from kinoforge.providers.modal._app import _VOLUME_NAME
 from kinoforge.providers.modal._catalog import MODAL_GPU_CATALOG
-from tools.prefetch_weights import PrefetchPlanError, build_plan
+from tools.prefetch_weights import (
+    PrefetchPlanError,
+    build_plan,
+    check_modal_credentials,
+)
 
 _H3 = "MiniMaxAI/MiniMax-H3"
 
@@ -74,6 +78,48 @@ def test_the_plan_targets_the_same_volume_the_generation_pods_mount() -> None:
     # own constant so renaming the volume cannot desync the two sides.
     plan = build_plan(_H3, ("model_index.json", "FL2VA/*"))
     assert plan.volume_name == _VOLUME_NAME
+
+
+def test_missing_modal_credentials_raise_a_readable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bug caught: `pixi run` does NOT source the dotenv file (pixi 0.69
+    # activation fires before it is read), so the tool reached Modal with no
+    # token and died in a 20-line SDK traceback ending in "Token missing" —
+    # observed live 2026-09-17. That traceback names neither the dotenv file
+    # nor which variable was absent. This turns it into one actionable line,
+    # raised BEFORE anything is booked.
+    monkeypatch.delenv("MODAL_TOKEN_ID", raising=False)
+    monkeypatch.delenv("MODAL_TOKEN_SECRET", raising=False)
+    with pytest.raises(PrefetchPlanError) as exc:
+        check_modal_credentials(load_dotenv=False)
+    msg = str(exc.value)
+    assert "MODAL_TOKEN_ID" in msg
+    assert "MODAL_TOKEN_SECRET" in msg
+
+
+def test_present_modal_credentials_pass_the_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bug caught: a check eager enough to reject a correctly-configured
+    # environment would block every real prefetch. Values are the repo's
+    # synthetic placeholder convention, never real tokens.
+    monkeypatch.setenv("MODAL_TOKEN_ID", "ak-deadbeef-placeholder")
+    monkeypatch.setenv("MODAL_TOKEN_SECRET", "as-deadbeef-placeholder")
+    check_modal_credentials(load_dotenv=False)
+
+
+def test_the_credential_check_never_echoes_a_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bug caught: an error message interpolating the variable's VALUE would
+    # put a live credential into a durable transcript. Only one var is set
+    # here, so the check must fail while saying nothing about the set one.
+    monkeypatch.setenv("MODAL_TOKEN_ID", "ak-deadbeef-placeholder")
+    monkeypatch.delenv("MODAL_TOKEN_SECRET", raising=False)
+    with pytest.raises(PrefetchPlanError) as exc:
+        check_modal_credentials(load_dotenv=False)
+    assert "deadbeef" not in str(exc.value)
 
 
 def test_the_default_timeout_survives_a_144gb_fetch() -> None:

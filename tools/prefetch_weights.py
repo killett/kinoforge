@@ -78,6 +78,47 @@ class PrefetchPlan:
     timeout_s: int
 
 
+#: Modal SDK credentials. Named here so the pre-flight can report WHICH one is
+#: absent; their VALUES are never read, logged, or interpolated.
+_MODAL_CRED_VARS = ("MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET")
+
+
+def check_modal_credentials(*, load_dotenv: bool = True) -> None:
+    """Fail early and legibly when Modal credentials are absent.
+
+    ``pixi run`` does NOT source the project dotenv file — pixi 0.69 fires
+    activation scripts *before* reading it — so a tool that assumes otherwise
+    reaches the Modal SDK unauthenticated and dies in a long traceback whose
+    final line is "Token missing", naming neither the dotenv file nor the
+    variable. Observed live on 2026-09-17. This converts that into one
+    actionable line, raised before anything is booked.
+
+    Args:
+        load_dotenv: Load the project dotenv file into ``os.environ`` first.
+            ``False`` in tests, which drive ``os.environ`` directly.
+
+    Raises:
+        PrefetchPlanError: One or both credential variables are unset. The
+            message names the missing VARIABLES and never their values.
+    """
+    import os
+
+    if load_dotenv:
+        from kinoforge.core.dotenv_loader import load_env_file
+
+        load_env_file()
+
+    missing = [v for v in _MODAL_CRED_VARS if not os.environ.get(v)]
+    if missing:
+        raise PrefetchPlanError(
+            f"Modal credentials absent: {', '.join(missing)} "
+            f"(required: {', '.join(_MODAL_CRED_VARS)}). Note that `pixi run` "
+            "does not source the project dotenv file by itself — this tool "
+            "loads it explicitly, so an unset variable here means it is "
+            "genuinely absent rather than merely unsourced."
+        )
+
+
 def _cheapest_gpu() -> str:
     """Return the id of the lowest-priced GPU in the Modal catalog.
 
@@ -272,6 +313,15 @@ def main(argv: list[str] | None = None) -> int:
     print(_render(plan))
     if args.dry_run:
         return 0
+
+    # Credentials are checked AFTER the plan renders (so --dry-run stays
+    # usable with no secrets present) but BEFORE anything is booked.
+    try:
+        check_modal_credentials()
+    except PrefetchPlanError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
     print(run_prefetch(plan))
     return 0
 
