@@ -112,7 +112,7 @@ def test_h200_ranks_first_when_a_config_asks_for_it_by_name():
 
 Run: `pixi run python -m pytest tests/providers/modal/test_catalog.py -v`
 
-Expected: all **four** new tests FAIL. `test_h200_row_matches_modal_published_specs` fails on `assert "H200" in by_id`; `test_a_request_above_80gb_is_now_satisfiable` fails on the empty-list assertion; `test_h200_is_the_only_card_above_80gb` fails comparing `set()` to `{"H200"}`; `test_h200_ranks_first_when_a_config_asks_for_it_by_name` fails because `offers[0].id` is `"T4"` (H200 is absent, so the unknown-accelerator path leaves the catalog in its natural order). The four pre-existing tests still PASS.
+Expected: all **four** new tests FAIL. `test_h200_row_matches_modal_published_specs` fails on `assert "H200" in by_id`; `test_a_request_above_80gb_is_now_satisfiable` fails on the empty-list assertion; `test_h200_is_the_only_card_above_80gb` fails comparing `set()` to `{"H200"}`; `test_h200_ranks_first_when_a_config_asks_for_it_by_name` fails because `offers[0].id` is `"T4"` (H200 is absent, so the unknown-accelerator path leaves the catalog in its natural order). The three pre-existing tests still PASS.
 
 **Verified against HEAD `0d600860` on 2026-09-17** — these are the measured pre-change values, not predictions: `"H200" in by_id` is `False`; `{o.id for o in MODAL_GPU_CATALOG if o.vram_gb > 80}` is `set()`; `modal_offers(Placement(min_vram_gb=120))` is `[]`; and `modal_offers(Placement(min_vram_gb=16, accelerators=("H200",)))` returns 7 offers led by `"T4"`.
 
@@ -182,7 +182,7 @@ to:
 
 Run: `pixi run python -m pytest tests/providers/modal/test_catalog.py -v`
 
-Expected: all 8 tests PASS (4 pre-existing + 4 new).
+Expected: all 7 tests PASS (3 pre-existing + 4 new).
 
 - [ ] **Step 6: Commit**
 
@@ -256,24 +256,27 @@ def test_the_shipped_modal_configs_are_actually_discovered():
 
 
 @pytest.mark.parametrize("cfg_path", _MODAL_CONFIGS, ids=lambda p: p.stem)
-def test_shipped_config_still_books_its_first_choice(cfg_path: Path):
+def test_shipped_config_still_books_its_first_choice(cfg_path: Path) -> None:
     cfg = load_config(str(cfg_path))
-    placement = cfg.compute.placement
+    assert cfg.compute is not None  # noqa: S101 — every shipped Modal config has one
+    accelerators = cfg.compute.placement.accelerators
 
     # A config with no stated preference has no protection from ranking, so a
     # new card could take candidates[0]. Fail rather than pass vacuously.
-    assert placement.accelerators, (
+    assert accelerators, (
         f"{cfg_path.name} declares no placement.accelerators, so a newly added "
         "catalog row could silently become its booked GPU"
     )
 
-    offers = modal_offers(placement)
+    offers = modal_offers(cfg.placement())
     assert offers, f"{cfg_path.name} matched no Modal offer at all"
-    assert offers[0].id == placement.accelerators[0], (
+    assert offers[0].id == accelerators[0], (
         f"{cfg_path.name} would now book {offers[0].id!r}, not its first "
-        f"declared choice {placement.accelerators[0]!r}"
+        f"declared choice {accelerators[0]!r}"
     )
 ```
+
+**Note on the two type surfaces** (this repo has both, and confusing them fails `mypy --strict`): `cfg.compute.placement` is a `PlacementConfig` — the YAML shape, which is what carries `.accelerators`. `modal_offers` wants an `interfaces.Placement`, which `cfg.placement()` (`src/kinoforge/core/config.py:1650`) adapts to. `tests/test_modal_config.py:59,93` already uses `modal_offers(cfg.placement())`; follow that. Both test functions also need `-> None` annotations.
 
 - [ ] **Step 2: Run it**
 
