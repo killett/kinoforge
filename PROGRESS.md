@@ -3083,6 +3083,45 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 
 ## RESUME SNAPSHOT (updated 2026-09-17 — read this, then STOP; below is history)
 
+### SESSION 2026-09-17 (second) — MiniMax-H3 Sub-project A done, $0 spent
+
+**Sub-project A of `docs/superpowers/specs/2026-09-17-minimax-h3-t2va-design.md`
+is COMPLETE, offline, for $0.** The Modal catalog now carries
+`("H200", 141, 4.54)` (commit `27eb95ba` — added the row to `_MODAL_GPUS`,
+re-dated the snapshot comment, 4 new tests, 7 total in that file, all
+passing), so a config can request more than 80 GB — which is what blocked
+MiniMax-H3, whose bf16 weights are ~115 GB.
+
+**H200 is the ONLY card above 80 GB in the catalog, deliberately.** Modal's docs
+state H200 = 141 GB verbatim but do NOT state B200's or B300's VRAM. A `vram_gb`
+the provider never published is the U48 defect — `filter_offers` applies it
+silently and can drop the entire catalog with no error to read. **Do not "finish
+the job" by adding B200/B300 until Modal publishes their VRAM.** A test
+(`test_h200_is_the_only_card_above_80gb`) enforces this.
+
+**The guard freezes an invariant, not an H200-specific risk.** `filter_offers`
+ranks unlisted accelerators strictly AFTER every listed one, so a new catalog
+row that is absent from a config's `accelerators` list can never outrank that
+config's first choice under the CURRENT ranking logic — the $4.54/hr H200 was
+never actually a silent candidate for any shipped config. The guard's real
+value is freezing that ranking INVARIANT against a future change to the
+ranking logic: a reviewer confirmed it is genuinely sensitive by showing that a
+"prefer cheapest clearing card" rule would flip
+`modal-diffusers-wan-2_1-1_3b-t2v` from `A10` to `L4` and trip the assertion.
+All five shipped `modal-*.yaml` still book their first declared choice, now
+frozen by `tests/providers/modal/test_catalog_no_regression.py` (commit
+`95f08af4` — new file, 6 tests passing), and the launch-payload goldens did
+not move (`tools/_snapshots/` clean, no golden regenerated).
+
+Both commits reviewed: spec PASS, quality PASS.
+
+**Next action: Sub-project B** — the HF Volume prefetch path. It pulls
+`FL2VA/*` (144 GB) onto `kinoforge-hf-cache` from a T4 rather than an H200,
+turning a ~$3.94 fetch into ~$0.51 and making a failed fetch cost cents. It is a
+prerequisite for C, not an optimisation: without it the $20 budget buys three or
+four attempts at H3 instead of six to eight. It is also the cheapest place to
+discover whether the `minimax-h3-community-license-agreement` gates downloads.
+
 ### SESSION 2026-09-17 — three Modal operator recipes verified live for ~$1.15; no defects found
 
 **Not a defect-hunting session.** The operator asked for paste-able Modal equivalents of two
