@@ -3104,6 +3104,48 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 
 ## RESUME SNAPSHOT (updated 2026-09-18 — read this, then STOP; below is history)
 
+### SESSION 2026-09-18 (second) — H3 max-length → 1080p → 60 fps chain; two FlashVSR defects found and fixed
+
+**Goal (operator brief):** three verified commands in the operator's shell format — (1) H3 t2va at
+the longest clip (345 f / 14.375 s) at "960x540", (2) upscale an existing such clip to 1080p +
+RIFE 60 fps, (3) the full chain. $20 budget. Decisions taken with the operator: **960x544**
+(H3 refuses non-multiples of 32; 540 is impossible), **local ffmpeg re-mux** of the H3 soundtrack
+onto the final clip (FlashVSR and RIFE both write frames only — audio would otherwise be lost),
+run all three literally with cmd 2 FIRST against the existing proven clip
+(`output/20260918-014621_..._MiniMax-H3_....mp4`) so the unproven stages fail cheaply.
+
+**Committed this session (all offline-green, full suite 5897 passed):**
+- `a34d654b` — `modal-diffusers-flashvsr-1080p-upscale-long.yaml` + `modal-diffusers-rife-60fps-interpolate-long.yaml`,
+  lifecycle-only siblings. **On Modal `job_timeout` is NOT enforced — `boot_timeout` becomes
+  `@app.function(timeout=)` and must cover boot AND render**; both set it to 60m.
+- `2d468143` — **temporal chunking** (`pipeline/chunk.py`, `upscale.chunk_frames` / `chunk_overlap`,
+  default off). The un-chunked 345-frame upscale **OOM'd the 80 GB A100** (77.8 GiB in use):
+  FlashVSR holds the whole clip on the GPU. UpscaleStage now splits losslessly, upscales each
+  chunk on the same pod, trims the overlap warm-up, joins in one ffmpeg pass; the join is a
+  `file://` marked `materialize` that the orchestrator publishes. Real-ffmpeg round trip at $0:
+  345 in → 345 out.
+- `6e6eefb3` — the 69-frame chunk ALSO OOM'd (10 GiB reserved-but-unallocated): memory is
+  superlinear in frames×pixels. `env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` on
+  `server_cmd` (the Lambda cfg's proven fix; `tile_size` reaches the pipeline as a bare bool).
+- `7580ee58` — **the 40-frame chunk died in a conv ("kernel 4 > input 3")**. Read from upstream
+  source: `FlashVSRFullPipeline` returns `8*((n-1)//8) - 3` frames and rounds any non-4k+1 count
+  WITHOUT padding the LQ. **Every FlashVSR run in this repo had silently lost its tail (§24: 81 in,
+  77 out).** `prepare_input_tensor` now pads to the smallest 8n+1 whose output covers the source
+  (clones of the last frame, returned as a 6th element) and the runtime trims back — exact frame
+  counts for any clip. 10 launch goldens + `_golden_provision.json` moved (embedded-blob leaves
+  only, reviewed key-by-key).
+
+**Live attempts on cmd 2 so far (all torn down, verified from fresh processes):** #1 OOM 345 f
+(~$0.35), #2 killed at launch — my process error, see the memory
+`precommit-all-files-ignores-untracked` (~$0.03), #3 OOM 69 f (~$0.08), #4 conv error 40 f
+(~$0.08). **#5 in flight** with `chunk_frames: 37` (+8 → 45 → padded 49), launched 13:07.
+Scripts: scratchpad `cmd1.sh` / `cmd2.sh` / `cmd3.sh` (cmd 1/3 use the operator's volcano prompt).
+
+**NEXT ACTION:** finish cmd 2 (frame-QA + `tools/av_qa.py --cut-scan` on the join, the 1080p
+publish, the RIFE output and the re-muxed final; the source's hard cut at frame 272 is a free
+frame-alignment check), then cmd 1, then cmd 3; log in `successful-generations.md`; finalise this
+block.
+
 ### SESSION 2026-09-18 — Sub-project C BUILT; `main` was red on 21 tests; one self-correction
 
 **Sub-project C is COMPLETE and LIVE-PROVEN — see the next block.** Full suite:
