@@ -3085,8 +3085,8 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 
 ### SESSION 2026-09-18 — Sub-project C BUILT; `main` was red on 21 tests; one self-correction
 
-**Sub-project C's code is complete, committed and offline-green.** Full suite:
-**5790 passed**. Live H200 run status is at the end of this section.
+**Sub-project C is COMPLETE and LIVE-PROVEN — see the next block.** Full suite:
+**5799 passed**.
 
 **`main` was RED on 21 tests when this session started, and had been since
 `ea4843dc`.** That commit added `_av_io.py` to `engines/diffusers/servers/`,
@@ -3175,7 +3175,70 @@ than no guard.
 **Cost discipline note:** the whole detour cost under $0.10 because it ran on a
 T4 and CPU-only containers. That is Sub-project B's thesis working as designed.
 
-**Spend on H3 so far: ~$0.15 of the $20.**
+### Sub-project C is COMPLETE and LIVE-PROVEN — kinoforge has audio
+
+`output/20260918-004508_diffusers_MiniMax-H3_Photorealistic-cinem.mp4`, sha256
+`87d54c664a20f257...`, **h264 1344x768 / 24 fps / 124 frames / 5.167 s WITH an
+aac stereo 32 kHz soundtrack**. Full record: `successful-generations.md` **§31**.
+It is the first output in this repo's 31-entry history that carries an audio
+stream at all.
+
+Pod `run-20260918-003326`, H200 at $4.54/hr, `--no-reuse`. Image bake 93.00 s,
+`App deployed` 96.563 s, weights load under ~60 s off the Volume, denoise ~8.5
+min at a sustained `gpu=100.0`, `generate completed` 00:45:08, destroyed
+00:45:14. Teardown verified from FRESH processes: `kinoforge list` both lines
+plus `total=8 running=0` Modal apps.
+
+**Audio QA passed the gates that matter and carries one honest flag.** Stereo,
+32000 Hz read back off the pipeline rather than hardcoded, duration within 15 ms
+of the video, not digital silence (peak 0.7104 / rms 0.09783), both channels
+live, and **L/R correlation 0.3190** — decorrelated, so not duplicated mono,
+which is the check a lazy mux would fail. ⚠️ BUT the spectrum is atypical for the
+scene: 72.2 % of energy in one octave (500-1000 Hz), peak 589 Hz, 3.2 % above
+1 kHz, 0.2 % below 125 Hz, envelope swelling from near-silence to loudest at the
+end. A waterfall scene should be broadband. It reads as music or a tonal swell,
+not diegetic ambience — and I cannot listen, so the PATH is proven and the
+APPROPRIATENESS is unverified. **Next session: get a human ear on it before
+building anything on H3's audio.**
+
+Frame QA **PASS, high quality**: the push-in and the over-the-shoulder turn both
+land as prompted, scene layout is temporally coherent, no false colour. Soft
+flags on the "magical creatures" rendering as glowing blobs, subtle flare/god
+rays, modest DoF.
+
+**Two live failures on the way, both now regression-tested — read these before
+touching the request path:**
+1. **HTTP 422 on `/generate` after the H200 had loaded** (`b9d56c4a`).
+   `DiffusersBackend.submit` posts `dict(job.spec)` and `strategy.decide` injects
+   `_audio_mode` into that spec, so the body carries a key no cfg contains and
+   `extra="forbid"` refused it. The 19 existing server tests all missed it
+   because each was written FROM the server's schema; the fix's test is written
+   from the cfg through `strategy.decide` and reproduces the 422 offline for $0.
+   **If you add a strict request schema to any server, test it against a body
+   built by the orchestrator, not by you.**
+2. **`FileNotFoundError: 'ffmpeg'` at the mux**, after a full load AND a complete
+   50-step generation (`55f857d5`). `_av_io` shelled out to a bare `"ffmpeg"`;
+   `python:3.13-slim` ships none and `imageio[ffmpeg]` does NOT put one on PATH
+   (`imageio_ffmpeg` keeps its binary inside the package). It passes here only
+   because conda provides one. **This would have destroyed the frames AND the
+   soundtrack together, and no test on an ffmpeg-having machine can see it.**
+
+**`memory_percent` stayed at 1.4 % throughout**, so the design doc's host-RAM
+worry (~124 GiB under `enable_auto_cpu_offload`) never materialised: safetensors
+mmaps the shards and the manager moves one component at a time. The jump to 5.1 %
+is the decoded frames and is a usable "denoise finished" marker.
+
+⚠️ **`/util`'s `uptime_seconds` is NOT pod uptime.** `_util_stats` sets `_START`
+at module import and that module is imported lazily inside the `/util` handler,
+so it counts from the first `/util` call. Affects `wan_t2v_server` too.
+
+**Spend on H3: ~$1.3 of the $20** across three live attempts (~$0.19 + ~$0.97 +
+~$0.8) plus ~$0.15 of T4/CPU probes. **Next action: nothing is blocked.** Optional
+follow-ups, cheapest first — (a) human listen on the soundtrack, (b) try
+`KINOFORGE_H3_ATTENTION_BACKEND=_flash_3_hub`, documented at ~3x faster on
+Hopper and already wired behind that env var, on a warm pod, (c) delete the
+dead-weight `FL2VA/` half from the Volume (144.05 GB, nothing loads it).
+
 
 ### SESSION 2026-09-17 (third) — H3 engine route RESOLVED, Sub-project B built
 

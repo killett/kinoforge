@@ -71,6 +71,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 29. `2026-09-06 02:13:00` — [`kinoforge grid` on Modal — 1x2 composed grid from two auto-torn-down cells (Wan 2.1 1.3B / A10) — t2v](#29-2026-09-06-021300--kinoforge-grid-on-modal--1x2-composed-grid-from-two-auto-torn-down-cells-wan-21-13b--a10--t2v) — **⚠️ see the caveat banner: cell B carries a whole-clip render defect (matrix T1-28 = FAIL)**
 
 30. `2026-09-17 20:26:18` — [Three-stage Modal chain in one shell block: Wan 2.2 T2V-A14B → FlashVSR 1080p → RIFE 60 fps across three cold pods — t2v+upscale+interpolate](#30-2026-09-17-202618--three-stage-modal-chain-in-one-shell-block-wan-22-t2v-a14b--flashvsr-1080p--rife-60-fps-across-three-cold-pods--t2vupscaleinterpolate)
+31. `2026-09-18 00:45:08` — [MiniMax-H3 joint video+audio (t2va) on Modal H200 — the first soundtrack kinoforge has ever generated — t2va](#31-2026-09-18-004508--minimax-h3-joint-videoaudio-t2va-on-modal-h200--the-first-soundtrack-kinoforge-has-ever-generated--t2va)
 
 ---
 
@@ -3118,3 +3119,176 @@ EOF
 ### Monitoring note (for whoever runs the next one)
 
 A 75 s `/util` poll **undersamples a ~90 s stage**. Stage 2 read `gpu=0.0` on both of its probes and still published seconds later, with `mem` rising 0.4 → 1.6 across them. CLAUDE.md's "GPU 0 % for ≥3 consecutive probes" threshold correctly did not fire, but the lesson is that the cadence has to be set against the *stage* duration, not the run duration: stage 1 (6 m 55 s) got three clean `gpu=100.0` reads at uptime 24 s / 99 s / 175 s, which is the evidence that matters. For sub-2-minute stages, poll at 20-30 s or accept that utilisation is unobserved.
+
+
+---
+
+## 31. `2026-09-18 00:45:08` — MiniMax-H3 joint video+audio (t2va) on Modal H200 — the first soundtrack kinoforge has ever generated — t2va
+
+**Five firsts in one run:** a new model (MiniMax-H3), a new mode (`t2va`), a new
+GPU class (H200, the only Modal card above 80 GB), the first `diffusers`
+`ModularPipeline` rather than a `DiffusionPipeline`, and the first output in this
+repo's history that carries an **audio stream**. Every prior entry — 30 of them —
+is silent video.
+
+- **Design:** `docs/superpowers/specs/2026-09-17-minimax-h3-t2va-design.md`
+- **Plan:** `docs/superpowers/plans/2026-09-17-minimax-h3-sub-project-c.md`
+- **Config:** `examples/configs/modal-diffusers-minimax-h3-t2va.yaml`
+- **Server:** `src/kinoforge/engines/diffusers/servers/minimax_h3_server.py` (new,
+  a sibling of `wan_t2v_server.py`)
+- **HEAD:** `55f857d5`
+
+### Reproduction
+
+```bash
+pixi run -e live-modal kinoforge generate \
+  --config examples/configs/modal-diffusers-minimax-h3-t2va.yaml \
+  --mode t2va \
+  --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+  --no-reuse
+```
+
+Standard smoke prompt, verbatim from `examples/configs/prompts/field-realistic.txt`.
+
+### Output
+
+`output/20260918-004508_diffusers_MiniMax-H3_Photorealistic-cinem.mp4`
+
+| | |
+|---|---|
+| size | 4,862,323 B (4.86 MB) |
+| sha256 | `87d54c664a20f2572201ed5c2b12a37747c55b753bbdb13a925d0535bedc09f2` |
+| video | h264 / yuv420p / **1344x768** / **24 fps** / **124 frames** / 5.166667 s |
+| audio | **aac / 2 ch / 32000 Hz** / 5.152000 s |
+| container | 5.166667 s |
+
+1344x768 is MiniMax-H3's own trained canvas (`canvas_short_edge` 768 at 16:9,
+which is also the `canvas_max_pixels` budget) and 124 frames is its **shortest
+legal clip** — the only `17*n+5` value inside the 5-15 s window at its fixed
+24 fps. Both are the cfg defaults, not accidents.
+
+### Pod + timings
+
+Pod `run-20260918-003326`, Modal H200 at **$4.54/hr**, `--no-reuse`.
+
+| phase | duration |
+|---|---|
+| image bake | 93.00 s (Modal builder, not GPU time) |
+| `✓ App deployed` | 96.563 s |
+| `provisioner.provision` begins | 00:35:06.994 |
+| weights load (124 GiB, from the Volume) | **under ~60 s** — safetensors mmap, not a byte-for-byte read |
+| denoise, 50 steps | ~8.5 min at a sustained **gpu=100.0** |
+| `generate completed` | 00:45:08.955 |
+| `--no-reuse` destroy | 00:45:14.326 |
+
+**Spend est. $0.75-0.89** (pod wall-clock x the published H200 rate; billing NOT
+measured).
+
+### Utilisation, polled per the CLAUDE.md rule
+
+`gpu_util_percent` / `cpu_percent` / `memory_percent` off the pod's own `/util`,
+never `est_spend`:
+
+```
+uptime  85s  gpu=100.0 cpu=5.9 mem=1.4
+uptime 175s  gpu=100.0 cpu=5.9 mem=1.4
+uptime 254s  gpu=100.0 cpu=6.0 mem=1.4
+uptime 356s  gpu=100.0 cpu=5.9 mem=1.4
+uptime 447s  gpu=100.0 cpu=5.9 mem=1.4
+uptime 537s  gpu= 11.0 cpu=5.7 mem=5.1   <- denoise done, VAE decode + mux
+```
+
+**`memory_percent` sat at 1.4 throughout**, which is worth carrying: the design
+doc expected ~124 GiB of weights to live in host RAM under
+`ComponentsManager.enable_auto_cpu_offload`, and it does not show up as resident.
+safetensors mmaps the shards and the offload strategy moves one component at a
+time, so the feared host-RAM ceiling never materialised. The jump to 5.1 % is the
+decoded frames, and it is the marker for "denoise finished".
+
+⚠️ `uptime_seconds` is **not pod uptime**. `_util_stats` sets `_START` at module
+import and that module is imported lazily *inside* the `/util` handler, so uptime
+counts from the FIRST `/util` call. Same for `wan_t2v_server`. Read it as
+"seconds since monitoring began", not pod age.
+
+### Audio QA — the arm that exists because a silent success is possible
+
+Asserted in code, not eyeballed off `ffprobe`:
+
+| check | result |
+|---|---|
+| audio stream present | ✅ |
+| stereo | ✅ 2 channels |
+| sample rate | ✅ 32000 Hz, read back off the pipeline's own `sampling_rate` |
+| duration vs video | ✅ 5.152 s vs 5.167 s — 15 ms apart |
+| not digital silence | ✅ peak 0.7104, rms 0.09783 |
+| both channels live | ✅ L peak 0.6205, R peak 0.7104 |
+| genuinely stereo | ✅ **L/R correlation 0.3190** — decorrelated, so not duplicated mono |
+
+The L/R correlation is the load-bearing one: a mux that wrote the same channel
+twice would pass every other check above.
+
+⚠️ **Content plausibility NOT verified, and the spectrum is atypical for the
+scene.** 72.2 % of the energy is in one octave (500-1000 Hz), the spectral peak
+is 589 Hz, only 3.2 % sits above 1 kHz and 0.2 % below 125 Hz, and the RMS
+envelope swells from near-silence (0.0014) to its loudest at the very end
+(0.1703). A waterfall-and-meadow scene should be broadband — HF water hiss, LF
+rumble — and this is neither. It reads as music or a tonal swell rather than
+diegetic ambience. **I cannot listen to it**, so this is a measurement, not a
+judgement: the joint-audio PATH is proven end to end, the audio's
+APPROPRIATENESS is unverified and flagged.
+
+### Frame QA — PASS, high quality
+
+5 frames via `ffmpeg_frames_by_count`, read as one contact sheet.
+
+Prompt adherence is specific rather than generic:
+- **The push-in lands.** Monotonic dolly from a wide establishing shot (figure
+  small in mid-ground) to an intimate face close-up, across 5.17 s.
+- **The over-the-shoulder turn lands.** Facing away in frames 1-3, turned to
+  camera with a smile in 4-5 — exactly the beat the prompt asks for.
+- Alpine meadow of yellow/purple wildflowers, tall waterfall over mossy cliffs
+  into a misting pool, pine treeline, mountains, warm golden-hour backlight,
+  vividly coloured floral dress rippling, clear sky brushed with cloud.
+- **Temporally coherent** — waterfall, treeline, river and mountain layout hold
+  across every frame; no flicker, no deformation, and **no false colour**, which
+  is the entry-#13/#14 FlashVSR failure mode this QA pass exists to catch.
+
+⚠️ Soft flags: the "luminous butterflies / friendly magical creatures" render as
+indistinct soft-white glowing blobs rather than resolved creatures; the
+anamorphic flare and volumetric god rays are subtle rather than pronounced;
+shallow depth of field is modest in the wide frames; and the push-in is brisk
+rather than "slow" given the 5.17 s the model's minimum clip allows.
+
+### Teardown
+
+Verified from FRESH processes after the orchestrator exited, not from a mid-run
+log line:
+
+- `pixi run kinoforge list` → `[instance overview] No running instances.` AND
+  `No instances recorded in ledger.`
+- Modal app list → `total=8 running=0` (every `kinoforge-*` app `stopped`)
+
+### What it cost to get here, and why
+
+Three live attempts, ~$1.3 total. The two failures are worth recording because
+both were caught by the pod and both are now regression-tested:
+
+1. **HTTP 422 on `/generate`, after the H200 had booted and loaded.**
+   `DiffusersBackend.submit` posts `dict(job.spec)`, and `strategy.decide`
+   injects an `_audio_mode` marker into that spec — so the body carries a key no
+   cfg author wrote, and the server's `extra="forbid"` refused it. Fixed
+   `b9d56c4a`; the new test builds the body from the shipped YAML through
+   `strategy.decide` exactly as the orchestrator does, and reproduces the 422
+   offline for $0. The irony is exact: `_audio_mode` is the seam this sub-project
+   deliberately documented as read-nowhere, and it is the only part of it that
+   had any effect at all.
+2. **`FileNotFoundError: 'ffmpeg'` at the mux**, after a full 124 GiB load and a
+   complete 50-step generation. `_av_io.write_mp4_with_audio` shelled out to a
+   bare `"ffmpeg"`; `python:3.13-slim` ships none, and `imageio[ffmpeg]` does NOT
+   put one on PATH — `imageio_ffmpeg` keeps its binary inside the package. It
+   works in the dev container only because conda provides one. Fixed `55f857d5`
+   with a PATH-then-`get_ffmpeg_exe()` resolver. **This one would have taken the
+   frames AND the soundtrack down together**, and it is invisible to any test run
+   on a machine that has ffmpeg.
+
+Same tuple `(modal, DiffusersEngine, MiniMaxAI/MiniMax-H3, t2va)`.
