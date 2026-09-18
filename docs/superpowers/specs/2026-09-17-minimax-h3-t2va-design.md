@@ -49,17 +49,21 @@ sourced from the vendor, that is stated rather than guessed.
 | bf16 component sizes | **MEASURED from the HF API 2026-09-17**: transformer 66.28 GB, text_encoder 66.73 GB, video_vae 10.42 GB, audio_vae 0.61 GB (**≈144 GB on disk, ≈133 GB of model weights**). The earlier 61.7/48.0 figures came from a third-party listing and were BOTH too low. | HF API, `FL2VA/` |
 | Native output | up to 2K, 24 fps, 15 s, 32 kHz stereo audio | model card |
 | Inference entry point | `ModularPipeline.from_pretrained("MiniMaxAI/MiniMax-H3")` | operator, 2026-09-17 |
-| Minimal fetch patterns | `--include "model_index.json" "FL2VA/*"` — **the ROOT `model_index.json` is required alongside the subfolder** | operator, 2026-09-17 |
+| Minimal fetch patterns | ~~`FL2VA/*`~~ **SUPERSEDED — see the CORRECTION section.** Fetch the ROOT-level modular layout: `model_index.json modular_model_index.json text_encoder/* tokenizer/* processor/* vae/* audio_vae/* transformer/* scheduler/* audio_scheduler/*` | `modular_model_index.json`, measured |
 | FL2VA covers | text-to-video **and** image-to-video, with optional first/last frame inputs | operator, 2026-09-17 |
 | Ref2VA covers | multi-reference: up to 9 images, 3 video clips, 3 audio clips at once | operator, 2026-09-17 |
 | Modal H200 VRAM | **141 GB** (verbatim) | Modal GPU docs |
 | Modal accepts gpu strings | `"H200"`, `"B200"`, `"B200+"`, `"B300"` | Modal GPU docs |
 | Modal H200 price | $0.001261/sec ≈ **$4.54/hr** | Modal pricing |
 
-**Stated VRAM requirement: none.** The model card gives no hardware floor. The
-~115 GB figure is derived from published weight sizes, and the claim that it
-does not fit 80 GB is an inference from that arithmetic — not a vendor number.
-Treat it as the design's single largest assumption.
+**Stated VRAM requirement: none.** The model card gives no hardware floor, so
+every hardware claim here is arithmetic on measured weight sizes, not a vendor
+number. Measured 2026-09-17: **~133 GB of weights** (text_encoder 66.73 +
+transformer 66.28), plus ~11 GB of VAEs. That does not fit 80 GB, and does not
+fit a 141 GB H200 alongside activations either — which is why
+`enable_model_cpu_offload` is mandatory rather than optional. The remaining
+assumption is that ~77 GB peak under offload leaves enough headroom at
+1344x768x73; that is untested until the first live run.
 
 ## RESOLVED 2026-09-17 — engine route is DIFFUSERS, and the memory math changed
 
@@ -133,6 +137,70 @@ transformer 66.28 + video_vae 10.42 + audio_vae 0.61 = **~77 GB**, leaving ~64 G
 of H200 headroom for activations. H200 remains the right card and Sub-project A
 stands; what changes is that the naive `device_map="cuda"` from the model card
 **must not** be used as-is.
+
+## CORRECTION 2026-09-17 — the FL2VA layout is the WRONG one, and `diffusers==0.40.0` is the floor
+
+Measured after Sub-project B's first fetch. **This spec was wrong about which
+half of the repo to load, and the operator's `ModularPipeline.from_pretrained`
+snippet was right.**
+
+### The repo ships the same FL2VA weights TWICE
+
+| Path | Declares | Size |
+|---|---|---|
+| `FL2VA/` (nested) | `_class_name: MiniMaxH3Pipeline`, `_diffusers_version: 0.32.2` | 144.05 GB |
+| root-level `text_encoder/ transformer/ vae/ audio_vae/ …` | `_class_name: MiniMaxH3ModularPipeline`, `_diffusers_version: 0.36.0.dev0` | 144.04 GB |
+| `Ref2VA/` + `transformer_ref/` | the ref2va task, not needed here | 144.05 + 66.28 GB |
+
+### Only the modular path is loadable
+
+Probed against the diffusers source:
+
+- **`MiniMaxH3Pipeline` is not exported by diffusers at all**, and
+  `pipelines/minimax_h3/pipeline_minimax_h3.py` does not exist. The
+  `_class_name` in `FL2VA/model_index.json` is **not loadable from a stock
+  install** — so the nested layout is a dead end without `trust_remote_code`.
+- **`MiniMaxH3ModularPipeline` IS exported**, alongside
+  `modular_pipelines/minimax_h3/` and `models/autoencoders/autoencoder_kl_minimax_h3.py`.
+
+**Minimum release: `diffusers==0.40.0`.** Tag-by-tag: 0.40.0 exports
+`MiniMaxH3ModularPipeline`; **0.39.0 and 0.38.0 do not**. The manifest's
+`0.36.0.dev0` is a dev build that predates the release. This retires risk 3 — the
+pin is a real released version, and it is nowhere near the `diffusers>=0.32` the
+Wan configs use, so **the H3 image must pin its own diffusers**.
+
+### What Sub-project C must actually load
+
+```python
+ModularPipeline.from_pretrained("MiniMaxAI/MiniMax-H3")  # repo ROOT
+```
+
+Components and their subfolders, read from `modular_model_index.json`:
+
+| Component | Class | Subfolder |
+|---|---|---|
+| text_encoder | `Qwen3VLForConditionalGeneration` | `text_encoder` |
+| tokenizer | `Qwen2TokenizerFast` | `tokenizer` |
+| processor | `Qwen3VLProcessor` | `processor` |
+| vae | `AutoencoderKLMiniMaxH3` | `vae` |
+| audio_vae | `AutoencoderKLMiniMaxH3Audio` | `audio_vae` |
+| transformer | `MiniMaxH3Transformer3DModel` | `transformer` |
+| transformer_ref | `MiniMaxH3Transformer3DModel` | `transformer_ref` |
+| scheduler | `MiniMaxH3Scheduler` | `scheduler` |
+| audio_scheduler | `MiniMaxH3Scheduler` | `audio_scheduler` |
+
+**`transformer_ref` is ref2va-only (66.28 GB) and is deliberately NOT fetched.**
+If the modular loader insists on every declared component, add it — that is a
+one-line change to the fetch and ~$0.04 more, which is exactly the kind of
+question Sub-project B made cheap to answer.
+
+### Why this correction cost $0.08 instead of $4
+
+The wrong-layout fetch ran on a **T4**, not the H200. Had C gone straight to the
+expensive card, this mistake would have surfaced ~50 minutes and ~$4 in, as a
+load error on a booked H200. **This is the concrete payoff for building B before
+C**, and it is worth remembering the next time a prefetch step looks like
+optional ceremony.
 
 ## Decomposition
 
@@ -411,9 +479,11 @@ exits.
    confirm the root manifest resolves to FL2VA when only FL2VA is cached — verify
    offline by reading the fetched `model_index.json` after Sub-project B lands,
    before spending on C.
-3. **diffusers version conflict.** ModularPipeline likely needs newer than the
-   `diffusers>=0.32` the Wan configs pin. The H3 config pins its own versions, so
-   this must not perturb the Wan image — verify the two images stay independent.
+3. ~~**diffusers version conflict.**~~ **RESOLVED 2026-09-17 by tag probe:**
+   `diffusers==0.40.0` is the minimum release exporting `MiniMaxH3ModularPipeline`
+   (0.39.0 and 0.38.0 do not). The H3 image pins its own diffusers; the Wan
+   images keep `>=0.32` and are untouched. Residual: confirm 0.40.0 coexists with
+   the torch 2.6.0+cu124 stack the other Modal configs use.
 4. **Image bake cost.** The first deploy of any new Modal config pays a full
    image build (356 s observed for FlashVSR on 2026-09-17). Budget it once.
 5. ~~**License gating.**~~ **RETIRED 2026-09-17 by measurement.** The HF API
@@ -442,7 +512,8 @@ exits.
 | 2026-09-17 | A and B ship before C | Both cheap, both de-risk C |
 | 2026-09-17 | H200 only; defer B200/B300 | Modal does not state their VRAM; inventing the constant is the U48 defect |
 | 2026-09-17 | Leave `_audio_mode` inert, document it | Flag is factually true; the seam is not the mechanism, and must not read as one |
-| 2026-09-17 | Fetch `model_index.json` **and** `FL2VA/*` | Operator correction: `FL2VA/*` alone omits the root manifest and the download will not load |
+| ~~2026-09-17~~ | ~~Fetch `model_index.json` + `FL2VA/*`~~ **SUPERSEDED** — fetch the ROOT-level modular layout instead | `MiniMaxH3Pipeline` (what FL2VA declares) is not exported by diffusers at all; only `MiniMaxH3ModularPipeline` is |
+| 2026-09-17 | **Pin `diffusers==0.40.0` minimum** | Tag-probed: 0.40.0 exports `MiniMaxH3ModularPipeline`, 0.39.0 and 0.38.0 do not. Far above the `>=0.32` the Wan configs use, so H3 pins its own |
 | 2026-09-17 | Entry point is `ModularPipeline`, not `DiffusionPipeline` | Operator correction; loads the repo root, which is why the root manifest is required |
 | 2026-09-17 | **Engine route RESOLVED: diffusers.** ComfyUI is 3.4x smaller (42.48 vs 144.1 GB) on a cheaper card and its H3 nodes are real, but needs three unproven links: Modal+ComfyUI never built, engine unproven since 2026-06-18, and the template is a subgraph the vendored converter predates | Measured both probes; one new server module beats three unbounded unknowns |
 | 2026-09-17 | **`enable_model_cpu_offload` is MANDATORY** | Weights measured at ~133 GB, not ~115 GB. Naive `device_map="cuda"` leaves ~8 GB for activations on a 141 GB H200 and will OOM; offloading the text encoder drops peak to ~77 GB |
