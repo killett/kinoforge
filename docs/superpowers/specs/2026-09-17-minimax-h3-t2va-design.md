@@ -218,11 +218,27 @@ across 11 files** (video engines, image engines and the fake backbone alike) and
 `_audio_mode` marker into the job spec "so a downstream stage can branch", and a
 grep confirms **nothing reads `_audio_mode` anywhere**. It is a dormant
 placeholder, not a working seam — the same shape as **U40** (correct logic,
-unreachable) and **U24** (the fix that was one field short). Setting the flag
-must not be mistaken for wiring the behaviour. Either make the marker
-load-bearing with a test that fails when it is wrong, or leave it deliberately
-inert and say so in the code. Silently setting a flag nothing reads is the
-failure this project keeps rediscovering.
+unreachable) and **U24** (the fix that was one field short).
+
+**Operator decision 2026-09-17: leave the marker inert, and say so in the code.**
+
+The flag is set to `True` because it is *factually true* — H3 does generate joint
+audio, and a capability profile that lied about that would be its own defect. But
+nothing may be built on it in this project. Concretely:
+
+- Add a comment at `core/strategy.py:55` recording that `_audio_mode` is written
+  and read nowhere, that this is deliberate as of 2026-09-17, and that H3 is the
+  first model for which the value is not a constant.
+- Add a comment at the H3 profile site recording that `supports_joint_audio=True`
+  is a capability *declaration*, and that the audio actually reaches the output
+  through `_av_io.write_mp4_with_audio` — **not** through the strategy seam.
+- **No test may assert behaviour through `_audio_mode`.** Audio behaviour is
+  tested at `_av_io` and at the frame-QA audio arm, where it is real.
+
+The comments are the deliverable here. An inert seam that is *documented* as
+inert is fine; an inert seam that reads as working is how U40 cost a live run.
+A future agent finding `supports_joint_audio=True` must be able to see, without
+grepping, that the strategy marker is not the mechanism.
 
 ### Config
 
@@ -300,6 +316,17 @@ exits.
    visible on the repo, but acceptance may still be required for download — a
    prefetch that 401s is the cheapest possible place to discover that, which is
    another argument for B preceding C.
+
+## Decisions log
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-09-17 | t2va only; no FlashVSR/RIFE for H3 | H3 is natively 2K/24 fps; upscaling is a no-op and interpolation would desync joint audio |
+| 2026-09-17 | H200 bf16, not A100 offload or INT8 | Fits outright with headroom; official weights; fewest unknowns |
+| 2026-09-17 | Prefetch to the Volume from a T4 | Turns a ~$3.94 fetch into ~$0.51 and makes the budget viable |
+| 2026-09-17 | A and B ship before C | Both cheap, both de-risk C |
+| 2026-09-17 | H200 only; defer B200/B300 | Modal does not state their VRAM; inventing the constant is the U48 defect |
+| 2026-09-17 | Leave `_audio_mode` inert, document it | Flag is factually true; the seam is not the mechanism, and must not read as one |
 
 ## Open questions for plan time
 
