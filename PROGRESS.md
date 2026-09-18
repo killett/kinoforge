@@ -3081,7 +3081,39 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-09-12 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-17 — read this, then STOP; below is history)
+
+### SESSION 2026-09-17 — three Modal operator recipes verified live for ~$1.15; no defects found
+
+**Not a defect-hunting session.** The operator asked for paste-able Modal equivalents of two
+example shell blocks (generate; upscale+interpolate; and the two chained) and required them to be
+RUN before being proposed. All three are green, all outputs frame-QA'd, all pods torn down and
+verified from fresh processes. Logged as §30 plus See-alsos under §23 / §25 / §27 in
+`successful-generations.md`. **The open-defect count is unchanged — see the STATUS INDEX.**
+
+**Two operator-facing facts worth carrying, neither of them a code defect:**
+
+- **Modal configs need `pixi shell-hook -e live-modal`, not a bare `pixi shell-hook`.** The default
+  env has no `modal` module, so the brief's `eval "$(pixi shell-hook)"` form dies with
+  `ModuleNotFoundError` on every Modal cfg. Both Modal cfg headers already say so; the example
+  block did not. RunPod cfgs are fine in the default env.
+- **`--ephemeral` and `successful-generations.md` are mutually exclusive by rule**, and the brief
+  asked for both. Operator ruled: **run without `--ephemeral` so the runs are loggable.** The flag
+  itself was verified only offline (`--dry-run` on both Modal cfgs, `--dry-run-swap` on the RunPod
+  one; `(diffusers, modal)` and `(diffusers, runpod)` are both `True` in `EPHEMERAL_CAPABILITIES`,
+  and `EphemeralSession.__exit__` scrubs the store only AFTER `OutputSink.publish`, so an
+  `--ephemeral` run still lands its mp4 in `output/`). **No `--ephemeral` run was fired live.**
+
+**One trap found in the operator's own glue, worth reusing:**
+`--video "$(ls -t output/*upscaled*.mp4 | head -1)"` **silently feeds the previous run's file to the
+next stage when a stage fails** — `output/` already held three older `*upscaled*` files, so the
+failure would have read as success. Replaced with `find -newer "$MARK"` + `test -n`, which fails the
+block instead. Use that shape in any multi-stage recipe.
+
+**Monitoring lesson:** a 75 s `/util` cadence undersamples a ~90 s stage — one stage read `gpu=0.0`
+on both its probes and published seconds later (mem rising 0.4 → 1.6 across them). The
+"0 % for ≥3 probes" threshold correctly did not fire, but set the cadence against the STAGE
+duration, not the run duration.
 
 ### SESSION 2026-09-11 (third) — U34 ANSWERED for ~$0.05, and the answer needed BOTH arms
 
