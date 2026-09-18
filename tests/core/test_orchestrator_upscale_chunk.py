@@ -41,6 +41,8 @@ def _chunked_upscale_cfg() -> Config:
                 "scale": "2x",
                 "chunk_frames": 69,
                 "chunk_overlap": 8,
+                "tile_grid": [2, 2],
+                "tile_overlap": 32,
                 "spandrel": {
                     "model_url": "hf:foo/bar.pth",
                     "arch": "realesrgan",
@@ -123,6 +125,8 @@ def test_chunk_knobs_reach_the_stage(
     kwargs = _stub_upscale_stage["init_kwargs"]
     assert kwargs["chunk_frames"] == 69
     assert kwargs["chunk_overlap"] == 8
+    assert kwargs["tile_grid"] == (2, 2)
+    assert kwargs["tile_overlap"] == 32
 
 
 def test_chunked_local_join_is_published_without_a_downscale(

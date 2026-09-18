@@ -56,3 +56,46 @@ def test_degenerate_chunking_is_refused_at_config_time(
             chunk_frames=chunk_frames,
             chunk_overlap=chunk_overlap,
         )
+
+
+def test_tiling_is_off_by_default() -> None:
+    # Bug caught: a default tile_grid crops every proven single-call upscale
+    # into a grid of pod calls nobody asked for.
+    cfg = UpscaleConfig(engine="spandrel", scale="2x", spandrel=_spandrel_block())
+    assert cfg.tile_grid is None
+    assert cfg.tile_overlap == 32
+
+
+def test_tile_grid_round_trips_as_a_pair() -> None:
+    # Bug caught: the YAML list [2, 2] rejected, or coerced into something
+    # the stage cannot unpack as (cols, rows).
+    cfg = UpscaleConfig.model_validate(
+        {
+            "engine": "spandrel",
+            "scale": "2x",
+            "spandrel": _spandrel_block().model_dump(),
+            "tile_grid": [2, 2],
+            "tile_overlap": 48,
+        }
+    )
+    assert cfg.tile_grid == (2, 2)
+    assert cfg.tile_overlap == 48
+
+
+@pytest.mark.parametrize(
+    ("tile_grid", "tile_overlap"),
+    [((0, 2), 32), ((2, 0), 32), ((2, 2), -1)],
+)
+def test_degenerate_tiling_is_refused_at_config_time(
+    tile_grid: tuple[int, int], tile_overlap: int
+) -> None:
+    # Bug caught: a zero-column grid or a negative overlap accepted here and
+    # only refused by the planner after the pod is booked.
+    with pytest.raises(ConfigError):
+        UpscaleConfig(
+            engine="spandrel",
+            scale="2x",
+            spandrel=_spandrel_block(),
+            tile_grid=tile_grid,
+            tile_overlap=tile_overlap,
+        )

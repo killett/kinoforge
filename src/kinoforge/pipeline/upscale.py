@@ -20,7 +20,7 @@ from typing import Any
 
 from kinoforge.core.cancel import CancelToken
 from kinoforge.core.errors import ScaleUnsatisfiableError
-from kinoforge.core.frames import _default_run, ffprobe_dims
+from kinoforge.core.frames import _default_run, ffprobe_dims, ffprobe_fps
 from kinoforge.core.interfaces import (
     Artifact,
     Instance,
@@ -37,6 +37,7 @@ from kinoforge.pipeline.chunk import (
     plan_chunks,
     split_argv,
 )
+from kinoforge.pipeline.tile import crop_argv, plan_tiles, stitch_videos
 
 _log = logging.getLogger("kinoforge.pipeline.upscale")
 
@@ -70,6 +71,12 @@ class UpscaleStage:
             chunk off the pod.
         probe_frames: Injectable ``(path) -> frame count`` seam.
         work_dir: Directory for chunk intermediates; a fresh temp dir when None.
+        tile_grid: ``(cols, rows)`` spatial tiling; ``None`` disables it. See
+            :mod:`kinoforge.pipeline.tile`. Composes with chunking: each tile
+            goes through the chunked path when ``chunk_frames`` is set.
+        tile_overlap: Minimum overlap between neighbouring tiles, source px.
+        stitch: Injectable feather-stitch seam (``stitch_videos`` signature).
+        probe_fps: Injectable ``(path) -> fps`` seam for the stitched output.
     """
 
     engine: UpscalerEngine
@@ -84,6 +91,10 @@ class UpscaleStage:
     fetch: Callable[[str], bytes] = _default_fetch
     probe_frames: Callable[[str | Path], int] = ffprobe_frames
     work_dir: Path | None = None
+    tile_grid: tuple[int, int] | None = None
+    tile_overlap: int = 32
+    stitch: Callable[..., None] = stitch_videos
+    probe_fps: Callable[[str | Path], float] = ffprobe_fps
 
     def run(self, state: PipelineState) -> PipelineState:
         """Run the upscale, returning a new state with ``upscaled`` populated."""
@@ -97,11 +108,101 @@ class UpscaleStage:
         return replace(state, artifacts=new_artifacts)
 
     def _run_engine(self, clip: Artifact, scale: ScaleTarget) -> UpscaleResult:
-        """Invoke the engine at a concrete factor scale, chunking when configured.
+        """Invoke the engine at a concrete factor scale, tiling/chunking when configured.
 
         Raises:
-            ValueError: Chunking is on but the source is not a local file.
+            ValueError: Tiling or chunking is on but the source is not a local file.
         """
+        if self.tile_grid is None:
+            return self._run_temporal(clip, scale)
+        local = self._local_path(clip)
+        if local is None:
+            raise ValueError(
+                f"tiled upscale needs a local source clip; got {clip.uri!r}"
+            )
+        return self._run_tiled(local, scale)
+
+    def _run_tiled(self, local: Path, scale: ScaleTarget) -> UpscaleResult:
+        """Crop → (chunked) upscale per tile on the same pod → localise → stitch."""
+        assert self.tile_grid is not None  # noqa: S101 — dispatched on it
+        cols, rows = self.tile_grid
+        width, height = self.probe_dims(local)
+        fps = self.probe_fps(local)
+        tiles = plan_tiles(
+            width, height, cols=cols, rows=rows, overlap=self.tile_overlap
+        )
+        work = self._work_dir()
+        parts: list[str] = []
+        elapsed = 0.0
+        factor: int | None = None
+        tile_meta: list[dict[str, Any]] = []
+        for i, tile in enumerate(tiles):
+            _log.info(
+                "upscale tile %d/%d: %dx%d at (%d,%d)",
+                i + 1,
+                len(tiles),
+                tile.w,
+                tile.h,
+                tile.x,
+                tile.y,
+            )
+            tile_path = work / f"tile{i:02d}.mp4"
+            self.ffmpeg_run(crop_argv(str(local), tile, str(tile_path)), b"")
+            result = self._run_temporal(Artifact(uri=f"file://{tile_path}"), scale)
+            parts.append(
+                str(self._localize(result.artifact, work / f"tileup{i:02d}.mp4"))
+            )
+            elapsed += result.elapsed_s
+            tile_meta.append(dict(result.engine_meta))
+            if factor is None:
+                factor = int(round(result.output_resolution[0] / tile.w))
+        assert factor is not None  # noqa: S101 — at least one tile
+        stitched = work / "stitched.mp4"
+        _log.info("stitching %d tiles -> %s", len(parts), stitched)
+        self.stitch(
+            parts,
+            tiles,
+            canvas_w=width,
+            canvas_h=height,
+            scale=factor,
+            fps=fps,
+            out_path=str(stitched),
+        )
+        body = stitched.read_bytes()
+        return UpscaleResult(
+            artifact=Artifact(
+                uri=f"file://{stitched}",
+                sha256=hashlib.sha256(body).hexdigest(),
+                size=len(body),
+                meta={"tiles": len(tiles), "materialize": True},
+            ),
+            input_resolution=(width, height),
+            output_resolution=(width * factor, height * factor),
+            elapsed_s=elapsed,
+            engine_meta={"tiles": len(tiles), "tile_meta": tile_meta},
+        )
+
+    def _localize(self, artifact: Artifact, dest_hint: Path) -> Path:
+        """Return a local path for *artifact*, fetching a pod URL when needed."""
+        local = self._local_path(artifact)
+        if local is not None:
+            return local
+        with tempfile.NamedTemporaryFile(
+            dir=dest_hint.parent,
+            prefix=dest_hint.stem + "-",
+            suffix=".mp4",
+            delete=False,
+        ) as tf:
+            tf.write(self.fetch(artifact.uri))
+            return Path(tf.name)
+
+    def _work_dir(self) -> Path:
+        work = self.work_dir or Path(tempfile.mkdtemp(prefix="kinoforge-chunks-"))
+        work.mkdir(parents=True, exist_ok=True)
+        return work
+
+    def _run_temporal(self, clip: Artifact, scale: ScaleTarget) -> UpscaleResult:
+        """Chunk-or-single upscale of one clip (the pre-tiling path)."""
         if self.chunk_frames is None:
             return self._engine_call(clip, scale)
         local = self._local_path(clip)
@@ -127,8 +228,7 @@ class UpscaleStage:
         self, local: Path, specs: list[Any], scale: ScaleTarget
     ) -> UpscaleResult:
         """Split → upscale each chunk on the same pod → fetch → trim+join."""
-        work = self.work_dir or Path(tempfile.mkdtemp(prefix="kinoforge-chunks-"))
-        work.mkdir(parents=True, exist_ok=True)
+        work = Path(tempfile.mkdtemp(prefix="chunks-", dir=self._work_dir()))
         parts: list[tuple[str, int]] = []
         elapsed = 0.0
         first: UpscaleResult | None = None

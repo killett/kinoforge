@@ -816,6 +816,14 @@ class UpscaleConfig(BaseModel):
         chunk_overlap: Warm-up frames rendered before each chunk's kept range
             and discarded, so the streaming model has temporal context at
             every seam. Must be below ``chunk_frames``.
+        tile_grid: ``[cols, rows]``; when set, UpscaleStage crops the source
+            into that many 32-px-aligned tiles, upscales each (chunked if
+            ``chunk_frames`` is also set) on the same pod and feather-stitches
+            them back — the only way a source whose 4x canvas exceeds the
+            card's attention budget (960x544 on FlashVSR) gets upscaled at
+            full fidelity. ``None`` (default) keeps the whole-frame path.
+        tile_overlap: Minimum overlap between neighbouring tiles in source
+            pixels; the feather ramp spans the actual overlap.
     """
 
     engine: str
@@ -825,6 +833,22 @@ class UpscaleConfig(BaseModel):
     flashvsr: FlashVSREngineConfig | None = None
     chunk_frames: int | None = None
     chunk_overlap: int = 8
+    tile_grid: tuple[int, int] | None = None
+    tile_overlap: int = 32
+
+    @model_validator(mode="after")
+    def _validate_tiling(self) -> Self:
+        if self.tile_grid is not None and (
+            self.tile_grid[0] < 1 or self.tile_grid[1] < 1
+        ):
+            raise ConfigError(
+                f"upscale.tile_grid must be [cols, rows] with both >= 1, got {self.tile_grid}"
+            )
+        if self.tile_overlap < 0:
+            raise ConfigError(
+                f"upscale.tile_overlap must be >= 0, got {self.tile_overlap}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_chunking(self) -> Self:

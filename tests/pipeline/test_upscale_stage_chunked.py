@@ -170,10 +170,12 @@ def test_long_clip_is_split_upscaled_per_chunk_fetched_and_joined(
     ]
     chunk_paths = [a[-1] for a in split]
     assert [j.source.uri for j in engine.jobs] == [f"file://{p}" for p in chunk_paths]
-    assert all(Path(p).parent == tmp_path / "work" for p in chunk_paths)
+    # one per-call subdir under work/, so several chunked calls (tiles) never collide
+    assert all(Path(p).parent.parent == tmp_path / "work" for p in chunk_paths)
+    assert len({Path(p).parent for p in chunk_paths}) == 1
 
     assert fetch.urls == [f"http://pod/artifacts/out{n}.mp4" for n in (1, 2, 3)]
-    fetched = [p for p in (tmp_path / "work").iterdir() if p.name.startswith("up")]
+    fetched = [p for p in (tmp_path / "work").rglob("up*")]
     assert len(fetched) == 3
     assert {p.read_bytes() for p in fetched} == {
         f"bytes-of-http://pod/artifacts/out{n}.mp4".encode() for n in (1, 2, 3)

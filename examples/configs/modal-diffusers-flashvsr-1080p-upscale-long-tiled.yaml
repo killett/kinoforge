@@ -1,0 +1,130 @@
+# FlashVSR v1.1 HEIGHT-TARGET upscale to 1080p on Modal — LONG clip, WIDE source,
+# SPATIALLY TILED.
+#
+# Sibling of modal-diffusers-flashvsr-1080p-upscale-long.yaml (same engine,
+# wheel, weights, lifecycle and temporal chunking) plus `upscale.tile_grid`.
+# It exists for sources whose 4x canvas exceeds the card's attention budget —
+# the MiniMax-H3 max-length clip at 960x544 (3840x2176 out) OOM'd an 80 GB
+# A100 five times on 2026-09-18 on a ~40 GiB block mask, whatever the chunk
+# length. A 2x2 grid with 32 px of requested overlap plans 512x288 tiles at
+# x=0/448, y=0/256 (64 px actual overlap horizontally, 32 vertically), each
+# rendering at 2048x1152 — a 55,296-token window, well under the 86,400 that
+# §24 proved. Each tile goes through the chunked upscale on the same pod; the
+# controller feather-blends them (pipeline/tile.py) and lanczos-downscales the
+# 3840x2176 canvas to 1906x1080. Every source pixel reaches FlashVSR — nothing
+# is downscaled first.
+#
+# Cost: 4 tiles x 5 chunks = 20 pod calls (~65 s each) ≈ 22 min on the A100 ≈
+# $0.90, plus a ~4-8 min local stitch (345 frames of 3840x2176).
+#
+# Tile dims must be multiples of 32 (the block-sparse attention window rule);
+# the planner guarantees it, so any 960x544 or 1344x768 source works.
+#
+# Usage (upscale-only; supply the source clip via --video):
+#   pixi run -e live-modal kinoforge upscale \
+#     --config examples/configs/modal-diffusers-flashvsr-1080p-upscale-long-tiled.yaml \
+#     --video output/<960x544 clip>.mp4 \
+#     --no-reuse
+
+engine:
+  kind: diffusers
+  precision: bfloat16
+  diffusers:
+    # Modal serialized web_server fn requires image-Python == controller (3.13).
+    image: "python:3.13-slim"
+    # `env VAR=val` argv prefix (no shell) sets PYTORCH_CUDA_ALLOC_CONF before
+    # torch's allocator initialises — the same fix the Lambda FlashVSR cfg
+    # needed. The 69-frame chunk attempt on 2026-09-18 died with 10.07 GiB
+    # "reserved but unallocated" (pure fragmentation) out of 77.3 GiB in use;
+    # expandable_segments reclaims that headroom. tile_size does NOT help: it
+    # reaches the pipeline as a bare `tiled=True`, and the Lambda run proved
+    # 256 vs 512 gives identical OOM figures.
+    server_cmd:
+      - "env"
+      - "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      # torch 2.6.0+cu124 trio — the cp313 BSA wheel below links against exactly
+      # this torch. Do NOT bump without rebuilding the wheel.
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      - "modelscope"
+      # setuptools>=81 removed pkg_resources, which FlashVSR's setup.py imports.
+      - "setuptools<81"
+      - "wheel"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      - "kinoforge.upscalers.flashvsr"
+    embed_files:
+      - "kinoforge.core.errors"
+      - "kinoforge.core.scale_target"
+    # Skip eager WanPipeline load — pod runs only the on-demand FlashVSR runtime.
+    upscale_only: true
+
+models: []
+
+compute:
+  provider: modal
+  image: "python:3.13-slim"
+  mode: pod
+  placement:
+    min_vram_gb: 80
+    min_cuda: "12.4"
+    max_usd_per_hr: 4.00
+    disk_gb: 60
+    accelerators:
+      - "A100-80GB"
+      - "H100"
+  lifecycle:
+    heartbeat_interval_s: 30  # required when warm_reuse_auto_attach=true (default)
+    idle_timeout: 30m
+    # ~10x the §24 workload (see header). 45m is a ceiling, not an estimate.
+    job_timeout: 45m
+    time_buffer: 3m
+    max_lifetime: 90m
+    # Modal does NOT enforce job_timeout: boot_timeout becomes
+    # @app.function(timeout=...) and is the ONLY deadline the instance sees, so
+    # it has to cover the boot AND the render (the validator says so on every
+    # dry-run). 45m on the sibling would kill a ~20 min render after a slow boot.
+    boot_timeout: 60m
+    budget: 5.0
+
+spec:
+  model: "flashvsr-wan21-bfloat16"
+
+upscale:
+  engine: flashvsr
+  scale: 1080p
+  # TEMPORAL CHUNKING — the load-bearing difference from the sibling. FlashVSR
+  # holds the whole clip on the GPU, so the un-chunked 345-frame run OOM'd
+  # the 80 GB A100 (2026-09-18). BUT the dominant term is the OUTPUT canvas,
+  # not the frame count: five attempts at a 960x544 source (3840x2176 out)
+  # all died at a ~69 GiB baseline whether the chunk held 345, 69 or 41
+  # frames, the last on a single 40 GiB block-mask allocation. This cfg is
+  # therefore sized for sources up to ~640x360 (2560x1440 out, token budget
+  # 86,400 = what §24 proved with 81 rendered frames): 69 kept + 8 warm-up =
+  # 77, padded on the pod to the pipeline's 8n+1 stream length = 81 — §24's
+  # exact envelope. Five chunks for 345 frames, each upscaled on the same
+  # pod and joined on the controller (pipeline/chunk.py). A wider source
+  # needs spatial tiling, not a bigger card.
+  chunk_frames: 69
+  chunk_overlap: 8
+  # SPATIAL TILING — see the header. 2x2 tiles of 512x288 from a 960x544
+  # source, feather-blended on the controller.
+  tile_grid: [2, 2]
+  tile_overlap: 32
+  flashvsr:
+    weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
+    # cp313 BSA wheel — built on Modal (tools/build_bsa_wheel_modal.py) against
+    # torch 2.6.0+cu124 / BSA 3453bbb1, hosted on killett/kinoforge-artifacts.
+    bsa_wheel_url: "https://github.com/killett/kinoforge-artifacts/releases/download/bsa-cu124-torch2.6-cp313-v1/block_sparse_attn-0.0.1-cp313-cp313-linux_x86_64.whl"
+    precision: bfloat16
+    window_size: 24
+    tile_size: 512
+    long_video_mode: false

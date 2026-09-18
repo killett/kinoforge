@@ -44,6 +44,7 @@ ADVERTISABLE_STAGES = frozenset({"t2v", "upscale", "interpolate"})
 # report and made the pod structurally unattachable.
 U14_CHANGED_CFGS = frozenset(
     {
+        "modal-diffusers-flashvsr-1080p-upscale-long-tiled.yaml",
         "modal-diffusers-flashvsr-1080p-upscale-long.yaml",
         "modal-diffusers-flashvsr-1080p-upscale.yaml",
         "modal-diffusers-flashvsr-x4-upscale.yaml",

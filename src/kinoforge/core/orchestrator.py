@@ -2901,6 +2901,8 @@ def generate(
                     cancel_token=cancel_token,
                     chunk_frames=cfg.upscale.chunk_frames,
                     chunk_overlap=cfg.upscale.chunk_overlap,
+                    tile_grid=cfg.upscale.tile_grid,
+                    tile_overlap=cfg.upscale.tile_overlap,
                 )
             )
 
