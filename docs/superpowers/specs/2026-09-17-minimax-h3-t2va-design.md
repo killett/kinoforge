@@ -61,6 +61,65 @@ sourced from the vendor, that is stated rather than guessed.
 does not fit 80 GB is an inference from that arithmetic — not a vendor number.
 Treat it as the design's single largest assumption.
 
+## OPEN — engine route, must be settled before Sub-project B
+
+**Raised 2026-09-17 by operator, after the hardware decision was made.** The
+Comfy-Org reference t2v workflow
+(`Comfy-Org/workflow_templates/templates/video_minimax_h3_t2v.json`) does **not**
+run bf16. It loads:
+
+| Role | File | Precision |
+|---|---|---|
+| diffusion model | `minimax_h3_fl2va_pruned_int8_convrot.safetensors` | **pruned INT8** |
+| text encoder | `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | **NVFP4 AWQ** |
+| video VAE | `minimax_h3_video_vae_fp16.safetensors` | fp16 |
+| audio VAE | `minimax_h3_audio_vae_fp32.safetensors` | fp32 |
+| optional LoRA | `minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors` | bf16 |
+
+Sampler `res_multistep`, scheduler `simple`, **20 steps** (or **8** with the
+turbo LoRA), **1344×768 @ 24 fps**. Audio is decoded by a separate
+`VAEDecodeAudio` node and muxed with the frames by `CreateVideo` — which
+independently confirms the `_av_io.write_mp4_with_audio` shape below is right.
+
+**Three assumptions this undermines:**
+
+1. **"bf16, therefore >80 GB, therefore H200."** The ecosystem's own reference
+   configuration is quantised and totals **~38 GB** (19.5 + 14.6 + VAEs, per the
+   comfyui-wiki listing — exact per-file sizes still to be confirmed). That fits
+   an A100-80GB with room to spare, and possibly an L40S at 48 GB.
+2. **"INT8 is an unvetted third-party repackage."** That reasoning was sound when
+   the quantised set looked like a community side-product. It is weaker now that
+   it is what Comfy-Org ships as the reference path.
+3. **"~2K output."** The reference runs 1344×768 — well under 2K, and far
+   cheaper.
+
+**Also newly known and directly budget-relevant:** a **turbo 8-step LoRA** exists.
+20 steps → 8 is a ~2.5× cut in generation time, i.e. in dollars per attempt.
+
+**What is NOT undermined:** Sub-project A stands as committed. The catalog was
+genuinely stale, H200 is genuinely the only card above 80 GB, and the row is
+correct and harmless whichever route wins. Do not revert it.
+
+**The fork, stated plainly.** kinoforge has BOTH a `diffusers` engine and a
+`comfyui` engine, and already ships `.graph.json` workflows for Wan 2.2 on the
+ComfyUI path. So:
+
+- **Diffusers route** (as specced): official `MiniMaxAI` bf16 layout, 144 GB,
+  H200, `ModularPipeline`. Matches how Wan 2.2 runs on Modal today.
+- **ComfyUI route**: `Comfy-Org` quantised layout, ~38 GB, A100-80GB, driven by
+  a `.graph.json` adapted from the reference template. Matches an
+  already-validated reference, 4× smaller fetch, cheaper card, and a known
+  8-step turbo option.
+
+**This changes what Sub-project B downloads**, so it must be decided before B is
+planned. The numeric parameters above (1344×768, 24 fps, 73 frames, 20/8 steps,
+`res_multistep`/`simple`) are useful ground truth for the `spec:` block on
+*either* route.
+
+**Unverified:** the fetched summary reported "73 frames ≈ 5 seconds", but
+73 / 24 = 3.04 s. Frame count and duration must be read from the template
+directly before being copied into a config.
+
 ## Decomposition
 
 Three sub-projects. **A and B ship before C** (operator decision 2026-09-17);
