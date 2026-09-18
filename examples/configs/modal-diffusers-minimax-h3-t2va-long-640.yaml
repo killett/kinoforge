@@ -1,0 +1,96 @@
+# MiniMax-H3 t2va on Modal H200 — LONGEST clip at a 640x352 canvas.
+#
+# Sibling of modal-diffusers-minimax-h3-t2va-long.yaml (960x544); byte-identical
+# except width/height. It exists for the 1080p chain: FlashVSR is 4x-native and
+# its attention canvas is the OUTPUT size, so a 960x544 source means 3840x2176
+# and a first-window block mask alone of ~40 GiB on top of a ~69 GiB baseline —
+# no Modal card fits it (2026-09-18, five attempts). 640x352 x4 = 2560x1408,
+# whose token count (160x88x6 = 84,480) sits just under the 86,400 that §24
+# proved on an 80 GB A100. Both axes must stay multiples of 32 (640/32=20,
+# 352/32=11); 640x360 is refused. Aspect 1.818 — not 16:9 — so the 1080p
+# deliverable is 1964x1080.
+#
+# H3 quality at this canvas is UNTESTED: the model trained at 1344x768 and
+# 960x544 is the documented small canvas. Frame-QA cmd 1 before building on it.
+#
+# Usage:
+#   pixi run -e live-modal kinoforge generate \
+#     --config examples/configs/modal-diffusers-minimax-h3-t2va-long-640.yaml \
+#     --mode t2va \
+#     --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+#     --no-reuse
+
+mode: t2va
+prompt: "Photorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace — luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking."
+
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    image: "python:3.13-slim"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.minimax_h3_server"
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "diffusers==0.40.0"
+      - "transformers>=4.57"
+      - "accelerate>=1.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      - "psutil>=5.9"
+      - "nvidia-ml-py>=12"
+      # `_flash_3_hub` resolves its kernels through huggingface_hub's kernels
+      # integration; without it set_attention_backend raises and the server
+      # degrades to the stock backend (see the header).
+      - "kernels>=0.4"
+    base_url: "http://localhost:8000"
+    prompt_body_key: "prompt"
+    embed_modules: ["kinoforge.engines.diffusers.servers"]
+    attention_backend: "_flash_3_hub"
+    capability:
+      supported_modes: ["t2va"]
+      max_frames: 345          # 14.375 s — the real ceiling, NOT 360
+      fps: 24
+      max_resolution: [1344, 768]   # the model's cap, not this cfg's canvas
+      supports_joint_audio: true
+
+models:
+  - ref: "hf:MiniMaxAI/MiniMax-H3"
+    kind: base
+    target: checkpoints
+
+compute:
+  provider: modal
+  image: "python:3.13-slim"
+  mode: pod
+  placement:
+    min_vram_gb: 120
+    min_cuda: "12.4"
+    max_usd_per_hr: 5.00
+    accelerators:
+      - "H200"
+  lifecycle:
+    heartbeat_interval_s: 30
+    idle_timeout: 20m
+    job_timeout: 40m
+    time_buffer: 3m
+    max_lifetime: 90m
+    # Also Modal's @app.function(timeout=...), so it has to cover boot AND a
+    # 14.375 s generation, which is the longest this model does.
+    boot_timeout: 60m
+    budget: 8.0
+
+spec:
+  model: "MiniMax-H3"
+  pipeline: "MiniMaxH3ModularPipeline"
+  scheduler: "MiniMaxH3Scheduler"
+  width: 640
+  height: 352
+  num_frames: 345
+  fps: 24
+  num_inference_steps: 50

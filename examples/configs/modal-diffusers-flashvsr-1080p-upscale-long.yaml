@@ -105,19 +105,18 @@ upscale:
   engine: flashvsr
   scale: 1080p
   # TEMPORAL CHUNKING — the load-bearing difference from the sibling. FlashVSR
-  # holds the whole clip on the GPU and its memory is SUPERLINEAR in
-  # frames x pixels: 81 f at 480² peaks 34.6 GiB (Lambda cfg), yet 69 f at
-  # 960x544 — 1.9x the frame-pixels — blew past 77 GiB on the 80 GB A100
-  # (2026-09-18, second attempt; the un-chunked 345 f run had died the same
-  # way). Fitting those two points puts ~49 rendered frames at this canvas
-  # near 55 GiB. The pod pads every clip to the pipeline's 8n+1 stream
-  # length (+4 frames of streaming latency) by cloning the last frame, so a
-  # chunk of 37 kept + 8 warm-up = 45 renders as exactly 49 with nothing
-  # wasted; 10 chunks for 345 frames, each upscaled on the same pod and
-  # joined on the controller (pipeline/chunk.py). If this OOMs again, drop
-  # chunk_frames before touching hardware — no card fixes a per-chunk
-  # footprint.
-  chunk_frames: 37
+  # holds the whole clip on the GPU, so the un-chunked 345-frame run OOM'd
+  # the 80 GB A100 (2026-09-18). BUT the dominant term is the OUTPUT canvas,
+  # not the frame count: five attempts at a 960x544 source (3840x2176 out)
+  # all died at a ~69 GiB baseline whether the chunk held 345, 69 or 41
+  # frames, the last on a single 40 GiB block-mask allocation. This cfg is
+  # therefore sized for sources up to ~640x360 (2560x1440 out, token budget
+  # 86,400 = what §24 proved with 81 rendered frames): 69 kept + 8 warm-up =
+  # 77, padded on the pod to the pipeline's 8n+1 stream length = 81 — §24's
+  # exact envelope. Five chunks for 345 frames, each upscaled on the same
+  # pod and joined on the controller (pipeline/chunk.py). A wider source
+  # needs spatial tiling, not a bigger card.
+  chunk_frames: 69
   chunk_overlap: 8
   flashvsr:
     weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
