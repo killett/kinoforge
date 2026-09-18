@@ -1,7 +1,7 @@
 """Static Modal GPU offer catalog.
 
 Modal is serverless — there is no live "offers" API. Pricing is a fixed table
-(snapshot 2026-07-08, https://modal.com/pricing). Offers are ``mode="serverless"``
+(snapshot 2026-09-17, https://modal.com/pricing). Offers are ``mode="serverless"``
 so :func:`filter_offers` does not apply the pod ``max_usd_per_hr`` cap.
 """
 
@@ -19,6 +19,13 @@ _MODAL_GPUS: tuple[tuple[str, int, float], ...] = (
     ("A100-40GB", 40, 2.10),
     ("A100-80GB", 80, 2.50),
     ("H100", 80, 3.95),
+    # H200 is the only card here above 80 GB, and it is deliberately the only
+    # one. Modal's GPU docs state its capacity verbatim ("141 GB"); they do NOT
+    # state B200's or B300's, and a vram_gb that the provider never published is
+    # the U48 defect — a fabricated constant that filter_offers applies
+    # silently, with no error to read. Add B200/B300 only when Modal itself
+    # publishes their VRAM.
+    ("H200", 141, 4.54),
 )
 
 #: Modal's GPU fleet runs recent NVIDIA drivers (CUDA 12.8+). Report 12.8 so the
