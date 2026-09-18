@@ -19,9 +19,19 @@ output. H3 emits up to 2K at 24 fps already, so upscaling it is at best a no-op,
 and RIFE would desynchronise a soundtrack that was generated in lockstep with
 the frames. Operator decision 2026-09-17: **t2va only, keep the audio.**
 
-Also out of scope: `fl2va` (first/last-frame) and `ref2va` (reference) modes,
-INT8/NVFP4 quantised weights, and multi-GPU SGLang serving. Each is a later
-increment; none is needed for a first working clip.
+Also out of scope: `fl2va` (first/last-frame), image-to-video, `ref2va`
+(reference) modes, INT8/NVFP4 quantised weights, and multi-GPU SGLang serving.
+Each is a later increment; none is needed for a first working clip.
+
+**Two of those deferrals are much cheaper to reverse than the third**, and the
+plan order should reflect it. The **FL2VA checkpoint already covers
+text-to-video *and* image-to-video with optional first/last-frame inputs** — so
+once Sub-project B has cached it, adding `i2v` and `fl2va` costs no new download
+and no new hardware, only mode wiring. **`ref2va` is the expensive one**: it is a
+separate checkpoint of comparable size (multi-reference — up to 9 images, 3 video
+clips and 3 audio clips at once), so enabling it means a second ~144 GB fetch.
+Sequence accordingly: i2v/fl2va are natural next increments after C; ref2va is
+its own budgeted project.
 
 ## Grounding — where these facts come from
 
@@ -38,7 +48,10 @@ sourced from the vendor, that is stated rather than guessed.
 | Whole repo size | 498 GB | repo tree |
 | bf16 component sizes | transformer 61.7 GB, text encoder 48.0 GB, video VAE 4.9 GB, audio VAE 0.6 GB (**≈115 GB**) | comfyui-wiki listing |
 | Native output | up to 2K, 24 fps, 15 s, 32 kHz stereo audio | model card |
-| Inference entry point | `DiffusionPipeline.from_pretrained(..., dtype=torch.bfloat16, device_map="cuda")` | model card example |
+| Inference entry point | `ModularPipeline.from_pretrained("MiniMaxAI/MiniMax-H3")` | operator, 2026-09-17 |
+| Minimal fetch patterns | `--include "model_index.json" "FL2VA/*"` — **the ROOT `model_index.json` is required alongside the subfolder** | operator, 2026-09-17 |
+| FL2VA covers | text-to-video **and** image-to-video, with optional first/last frame inputs | operator, 2026-09-17 |
+| Ref2VA covers | multi-reference: up to 9 images, 3 video clips, 3 audio clips at once | operator, 2026-09-17 |
 | Modal H200 VRAM | **141 GB** (verbatim) | Modal GPU docs |
 | Modal accepts gpu strings | `"H200"`, `"B200"`, `"B200+"`, `"B300"` | Modal GPU docs |
 | Modal H200 price | $0.001261/sec ≈ **$4.54/hr** | Modal pricing |
@@ -127,13 +140,24 @@ A path that mounts the same Volume on a **T4** ($0.59/hr — the cheapest card i
 the catalog) and runs:
 
 ```python
-snapshot_download("MiniMaxAI/MiniMax-H3", allow_patterns=["FL2VA/*"])
+snapshot_download(
+    "MiniMaxAI/MiniMax-H3",
+    allow_patterns=["model_index.json", "FL2VA/*"],
+)
 ```
 
 followed by an explicit `volume.commit()`.
 
-`allow_patterns` is load-bearing: without it this pulls 498 GB instead of 144 GB,
-tripling both time and cost.
+**Both patterns are required.** `FL2VA/*` alone omits the repo-root
+`model_index.json`, producing a 144 GB download that looks complete and does not
+load. Operator-supplied 2026-09-17, matching the documented
+`huggingface-cli download ... --include "model_index.json" "FL2VA/*"`. A test
+must assert **both** patterns are present, not merely that `allow_patterns` is
+non-empty — the omission is invisible until load time, and load time is on the
+expensive card.
+
+`allow_patterns` is otherwise load-bearing for cost: without it this pulls 498 GB
+instead of 144 GB, tripling both time and money.
 
 ### Properties
 
@@ -149,10 +173,14 @@ CPU-only is a later optimisation to be measured, not assumed.
 
 ### Tests
 
-- Offline: the composed Modal request carries the expected `allow_patterns`, the
-  Volume name, and a cheap GPU — asserted without touching the network.
+- Offline: the composed Modal request carries the Volume name, a cheap GPU, and
+  `allow_patterns` containing **both** `"model_index.json"` and `"FL2VA/*"` —
+  asserted without touching the network.
 - Offline: a missing/empty `allow_patterns` is rejected loudly rather than
   silently fetching the whole 498 GB repo.
+- Offline: `allow_patterns` carrying only `"FL2VA/*"` is rejected — the
+  root-manifest omission is the failure that would otherwise be discovered on
+  the H200.
 - Live: one real prefetch; verify by listing the Volume and confirming the
   FL2VA tree is resident and ~144 GB.
 
@@ -303,10 +331,13 @@ exits.
    activations. If it OOMs, the first mitigation is a smaller resolution or frame
    count — far cheaper than changing hardware, and it isolates whether the
    problem is capacity or configuration.
-2. **`from_pretrained` may need an explicit subfolder or variant** to select
-   FL2VA. The model card's example is abbreviated and does not show it. Resolve
-   offline by reading `model_index.json` and `modular_model_index.json` before
-   spending.
+2. ~~**`from_pretrained` may need an explicit subfolder or variant.**~~
+   **Largely resolved 2026-09-17** by operator: the entry point is
+   `ModularPipeline.from_pretrained("MiniMaxAI/MiniMax-H3")` against the repo
+   root, which is why the root `model_index.json` must be in the fetch. Residual:
+   confirm the root manifest resolves to FL2VA when only FL2VA is cached — verify
+   offline by reading the fetched `model_index.json` after Sub-project B lands,
+   before spending on C.
 3. **diffusers version conflict.** ModularPipeline likely needs newer than the
    `diffusers>=0.32` the Wan configs pin. The H3 config pins its own versions, so
    this must not perturb the Wan image — verify the two images stay independent.
@@ -327,6 +358,8 @@ exits.
 | 2026-09-17 | A and B ship before C | Both cheap, both de-risk C |
 | 2026-09-17 | H200 only; defer B200/B300 | Modal does not state their VRAM; inventing the constant is the U48 defect |
 | 2026-09-17 | Leave `_audio_mode` inert, document it | Flag is factually true; the seam is not the mechanism, and must not read as one |
+| 2026-09-17 | Fetch `model_index.json` **and** `FL2VA/*` | Operator correction: `FL2VA/*` alone omits the root manifest and the download will not load |
+| 2026-09-17 | Entry point is `ModularPipeline`, not `DiffusionPipeline` | Operator correction; loads the repo root, which is why the root manifest is required |
 
 ## Open questions for plan time
 
