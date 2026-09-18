@@ -4,6 +4,27 @@ Recovery index. A fresh/resumed session reads THIS first (see `CLAUDE.md` → Se
 protocol), then the design + plan it points to, then `git log --oneline -20`, then resumes from the
 first unchecked task without redoing committed work.
 
+> ## ⚠️ DO THIS ON THE NEXT LIVE MiniMax-H3 RUN — costs $0
+>
+> **`curl <pod-url>/health` once, while the pod is alive, and read
+> `attention_backend`.** It answers whether `_flash_3_hub` actually engaged —
+> still UNVERIFIED after the 2026-09-18 max-length run, where the timing says it
+> did NOT help (1.39x the video rows took 1.8x the time; attention is ~quadratic,
+> so 1.94x is the no-speed-up prediction).
+>
+> Get the URL from `pixi run kinoforge list` or the ledger's `endpoints["8000"]`.
+> Do it with a plain `curl` — do NOT build a monitor loop for it, which is how the
+> evidence was missed the first time (an inline ledger-parse never fired and sat
+> for 40 minutes). Modal retains only ~100 log lines, so the server's startup line
+> has rolled off by the time the run ends: **while the pod is alive is the only
+> window.**
+>
+> `attention_backend` is reported by `GET /health` on
+> `servers/minimax_h3_server.py`; it reads `"default"` when the Hub kernel fetch
+> failed and the server degraded (which it does deliberately, loudly, rather than
+> bricking the boot). Config that requests it:
+> `examples/configs/modal-diffusers-minimax-h3-t2va-long.yaml`.
+
 ## Pointers
 - **Spec (the *what*):** `SPEC.md`
 - **Design (validated):** `DESIGN.md`
@@ -3231,6 +3252,19 @@ is the decoded frames and is a usable "denoise finished" marker.
 ⚠️ **`/util`'s `uptime_seconds` is NOT pod uptime.** `_util_stats` sets `_START`
 at module import and that module is imported lazily inside the `/util` handler,
 so it counts from the first `/util` call. Affects `wan_t2v_server` too.
+
+**QA tooling is now in the repo, not in a scratchpad:** `tools/av_qa.py`
+(+ 11 tests) asserts the measurable output gates — audio present, stereo, rate,
+duration match, not digital silence, neither channel dead — and reports two
+things a contact sheet cannot: **L/R correlation** (a mux that wrote one channel
+twice passes every other check) and **hard cuts** via a frame-delta trace
+(evenly-spaced sampling cannot tell a cut from a fast camera move). Reproduces
+both 2026-09-18 findings exactly: `LR_corr 0.3190` + no cuts on the 5.167 s
+clip, `0.9956` + a cut at frame 272 (delta 70.05) on the 14.375 s one. Negative
+control: it FAILS a silent Wan clip and passes it under `--no-audio`. Usage:
+`pixi run python tools/av_qa.py <clip> --expect-rate 32000 --cut-scan`.
+It deliberately does NOT judge content — frame QA still needs eyes, and whether
+a soundtrack suits the scene is out of its reach.
 
 ### Max-length run 2026-09-18: 14.375 s proven, flash-attn NOT proven
 
