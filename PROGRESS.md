@@ -3111,9 +3111,14 @@ ranking logic: a reviewer confirmed it is genuinely sensitive by showing that a
 All five shipped `modal-*.yaml` still book their first declared choice, now
 frozen by `tests/providers/modal/test_catalog_no_regression.py` (commit
 `95f08af4` — new file, 6 tests passing), and the launch-payload goldens did
-not move (`tools/_snapshots/` clean, no golden regenerated).
+not move (`tests/providers/golden/launch_payloads/` clean, no golden regenerated).
 
-Both commits reviewed: spec PASS, quality PASS.
+Per-task reviews of both commits passed: spec PASS, quality PASS. The
+subsequent final whole-branch review then caught what neither task's own
+verify command covered: `tests/providers/modal/test_provider.py`'s
+`test_find_offers_returns_filtered_catalog` still asserted the pre-H200
+`{"A100-80GB", "H100"}` set, left stale by Task 1's catalog change — a real
+red test on this branch, fixed alongside this doc correction.
 
 **Next action: Sub-project B** — the HF Volume prefetch path. It pulls
 `FL2VA/*` (144 GB) onto `kinoforge-hf-cache` from a T4 rather than an H200,

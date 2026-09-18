@@ -31,7 +31,7 @@ def test_the_shipped_modal_configs_are_actually_discovered() -> None:
 @pytest.mark.parametrize("cfg_path", _MODAL_CONFIGS, ids=lambda p: p.stem)
 def test_shipped_config_still_books_its_first_choice(cfg_path: Path) -> None:
     cfg = load_config(str(cfg_path))
-    assert cfg.compute is not None  # noqa: S101 — every shipped Modal config has one
+    assert cfg.compute is not None  # every shipped Modal config has one
     accelerators = cfg.compute.placement.accelerators
 
     # A config with no stated preference has no protection from ranking, so a

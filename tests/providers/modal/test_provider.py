@@ -16,8 +16,10 @@ def test_registry_resolves_modal():
 
 
 def test_find_offers_returns_filtered_catalog():
+    # H200 (141 GB) clears the 80 GB floor too; a future card above the floor
+    # belongs in this set — do not "fix" this by removing it from the catalog.
     offers = ModalProvider().find_offers(Placement(min_vram_gb=80))
-    assert {o.id for o in offers} == {"A100-80GB", "H100"}
+    assert {o.id for o in offers} == {"A100-80GB", "H100", "H200"}
 
 
 def test_last_heartbeat_is_none_and_heartbeat_is_noop():

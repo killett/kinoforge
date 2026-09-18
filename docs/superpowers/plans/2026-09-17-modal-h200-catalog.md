@@ -214,7 +214,7 @@ applies it silently and the whole catalog can vanish with no error."
 - [ ] For all five shipped `examples/configs/modal-*.yaml`, `modal_offers(placement)[0].id` equals the config's first declared accelerator
 - [ ] The test derives the expectation from each config's own `accelerators` list — it does not hardcode five GPU names, so it keeps working when a config's preference changes
 - [ ] The test fails loudly if a config declares no `accelerators` list, rather than silently passing
-- [ ] `tests/providers/test_launch_payload_goldens.py` passes with **no golden regenerated**
+- [ ] `tests/providers/test_launch_payload_goldens.py` passes with **no golden regenerated** (`git status --short tests/providers/golden/launch_payloads/` is empty)
 
 **Verify:** `pixi run python -m pytest tests/providers/modal/test_catalog_no_regression.py tests/providers/test_launch_payload_goldens.py -v` → all PASS
 
@@ -293,7 +293,7 @@ Run: `pixi run python -m pytest tests/providers/test_launch_payload_goldens.py -
 Expected: PASS, with no golden file modified. Confirm with:
 
 ```bash
-git status --short tools/_snapshots/
+git status --short tests/providers/golden/launch_payloads/
 ```
 
 Expected: empty output.

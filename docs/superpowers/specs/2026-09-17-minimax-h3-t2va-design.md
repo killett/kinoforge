@@ -432,6 +432,16 @@ exits.
    visible on the repo, but acceptance may still be required for download — a
    prefetch that 401s is the cheapest possible place to discover that, which is
    another argument for B preceding C.
+6. **H200 now makes an under-capped config launch-then-die instead of fail-free.**
+   Every Modal offer is `mode="serverless"`, so `filter_offers` skips the
+   `max_usd_per_hr` ceiling at selection time — but `_enforce_rate_cap`
+   (`src/kinoforge/orchestrator.py`, around line 973) still destroys the
+   instance *after launch* if the realized rate exceeds the cap. Before H200
+   existed, a config asking for >80 GB VRAM simply got a `CapacityError` for
+   free. Now it can book H200 at $4.54/hr and then get torn down mid-run if its
+   `max_usd_per_hr` is below 4.54. All five shipped Modal configs sit between
+   1.00 and 4.00. **The MiniMax-H3 config (Sub-project C) must set
+   `max_usd_per_hr >= 4.54`**, or it will pay for a launch it cannot keep.
 
 ## Decisions log
 
