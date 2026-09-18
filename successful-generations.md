@@ -78,6 +78,53 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
       (
           eval "$(pixi shell-hook -e live-modal)"
 32. `2026-09-18 15:38:21` — [MiniMax-H3 max-length clip → FlashVSR 1080p (temporally chunked) → RIFE 60 fps → soundtrack re-mux, on Modal — upscale+interpolate (long-clip chain)](#32-2026-09-18-153821--minimax-h3-max-length-clip--flashvsr-1080p-temporally-chunked--rife-60-fps--soundtrack-re-mux-on-modal--upscaleinterpolate-long-clip-chain)
+    - See also: `2026-09-18 15:56:03` — **the full chain as ONE command** (the operator's "command 3": generate → upscale → interpolate → re-mux in a single `set -euo pipefail` subshell, file hand-off via `find -newer "$MARK"`), same configs, same prompt, HEAD `9684af4e`. 16 min wall, three pods in sequence, each `--no-reuse` and verified destroyed: H200 `run-20260918-153959` (provision 15:39:58, `/health` 15:41, denoise 15:42→15:45 at `gpu=100.0`, published 15:46:09, destroyed 15:46:14, ~$0.48), A100 `upscale-20260918-154615` (cached image, chunks 15:46:32 / 15:47:50 / 15:48:49 / 15:49:52 / 15:50:53, join 15:51:54, published 15:53:30, destroyed 15:53:36, ~$0.31), T4-class `interpolate-20260918-155337` (cached image this time — `/health` 16 s after the upscale pod died, GPU 90 %, published 15:55:57, destroyed 15:56:02, ~$0.03). **≈ $0.82 for the chain.** Outputs: generation `output/20260918-154609_diffusers_MiniMax-H3_A-giant-chocolate-vo.mp4` (640x352 / 24 fps / 345 f / aac stereo 32 kHz; 2,611,350 B, sha256 `9eb9da39b8bcfd0e...`) → upscale `output/20260918-155330_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4` (1964x1080 / 24 fps / 345 f; 13,203,454 B, sha256 `db205c446c7bbfda...`) → interpolate `output/20260918-155557_interpolated_rife_interp_interpolate.mp4` (1964x1080 / 60 fps / 862 f; 21,649,465 B, sha256 `64e0674f2d2b324d...`) → **final** `output/20260918-155557_interpolated_rife_interp_interpolate_with-audio.mp4` (1964x1080 / 60 fps / 862 f / aac stereo 32 kHz restored; 22,001,762 B, sha256 `c2314147555aa055...`). `av_qa` PASS on the generation (peak 0.435, L/R corr 0.898, no cuts), the upscale (`--no-audio --cut-scan`: no seam at any chunk boundary) and the final (audio identical to the generation, duration within 31 ms). Frame QA PASS on all three: this draw reads the prompt better than the 15:22 one — a chocolate-brown eruption that ends up engulfing the frame, gummy figures close in the foreground turning to run — and the upscale is faithful and sharper with no false colour; 60 fps sheet identical, no ghosting at sheet scale. `/health` on the H200 again read `attention_backend: default`. Exact command (from `/workspace`):
+      ```bash
+      (
+          eval "$(pixi shell-hook -e live-modal)"
+          set -euo pipefail
+
+          MARK="$(mktemp)"
+
+          python -m kinoforge generate \
+              --config examples/configs/modal-diffusers-minimax-h3-t2va-long-640.yaml \
+              --mode t2va \
+              --no-reuse \
+              --prompt "$(cat <<'EOF'
+      A giant chocolate volcano erupts, showering the land with skittles. The Sour Patch Kids run for their
+      lives. Photorealistic, cinematic lighting.
+      EOF
+      )"
+
+          SRC="$(find /workspace/output -name '*MiniMax-H3*.mp4' -newer "$MARK" \
+              | sort | tail -1)"
+          test -n "$SRC" || { echo "stage 0 published no new file"; exit 1; }
+
+          python -m kinoforge upscale \
+              --config examples/configs/modal-diffusers-flashvsr-1080p-upscale-long.yaml \
+              --video "$SRC" \
+              --no-reuse
+
+          UPSCALED="$(find /workspace/output -name '*upscaled*.mp4' -newer "$MARK" \
+              | sort | tail -1)"
+          test -n "$UPSCALED" || { echo "stage 1 published no new file"; exit 1; }
+
+          python -m kinoforge interpolate \
+              --config examples/configs/modal-diffusers-rife-60fps-interpolate-long.yaml \
+              --video "$UPSCALED" \
+              --fps 60 \
+              --no-reuse
+
+          INTERPOLATED="$(find /workspace/output -name '*interpolated*.mp4' -newer "$MARK" \
+              | sort | tail -1)"
+          test -n "$INTERPOLATED" || { echo "stage 2 published no new file"; exit 1; }
+
+          FINAL="${INTERPOLATED%.mp4}_with-audio.mp4"
+          ffmpeg -y -loglevel error -i "$INTERPOLATED" -i "$SRC" \
+              -map 0:v:0 -map 1:a:0 -c:v copy -c:a copy -shortest "$FINAL"
+          echo "final: $FINAL"
+      )
+      ```
 
           python -m kinoforge generate \
               --config examples/configs/modal-diffusers-minimax-h3-t2va-long-640.yaml \
