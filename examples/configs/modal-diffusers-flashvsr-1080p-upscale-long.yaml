@@ -1,0 +1,106 @@
+# FlashVSR v1.1 HEIGHT-TARGET upscale to 1080p on Modal — LONG-CLIP sizing.
+#
+# Sibling of modal-diffusers-flashvsr-1080p-upscale.yaml, which is the proven
+# recipe for ~80-frame clips (§24: 77 frames at 480², provision→result ~97 s).
+# This one exists for the MiniMax-H3 max-length clip
+# (modal-diffusers-minimax-h3-t2va-long.yaml: 345 frames / 14.375 s at 960x544)
+# and differs ONLY in lifecycle ceilings. The engine, wheel, weights, tiling and
+# placement blocks are byte-identical — do not let them drift.
+#
+#   * 345 frames at 960x544 is ~10x the proven §24 workload: 4.5x the frames
+#     through 2.3x the pixels per frame. FlashVSR is 4x-native, so the pod
+#     renders 3840x2176 and the controller lanczos-downscales to height 1080
+#     (width auto, kept even → 1906x1080). `job_timeout: 15m` on the sibling is
+#     sized for the ~80-frame case and would kill this one mid-render, after
+#     the boot was paid for.
+#   * `budget: 2.0` on the sibling is a deliberate safety ceiling for short
+#     clips. It is raised HERE rather than there so a short upscale keeps its
+#     cheap guard.
+#   * Audio: FlashVSR writes frames only (upscalers/flashvsr/_runtime.py), so an
+#     H3 soundtrack does NOT survive this stage. Re-mux it from the source with
+#     ffmpeg after the chain — the duration is preserved, so it lines up.
+#
+# NO `backend_options.skypilot` block — those keys are SkyPilot-only and
+# fail validation here (the owning provider validates its own namespace).
+#
+# Usage (upscale-only; supply the source clip via --video):
+#   pixi run -e live-modal kinoforge upscale \
+#     --config examples/configs/modal-diffusers-flashvsr-1080p-upscale-long.yaml \
+#     --video output/<h3-max-length-clip>.mp4 \
+#     --no-reuse
+
+engine:
+  kind: diffusers
+  precision: bfloat16
+  diffusers:
+    # Modal serialized web_server fn requires image-Python == controller (3.13).
+    image: "python:3.13-slim"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      # torch 2.6.0+cu124 trio — the cp313 BSA wheel below links against exactly
+      # this torch. Do NOT bump without rebuilding the wheel.
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      - "modelscope"
+      # setuptools>=81 removed pkg_resources, which FlashVSR's setup.py imports.
+      - "setuptools<81"
+      - "wheel"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      - "kinoforge.upscalers.flashvsr"
+    embed_files:
+      - "kinoforge.core.errors"
+      - "kinoforge.core.scale_target"
+    # Skip eager WanPipeline load — pod runs only the on-demand FlashVSR runtime.
+    upscale_only: true
+
+models: []
+
+compute:
+  provider: modal
+  image: "python:3.13-slim"
+  mode: pod
+  placement:
+    min_vram_gb: 80
+    min_cuda: "12.4"
+    max_usd_per_hr: 4.00
+    disk_gb: 60
+    accelerators:
+      - "A100-80GB"
+      - "H100"
+  lifecycle:
+    heartbeat_interval_s: 30  # required when warm_reuse_auto_attach=true (default)
+    idle_timeout: 30m
+    # ~10x the §24 workload (see header). 45m is a ceiling, not an estimate.
+    job_timeout: 45m
+    time_buffer: 3m
+    max_lifetime: 90m
+    # Modal does NOT enforce job_timeout: boot_timeout becomes
+    # @app.function(timeout=...) and is the ONLY deadline the instance sees, so
+    # it has to cover the boot AND the render (the validator says so on every
+    # dry-run). 45m on the sibling would kill a ~20 min render after a slow boot.
+    boot_timeout: 60m
+    budget: 5.0
+
+spec:
+  model: "flashvsr-wan21-bfloat16"
+
+upscale:
+  engine: flashvsr
+  scale: 1080p
+  flashvsr:
+    weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
+    # cp313 BSA wheel — built on Modal (tools/build_bsa_wheel_modal.py) against
+    # torch 2.6.0+cu124 / BSA 3453bbb1, hosted on killett/kinoforge-artifacts.
+    bsa_wheel_url: "https://github.com/killett/kinoforge-artifacts/releases/download/bsa-cu124-torch2.6-cp313-v1/block_sparse_attn-0.0.1-cp313-cp313-linux_x86_64.whl"
+    precision: bfloat16
+    window_size: 24
+    tile_size: 512
+    long_video_mode: false

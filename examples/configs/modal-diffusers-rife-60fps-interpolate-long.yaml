@@ -1,0 +1,92 @@
+# RIFE v4.26 frame interpolation to 60 fps on Modal — LONG-CLIP sizing.
+#
+# Sibling of modal-diffusers-rife-60fps-interpolate.yaml, which is the proven
+# recipe for ~80-frame clips (§25: 81 frames at 480² → 304 frames, ~42 s on a
+# T4). This one exists for the MiniMax-H3 max-length clip after its 1080p
+# upscale (345 frames / 14.375 s at 1906x1080 → 862 frames at 60 fps) and
+# differs ONLY in lifecycle ceilings. The engine and placement blocks are
+# byte-identical — do not let them drift.
+#
+#   * 862 output frames at 1906x1080 is ~25x the §25 workload (2.8x the output
+#     frames through 8.9x the pixels per frame). `job_timeout: 12m` on the
+#     sibling would kill this one mid-render.
+#   * `budget: 0.5` on the sibling is a deliberate safety ceiling for short
+#     clips; it is raised HERE so a short interpolate keeps its cheap guard.
+#   * Audio: RIFE writes frames only (interpolators/rife/_runtime.py), so a
+#     soundtrack does NOT survive this stage. Re-mux it from the original source
+#     with ffmpeg afterwards — interpolation preserves the duration exactly.
+#
+# NO `backend_options.skypilot` block — those keys are SkyPilot-only and
+# fail validation here (the owning provider validates its own namespace).
+#
+# Usage (interpolate-only; supply the source clip via --video):
+#   pixi run -e live-modal kinoforge interpolate \
+#     --config examples/configs/modal-diffusers-rife-60fps-interpolate-long.yaml \
+#     --video output/<upscaled-h3-clip>.mp4 \
+#     --fps 60 --no-reuse
+
+engine:
+  kind: diffusers
+  precision: fp16
+  diffusers:
+    # Modal's serialized web_server fn requires image-Python == controller (3.13).
+    image: "python:3.13-slim"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      - "kinoforge.interpolators.rife"
+    embed_files:
+      - "kinoforge.core.errors"
+      - "kinoforge.core.frames"
+      - "kinoforge.core.fps_resolver"
+    # Skip eager WanPipeline load — pod runs only the on-demand RIFE runtime.
+    upscale_only: true
+
+models: []
+
+compute:
+  provider: modal
+  image: "python:3.13-slim"
+  mode: pod
+  placement:
+    min_vram_gb: 16
+    min_cuda: "12.4"
+    max_usd_per_hr: 1.00
+    disk_gb: 40
+    accelerators:
+      - "T4"
+      - "L4"
+      - "A10"
+  lifecycle:
+    heartbeat_interval_s: 30  # required when warm_reuse_auto_attach=true (default)
+    # Modal does NOT enforce job_timeout: boot_timeout becomes
+    # @app.function(timeout=...) and is the ONLY deadline the instance sees, so
+    # it has to cover the boot AND the render (the validator says so on every
+    # dry-run). 30m on the sibling would not cover a ~25x §25 render.
+    boot_timeout: 60m
+    idle_timeout: 20m
+    # ~25x the §25 workload (see header). 40m is a ceiling, not an estimate.
+    job_timeout: 40m
+    time_buffer: 3m
+    max_lifetime: 90m
+    budget: 2.0
+
+spec:
+  model: "rife-rife49"
+
+interpolate:
+  engine: rife
+  fps: 60.0
+  rife:
+    weights_ref: "hf:hzwer/RIFE"
+    model: rife426
+    precision: fp16
