@@ -234,10 +234,18 @@ def _render(plan: PrefetchPlan) -> str:
 #: ``hub/models--<repo>/blobs`` from the controller and summing ``size``. That
 #: measure is WRONG and it produced a false alarm on 2026-09-18: it reported
 #: 1.96 GB for a MiniMax-H3 tree that a fresh container measured at 288.10 GB
-#: with zero broken symlinks. Two reasons — Modal's ``listdir`` reports 0 for a
-#: symlink rather than its target's size, and an xet-backed download does not
-#: keep its content under ``blobs/`` at all. The Wan repos happen to sum
-#: correctly, which is exactly what makes the bad measure look trustworthy.
+#: with zero broken symlinks.
+#:
+#: Two reasons, and the second one is NOT what I first wrote. Modal's
+#: ``listdir`` reports 0 for a symlink rather than its target's size — and a
+#: snapshot entry IS a symlink. And the bytes are not under the per-model
+#: ``blobs/`` directory at all: ``os.path.realpath`` on a shard resolves to
+#: ``hub/blobs/<2-hex>/<sha256>`` — a SHARED, two-level-sharded store beside
+#: the model directories, not inside one. (My first explanation blamed xet.
+#: It is not xet; it is simply the wrong directory.) The per-model ``blobs/``
+#: holds only small files, which is why it summed to a plausible-looking 1.96
+#: GB instead of to zero, and why the Wan repos happen to sum correctly — that
+#: coincidence is what made the bad measure convincing.
 #:
 #: Durability means "a NEW container mounting the Volume sees the bytes", so
 #: that is what :func:`verify_resident` asks, in its own app run.

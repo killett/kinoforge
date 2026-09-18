@@ -3232,6 +3232,39 @@ is the decoded frames and is a usable "denoise finished" marker.
 at module import and that module is imported lazily inside the `/util` handler,
 so it counts from the first `/util` call. Affects `wan_t2v_server` too.
 
+**GOTCHA that cost a pod boot 2026-09-18, and it is detectable for $0 —
+consider filing it.** Correcting `capability.max_frames` from 360 to 345 made
+the very next run die with `CapabilityMismatch: profile drift on field
+'max_frames': expected 360 got 345`. Cause: the cached profile under
+`.kinoforge/_profiles/profiles/<key>.json` was written by the earlier green run
+and holds the OLD value; `capability` fields are not part of the CapabilityKey,
+so the key is unchanged and `resolve()` returns the stale profile, which
+`verify()` then compares against the cfg-derived probe.
+
+**Two things make this worth fixing rather than just knowing:**
+1. **`verify()` runs AFTER the pod is booked** (orchestrator step 8, after
+   `_provision_instance_and_build_backend`), so the run pays a full boot and
+   then tears the pod down. Measured: ~$0.16 plus an image bake.
+2. **For the diffusers engine the comparison needs no network at all.**
+   `DiffusersBackend.inspect_capabilities()` returns `self._probe`, which is
+   now pure cfg-derived data — so a stale-profile mismatch is knowable at
+   validation time, before anything is booked. A `kinoforge doctor` check
+   comparing the cached profile against the cfg-derived probe would turn a
+   post-boot teardown into a $0 config error. That is exactly the shape of the
+   existing validation registry.
+
+**Recovery, for whoever hits it:** delete the one stale profile
+(`rg -l '"max_frames": 360' .kinoforge/_profiles/profiles/` finds it, or match
+the `capability_key` the run logs) and re-run; `discover()` then re-probes and
+re-persists. Also `kinoforge forget --id <id>` the provisional ledger row.
+
+**Benign noise seen on that failure, not a defect worth chasing:** the mismatch
+handler destroys the pod and re-raises, then `--no-reuse`'s own destroy runs and
+fails with `failed to stop modal app ... (exit 1)` because the app is ALREADY
+stopped ("App is already stopped." is right above it in the log). Teardown was
+correct; the second attempt is just not idempotent, and its ERROR line reads far
+scarier than it is.
+
 **Operator question answered 2026-09-18, and it found a defect.** "Can this
 model produce 15-second clips?" — **No. The ceiling is 345 frames = 14.375 s.**
 The count is snapped UP to the next `17*n+5` the video VAE can decode and the
