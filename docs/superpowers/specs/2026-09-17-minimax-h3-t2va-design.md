@@ -120,6 +120,32 @@ planned. The numeric parameters above (1344×768, 24 fps, 73 frames, 20/8 steps,
 73 / 24 = 3.04 s. Frame count and duration must be read from the template
 directly before being copied into a config.
 
+### Operator ruling 2026-09-17: decide later, probe both offline first
+
+**Do not pick a route from the numbers above.** Two of them are unconfirmed and
+both are load-bearing:
+
+1. **The ~38 GB figure is third-party and per-file-unverified.** It comes from a
+   comfyui-wiki listing, not from the repo. `Comfy-Org/MiniMax-H3` is itself
+   480 GB (it holds every precision), so the saving depends entirely on hitting
+   the right individual files. Confirm the actual sizes of
+   `minimax_h3_fl2va_pruned_int8_convrot.safetensors`,
+   `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` and the two VAEs from the repo
+   tree itself.
+2. **Whether kinoforge's `comfyui` engine can drive H3's node types at all is
+   unknown.** The reference template uses `CLIPLoader` with an H3-specific
+   `"minimax"` CLIP type, plus `VAEDecodeAudio` and `CreateVideo`. If our engine
+   or the pinned ComfyUI build does not carry those nodes, the ComfyUI route is
+   not cheaper — it does not exist. Check before choosing, not after.
+
+Both probes are **$0 and offline**. The cost of guessing wrong is a 144 GB
+download or a dead-end engine path, so the probes are strictly cheaper than the
+decision they inform.
+
+**Sequencing:** run these probes at the start of Sub-project B's planning, and
+record the answer in this section before B is planned. Sub-project A is
+unaffected and proceeds now.
+
 ## Decomposition
 
 Three sub-projects. **A and B ship before C** (operator decision 2026-09-17);
@@ -406,6 +432,16 @@ exits.
    visible on the repo, but acceptance may still be required for download — a
    prefetch that 401s is the cheapest possible place to discover that, which is
    another argument for B preceding C.
+6. **H200 now makes an under-capped config launch-then-die instead of fail-free.**
+   Every Modal offer is `mode="serverless"`, so `filter_offers` skips the
+   `max_usd_per_hr` ceiling at selection time — but `_enforce_rate_cap`
+   (`src/kinoforge/orchestrator.py`, around line 973) still destroys the
+   instance *after launch* if the realized rate exceeds the cap. Before H200
+   existed, a config asking for >80 GB VRAM simply got a `CapacityError` for
+   free. Now it can book H200 at $4.54/hr and then get torn down mid-run if its
+   `max_usd_per_hr` is below 4.54. All five shipped Modal configs sit between
+   1.00 and 4.00. **The MiniMax-H3 config (Sub-project C) must set
+   `max_usd_per_hr >= 4.54`**, or it will pay for a launch it cannot keep.
 
 ## Decisions log
 
@@ -419,6 +455,7 @@ exits.
 | 2026-09-17 | Leave `_audio_mode` inert, document it | Flag is factually true; the seam is not the mechanism, and must not read as one |
 | 2026-09-17 | Fetch `model_index.json` **and** `FL2VA/*` | Operator correction: `FL2VA/*` alone omits the root manifest and the download will not load |
 | 2026-09-17 | Entry point is `ModularPipeline`, not `DiffusionPipeline` | Operator correction; loads the repo root, which is why the root manifest is required |
+| 2026-09-17 | Engine route (diffusers vs ComfyUI) deferred; probe both offline first | The ~38 GB saving is unverified per-file, and whether our comfyui engine carries H3's node types is unknown. Both probes are $0; guessing wrong costs a 144 GB fetch or a dead-end path |
 
 ## Open questions for plan time
 
