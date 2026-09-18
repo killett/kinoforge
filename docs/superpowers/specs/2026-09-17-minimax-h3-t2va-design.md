@@ -202,6 +202,49 @@ load error on a booked H200. **This is the concrete payoff for building B before
 C**, and it is worth remembering the next time a prefetch step looks like
 optional ceremony.
 
+## The pipeline API, read from diffusers v0.40.0 source
+
+All of this is quoted from `src/diffusers/modular_pipelines/minimax_h3/` at tag
+`v0.40.0`, not inferred.
+
+```python
+import torch
+from diffusers import ModularPipeline
+
+pipe = ModularPipeline.from_pretrained("MiniMaxAI/MiniMax-H3", workflow="t2va")
+pipe.load_components(dtype=torch.bfloat16)
+```
+
+**`workflow="t2va"` is MANDATORY, and omitting it is expensive.** The blocks
+module says in terms: *"Without a `workflow=`, loading the components pulls
+**both** 61.7GB transformer partitions."* We deliberately did not prefetch
+`transformer_ref/`, so a missing `workflow=` would either fail the load or pull
+66 GB **on the H200 at $4.54/hr**. This single kwarg is the difference between a
+working run and the most expensive failure available in this project.
+
+`_workflow_map` declares `"t2va": {"prompt": True}` — text only, no image roles,
+which is what makes `MODE_ROLE_REQUIREMENTS["t2va"] = {}` correct.
+
+**Outputs:** `videos`, `audio`, `sampling_rate` (the audio VAE reports
+`sampling_rate = 32000`, matching the model card's 32 kHz stereo claim).
+
+**Guidance-distilled: there is no guider, no `negative_prompt`, and no
+`guidance_scale`,** and every step runs exactly one forward pass. A request
+schema offering `guidance_scale` would be offering something the model cannot
+use — leave it out rather than accept-and-ignore it.
+
+**Two schedulers, stepped inside a single transformer call:** `shift = 12.0` for
+video, `shift = 3.0` for audio — matching `sigma_shift_scales` in the manifest.
+H3 denoises **one packed sequence** holding text conditioning, keyframe latents,
+audio latents and video latents together, which is why the audio is inherently
+in sync with the frames and why post-hoc interpolation would break it.
+
+**"MiniMax-H3 is modular only: this pipeline and its blocks are the whole
+integration, there is no `DiffusionPipeline` half."** That sentence is in the
+class docstring, and it independently confirms the CORRECTION above: the
+`_class_name: MiniMaxH3Pipeline` in `FL2VA/model_index.json` names a class that
+does not exist.
+
 ## Decomposition
 
 Three sub-projects. **A and B ship before C** (operator decision 2026-09-17);
