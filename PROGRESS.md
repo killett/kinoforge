@@ -3081,7 +3081,101 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-09-17 third session — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-18 — read this, then STOP; below is history)
+
+### SESSION 2026-09-18 — Sub-project C BUILT; `main` was red on 21 tests; one self-correction
+
+**Sub-project C's code is complete, committed and offline-green.** Full suite:
+**5790 passed**. Live H200 run status is at the end of this section.
+
+**`main` was RED on 21 tests when this session started, and had been since
+`ea4843dc`.** That commit added `_av_io.py` to `engines/diffusers/servers/`,
+which every diffusers cfg embeds wholesale via `embed_modules` — so the new file
+changed the wire payload of all 20 diffusers launch goldens plus the separate
+`tests/engines/diffusers/_golden_provision.json`, and none was regenerated.
+Fixed in `8db241af`, and the diff was verified to be ONLY the new embed (the
+golden carried four gzip+base64 blobs — 302 / 1462 / 3151 / 102524 bytes — and
+now carries five, the added one decoding to `_av_io.py` at 5704 bytes; key sets
+identical, only `provision_script` and `image_build_script` changed).
+**Ratchet order matters: `pre-commit run --all-files` FIRST, then
+`tools/snapshot_launch_payloads.py`, then regenerate `_golden_provision.json`
+by hand — it has no tool.** Adding `minimax_h3_server.py` moved all 21 again,
+which is expected and causal.
+
+**What shipped for C:**
+
+- **`266eadb7`** — `MODE_ROLE_REQUIREMENTS["t2va"] = {}` plus the inert-seam
+  comment at `core/strategy.py:55`. Without the map entry the failure is worse
+  than a missing mode: `validate_request` checks the mode gate and the role
+  contract separately, so a profile declaring t2va passes the gate and then
+  raises `KeyError` — which is not a `ValidationError`, so the orchestrator's
+  teardown does not fire and the pod stays up billing.
+- **`f7baa485`** — `engine.diffusers.capability`, a per-config capability-probe
+  override. **Do not "simplify" this by widening `_DEFAULT_PROBE`.** That
+  constant is shared by every diffusers cfg; `JsonProfileCache.verify` compares
+  `supported_modes` against the live probe and raises `CapabilityMismatch`,
+  which the orchestrator answers by destroying the instance. `.kinoforge/_profiles/`
+  holds 10 cached `diffusers` profiles saying `["t2v"]`, so widening it tears
+  down the next warm Wan pod after its boot is paid for. A test asserts the
+  no-capability-block case is object-equal to `_DEFAULT_PROBE`.
+- **`a65e4052`** — `servers/minimax_h3_server.py` + 19 tests.
+- **`630690d1`** — `examples/configs/modal-diffusers-minimax-h3-t2va.yaml`, its
+  golden, and `tests/providers/modal/test_h200_rate_cap.py`.
+
+**THREE spec corrections, all found by reading the diffusers v0.40.0 source
+rather than trusting the design doc. Each would have failed on a booked H200:**
+
+1. **`enable_model_cpu_offload` DOES NOT EXIST on `ModularPipeline`.** The spec
+   called it mandatory. `ModularPipeline` subclasses `ConfigMixin,
+   PushToHubMixin` — not `DiffusionPipeline` — and defines no `enable_*` offload
+   method at all; the name appears only inside two warning strings in `to()`.
+   The mechanism is **`ComponentsManager.enable_auto_cpu_offload(device="cuda",
+   memory_reserve_margin="12GB")`**, which is also the diffusers H3 doc's
+   single-card recipe.
+2. **Auto offload changes which resource binds.** Peak DEVICE residency is
+   ~62 GiB, not the ~124 GiB the spec's OOM worry assumed, so the canvas is not
+   the constraint. The weights live in **host RAM** (~124 GiB) and Modal's
+   default container memory *request* is 128 MiB with burst-if-available — so
+   that headroom is a property of the machine we land on. The server logs
+   `/proc/meminfo` and `torch.cuda.mem_get_info()` before and after the load so
+   a shortfall is one legible line, not a mystery container death.
+3. **Geometry is a hard contract, checked inside the pipeline:** `height`/`width`
+   multiples of **32**, `num_frames` snapped to `17*n+5` with the ALIGNED
+   duration inside **5-15 s** at the fixed **24 fps** (so 120-360, default
+   **124**), `num_inference_steps` default **50**. Every violation is a
+   `ValueError` from `before_denoise` — minutes after a 124 GiB load, on the
+   expensive card. The server refuses all of them at the HTTP edge.
+
+**I made a wrong call mid-session and corrected it; read this before re-deriving
+it.** I measured the Volume by summing `size` over
+`hub/models--MiniMaxAI--MiniMax-H3/blobs` from the controller, read **1.96 GB**
+against 144.05 GB expected, and concluded Sub-project B had never persisted —
+treating Wan 2.2's 126.20 GB on the same Volume as a control that proved the
+method. **That measure is WRONG and B is fine.** Modal's `listdir` reports size
+0 for a symlink rather than its target's size, and xet-backed content is not
+under `blobs/` at all; the Wan repos happen to sum correctly, which is exactly
+what made the bad measure convincing. A CPU-only container walking the snapshot
+sees **transformer 66.28 + text_encoder 66.73 + vae 10.42 + audio_vae 0.61 GB,
+zero broken symlinks**, matching the HF API file-for-file, both root manifests
+present, `transformer_ref` correctly absent. The corrected tool reports
+**"reported 288.10 GB, re-measured from a fresh container 288.10 GB"** (the
+t2va set plus the dead-weight FL2VA half).
+
+**Net of that detour, two real improvements to `tools/prefetch_weights.py`
+(`ca904459` then `59ab5aa4`):** the `volume.commit()` that `cdbd9087` deleted is
+back, now INSIDE the container where Modal's error message said it belongs
+("commit() can only be called on a mounted volume inside a container" is an
+instruction about WHERE, not whether), in a `finally` so a completed download is
+durable before the optional size walk can raise; and durability is verified by a
+second CPU-only container that re-walks the snapshot, with a test pinning the
+seam so nobody reintroduces a listing-based measure. **`durable_bytes` is
+deliberately gone** — a guard that false-alarms on every healthy run is worse
+than no guard.
+
+**Cost discipline note:** the whole detour cost under $0.10 because it ran on a
+T4 and CPU-only containers. That is Sub-project B's thesis working as designed.
+
+**Spend on H3 so far: ~$0.15 of the $20.**
 
 ### SESSION 2026-09-17 (third) — H3 engine route RESOLVED, Sub-project B built
 

@@ -367,3 +367,56 @@ def test_status_404s_an_unknown_job(server: Any) -> None:
     """
     with TestClient(server.app) as client:
         assert client.get("/status/deadbeef").status_code == 404
+
+
+def test_the_shipped_cfg_spec_block_is_accepted_verbatim(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact body the orchestrator posts for the shipped cfg is accepted.
+
+    Bug caught: THE 2026-09-18 live failure, HTTP 422 on /generate after the
+    H200 had booted and loaded. `DiffusersBackend.submit` posts
+    ``dict(job.spec)`` — the cfg's whole `spec` block — and `strategy.decide`
+    injects an ``_audio_mode`` marker into that spec on the way. So the body
+    carries a key no cfg author wrote, `extra="forbid"` refused it, and the run
+    died at the one point where everything expensive had already happened.
+
+    The per-field tests above all passed because each was written from the
+    server's own schema. This one is written from the CONFIG and the pipeline
+    that feeds it, which is the only direction that can catch a key the server
+    never knew about. It is the cheap version of the live run.
+    """
+    from kinoforge.core.config import load_config
+    from kinoforge.core.interfaces import ModelProfile, Segment
+    from kinoforge.core.strategy import decide
+
+    cfg = load_config("examples/configs/modal-diffusers-minimax-h3-t2va.yaml")
+    profile = ModelProfile(
+        name="minimax-h3",
+        max_frames=360,
+        fps=24,
+        supported_modes={"t2va"},
+        max_resolution=(1344, 768),
+        supports_native_extension=False,
+        supports_joint_audio=True,  # the flag that makes _audio_mode "joint"
+    )
+    jobs = decide(profile, [Segment(prompt=cfg.prompt or "x")], {}, cfg.spec)
+    body = dict(jobs[0].spec)
+    body.setdefault("prompt", cfg.prompt or "x")
+    assert "_audio_mode" in body, (
+        "the strategy no longer injects _audio_mode; this test is now guarding "
+        "nothing and should be re-pointed at whatever it injects instead"
+    )
+
+    monkeypatch.setattr(server, "write_mp4_with_audio", lambda *a, **k: None)
+    with TestClient(server.app) as client:
+        resp = client.post("/generate", json=body)
+        assert resp.status_code == 200, (
+            f"the shipped cfg's own spec block was refused: {resp.text}"
+        )
+        assert _wait_done(client, resp.json()["job_id"])["status"] == "done"
+
+    # ... and the marker must not reach the pipeline, which would warn
+    # "Unexpected input" on every generation.
+    call = h3_stub_pipe.STATE["pipe"].calls[0]
+    assert "_audio_mode" not in call

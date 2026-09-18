@@ -180,6 +180,18 @@ class GenerateRequest(BaseModel):
     pipeline: str | None = None
     scheduler: str | None = None
     fps: int | None = None
+    # NOT written by any cfg author: `core/strategy.py:55` injects `_audio_mode`
+    # into the job spec, and `DiffusersBackend.submit` posts that spec as the
+    # body. Undeclared, it was a 422 on /generate — after the H200 had booted
+    # and loaded 124 GiB, which is the most expensive place to learn it (live
+    # 2026-09-18). Pydantic forbids a field name starting with an underscore, so
+    # it arrives by alias.
+    #
+    # Declaring it here is NOT a use of the seam. The marker is read nowhere —
+    # see the note at core/strategy.py:55 — and this server ignores its value;
+    # H3's audio reaches the output through _av_io.write_mp4_with_audio. It is
+    # declared only so the request the orchestrator actually sends is accepted.
+    audio_mode: str | None = Field(None, alias="_audio_mode")
 
     @field_validator("width", "height")
     @classmethod
