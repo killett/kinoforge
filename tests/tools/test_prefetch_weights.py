@@ -137,24 +137,21 @@ def test_the_default_timeout_survives_a_144gb_fetch() -> None:
 # ---------------------------------------------------------------------------
 #
 # The module docstring above names three failure modes: wrong bytes, wrong
-# place, wrong card. It missed the one that actually happened on 2026-09-17.
+# place, wrong card. There is a fourth: the download happens and does not
+# persist. `cdbd9087` removed the controller-side `volume.commit()` after Modal
+# answered it with `ConflictError: commit() can only be called on a mounted
+# volume inside a container`, and concluded Modal commits on function return.
+# The error was an instruction about WHERE, not whether — so the commit now
+# happens inside the container.
 #
-# `cdbd9087` removed the controller-side `volume.commit()` after Modal answered
-# it with `ConflictError: commit() can only be called on a mounted volume
-# inside a container`, and concluded "Modal commits the volume itself when the
-# function returns". The tool then reported a successful 144.05 GB fetch, and
-# PROGRESS.md recorded Sub-project B as complete and live-proven.
-#
-# Measured against the Volume on 2026-09-18, the H3 blob store held **1.96 GB**
-# with a largest blob of 0.67 GB — i.e. the configs, tokenizer and processor
-# landed and every safetensors shard did not. The control is what makes this
-# conclusive rather than a measurement artifact: on the same Volume, by the
-# same listing call, Wan 2.2 A14B holds 126.20 GB with 4.98 GB shards.
-#
-# The error message was the instruction: `commit()` has to be called INSIDE the
-# container, not deleted. And because the tool's whole purpose is to keep a 124
-# GiB download off a $4.54/hr card, "reported success" is not good enough —
-# after the run it re-reads the Volume from the controller and compares.
+# The verification is a second CONTAINER, not a controller-side byte count, and
+# that distinction was learned the embarrassing way on 2026-09-18. Summing
+# `hub/models--<repo>/blobs` from the controller reported 1.96 GB for a
+# MiniMax-H3 tree that a fresh container then measured at 288.10 GB with zero
+# broken symlinks: Modal's listdir reports 0 for a symlink rather than its
+# target's size, and xet-backed content is not under `blobs/` at all. The Wan
+# repos happen to sum correctly, which is what made the bad measure convincing.
+# A guard that false-alarms on every healthy run is worse than no guard.
 
 
 class _FakeVolume:
@@ -167,17 +164,11 @@ class _FakeVolume:
         self.commits += 1
 
 
-def _fake_entry(path: str, size: int) -> object:
-    from types import SimpleNamespace
-
-    return SimpleNamespace(path=path, size=size)
-
-
 def test_the_fetch_commits_the_volume_from_inside_the_container() -> None:
-    # Bug caught: THE 2026-09-17 defect. Without an explicit commit the writes
-    # are not durable, the tool reports a 144.05 GB success, and the next H200
-    # run re-downloads all of it at $4.54/hr — which is the entire cost this
-    # tool exists to avoid. Modal's own error names the fix: inside a container.
+    # Bug caught: without an explicit commit the writes are not guaranteed
+    # durable, and the next H200 run would re-download 124 GiB at $4.54/hr —
+    # the entire cost this tool exists to avoid. Modal's own error names the
+    # fix: inside a container.
     from tools.prefetch_weights import fetch_snapshot
 
     volume = _FakeVolume()
@@ -206,7 +197,7 @@ def test_the_fetch_commits_even_when_measuring_raises() -> None:
     def boom(_path: str) -> int:
         raise OSError("stat failed")
 
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match="stat failed"):
         fetch_snapshot(
             "MiniMaxAI/MiniMax-H3",
             ["model_index.json"],
@@ -218,58 +209,61 @@ def test_the_fetch_commits_even_when_measuring_raises() -> None:
     assert volume.commits == 1, "a completed download was discarded uncommitted"
 
 
-def test_durable_bytes_sums_only_the_requested_repo() -> None:
-    # Bug caught: the verification sums every blob on the shared Volume, so the
-    # 126.20 GB of Wan 2.2 already resident makes a completely failed H3 fetch
-    # look like a 128 GB success.
-    from tools.prefetch_weights import durable_bytes
-
-    listing = {
-        "hub/models--MiniMaxAI--MiniMax-H3/blobs": [
-            _fake_entry("hub/models--MiniMaxAI--MiniMax-H3/blobs/a", 1_000),
-            _fake_entry("hub/models--MiniMaxAI--MiniMax-H3/blobs/b", 2_000),
-        ],
-        "hub/models--Wan-AI--Wan2.2-T2V-A14B-Diffusers/blobs": [
-            _fake_entry("hub/models--Wan-AI--Wan2.2-T2V-A14B-Diffusers/blobs/c", 9_999),
-        ],
-    }
-    total = durable_bytes("MiniMaxAI/MiniMax-H3", lister=lambda p: listing.get(p, []))
-    assert total == 3_000
-
-
-def test_verify_resident_refuses_the_real_partial_commit() -> None:
-    # Bug caught: exactly the 2026-09-17 state. The remote reported 144.05 GB;
-    # the Volume durably held 1.96 GB. The tool must exit non-zero on that,
-    # because the alternative is discovering it as a 124 GiB re-download on the
-    # H200 — and, worse, recording Sub-project B as complete in PROGRESS.md.
+def test_verify_resident_refuses_a_fetch_that_did_not_persist() -> None:
+    # Bug caught: the fetch reports a large success and the Volume holds a
+    # fraction of it. Exiting 0 there means the gap is discovered later as a
+    # 124 GiB re-download on the H200 — and, worse, gets recorded as a
+    # completed sub-project.
     from tools.prefetch_weights import PrefetchNotDurable, verify_resident
 
     with pytest.raises(PrefetchNotDurable) as exc:
         verify_resident(
             "MiniMaxAI/MiniMax-H3",
             reported_bytes=144_050_000_000,
-            lister=lambda _p: [
-                _fake_entry("hub/models--MiniMaxAI--MiniMax-H3/blobs/a", 1_960_000_000)
-            ],
+            remeasure=lambda: 1_960_000_000,
         )
     message = str(exc.value)
-    # Both numbers must appear: "it did not persist" is unactionable without
-    # the gap, and the gap is what says re-run rather than debug the loader.
+    # Both numbers must appear: "it did not persist" is unactionable without the
+    # gap, and the gap is what says re-run rather than debug the loader.
     assert "144" in message and "1.9" in message
     assert "MiniMaxAI/MiniMax-H3" in message
 
 
 def test_verify_resident_accepts_a_fetch_that_actually_landed() -> None:
-    # Bug caught: the tolerance is too tight (exact equality), so the normal
-    # case — the controller's blob sum differing slightly from the container's
-    # symlink-following walk — fails every healthy run and the guard gets
-    # deleted as noise.
+    # Bug caught: the tolerance is exact equality, so the normal case — two
+    # walks of the same tree differing incidentally — fails every healthy run
+    # and the guard gets deleted as noise.
     from tools.prefetch_weights import verify_resident
 
-    verify_resident(
-        "MiniMaxAI/MiniMax-H3",
-        reported_bytes=144_050_000_000,
-        lister=lambda _p: [
-            _fake_entry("hub/models--MiniMaxAI--MiniMax-H3/blobs/a", 143_900_000_000)
-        ],
+    assert (
+        verify_resident(
+            "MiniMaxAI/MiniMax-H3",
+            reported_bytes=144_050_000_000,
+            remeasure=lambda: 143_900_000_000,
+        )
+        == 143_900_000_000
     )
+
+
+def test_verify_resident_measures_through_a_container_not_a_blob_listing() -> None:
+    # Bug caught: THE 2026-09-18 false alarm. The check is reimplemented as a
+    # controller-side sum of `hub/models--<repo>/blobs`, which reported 1.96 GB
+    # for a tree a fresh container measured at 288.10 GB — Modal's listdir
+    # reports 0 for a symlink, and xet-backed content is not under blobs/.
+    # The guard then blocks every healthy prefetch.
+    #
+    # This pins the SEAM: the only way verify_resident learns a size is the
+    # injected `remeasure` callable, so a future edit cannot quietly swap in a
+    # listing-based measure without changing this signature.
+    import inspect
+
+    from tools.prefetch_weights import verify_resident
+
+    params = inspect.signature(verify_resident).parameters
+    assert "remeasure" in params
+    assert "lister" not in params, (
+        "a listing-based durability measure is wrong here — see the note above"
+    )
+    assert not hasattr(
+        __import__("tools.prefetch_weights", fromlist=["x"]), "durable_bytes"
+    ), "durable_bytes summed blobs/ from the controller and false-alarmed; it is gone"

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -229,84 +229,61 @@ def _render(plan: PrefetchPlan) -> str:
     )
 
 
-def _blob_dir(repo_id: str) -> str:
-    """Return the Volume-relative blob directory HF uses for *repo_id*.
-
-    Args:
-        repo_id: HuggingFace repo id, e.g. ``"MiniMaxAI/MiniMax-H3"``.
-
-    Returns:
-        The path, e.g. ``"hub/models--MiniMaxAI--MiniMax-H3/blobs"``. The
-        snapshot directory is only symlinks into here, so this is where the
-        bytes actually are — and the only place that can answer "did the fetch
-        persist?".
-    """
-    return f"hub/models--{repo_id.replace('/', '--')}/blobs"
-
-
-def durable_bytes(repo_id: str, *, lister: Callable[[str], Iterable[Any]]) -> int:
-    """Sum the bytes the Volume DURABLY holds for *repo_id*.
-
-    Scoped to one repo's blob directory on purpose. ``kinoforge-hf-cache`` is
-    shared — it already carries 126.20 GB of Wan 2.2 — so a Volume-wide sum
-    would make a completely failed fetch look like a 128 GB success.
-
-    Args:
-        repo_id: HuggingFace repo id.
-        lister: ``(path) -> entries`` with ``.size``; injected so this is
-            testable without Modal, and so the caller owns the SDK import.
-
-    Returns:
-        Total bytes, or 0 when the directory does not exist.
-    """
-    return sum(int(getattr(e, "size", 0) or 0) for e in lister(_blob_dir(repo_id)))
+#: Why there is no controller-side byte check here, stated so the next reader
+#: does not rebuild one. It is tempting to verify durability by listing
+#: ``hub/models--<repo>/blobs`` from the controller and summing ``size``. That
+#: measure is WRONG and it produced a false alarm on 2026-09-18: it reported
+#: 1.96 GB for a MiniMax-H3 tree that a fresh container measured at 288.10 GB
+#: with zero broken symlinks. Two reasons — Modal's ``listdir`` reports 0 for a
+#: symlink rather than its target's size, and an xet-backed download does not
+#: keep its content under ``blobs/`` at all. The Wan repos happen to sum
+#: correctly, which is exactly what makes the bad measure look trustworthy.
+#:
+#: Durability means "a NEW container mounting the Volume sees the bytes", so
+#: that is what :func:`verify_resident` asks, in its own app run.
+_DURABILITY_NOTE = __doc__
 
 
 def verify_resident(
     repo_id: str,
     *,
     reported_bytes: int,
-    lister: Callable[[str], Iterable[Any]],
+    remeasure: Callable[[], int],
     tolerance: float = 0.98,
 ) -> int:
-    """Confirm the container's reported fetch is durable on the Volume.
+    """Confirm the fetch is durable by re-measuring it from a fresh container.
 
-    Two independent observations, which is the whole point: the container walks
-    the snapshot tree and reports a size; the controller then re-reads the blob
-    store afterwards, through a separate connection, and compares. A commit that
-    did not persist shows up as a gap between them.
+    Two independent observations, which is the point: the fetch container walks
+    the snapshot and reports a size, then a SECOND container — new process, new
+    mount, after the first app has stopped — walks it again. A commit that did
+    not persist shows up as a gap.
 
-    This exists because "the remote returned a size" is NOT evidence of
-    durability. On 2026-09-17 the tool reported 144.05 GB and PROGRESS.md
-    recorded Sub-project B as complete; measured on 2026-09-18 the Volume held
-    **1.96 GB** for this repo, largest blob 0.67 GB — configs and tokenizer, no
-    shards. The next step would have been a 124 GiB re-download on an H200 at
-    $4.54/hr, which is the exact cost this tool exists to avoid.
+    It has to be a container. A controller-side listing cannot see through the
+    HF cache's symlinks, and cannot see xet-backed content at all; see
+    ``_DURABILITY_NOTE``.
 
     Args:
-        repo_id: HuggingFace repo id.
-        reported_bytes: What the remote function measured.
-        lister: ``(path) -> entries`` with ``.size``.
-        tolerance: Fraction of *reported_bytes* that must be durable. Slightly
-            below 1.0 because the two measurements are not the same walk — the
-            container follows symlinks through the snapshot tree, the controller
-            sums the blob store — so exact equality would fail healthy runs and
-            the guard would be deleted as noise.
+        repo_id: HuggingFace repo id, for the error message.
+        reported_bytes: What the fetch container measured.
+        remeasure: Callable returning the bytes a fresh container sees.
+        tolerance: Fraction of *reported_bytes* that must be resident. Slightly
+            below 1.0 so an incidental difference between two walks does not
+            fail a healthy run and get the guard deleted as noise.
 
     Returns:
-        The durable byte count.
+        The re-measured byte count.
 
     Raises:
-        PrefetchNotDurable: Less than *tolerance* of the reported bytes are
-            durably resident.
+        PrefetchNotDurable: The fresh container sees less than *tolerance* of
+            what the fetch reported.
     """
-    durable = durable_bytes(repo_id, lister=lister)
+    durable = remeasure()
     if durable < reported_bytes * tolerance:
         raise PrefetchNotDurable(
-            f"{repo_id}: the container reported {reported_bytes / 1e9:.2f} GB but the "
-            f"Volume durably holds {durable / 1e9:.2f} GB. The fetch did not persist — "
-            "re-run it here rather than discovering it as a re-download on the "
-            "expensive card. Check that the remote function calls volume.commit() "
+            f"{repo_id}: the fetch reported {reported_bytes / 1e9:.2f} GB but a fresh "
+            f"container sees {durable / 1e9:.2f} GB on the Volume. The fetch did not "
+            "persist — re-run it here rather than discovering it as a re-download on "
+            "the expensive card. Check that the remote function calls volume.commit() "
             "before returning."
         )
     return durable
@@ -417,38 +394,46 @@ def run_prefetch(plan: PrefetchPlan) -> str:
             plan.repo_id, list(plan.allow_patterns), plan.volume_mount
         )
 
-    # The commit now happens INSIDE the container (see fetch_snapshot). It is
-    # still not trusted on its own: this re-reads the blob store from the
-    # controller, through a separate connection, after the app has stopped. On
-    # 2026-09-17 a reported 144.05 GB success left 1.96 GB on the Volume and was
-    # recorded in PROGRESS.md as complete — a second, independent observation is
-    # what makes that impossible to repeat.
-    durable = verify_resident(
-        plan.repo_id,
-        reported_bytes=reported,
-        lister=lambda p: _list_volume(volume, p),
+    # The commit happens INSIDE the fetch container (see fetch_snapshot), and is
+    # still not trusted on its own. A SECOND app — new container, new mount,
+    # started after the first has stopped — re-walks the snapshot and reports
+    # what it sees. That is what durability means here, and it is the only
+    # measure that holds: a controller-side blob listing cannot see through the
+    # HF cache's symlinks (Modal reports size 0 for one) and cannot see
+    # xet-backed content at all. See _DURABILITY_NOTE.
+    #
+    # It runs on a CPU-only image: no GPU is needed to stat files, and at
+    # $0.0000131/core/s this check costs a fraction of a cent.
+    verify_app = modal.App(name=f"{app.name}-verify")
+
+    @verify_app.function(  # type: ignore[untyped-decorator]
+        image=modal.Image.debian_slim(),
+        volumes={plan.volume_mount: volume},
+        timeout=900,
+        serialized=True,
     )
+    def _remeasure(snapshot_path: str) -> int:
+        import os
+
+        total = 0
+        for root, _, files in os.walk(snapshot_path):
+            for name in files:
+                # getsize FOLLOWS symlinks, so a broken link raises here rather
+                # than quietly contributing zero — which is the failure this
+                # whole check exists to surface.
+                total += os.path.getsize(os.path.join(root, name))
+        return total
+
+    with verify_app.run():
+        durable = verify_resident(
+            plan.repo_id,
+            reported_bytes=reported,
+            remeasure=lambda: int(_remeasure.remote(path)),
+        )
     return (
         f"{path} :: reported {reported / 1e9:.2f} GB, "
-        f"durable on {plan.volume_name} {durable / 1e9:.2f} GB"
+        f"re-measured from a fresh container {durable / 1e9:.2f} GB"
     )
-
-
-def _list_volume(volume: Any, path: str) -> list[Any]:  # noqa: ANN401 — as above
-    """List *path* on *volume*, treating a missing directory as empty.
-
-    Args:
-        volume: A ``modal.Volume``.
-        path: Volume-relative directory.
-
-    Returns:
-        The entries, or ``[]`` when the path does not exist — which is itself a
-        legitimate answer here (a fetch that persisted nothing at all).
-    """
-    try:
-        return list(volume.listdir(path))
-    except Exception:  # noqa: BLE001 — absent path is data, not an error
-        return []
 
 
 def main(argv: list[str] | None = None) -> int:

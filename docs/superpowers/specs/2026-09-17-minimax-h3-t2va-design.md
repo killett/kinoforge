@@ -245,6 +245,64 @@ class docstring, and it independently confirms the CORRECTION above: the
 `_class_name: MiniMaxH3Pipeline` in `FL2VA/model_index.json` names a class that
 does not exist.
 
+## CORRECTION 2026-09-18 — the offload API does not exist, and the geometry is a contract
+
+Two findings from reading `diffusers/modular_pipelines/` at v0.40.0 while
+implementing Sub-project C. Both would have failed on a booked H200.
+
+### `enable_model_cpu_offload` is not a method on `ModularPipeline`
+
+The decision row below says it is mandatory. The *intent* is right and the
+*call* does not exist. `ModularPipeline` subclasses `ConfigMixin, PushToHubMixin`
+— **not** `DiffusionPipeline` — and defines no `enable_*_cpu_offload` of any
+kind; `grep -n 'def enable_'` over `modular_pipelines/modular_pipeline.py`
+returns nothing. The name appears in that file only inside two warning strings
+in `to()`. Calling it is an `AttributeError`, at $4.54/hr.
+
+The mechanism, and the recipe the diffusers H3 doc gives for a single card:
+
+```py
+manager = ComponentsManager()
+pipe = ModularPipeline.from_pretrained(repo, workflow="t2va", components_manager=manager)
+pipe.load_components(dtype=torch.bfloat16)
+manager.enable_auto_cpu_offload(device="cuda", memory_reserve_margin="12GB")
+```
+
+Every model starts on CPU and is moved onto the accelerator when a block reaches
+it, then evicted when another needs the room.
+
+**This also weakens risk 1.** The "141 GB fit" worry assumed both large
+components resident (61.7 GiB transformer + 62.1 GiB conditioner = 123.8 GiB on
+a 131.3 GiB card, ~7 GiB left for activations). Under auto offload peak device
+residency is ~62 GiB, so the canvas is not the constraint it looked like. The
+binding resource moves to **host RAM**: the weights live there, ~124 GiB of it,
+and Modal's default container memory *request* is 128 MiB with "can exceed if
+the worker has available memory" — so that headroom is a property of the machine
+we land on, not of our request. The H3 server therefore logs `/proc/meminfo`
+MemTotal/MemAvailable and `torch.cuda.mem_get_info()` before and after the load,
+so a shortfall is one legible line rather than an unexplained container death.
+
+### Geometry is a hard contract, checked inside the pipeline
+
+None of this was in the spec, and each is a `ValueError` raised from
+`before_denoise` — i.e. minutes after a 124 GiB load finished:
+
+| Rule | Source |
+|---|---|
+| `height`/`width` multiples of **32** | `canvas_multiple` = VAE spatial compression 16 x `patch_size[2]` 2 |
+| `num_frames` snapped up to `17 * n + 5` | the video VAE's `clip_length` / `tokens_chunk_size` |
+| duration in **5.0-15.0 s** at 24 fps, i.e. 120-360 frames | `min_duration` / `max_duration`; checked on the ALIGNED count |
+| 24 fps, fixed | `MINIMAX_H3_FPS`; everything is resampled onto it |
+| `num_inference_steps` defaults to 50 | `InputParam.template`; guidance-distilled is not step-distilled |
+
+Trained canvas is 1344x768 (`canvas_short_edge` 768 at 16:9, which is also the
+`canvas_max_pixels` budget); 960x544 is measured at ~2.3x faster per step and is
+the first mitigation if anything OOMs. Default `num_frames` is **124** — the
+shortest legal clip, and the only `17n+5` value in the 120-126 range.
+
+The server re-states all of it and refuses violations at the HTTP edge, so a bad
+number costs nothing instead of costing a load.
+
 ## Decomposition
 
 Three sub-projects. **A and B ship before C** (operator decision 2026-09-17);
@@ -559,7 +617,8 @@ exits.
 | 2026-09-17 | **Pin `diffusers==0.40.0` minimum** | Tag-probed: 0.40.0 exports `MiniMaxH3ModularPipeline`, 0.39.0 and 0.38.0 do not. Far above the `>=0.32` the Wan configs use, so H3 pins its own |
 | 2026-09-17 | Entry point is `ModularPipeline`, not `DiffusionPipeline` | Operator correction; loads the repo root, which is why the root manifest is required |
 | 2026-09-17 | **Engine route RESOLVED: diffusers.** ComfyUI is 3.4x smaller (42.48 vs 144.1 GB) on a cheaper card and its H3 nodes are real, but needs three unproven links: Modal+ComfyUI never built, engine unproven since 2026-06-18, and the template is a subgraph the vendored converter predates | Measured both probes; one new server module beats three unbounded unknowns |
-| 2026-09-17 | **`enable_model_cpu_offload` is MANDATORY** | Weights measured at ~133 GB, not ~115 GB. Naive `device_map="cuda"` leaves ~8 GB for activations on a 141 GB H200 and will OOM; offloading the text encoder drops peak to ~77 GB |
+| ~~2026-09-17~~ | ~~**`enable_model_cpu_offload` is MANDATORY**~~ **SUPERSEDED 2026-09-18** — CPU offload is mandatory, but via `ComponentsManager.enable_auto_cpu_offload`; `enable_model_cpu_offload` is not a method on `ModularPipeline` at all | Weights measured at ~124 GiB against a 131.3 GiB card. See the 2026-09-18 CORRECTION: the named call would have been an `AttributeError` on the booked H200 |
+| 2026-09-18 | **Sub-project B confirmed complete** — 288.10 GB durable, re-measured from a fresh container | A controller-side sum of `hub/models--<repo>/blobs` read 1.96 GB and looked like a total failure; it is the WRONG measure (Modal reports size 0 for a symlink, and xet-backed content is not under `blobs/`). A fresh container walking the snapshot sees transformer 66.28 + text_encoder 66.73 + vae 10.42 + audio_vae 0.61 GB with zero broken symlinks, matching the HF API file-for-file |
 | ~~2026-09-17~~ | ~~Engine route deferred; probe both offline first~~ | The ~38 GB saving is unverified per-file, and whether our comfyui engine carries H3's node types is unknown. Both probes are $0; guessing wrong costs a 144 GB fetch or a dead-end path |
 
 ## Open questions for plan time
