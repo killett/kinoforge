@@ -798,6 +798,11 @@ class ModelProfile:
 
 MODE_ROLE_REQUIREMENTS: dict[str, dict[str, str]] = {
     "t2v": {},
+    # MiniMax-H3's joint video+audio mode. Empty for the same reason t2v is: the
+    # `t2va` entry in the diffusers blocks' `_workflow_map` is `{"prompt": True}`
+    # — text only, no image roles. The soundtrack is an OUTPUT, not a
+    # conditioning role, so it has no entry here at all.
+    "t2va": {},
     "i2v": {"init_image": "image"},
     "flf2v": {"first_frame": "image", "last_frame": "image"},
 }

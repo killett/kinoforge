@@ -52,6 +52,13 @@ def decide(
         order and assets are preserved in both branches; per-segment
         ``params`` carry the segment-wins merge over the base ``params``.
     """
+    # INERT SEAM — deliberate, 2026-09-17. `_audio_mode` is written here and read
+    # NOWHERE: grep the tree for it and this line is the only hit outside tests.
+    # MiniMax-H3 is the first model for which the value is not the constant
+    # "separate", and it is STILL not the mechanism — H3's soundtrack reaches the
+    # output through `engines/diffusers/servers/_av_io.write_mp4_with_audio`, on
+    # the pod, never through this marker. Do not build on it without wiring a
+    # reader first; an inert seam that reads as working is how U40 cost a live run.
     audio_mode = "joint" if profile.supports_joint_audio else "separate"
     job_spec = {**spec, "_audio_mode": audio_mode}
     merged_segments = [_merged_segment(params, s) for s in segments]

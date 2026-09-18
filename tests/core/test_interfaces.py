@@ -69,6 +69,9 @@ def test_mode_role_requirements_shape() -> None:
     # Shape: dict[mode, dict[role, kind]] since Layer R.
     assert MODE_ROLE_REQUIREMENTS == {
         "t2v": {},
+        # MiniMax-H3 joint video+audio. Empty like t2v: the soundtrack is an
+        # output, not a conditioning role. See tests/core/test_mode_t2va.py.
+        "t2va": {},
         "i2v": {"init_image": "image"},
         "flf2v": {"first_frame": "image", "last_frame": "image"},
     }
