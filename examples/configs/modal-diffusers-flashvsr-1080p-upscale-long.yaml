@@ -35,7 +35,16 @@ engine:
   diffusers:
     # Modal serialized web_server fn requires image-Python == controller (3.13).
     image: "python:3.13-slim"
+    # `env VAR=val` argv prefix (no shell) sets PYTORCH_CUDA_ALLOC_CONF before
+    # torch's allocator initialises — the same fix the Lambda FlashVSR cfg
+    # needed. The 69-frame chunk attempt on 2026-09-18 died with 10.07 GiB
+    # "reserved but unallocated" (pure fragmentation) out of 77.3 GiB in use;
+    # expandable_segments reclaims that headroom. tile_size does NOT help: it
+    # reaches the pipeline as a bare `tiled=True`, and the Lambda run proved
+    # 256 vs 512 gives identical OOM figures.
     server_cmd:
+      - "env"
+      - "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
       - "python"
       - "-m"
       - "kinoforge.engines.diffusers.servers.wan_t2v_server"
@@ -96,13 +105,16 @@ upscale:
   engine: flashvsr
   scale: 1080p
   # TEMPORAL CHUNKING — the load-bearing difference from the sibling. FlashVSR
-  # holds the whole clip on the GPU, so memory grows with the frame count:
-  # the un-chunked 345-frame run OOM'd the 80 GB A100 on 2026-09-18 (77.8 GiB
-  # in use at frame ~130, ~200 GB extrapolated). 69 kept frames + 8 warm-up =
-  # 77 rendered per chunk, the same count §24 proved, at 2.3x the pixels
-  # (~50 GB est). Five chunks for 345 frames, each upscaled on the same pod,
-  # joined on the controller (pipeline/chunk.py).
-  chunk_frames: 69
+  # holds the whole clip on the GPU and its memory is SUPERLINEAR in
+  # frames x pixels: 81 f at 480² peaks 34.6 GiB (Lambda cfg), yet 69 f at
+  # 960x544 — 1.9x the frame-pixels — blew past 77 GiB on the 80 GB A100
+  # (2026-09-18, second attempt; the un-chunked 345 f run had died the same
+  # way). Fitting those two points puts ~48 rendered frames at this canvas
+  # near 55 GiB, so: 40 kept + 8 warm-up = 48 rendered per chunk, 9 chunks for
+  # 345 frames, each upscaled on the same pod and joined on the controller
+  # (pipeline/chunk.py). If this OOMs again, drop chunk_frames before
+  # touching hardware — no card fixes a per-chunk footprint.
+  chunk_frames: 40
   chunk_overlap: 8
   flashvsr:
     weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
