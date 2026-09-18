@@ -268,7 +268,13 @@ def run_prefetch(plan: PrefetchPlan) -> str:
         result: str = _fetch.remote(
             plan.repo_id, list(plan.allow_patterns), plan.volume_mount
         )
-    volume.commit()
+    # NO controller-side volume.commit(). Modal raises
+    # "commit() can only be called on a mounted volume inside a container"
+    # — observed live 2026-09-17, AFTER a successful 144.1 GB download, so
+    # the crash reported failure on work that had actually succeeded and
+    # swallowed the size line. Modal commits the volume itself when the
+    # function returns; the fetched tree was verified present afterwards via
+    # `modal volume ls`. Committing here is neither needed nor permitted.
     return result
 
 
