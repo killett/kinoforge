@@ -3232,6 +3232,37 @@ is the decoded frames and is a usable "denoise finished" marker.
 at module import and that module is imported lazily inside the `/util` handler,
 so it counts from the first `/util` call. Affects `wan_t2v_server` too.
 
+### Max-length run 2026-09-18: 14.375 s proven, flash-attn NOT proven
+
+`examples/configs/modal-diffusers-minimax-h3-t2va-long.yaml` — **345 frames /
+14.375 s at 960x544**, the longest clip this model makes. Live-green, logged as
+a See-also under `successful-generations.md` §31 (same tuple). Pod
+`run-20260918-012850`, ~17.6 min, est **$1.33**, teardown verified.
+
+**Three findings, two of them cautionary:**
+
+1. **A HARD CUT at frame 272 (t = 11.33 s).** Frame-to-frame mean delta spikes
+   to 70.05 against a median of 1.54 and p95 of 2.70 — a 26x outlier, next
+   largest 3.8. The clip is a two-shot sequence: ~11.3 s meadow mid-shot, then
+   a cut to ~3.0 s of an extreme eyes-only close-up. **At 5.167 s the same
+   prompt produced ONE continuous push-in.** So: short clip for continuous
+   camera motion; at max length H3 cuts. Note the QA method — evenly-spaced
+   sampling CANNOT distinguish this from a fast dolly; it took a consecutive-
+   frame sweep plus a delta trace, which is the same lesson §25's See-also
+   recorded for interpolation.
+2. **The soundtrack is effectively MONO** — L/R correlation **0.9956** against
+   the §31 clip's 0.3190. NOT a mux defect (§31 proves decorrelated stereo
+   passes through unchanged); it is this generation's content. Duration is
+   exactly 14.375000 s, matching the video to the millisecond.
+3. **`_flash_3_hub` is UNVERIFIED, and that is a process miss of mine.** The
+   server reports the live backend on `/health` — the field exists precisely so
+   a degraded run is visible — and I did not read it while the pod was alive.
+   Modal retains only ~100 log lines, so the startup line had rolled off.
+   Timing argues it did not help: 52,020 video rows against §31's 37,296
+   (1.39x) took ~15.5 min against ~8.5 min (1.8x), and attention is ~quadratic
+   (1.39² = 1.94x), so 1.8x is what NO speed-up looks like. **`curl <url>/health`
+   ONCE on the next run settles it for $0 — do that before spending again.**
+
 **GOTCHA that cost a pod boot 2026-09-18, and it is detectable for $0 —
 consider filing it.** Correcting `capability.max_frames` from 360 to 345 made
 the very next run die with `CapabilityMismatch: profile drift on field
