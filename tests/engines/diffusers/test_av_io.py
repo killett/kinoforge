@@ -14,6 +14,7 @@ structural check here and be equally worthless.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -200,3 +201,80 @@ def test_wav_clips_rather_than_wrapping_on_overshoot(tmp_path: Path) -> None:
         data = np.frombuffer(fh.readframes(fh.getnframes()), dtype=np.int16)
     assert data.min() > 0, "overshoot wrapped to negative instead of clipping"
     assert data.max() == 32767
+
+
+# ---------------------------------------------------------------------------
+# ffmpeg resolution on an image that has no ffmpeg
+# ---------------------------------------------------------------------------
+
+
+def test_ffmpeg_exe_prefers_path() -> None:
+    """A PATH ffmpeg is used when there is one.
+
+    Bug caught: the resolver always reaches for imageio's bundled binary and
+    ignores a newer, deliberately-installed system ffmpeg — which is what the
+    dev container and every RunPod image provide.
+    """
+    from kinoforge.engines.diffusers.servers import _av_io
+
+    assert _av_io._ffmpeg_exe() == shutil.which("ffmpeg")
+
+
+def test_ffmpeg_exe_falls_back_to_imageios_binary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no ffmpeg on PATH, imageio's bundled binary is used.
+
+    Bug caught: the real one. The pod image is ``python:3.13-slim``, which ships
+    no ffmpeg, and the cfg's ``imageio[ffmpeg]`` does NOT put one on PATH —
+    ``imageio_ffmpeg`` keeps its binary inside the package and exposes it only
+    via ``get_ffmpeg_exe()``. A bare ``"ffmpeg"`` argv therefore works in this
+    container (whose conda env happens to provide one) and raises
+    ``FileNotFoundError`` on the pod, at the MUX — after the entire generation
+    has been paid for on a $4.54/hr card.
+
+    This test forces the pod's condition, which is the only way to see it from
+    here: the happy path above passes either way.
+    """
+    from kinoforge.engines.diffusers.servers import _av_io
+
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    resolved = _av_io._ffmpeg_exe()
+    assert resolved != "ffmpeg", (
+        "fell through to the bare name — on python:3.13-slim that is "
+        "FileNotFoundError at the mux"
+    )
+    assert Path(resolved).exists(), resolved
+    assert "imageio_ffmpeg" in resolved
+
+
+def test_write_mp4_with_audio_uses_the_resolved_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The mux argv starts with the resolved path, not the bare name.
+
+    Bug caught: ``_ffmpeg_exe`` is added but ``write_mp4_with_audio`` keeps its
+    hardcoded ``"ffmpeg"`` — the helper exists, is tested, and is not wired in.
+    """
+    from kinoforge.engines.diffusers.servers import _av_io
+
+    seen: dict[str, object] = {}
+
+    def fake_run(argv, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        seen["argv"] = argv
+        Path(argv[-1]).write_bytes(b"mp4")
+
+        class _P:
+            returncode = 0
+            stderr = ""
+
+        return _P()
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/local/bin/ffmpeg")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    frames = np.zeros((4, 32, 32, 3), dtype=np.uint8)
+    audio = np.zeros((1000, 2), dtype=np.float32)
+    _av_io.write_mp4_with_audio(frames, audio, 24, 32000, tmp_path / "out.mp4")
+    argv = seen["argv"]
+    assert isinstance(argv, list)
+    assert argv[0] == "/usr/local/bin/ffmpeg", argv[0]

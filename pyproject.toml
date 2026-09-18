@@ -70,7 +70,7 @@ module = ["torch", "torch.*", "diffusers", "diffusers.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]  # imageio + imageio.v3 have no py.typed markers; lazy-imported in _input_prep.
-module = ["imageio", "imageio.*"]
+module = ["imageio", "imageio.*", "imageio_ffmpeg", "imageio_ffmpeg.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]  # huggingface_hub: installed on the prefetch container only, never locally.

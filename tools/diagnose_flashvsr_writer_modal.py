@@ -133,7 +133,7 @@ def probe() -> dict[str, object]:
 
     ffmpeg_exe_version = "<unknown>"
     try:
-        import imageio_ffmpeg  # type: ignore[import-untyped]  # no py.typed
+        import imageio_ffmpeg
 
         exe = imageio_ffmpeg.get_ffmpeg_exe()
         proc = subprocess.run(  # noqa: S603 — path from imageio_ffmpeg, no shell

@@ -17,12 +17,42 @@ keeps the sample layout explicit.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tempfile
 import wave
 from pathlib import Path
 
 import numpy as np
+
+
+def _ffmpeg_exe() -> str:
+    """Return a runnable ffmpeg path, preferring PATH then imageio's binary.
+
+    The pod image is ``python:3.13-slim``, which ships no ffmpeg, and the cfg's
+    ``imageio[ffmpeg]`` does NOT put one on PATH — ``imageio_ffmpeg`` keeps its
+    binary inside the package (``.../imageio_ffmpeg/binaries/ffmpeg-linux-...``)
+    and exposes it only through ``get_ffmpeg_exe()``. So a bare ``"ffmpeg"``
+    argv works in the dev container, whose conda env happens to provide one on
+    PATH, and raises ``FileNotFoundError`` on the pod — at the mux, i.e. after
+    the whole generation has been paid for.
+
+    ``_video_io.write_mp4`` never hit this because ``imageio`` resolves the
+    binary itself; this module is the first to shell out directly.
+
+    Returns:
+        An absolute path, or the bare name ``"ffmpeg"`` as a last resort so the
+        failure message still names the tool.
+    """
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    try:
+        import imageio_ffmpeg
+
+        return str(imageio_ffmpeg.get_ffmpeg_exe())
+    except Exception:  # noqa: BLE001 — fall through to the bare name
+        return "ffmpeg"
 
 
 def _to_pcm16(audio: np.ndarray) -> np.ndarray:
@@ -137,7 +167,7 @@ def write_mp4_with_audio(
         # video freezes on its last frame while audio continues, which reads
         # as a model defect rather than a mux defect.
         argv = [
-            "ffmpeg",
+            _ffmpeg_exe(),
             "-y",
             "-loglevel",
             "error",
