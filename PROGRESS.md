@@ -3083,6 +3083,58 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 
 ## RESUME SNAPSHOT (updated 2026-09-17 — read this, then STOP; below is history)
 
+### SESSION 2026-09-17 (third) — H3 engine route RESOLVED, Sub-project B built
+
+**The engine route is DIFFUSERS, decided by measurement, not preference.** Two
+$0 probes ran. Full reasoning is in the spec's "RESOLVED 2026-09-17" section;
+the load-bearing parts:
+
+- **ComfyUI is genuinely cheaper and its node support is real.**
+  `MiniMaxH3ImageToVideo` IS in ComfyUI core (`comfy_extras/nodes_minimax_h3.py`,
+  `master`), and we clone `master` unpinned. Its quantised weight set is
+  **42.48 GB** against **144.1 GB** for official FL2VA, and fits an A100-80GB
+  rather than an H200.
+- **It lost on three unproven links, not on merit.** Modal+ComfyUI has never
+  been built (every ComfyUI cfg is RunPod or SkyPilot-Lambda); the ComfyUI
+  engine has not been live-proven since **2026-06-18** across three refactors
+  that touched it (`4856a85a`, `8e584fe2`, `13316c99`) — offline-green and in
+  the golden ratchet, so **unproven, not broken**; and the reference template is
+  a **subgraph** workflow that `tools/comfyui_ui_to_api.py`'s vendored converter
+  predates. **ComfyUI deserves its own project and budget — do not read this as
+  a verdict against it.**
+
+**The spec's memory math was WRONG and is now measured.** bf16 weights are
+**~133 GB** (text_encoder 66.73 + transformer 66.28), not the ~115 GB a
+third-party listing claimed. On a 141 GB H200 that leaves ~8 GB for activations
+and **will OOM**, so **`enable_model_cpu_offload` is MANDATORY** — offloading the
+text encoder after encoding drops peak to ~77 GB. The model card's naive
+`device_map="cuda"` must not be used as-is. Sub-project A's H200 row is still
+correct and still needed.
+
+**Sub-project B is built and committed** (`4c2937f2`, `22339088`):
+`tools/prefetch_weights.py`, 10 tests. It runs the 144.1 GB download on the
+**cheapest catalog card** instead of the H200, turning ~$3.94 into ~$0.15-0.50
+and making a failed fetch cost cents. `build_plan()` refuses, for $0, both an
+empty `allow_patterns` (which would pull 498 GB) and a subfolder glob with no
+root manifest (which yields a download that looks complete and fails to load —
+on the GPU, never on the prefetch).
+
+**Two defects the live run found that offline work could not:**
+1. **`pixi run` does not source the dotenv file**, so the tool reached Modal
+   unauthenticated and died in a traceback ending "Token missing", naming
+   neither the file nor the variable. Fixed + tested (`22339088`).
+2. **Ruff caught a real bug, not a style nit** — the image carrying
+   `huggingface_hub` was built and never passed to `@app.function`, so the
+   container would have failed at import **on a booked GPU**.
+
+**Spec risk 5 (license gating) is RETIRED by measurement:** the HF API reports
+`gated=False, private=False` both anonymously and with our token. The community
+licence governs USE, not download access.
+
+**Next action: finish the live prefetch, then Sub-project C** — the H3 t2va
+server. C must set `max_usd_per_hr >= 4.54` or `_enforce_rate_cap` destroys the
+H200 after launch (see the spec's Risks).
+
 ### SESSION 2026-09-17 (second) — MiniMax-H3 Sub-project A done, $0 spent
 
 **Sub-project A of `docs/superpowers/specs/2026-09-17-minimax-h3-t2va-design.md`
