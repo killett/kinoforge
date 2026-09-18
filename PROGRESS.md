@@ -3135,16 +3135,49 @@ run all three literally with cmd 2 FIRST against the existing proven clip
   counts for any clip. 10 launch goldens + `_golden_provision.json` moved (embedded-blob leaves
   only, reviewed key-by-key).
 
-**Live attempts on cmd 2 so far (all torn down, verified from fresh processes):** #1 OOM 345 f
-(~$0.35), #2 killed at launch — my process error, see the memory
-`precommit-all-files-ignores-untracked` (~$0.03), #3 OOM 69 f (~$0.08), #4 conv error 40 f
-(~$0.08). **#5 in flight** with `chunk_frames: 37` (+8 → 45 → padded 49), launched 13:07.
-Scripts: scratchpad `cmd1.sh` / `cmd2.sh` / `cmd3.sh` (cmd 1/3 use the operator's volcano prompt).
+**Five failed upscale attempts on the 960x544 source (all torn down, verified):** #1 OOM 345 f
+(~$0.35), #2 killed at launch — my process error, memory `precommit-all-files-ignores-untracked`
+(~$0.03), #3 OOM 69 f (~$0.08), #4 conv error 40 f (~$0.08), #5 **OOM on a single 40.34 GiB
+allocation with 41 frames** (~$0.10). #5 was the decisive one: the resident baseline was ~69 GiB
+whether the chunk held 345, 69 or 41 frames — **frame count was never the driver; FlashVSR's 4x
+OUTPUT canvas is.** 960x544 → 3840x2176 needs an S×S block mask (S≈208k) no Modal card holds.
 
-**NEXT ACTION:** finish cmd 2 (frame-QA + `tools/av_qa.py --cut-scan` on the join, the 1080p
-publish, the RIFE output and the re-muxed final; the source's hard cut at frame 272 is a free
-frame-alignment check), then cmd 1, then cmd 3; log in `successful-generations.md`; finalise this
-block.
+**Resolution, decided with the operator:** (1) generate H3 at **640x352** — the new
+`modal-diffusers-minimax-h3-t2va-long-640.yaml` (`9684af4e`; 640x360 is illegal, both axes must
+be multiples of 32) — whose 4x canvas (2560x1408) sits under the token window §24 proved; the
+long FlashVSR cfg went back to `chunk_frames: 69` (+8 → 77 → padded 81 = §24's exact envelope);
+(2) keep the 960x544 generation and pre-downscale on the controller only for the upscale
+(`scale=640:-2,crop=640:352` — crop, not squeeze; **FlashVSR source dims must be multiples of 32**,
+the BSA window rule, found live as `Dims must divide by window size`, `ca6ded78`).
+
+**ALL THREE COMMANDS PROVEN LIVE, plus the step-2 variant** — every pod `--no-reuse`, teardown
+verified from fresh processes after each, ~**$3.10 of the $20** spent in total:
+- **cmd 1** (H3 640x352, 345 f, volcano prompt): `output/20260918-152249_diffusers_MiniMax-H3_A-giant-chocolate-vo.mp4`,
+  H200 ~10 min ≈ $0.78, denoise ~4.5 min at `gpu=100.0`. Logged as a See-also under §31.
+- **cmd 2** (that clip → chunked FlashVSR 1080p → RIFE 60 fps → audio re-mux):
+  `output/20260918-153821_interpolated_rife_interp_interpolate_with-audio.mp4` (1964x1080 / 60 fps
+  / 862 f / aac stereo), ≈ $0.36. **§32** in `successful-generations.md` (new capability axis:
+  chunking + padding + the first 14 s clip through the chain).
+- **cmd 3** (the whole chain as one command): `output/20260918-155557_interpolated_rife_interp_interpolate_with-audio.mp4`,
+  16 min wall, ≈ $0.82. See-also under §32.
+- **cmd 2b** (960x544 source, pre-downscaled): `output/20260918-160841_interpolated_rife_interp_interpolate_with-audio.mp4`,
+  ≈ $0.34 (+$0.04 for the 640x360 lesson). See-also under §32. **Alignment proof:** the source's
+  hard cut at frame 272 lands at frame 272 of the chunked upscale, nothing at the seams.
+- QA on every output: `tools/av_qa.py` PASS (audio gates + `--cut-scan` as a seam detector),
+  contact sheets + native-res fidelity crops eyeballed (FlashVSR clearly sharper than lanczos,
+  no invented structure, no false colour), RIFE consecutive-frame check (no ghosting).
+  ⚠️ RIFE blends across a hard cut (frames 678-680 of cmd 2b's final) — inherent, not a bug.
+- **`_flash_3_hub` is NOT engaging:** `/health` read `attention_backend: default` on both H200
+  runs; the startup WARNING had rolled off Modal's 100-line log. Capture the boot log at start on a
+  future run to learn why.
+
+**NEXT ACTION (operator's step 3, design presented, awaiting approval):** upscale the 960x544
+source WITHOUT pre-downscaling by **spatial tiling** — split each frame into tiles whose 4x canvas
+fits the proven token window (e.g. 2x2 tiles of 512x304 with 32-px overlap → 2048x1216 each),
+run each tile through the existing chunked upscale, feather-blend the tiles locally, then the
+usual 1080p downscale / RIFE / re-mux. Controller-side, mirroring `pipeline/chunk.py`
+(`upscale.tile_grid` / `tile_overlap`, default off). Est. ~$1, ~25 min (4 tiles × 5 chunks).
+Open risks: visible seams if feathering is too narrow; tile dims must stay multiples of 32.
 
 ### SESSION 2026-09-18 — Sub-project C BUILT; `main` was red on 21 tests; one self-correction
 
