@@ -46,7 +46,7 @@ sourced from the vendor, that is stated rather than guessed.
 | FL2VA folder is self-contained | own `model_index.json`, `transformer`, `text_encoder`, `tokenizer`, `video_vae`, `audio_vae`, `processor` | repo tree |
 | FL2VA folder size | **144 GB** | repo tree |
 | Whole repo size | 498 GB | repo tree |
-| bf16 component sizes | transformer 61.7 GB, text encoder 48.0 GB, video VAE 4.9 GB, audio VAE 0.6 GB (**≈115 GB**) | comfyui-wiki listing |
+| bf16 component sizes | **MEASURED from the HF API 2026-09-17**: transformer 66.28 GB, text_encoder 66.73 GB, video_vae 10.42 GB, audio_vae 0.61 GB (**≈144 GB on disk, ≈133 GB of model weights**). The earlier 61.7/48.0 figures came from a third-party listing and were BOTH too low. | HF API, `FL2VA/` |
 | Native output | up to 2K, 24 fps, 15 s, 32 kHz stereo audio | model card |
 | Inference entry point | `ModularPipeline.from_pretrained("MiniMaxAI/MiniMax-H3")` | operator, 2026-09-17 |
 | Minimal fetch patterns | `--include "model_index.json" "FL2VA/*"` — **the ROOT `model_index.json` is required alongside the subfolder** | operator, 2026-09-17 |
@@ -61,90 +61,78 @@ sourced from the vendor, that is stated rather than guessed.
 does not fit 80 GB is an inference from that arithmetic — not a vendor number.
 Treat it as the design's single largest assumption.
 
-## OPEN — engine route, must be settled before Sub-project B
+## RESOLVED 2026-09-17 — engine route is DIFFUSERS, and the memory math changed
 
-**Raised 2026-09-17 by operator, after the hardware decision was made.** The
-Comfy-Org reference t2v workflow
-(`Comfy-Org/workflow_templates/templates/video_minimax_h3_t2v.json`) does **not**
-run bf16. It loads:
+Both probes ran ($0, offline). Results, then the ruling.
 
-| Role | File | Precision |
-|---|---|---|
-| diffusion model | `minimax_h3_fl2va_pruned_int8_convrot.safetensors` | **pruned INT8** |
-| text encoder | `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | **NVFP4 AWQ** |
-| video VAE | `minimax_h3_video_vae_fp16.safetensors` | fp16 |
-| audio VAE | `minimax_h3_audio_vae_fp32.safetensors` | fp32 |
-| optional LoRA | `minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors` | bf16 |
+### Probe A — per-file sizes, measured from the HF API (not a third-party listing)
 
-Sampler `res_multistep`, scheduler `simple`, **20 steps** (or **8** with the
-turbo LoRA), **1344×768 @ 24 fps**. Audio is decoded by a separate
-`VAEDecodeAudio` node and muxed with the frames by `CreateVideo` — which
-independently confirms the `_av_io.write_mp4_with_audio` shape below is right.
+**ComfyUI route (`Comfy-Org/MiniMax-H3`), the reference workflow's exact files:**
 
-**Three assumptions this undermines:**
+| File | Size |
+|---|---|
+| `diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors` | 20.97 GB |
+| `text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | 15.69 GB |
+| `vae/minimax_h3_video_vae_fp16.safetensors` | 5.21 GB |
+| `vae/minimax_h3_audio_vae_fp32.safetensors` | 0.61 GB |
+| **total** | **42.48 GB** (+1.96 GB for `loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16`) |
 
-1. **"bf16, therefore >80 GB, therefore H200."** The ecosystem's own reference
-   configuration is quantised and totals **~38 GB** (19.5 + 14.6 + VAEs, per the
-   comfyui-wiki listing — exact per-file sizes still to be confirmed). That fits
-   an A100-80GB with room to spare, and possibly an L40S at 48 GB.
-2. **"INT8 is an unvetted third-party repackage."** That reasoning was sound when
-   the quantised set looked like a community side-product. It is weaker now that
-   it is what Comfy-Org ships as the reference path.
-3. **"~2K output."** The reference runs 1344×768 — well under 2K, and far
-   cheaper.
+**Diffusers route (`MiniMaxAI/MiniMax-H3`, `FL2VA/`): 144.1 GB across 81 files** —
+text_encoder 66.73, transformer 66.28, video_vae 10.42, audio_vae 0.61.
+**No fp8/int8/nvfp4 variant exists anywhere under official `FL2VA/`.** The
+quantised weights are Comfy-Org repackages and have no official counterpart.
 
-**Also newly known and directly budget-relevant:** a **turbo 8-step LoRA** exists.
-20 steps → 8 is a ~2.5× cut in generation time, i.e. in dollars per attempt.
+### Probe B — ComfyUI node support
 
-**What is NOT undermined:** Sub-project A stands as committed. The catalog was
-genuinely stale, H200 is genuinely the only card above 80 GB, and the row is
-correct and harmless whichever route wins. Do not revert it.
+**`MiniMaxH3ImageToVideo` IS in ComfyUI core**, at `comfy_extras/nodes_minimax_h3.py`
+(~30 KB) on `master`. kinoforge clones ComfyUI from `master` **unpinned**
+(`engines/comfyui/__init__.py:1165`), so a fresh pod would carry it. The rest of
+the template is core too: `UNETLoader`, `CLIPLoader` (type `minimax`), `VAELoader`,
+`VAEDecode`, `VAEDecodeAudio`, `CreateVideo`, `SamplerCustomAdvanced`,
+`BasicGuider`, `BasicScheduler`, `KSamplerSelect`, `RandomNoise`,
+`LoraLoaderModelOnly`.
 
-**The fork, stated plainly.** kinoforge has BOTH a `diffusers` engine and a
-`comfyui` engine, and already ships `.graph.json` workflows for Wan 2.2 on the
-ComfyUI path. So:
+### Ruling: DIFFUSERS, despite ComfyUI being 3.4x smaller and on a cheaper card
 
-- **Diffusers route** (as specced): official `MiniMaxAI` bf16 layout, 144 GB,
-  H200, `ModularPipeline`. Matches how Wan 2.2 runs on Modal today.
-- **ComfyUI route**: `Comfy-Org` quantised layout, ~38 GB, A100-80GB, driven by
-  a `.graph.json` adapted from the reference template. Matches an
-  already-validated reference, 4× smaller fetch, cheaper card, and a known
-  8-step turbo option.
+The ComfyUI route needs **three** unproven links to all hold, and each is unbounded:
 
-**This changes what Sub-project B downloads**, so it must be decided before B is
-planned. The numeric parameters above (1344×768, 24 fps, 73 frames, 20/8 steps,
-`res_multistep`/`simple`) are useful ground truth for the `spec:` block on
-*either* route.
+1. **Modal + ComfyUI has never existed.** Every shipped ComfyUI config targets
+   RunPod or SkyPilot-Lambda. `("comfyui", "modal")` is `True` in
+   `EPHEMERAL_CAPABILITIES`, but no config, no golden, no live run.
+2. **The ComfyUI engine is unproven for three months.** Last live ComfyUI
+   generation: **2026-06-18** (log entries #4/#5/#7). Since then
+   `provision_script` was deleted (`4856a85a`), setup-steps were reworked
+   (`8e584fe2`), and `compute.requirements` became the placement block
+   (`13316c99`) — all touching this engine. Offline tests are green and all four
+   configs are in the golden ratchet, so it is **unproven, not broken** — but
+   unproven is what costs money to discover.
+3. **The reference template is a SUBGRAPH workflow.** Its real nodes are nested
+   under `definitions.subgraphs`, with `ComfySwitchNode` / `ComfyMathExpression`
+   driving the turbo toggle. `tools/comfyui_ui_to_api.py` vendors a third-party
+   converter that predates subgraphs, and its captured-`/object_info` input would
+   itself have to come from a live H3-capable pod first.
 
-**Unverified:** the fetched summary reported "73 frames ≈ 5 seconds", but
-73 / 24 = 3.04 s. Frame count and duration must be read from the template
-directly before being copied into a config.
+Diffusers on Modal, by contrast, is the **only** Modal path ever proven, and was
+proven again on 2026-09-17 with three green Wan 2.2 runs. One new server module
+against three unbounded unknowns is the cheaper bet.
 
-### Operator ruling 2026-09-17: decide later, probe both offline first
+**This is not a verdict on ComfyUI.** The route is viable and materially cheaper,
+and the node support is real. It is a sequencing call: it should be opened by a
+deliberate Modal+ComfyUI project with its own budget, not discovered mid-H3.
 
-**Do not pick a route from the numbers above.** Two of them are unconfirmed and
-both are load-bearing:
+### The memory math CHANGED, and it is the most important finding here
 
-1. **The ~38 GB figure is third-party and per-file-unverified.** It comes from a
-   comfyui-wiki listing, not from the repo. `Comfy-Org/MiniMax-H3` is itself
-   480 GB (it holds every precision), so the saving depends entirely on hitting
-   the right individual files. Confirm the actual sizes of
-   `minimax_h3_fl2va_pruned_int8_convrot.safetensors`,
-   `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` and the two VAEs from the repo
-   tree itself.
-2. **Whether kinoforge's `comfyui` engine can drive H3's node types at all is
-   unknown.** The reference template uses `CLIPLoader` with an H3-specific
-   `"minimax"` CLIP type, plus `VAEDecodeAudio` and `CreateVideo`. If our engine
-   or the pinned ComfyUI build does not carry those nodes, the ComfyUI route is
-   not cheaper — it does not exist. Check before choosing, not after.
+The spec previously estimated ~115 GB of bf16 weights from a third-party listing.
+**Measured, it is ~133 GB** (text_encoder 66.73 + transformer 66.28), plus 11 GB
+of VAEs. On H200's 141 GB that leaves **~8 GB for activations at 1344x768x73
+frames, which will OOM.**
 
-Both probes are **$0 and offline**. The cost of guessing wrong is a 144 GB
-download or a dead-end engine path, so the probes are strictly cheaper than the
-decision they inform.
-
-**Sequencing:** run these probes at the start of Sub-project B's planning, and
-record the answer in this section before B is planned. Sub-project A is
-unaffected and proceeds now.
+**Therefore `enable_model_cpu_offload` is MANDATORY, not an optimisation.** With
+the text encoder offloaded after prompt encoding, peak residency is
+transformer 66.28 + video_vae 10.42 + audio_vae 0.61 = **~77 GB**, leaving ~64 GB
+of H200 headroom for activations. H200 remains the right card and Sub-project A
+stands; what changes is that the naive `device_map="cuda"` from the model card
+**must not** be used as-is.
 
 ## Decomposition
 
@@ -234,7 +222,7 @@ snapshot_download(
 followed by an explicit `volume.commit()`.
 
 **Both patterns are required.** `FL2VA/*` alone omits the repo-root
-`model_index.json`, producing a 144 GB download that looks complete and does not
+`model_index.json`, producing a 144.1 GB download that looks complete and does not
 load. Operator-supplied 2026-09-17, matching the documented
 `huggingface-cli download ... --include "model_index.json" "FL2VA/*"`. A test
 must assert **both** patterns are present, not merely that `allow_patterns` is
@@ -455,7 +443,9 @@ exits.
 | 2026-09-17 | Leave `_audio_mode` inert, document it | Flag is factually true; the seam is not the mechanism, and must not read as one |
 | 2026-09-17 | Fetch `model_index.json` **and** `FL2VA/*` | Operator correction: `FL2VA/*` alone omits the root manifest and the download will not load |
 | 2026-09-17 | Entry point is `ModularPipeline`, not `DiffusionPipeline` | Operator correction; loads the repo root, which is why the root manifest is required |
-| 2026-09-17 | Engine route (diffusers vs ComfyUI) deferred; probe both offline first | The ~38 GB saving is unverified per-file, and whether our comfyui engine carries H3's node types is unknown. Both probes are $0; guessing wrong costs a 144 GB fetch or a dead-end path |
+| 2026-09-17 | **Engine route RESOLVED: diffusers.** ComfyUI is 3.4x smaller (42.48 vs 144.1 GB) on a cheaper card and its H3 nodes are real, but needs three unproven links: Modal+ComfyUI never built, engine unproven since 2026-06-18, and the template is a subgraph the vendored converter predates | Measured both probes; one new server module beats three unbounded unknowns |
+| 2026-09-17 | **`enable_model_cpu_offload` is MANDATORY** | Weights measured at ~133 GB, not ~115 GB. Naive `device_map="cuda"` leaves ~8 GB for activations on a 141 GB H200 and will OOM; offloading the text encoder drops peak to ~77 GB |
+| ~~2026-09-17~~ | ~~Engine route deferred; probe both offline first~~ | The ~38 GB saving is unverified per-file, and whether our comfyui engine carries H3's node types is unknown. Both probes are $0; guessing wrong costs a 144 GB fetch or a dead-end path |
 
 ## Open questions for plan time
 
