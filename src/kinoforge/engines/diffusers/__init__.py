@@ -1283,6 +1283,21 @@ class DiffusersEngine(GenerationEngine):
         if diffusers_cfg.get("upscale_only"):
             _add("runtime", "export KINOFORGE_SKIP_WAN_LOAD=1")
 
+        # Optional attention backend for the in-pod server. `or`, not `.get`'s
+        # default — U33: an unset `X | None` field dumps as a PRESENT None, so a
+        # `.get(k, "")` would hand back None and render the literal
+        # `export ...=None` on every diffusers cfg there has ever been.
+        #
+        # "runtime", not "build": setting the backend fetches kernels from the
+        # Hub, and it configures a pipeline that does not exist at image-bake
+        # time. Baking the export would also put a network fetch in the build.
+        attention_backend = str(diffusers_cfg.get("attention_backend") or "")
+        if attention_backend:
+            _add(
+                "runtime",
+                f"export KINOFORGE_H3_ATTENTION_BACKEND={shlex.quote(attention_backend)}",
+            )
+
         # T8 — compose upscaler render_provision script when cfg.upscale set.
         # Reads cfg.upscale.engine, looks up via registry, appends the upscaler's
         # render_provision script BEFORE the server exec line. Engine-agnostic:

@@ -479,6 +479,9 @@ class DiffusersEngineConfig(BaseModel):
             the spec does not carry an explicit ``"prompt"``. Defaults
             to ``"prompt"``; set to ``None`` (YAML ``null``) to disable
             routing for endpoints that reject unknown top-level fields.
+        attention_backend: Optional attention-backend name handed to the in-pod
+            server via ``KINOFORGE_H3_ATTENTION_BACKEND``. ``None`` exports
+            nothing and the server keeps its default.
         capability: Per-config capability-probe override. ``None`` means the
             engine's shared ``_DEFAULT_PROBE``, which is what every Wan config
             uses and must keep using. See :class:`DiffusersCapabilityConfig`.
@@ -494,6 +497,11 @@ class DiffusersEngineConfig(BaseModel):
     server_cmd: list[str] = Field(default_factory=list)
     asset_paths: dict[str, str] = Field(default_factory=dict)
     prompt_body_key: str | None = "prompt"
+    attention_backend: str | None = None  # Optional attention backend for the
+    # in-pod server, exported as KINOFORGE_H3_ATTENTION_BACKEND. `_flash_3_hub`
+    # is ~3x on Hopper but FETCHES KERNELS FROM THE HUB when set, so it is
+    # opt-in per cfg rather than a default. The server degrades to the stock
+    # backend (loudly) if the fetch fails, so this cannot brick a boot.
     capability: DiffusersCapabilityConfig | None = None  # Per-config capability
     # probe override; None => the engine's shared _DEFAULT_PROBE. Needed because
     # that probe declares supported_modes={"t2v"} for EVERY diffusers config, and

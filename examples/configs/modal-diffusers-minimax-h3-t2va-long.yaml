@@ -1,0 +1,114 @@
+# MiniMax-H3 t2va on Modal H200 — LONGEST clip, smaller canvas, flash-attn.
+#
+# Sibling of modal-diffusers-minimax-h3-t2va.yaml, which is the reference
+# recipe: the model's trained 1344x768 canvas at its shortest legal clip (124
+# frames / 5.167 s), proven live 2026-09-18 (successful-generations.md §31).
+# This one goes the other way on every axis:
+#
+#   * `num_frames: 345` — the LONGEST clip MiniMax-H3 can produce, 14.375 s.
+#     NOT 360. The count is snapped up to the next `17*n+5` the video VAE can
+#     decode and the 5-15 s window is checked against the ALIGNED value, so 360
+#     aligns to 362 = 15.083 s and is refused. **15 s is unreachable.** The
+#     server refuses the whole 346-360 range at the HTTP edge rather than
+#     letting the pipeline raise on a booked card.
+#   * `960x544` instead of 1344x768 — the diffusers H3 doc measures this at
+#     ~2.3x faster per step. Both axes must stay multiples of 32 (960/32=30,
+#     544/32=17). This is what pays for the extra length: 345 frames is 102
+#     latent frames against 124's 37, and attention is superlinear in sequence
+#     length, so at the trained canvas this clip would be far more than 2.8x
+#     the reference run's ~8.5 min.
+#   * `attention_backend: _flash_3_hub` — documented at ~3x on Hopper, which
+#     H200 is. It FETCHES KERNELS FROM THE HUB when set, so the in-pod server
+#     wraps the call: a failed fetch logs a WARNING and continues on the stock
+#     backend rather than bricking the boot (which would otherwise burn the
+#     full 45-minute boot_timeout at $4.54/hr). `GET /health` reports
+#     `attention_backend`, so a degraded run is visible without the boot log —
+#     check it before reading a slow run as a slow model.
+#
+# Everything else matches the reference cfg, including the H200 rate cap
+# (>= $4.54, or _enforce_rate_cap destroys the pod after launch) and the exact
+# `diffusers==0.40.0` pin. Weights are already on the kinoforge-hf-cache Volume.
+#
+# Modal cfgs need the live-modal env: `pixi run -e live-modal ...`.
+#
+# Usage:
+#   pixi run -e live-modal kinoforge generate \
+#     --config examples/configs/modal-diffusers-minimax-h3-t2va-long.yaml \
+#     --mode t2va \
+#     --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+#     --no-reuse
+
+mode: t2va
+prompt: "Photorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace — luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking."
+
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    image: "python:3.13-slim"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.minimax_h3_server"
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "diffusers==0.40.0"
+      - "transformers>=4.57"
+      - "accelerate>=1.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      - "psutil>=5.9"
+      - "nvidia-ml-py>=12"
+      # `_flash_3_hub` resolves its kernels through huggingface_hub's kernels
+      # integration; without it set_attention_backend raises and the server
+      # degrades to the stock backend (see the header).
+      - "kernels>=0.4"
+    base_url: "http://localhost:8000"
+    prompt_body_key: "prompt"
+    embed_modules: ["kinoforge.engines.diffusers.servers"]
+    attention_backend: "_flash_3_hub"
+    capability:
+      supported_modes: ["t2va"]
+      max_frames: 345          # 14.375 s — the real ceiling, NOT 360
+      fps: 24
+      max_resolution: [1344, 768]   # the model's cap, not this cfg's canvas
+      supports_joint_audio: true
+
+models:
+  - ref: "hf:MiniMaxAI/MiniMax-H3"
+    kind: base
+    target: checkpoints
+
+compute:
+  provider: modal
+  image: "python:3.13-slim"
+  mode: pod
+  placement:
+    min_vram_gb: 120
+    min_cuda: "12.4"
+    max_usd_per_hr: 5.00
+    accelerators:
+      - "H200"
+  lifecycle:
+    heartbeat_interval_s: 30
+    idle_timeout: 20m
+    job_timeout: 40m
+    time_buffer: 3m
+    max_lifetime: 90m
+    # Also Modal's @app.function(timeout=...), so it has to cover boot AND a
+    # 14.375 s generation, which is the longest this model does.
+    boot_timeout: 60m
+    budget: 8.0
+
+spec:
+  model: "MiniMax-H3"
+  pipeline: "MiniMaxH3ModularPipeline"
+  scheduler: "MiniMaxH3Scheduler"
+  width: 960
+  height: 544
+  num_frames: 345
+  fps: 24
+  num_inference_steps: 50

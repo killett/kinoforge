@@ -159,3 +159,48 @@ def test_seedvr2_composition_raises_extras_not_installed() -> None:
     # the ExtrasNotInstalled propagates cleanly.
     with pytest.raises(ExtrasNotInstalled, match=r"seedvr"):
         DiffusersEngine().render_provision(_with_seedvr2(_wan_only_cfg()))
+
+
+def test_attention_backend_is_exported_when_the_cfg_declares_one() -> None:
+    """``engine.diffusers.attention_backend`` reaches the pod as an env export.
+
+    The in-pod server reads ``KINOFORGE_H3_ATTENTION_BACKEND``, but nothing was
+    setting it: ``spec.env`` carries only credentials resolved from
+    ``env_required``, and there is no general cfg->pod env passthrough. So the
+    knob was reachable only by hand-editing a pod, i.e. not reproducible and not
+    recordable in a config.
+
+    Bug caught: the cfg key is added and read nowhere, so an operator sets it,
+    measures no speed-up, and concludes the backend does not help — when it was
+    never enabled. Mirrors the ``upscale_only`` -> ``KINOFORGE_SKIP_WAN_LOAD``
+    precedent in the same method.
+    """
+    from kinoforge.core.config import load_config
+    from kinoforge.engines.diffusers import DiffusersEngine
+
+    cfg = load_config(
+        "examples/configs/modal-diffusers-minimax-h3-t2va-long.yaml"
+    ).model_dump()
+    rendered = DiffusersEngine().render_provision(cfg)
+    assert "export KINOFORGE_H3_ATTENTION_BACKEND=_flash_3_hub" in rendered.script
+    # It has to be a RUNTIME step: baking it into the image would fetch Hub
+    # kernels at build time, where the pipeline it configures does not exist.
+    runtime = "\n".join(s.script for s in rendered.setup_steps if s.runtime)
+    assert "KINOFORGE_H3_ATTENTION_BACKEND=_flash_3_hub" in runtime
+
+
+def test_no_attention_backend_export_when_the_cfg_omits_it() -> None:
+    """A cfg without the key exports nothing.
+
+    Bug caught: the export is emitted unconditionally as
+    ``export KINOFORGE_H3_ATTENTION_BACKEND=None`` — the U33 shape, where an
+    unset ``X | None`` field dumps as a present None and ``str(None)`` renders
+    the literal. Every Wan cfg would then carry a bogus export, and the H3
+    server would try to set a backend named "None".
+    """
+    from kinoforge.core.config import load_config
+    from kinoforge.engines.diffusers import DiffusersEngine
+
+    cfg = load_config("examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml")
+    rendered = DiffusersEngine().render_provision(cfg.model_dump())
+    assert "KINOFORGE_H3_ATTENTION_BACKEND" not in rendered.script

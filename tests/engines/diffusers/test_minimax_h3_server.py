@@ -464,3 +464,79 @@ def test_generate_accepts_the_longest_legal_clip(
         assert resp.status_code == 200, resp.text
         assert _wait_done(client, resp.json()["job_id"])["status"] == "done"
     assert h3_stub_pipe.STATE["pipe"].calls[0]["num_frames"] == 345
+
+
+def test_attention_backend_failure_does_not_brick_the_boot(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed attention-backend swap degrades to the default, it does not abort.
+
+    Bug caught: `_flash_3_hub` FETCHES KERNELS FROM THE HUB when it is set. If
+    that fetch fails — rate limit, network, a moved repo — an unguarded call
+    raises inside the FastAPI startup handler. uvicorn then never binds the
+    port, `/health` never answers, and the orchestrator waits its full
+    `boot_timeout` of 45 MINUTES on an H200 at $4.54/hr: up to $3.40 to learn
+    that an optional speed-up was unavailable.
+
+    Degrading to the stock SDPA backend costs a slower run. Aborting the boot
+    costs the whole pod. The log line is the deliverable — a silent fallback
+    would make a 3x regression look like the model being slow.
+    """
+
+    class Boom:
+        def set_attention_backend(self, name: str) -> None:
+            raise RuntimeError(f"hub fetch failed for {name}")
+
+    monkeypatch.setattr(server, "_ATTENTION_BACKEND", "_flash_3_hub")
+    monkeypatch.setattr(h3_stub_pipe.FakePipe, "transformer", Boom(), raising=False)
+
+    with TestClient(server.app) as client:
+        assert client.get("/health").json()["ready"] is True
+        resp = client.post("/generate", json={"prompt": "x"})
+    assert resp.status_code == 200, resp.text
+
+
+def test_attention_backend_is_applied_when_requested(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The env var actually reaches ``transformer.set_attention_backend``.
+
+    Bug caught: the knob is documented, plumbed through the cfg, and never
+    called — so an operator measures "no speed-up" and concludes the backend
+    does not help, when in fact it was never enabled.
+    """
+    seen: list[str] = []
+
+    class Recorder:
+        def set_attention_backend(self, name: str) -> None:
+            seen.append(name)
+
+    monkeypatch.setattr(server, "_ATTENTION_BACKEND", "_flash_3_hub")
+    monkeypatch.setattr(h3_stub_pipe.FakePipe, "transformer", Recorder(), raising=False)
+
+    with TestClient(server.app):
+        pass
+    assert seen == ["_flash_3_hub"]
+
+
+def test_no_attention_backend_leaves_the_pipeline_alone(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the env var unset, nothing is called at all.
+
+    Bug caught: the code passes an empty string to
+    ``set_attention_backend("")``, which is not a valid backend name, so every
+    default run fails at startup.
+    """
+    seen: list[str] = []
+
+    class Recorder:
+        def set_attention_backend(self, name: str) -> None:
+            seen.append(name)
+
+    monkeypatch.setattr(server, "_ATTENTION_BACKEND", "")
+    monkeypatch.setattr(h3_stub_pipe.FakePipe, "transformer", Recorder(), raising=False)
+
+    with TestClient(server.app):
+        pass
+    assert seen == []

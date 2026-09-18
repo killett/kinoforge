@@ -159,6 +159,10 @@ app = FastAPI(title="kinoforge minimax-h3 t2va server", version="0.1.0")
 ready: threading.Event = threading.Event()
 pipe: Any = None  # set in _startup
 manager: Any = None  # the ComponentsManager holding the offload hooks
+#: Which attention backend is actually in force. Surfaced on /health so a
+#: degraded run is visible without reading the boot log — on Modal that log is
+#: unreadable once an ephemeral app stops.
+attention_backend: str = "default"
 jobs: dict[str, JobState] = {}
 _q: queue.Queue[str] = queue.Queue()
 _worker_thread: threading.Thread | None = None
@@ -432,11 +436,49 @@ def _load() -> tuple[Any, Any]:
     components_manager.enable_auto_cpu_offload(
         device="cuda", memory_reserve_margin=_OFFLOAD_MARGIN
     )
-    if _ATTENTION_BACKEND:
-        # Opt-in only; see the _ATTENTION_BACKEND note at the top.
-        _log.info("startup: setting attention backend %s", _ATTENTION_BACKEND)
-        pipe_obj.transformer.set_attention_backend(_ATTENTION_BACKEND)
     return pipe_obj, components_manager
+
+
+def _apply_attention_backend(pipe_obj: Any) -> str:  # noqa: ANN401 — a ModularPipeline; diffusers is pod-only
+    """Opt into a faster attention backend, without ever failing the boot.
+
+    ``_flash_3_hub`` is documented at roughly 3x on Hopper (which H200 is), but
+    setting it FETCHES KERNELS FROM THE HUB. An unguarded call therefore puts a
+    network fetch on the critical path of the FastAPI startup handler: if it
+    raises, uvicorn never binds the port, ``/health`` never answers, and the
+    orchestrator waits its full ``boot_timeout`` — 45 minutes on a $4.54/hr card,
+    up to $3.40, to discover that an OPTIONAL speed-up was unavailable.
+
+    Degrading to the stock SDPA backend costs a slower run. Aborting the boot
+    costs the whole pod. So this degrades, loudly: the WARNING is the deliverable,
+    because a silent fallback would make a 3x regression look like the model
+    simply being slow.
+
+    Called from ``_startup`` rather than from inside ``_load`` so that it runs on
+    the stub path too and is reachable from a test.
+
+    Args:
+        pipe_obj: The loaded pipeline.
+
+    Returns:
+        The backend actually in force: the requested name, or ``"default"``.
+    """
+    if not _ATTENTION_BACKEND:
+        return "default"
+    try:
+        pipe_obj.transformer.set_attention_backend(_ATTENTION_BACKEND)
+    except Exception as exc:  # noqa: BLE001 — an optional speed-up must not brick a boot
+        _log.warning(
+            "startup: attention backend %r could NOT be set (%s: %s); continuing on "
+            "the default backend. Expect roughly 3x slower denoise on Hopper — this "
+            "is a degraded run, not a slow model.",
+            _ATTENTION_BACKEND,
+            type(exc).__name__,
+            exc,
+        )
+        return "default"
+    _log.info("startup: attention backend set to %s", _ATTENTION_BACKEND)
+    return _ATTENTION_BACKEND
 
 
 def _seed_to_generator(seed: int | None) -> Any:  # noqa: ANN401 — torch.Generator is opaque here (torch is pod-only)
@@ -594,6 +636,8 @@ def _startup() -> None:
     _log.info("startup: loading %s workflow=t2va", MODEL_ID)
     t0 = time.monotonic()
     pipe, manager = _load()
+    global attention_backend
+    attention_backend = _apply_attention_backend(pipe)
     _log.info("startup: loaded in %.1f s", time.monotonic() - t0)
     _log_memory_facts()
     _worker_thread = threading.Thread(target=_worker_loop, daemon=True)
@@ -614,6 +658,7 @@ def health() -> dict[str, Any]:
         "ready": ready.is_set(),
         "model": MODEL_ID,
         "capabilities": ["t2va"] if ready.is_set() else [],
+        "attention_backend": attention_backend,
         "torch": _torch_build(),
     }
 
