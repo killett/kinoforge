@@ -24,8 +24,8 @@ def prepare_input_tensor(
     scale: int = 4,
     dtype: Any = None,  # noqa: ANN401
     device: str = "cuda",
-) -> tuple[Any, int, int, int, float]:
-    """Read a video file and return (LQ_video_tensor, target_h, target_w, num_frames, fps).
+) -> tuple[Any, int, int, int, float, int]:
+    """Read a video file and return (LQ, target_h, target_w, num_frames, fps, source_frames).
 
     Mirrors ``prepare_input_tensor`` from upstream
     ``examples/WanVSR/infer_flashvsr_v1.1_full.py`` (commit
@@ -44,8 +44,11 @@ def prepare_input_tensor(
             video upscaled (bicubic) and normalised to ``[-1, 1]``.
         th: Target height (source_h * scale).
         tw: Target width (source_w * scale).
-        F: Number of frames read.
+        F: Frames in ``LQ`` — the source padded to :func:`stream_frame_count`
+            by cloning the last frame; this is what the pipeline needs.
         fps: Source FPS from container metadata.
+        source_frames: Frames actually read; the runtime trims the output
+            back to this count.
     """
     import imageio.v3 as iio
     import torch
@@ -64,7 +67,8 @@ def prepare_input_tensor(
         fps = float(meta.get("fps", 24.0))
         raw_frames = list(reader.iter())
 
-    num_frames = len(raw_frames)
+    source_frames = len(raw_frames)
+    raw_frames, num_frames = pad_frames_to_stream_length(raw_frames)
 
     # Derive source dims from the first frame (HWC numpy array).
     first = raw_frames[0]
@@ -99,7 +103,54 @@ def prepare_input_tensor(
         .unsqueeze(0)  # (1, C, F, H, W)
     )
 
-    return lq, th, tw, num_frames, fps
+    return lq, th, tw, num_frames, fps, source_frames
+
+
+def stream_frame_count(source_frames: int) -> int:
+    """Smallest ``8n+1`` input length whose FlashVSR output covers the source.
+
+    ``FlashVSRFullPipeline`` streams ``(num_frames - 1) // 8 - 2`` latent
+    iterations and returns ``8 * ((num_frames - 1) // 8) - 3`` frames — four
+    fewer than an ``8n+1`` input — and it rounds any other count to ``4k+1``
+    WITHOUT padding the LQ tensor (a conv-size error on the card, live
+    2026-09-18). So the input has to be ``8n+1`` with ``F - 4 >= source``.
+
+    Args:
+        source_frames: Real frames in the clip; must be positive.
+
+    Returns:
+        The padded input length ``F``.
+
+    Raises:
+        ValueError: ``source_frames`` is not positive.
+    """
+    if source_frames <= 0:
+        raise ValueError(f"source_frames must be positive, got {source_frames}")
+    needed = source_frames + 4
+    return ((needed - 2) // 8 + 1) * 8 + 1 if (needed - 1) % 8 else needed
+
+
+def pad_frames_to_stream_length(frames: list[Any]) -> tuple[list[Any], int]:
+    """Append clones of the LAST frame until ``len == stream_frame_count``.
+
+    Mirrors upstream ``infer_flashvsr_v1.1_full.py``, which appends copies
+    of the final frame — except upstream then truncates to the ``8n+1``
+    BELOW and loses real tail frames; this pads UP so the runtime can trim
+    the output back to exactly the source count.
+
+    Args:
+        frames: Decoded source frames in temporal order.
+
+    Returns:
+        ``(padded_frames, total)`` — a new list, the input untouched.
+
+    Raises:
+        ValueError: ``frames`` is empty.
+    """
+    if not frames:
+        raise ValueError("cannot pad an empty clip")
+    total = stream_frame_count(len(frames))
+    return list(frames) + [frames[-1]] * (total - len(frames)), total
 
 
 class Causal_LQ4x_Proj:

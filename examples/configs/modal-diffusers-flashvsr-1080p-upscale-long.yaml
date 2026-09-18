@@ -109,12 +109,15 @@ upscale:
   # frames x pixels: 81 f at 480² peaks 34.6 GiB (Lambda cfg), yet 69 f at
   # 960x544 — 1.9x the frame-pixels — blew past 77 GiB on the 80 GB A100
   # (2026-09-18, second attempt; the un-chunked 345 f run had died the same
-  # way). Fitting those two points puts ~48 rendered frames at this canvas
-  # near 55 GiB, so: 40 kept + 8 warm-up = 48 rendered per chunk, 9 chunks for
-  # 345 frames, each upscaled on the same pod and joined on the controller
-  # (pipeline/chunk.py). If this OOMs again, drop chunk_frames before
-  # touching hardware — no card fixes a per-chunk footprint.
-  chunk_frames: 40
+  # way). Fitting those two points puts ~49 rendered frames at this canvas
+  # near 55 GiB. The pod pads every clip to the pipeline's 8n+1 stream
+  # length (+4 frames of streaming latency) by cloning the last frame, so a
+  # chunk of 37 kept + 8 warm-up = 45 renders as exactly 49 with nothing
+  # wasted; 10 chunks for 345 frames, each upscaled on the same pod and
+  # joined on the controller (pipeline/chunk.py). If this OOMs again, drop
+  # chunk_frames before touching hardware — no card fixes a per-chunk
+  # footprint.
+  chunk_frames: 37
   chunk_overlap: 8
   flashvsr:
     weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"

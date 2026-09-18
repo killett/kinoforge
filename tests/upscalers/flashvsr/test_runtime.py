@@ -350,10 +350,12 @@ def _stub_input_prep(monkeypatch: pytest.MonkeyPatch) -> None:
     from kinoforge.upscalers.flashvsr import _input_prep
 
     def prepare_input_tensor(path: str, scale: int = 4, **kwargs: Any) -> Any:  # noqa: ARG001
+        # 16 source frames padded to the 25-frame stream length the real
+        # helper produces (smallest 8n+1 whose F - 4 output covers 16).
         class _T:
-            shape = (1, 3, 16, 64, 64)
+            shape = (1, 3, 25, 64, 64)
 
-        return (_T(), 64, 64, 16, 24.0)
+        return (_T(), 64, 64, 25, 24.0, 16)
 
     monkeypatch.setattr(_input_prep, "prepare_input_tensor", prepare_input_tensor)
 
@@ -978,3 +980,42 @@ def test_construct_missing_lq_ckpt_raises(
 
     with pytest.raises(FlashVSRWeightsIncomplete, match="LQ_proj_in.ckpt"):
         FlashVSRRuntime(tmp_path, "bfloat16", 24, 0, False)
+
+
+def test_upscale_passes_stream_length_and_trims_output_to_source_frames(
+    stub_diffsynth: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pipe sees the padded count; the written clip has the source count.
+
+    Bug caught: passing the source count (16) to the pipe — it rounds to 4k+1
+    and dies in a conv on the booked card — or writing all 25 returned frames,
+    so the output carries 9 cloned tail frames and a chunk join duplicates
+    them at every seam.
+    """
+    _stub_input_prep(monkeypatch)
+    imwrite_calls: list[Any] = []
+
+    import imageio.v3 as iio_stub
+
+    def capturing_imwrite(
+        path: str,
+        data: Any,
+        fps: float = 24.0,
+        plugin: str = "pyav",
+        codec: str = "libx264",
+    ) -> None:
+        imwrite_calls.append(data)
+        Path(path).write_bytes(b"MP4-STUB")
+
+    monkeypatch.setattr(iio_stub, "imwrite", capturing_imwrite)
+
+    from kinoforge.upscalers.flashvsr._runtime import FlashVSRRuntime
+
+    rt = FlashVSRRuntime(tmp_path, "bfloat16", 24, 0, False)
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"SRC")
+    rt.upscale(src, ScaleTarget(kind="factor", value=4.0), {})
+
+    assert rt._pipe.pipe_calls[0]["num_frames"] == 25
+    assert len(imwrite_calls) == 1
+    assert imwrite_calls[0].shape[0] == 16

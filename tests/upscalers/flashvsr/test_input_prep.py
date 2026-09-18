@@ -289,10 +289,17 @@ def _reset_module(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_prepare_input_tensor_returns_5tuple(
+def test_prepare_input_tensor_returns_6tuple_padded_to_stream_length(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """prepare_input_tensor returns (LQ, th, tw, F, fps) with the full shape contract."""
+    """prepare_input_tensor returns (LQ, th, tw, F, fps, source_frames).
+
+    Bug caught: handing the pipeline the raw 16-frame tensor. It rounds
+    ``num_frames`` to 4k+1 without padding the LQ (conv-size error live on
+    2026-09-18 for 40 frames) and returns ``F - 4`` frames, so an unpadded
+    clip silently loses its tail (§24: 81 in, 77 out). 16 source frames need
+    the smallest 8n+1 with F - 4 >= 16, i.e. 25.
+    """
     _install_torch_stub(monkeypatch)
     _install_imageio_stub(monkeypatch, num_frames=16, src_h=16, src_w=16, fps=24.0)
     _reset_module(monkeypatch)
@@ -300,13 +307,14 @@ def test_prepare_input_tensor_returns_5tuple(
 
     src = tmp_path / "in.mp4"
     src.write_bytes(b"MP4")
-    lq, th, tw, f, fps = prepare_input_tensor(str(src), scale=4, device="cpu")
+    lq, th, tw, f, fps, source = prepare_input_tensor(str(src), scale=4, device="cpu")
 
-    # Full tuple contract: shape must be (1, 3, F, th, tw).
-    assert lq.shape == (1, 3, 16, 64, 64), f"unexpected LQ shape {lq.shape}"
+    # Full tuple contract: shape must be (1, 3, F, th, tw) with F padded.
+    assert lq.shape == (1, 3, 25, 64, 64), f"unexpected LQ shape {lq.shape}"
     assert th == 64
     assert tw == 64
-    assert f == 16
+    assert f == 25
+    assert source == 16
     assert fps == 24.0
 
 
@@ -321,7 +329,7 @@ def test_prepare_input_tensor_scale_multiplies_dims(
 
     src = tmp_path / "in.mp4"
     src.write_bytes(b"MP4")
-    _, th, tw, _, _ = prepare_input_tensor(str(src), scale=4, device="cpu")
+    _, th, tw, _, _, _ = prepare_input_tensor(str(src), scale=4, device="cpu")
 
     assert th == 20 * 4, f"expected th=80, got {th}"
     assert tw == 30 * 4, f"expected tw=120, got {tw}"

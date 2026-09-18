@@ -326,7 +326,7 @@ class FlashVSRRuntime:
                 f"got {attention_impl!r}"
             )
 
-        lq, th, tw, num_frames, fps = prepare_input_tensor(
+        lq, th, tw, num_frames, fps, source_frames = prepare_input_tensor(
             str(video_path), scale=int(self._native_scale)
         )
         # topk_ratio derived from resolution per upstream recommendation:
@@ -408,6 +408,10 @@ class FlashVSRRuntime:
             # Denormalise [-1,1] → [0,255], then rearrange (C,T,H,W)→(T,H,W,C).
             video = ((arr4d + 1.0) * 127.5).clip(0, 255).astype(np.uint8)
             video = video.transpose(1, 2, 3, 0)  # (T, H, W, C)
+            # The input was padded to an 8n+1 stream length by cloning the
+            # last frame; drop the rendered clones so the clip carries exactly
+            # the source's frame count (a chunk join relies on this).
+            video = video[:source_frames]
         # `codec=` is required when writing via the pyav plugin — without
         # it, imageio passes codec=None down to
         # `avcodec_find_encoder_by_name(None)` which raises
