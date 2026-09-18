@@ -3131,9 +3131,32 @@ on the GPU, never on the prefetch).
 `gated=False, private=False` both anonymously and with our token. The community
 licence governs USE, not download access.
 
-**Next action: finish the live prefetch, then Sub-project C** — the H3 t2va
-server. C must set `max_usd_per_hr >= 4.54` or `_enforce_rate_cap` destroys the
-H200 after launch (see the spec's Risks).
+**Sub-project B is COMPLETE and LIVE-PROVEN.** `144.05 GB` is resident on
+`kinoforge-hf-cache` — matching the 144.1 GB the HF API reports, so the whole
+FL2VA tree landed, snapshot-root `model_index.json` included. The re-run was
+near-instant with no re-download, proving idempotency. **The fetch ran on a T4
+at $0.59/hr instead of an H200 at $4.54/hr: ~$0.08 against ~$3.94.** That saving
+is the entire reason B exists, and it is now measured rather than projected.
+
+**Cache path for Sub-project C** (the pod mounts this at `HF_HOME`):
+`hub/models--MiniMaxAI--MiniMax-H3/snapshots/42ed227ee7df40d41602854ae760620d6eb651fe`
+carrying `model_index.json` + `FL2VA/{transformer,text_encoder,video_vae,audio_vae,processor,tokenizer}`.
+
+**A THIRD live-only defect, and the nastiest of the three:** `volume.commit()`
+raises `ConflictError: commit() can only be called on a mounted volume inside a
+container` — and it raised **after** the 144 GB download had already succeeded.
+So the tool reported failure on work that had actually completed, and swallowed
+the size line with it. Modal commits the volume itself on function return. Fixed
+`cdbd9087`. *A crash after the expensive part is not proof the expensive part
+failed — check the durable side before re-running anything costly.*
+
+**Next action: Sub-project C** — the H3 t2va server. Two constraints already
+established that C must honour or it will fail expensively:
+- **`max_usd_per_hr >= 4.54`**, or `_enforce_rate_cap` destroys the H200 after
+  launch (it is `mode="serverless"`, so the ceiling does not filter at select
+  time — it reaps after).
+- **`enable_model_cpu_offload` is mandatory** — ~133 GB of weights on a 141 GB
+  card leaves ~8 GB for activations and will OOM.
 
 ### SESSION 2026-09-17 (second) — MiniMax-H3 Sub-project A done, $0 spent
 
