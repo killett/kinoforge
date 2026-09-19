@@ -11,6 +11,9 @@ sits at round((dim - tile) * i / (n - 1)) (even), so the effective overlap is
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -211,3 +214,58 @@ class TestRawvideoArgv:
         assert post[post.index("-crf") + 1] == "10"
         assert post[post.index("-pix_fmt") + 1] == "yuv420p"
         assert argv[-1] == "stitched.mp4"
+
+
+class TestStitchVideosFailurePath:
+    def test_dead_writer_raises_promptly_with_its_stderr_and_kills_readers(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Bug caught: the 2026-09-18 live wedge — the encoder died at startup
+        # and stitch_videos hung for 20+ minutes with the pod still booked,
+        # instead of failing at once. Readers are endless producers here, so a
+        # hang would also mean they never get reaped.
+        import subprocess
+        import time
+
+        from kinoforge.pipeline import tile as tile_mod
+
+        frame_bytes = 32 * 32 * 3
+        producer = (
+            "import sys\n"
+            f"b = bytes({frame_bytes})\n"
+            "while True:\n"
+            "    sys.stdout.buffer.write(b)\n"
+        )
+        monkeypatch.setattr(
+            tile_mod,
+            "rawvideo_read_argv",
+            lambda path: [sys.executable, "-c", producer],
+        )
+        monkeypatch.setattr(
+            tile_mod,
+            "rawvideo_write_argv",
+            lambda w, h, fps, out: [
+                sys.executable,
+                "-c",
+                "import sys; sys.stderr.write('encoder exploded'); sys.exit(3)",
+            ],
+        )
+        tiles = [TileSpec(x=0, y=0, w=32, h=32), TileSpec(x=32, y=0, w=32, h=32)]
+
+        t0 = time.time()
+        with pytest.raises(RuntimeError, match="encoder exploded"):
+            tile_mod.stitch_videos(
+                ["a.mp4", "b.mp4"],
+                tiles,
+                canvas_w=64,
+                canvas_h=32,
+                scale=1,
+                fps=24.0,
+                out_path=str(tmp_path / "out.mp4"),
+            )
+        assert time.time() - t0 < 20
+        # no orphaned producers: none of our python producers is still alive
+        leftover = subprocess.run(
+            ["pgrep", "-f", "sys.stdout.buffer.write"], capture_output=True, text=True
+        )
+        assert leftover.stdout.strip() == ""

@@ -19,14 +19,15 @@ which is why the weights are derived from the whole tile list.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
 _ALIGN = 32
+_log = logging.getLogger("kinoforge.pipeline.tile")
 
 
 @dataclass(frozen=True)
@@ -219,6 +220,8 @@ def stitch_frames(
         for w in tile_weights(tiles, canvas_w=canvas_w, canvas_h=canvas_h)
     ]
     iters = [iter(s) for s in streams]
+    acc = np.zeros((canvas_h * scale, canvas_w * scale, 3), dtype=np.float32)
+    norm = np.zeros((canvas_h * scale, canvas_w * scale, 1), dtype=np.float32)
     while True:
         frames = []
         for it in iters:
@@ -228,8 +231,8 @@ def stitch_frames(
             return
         if not all(present):
             raise ValueError("tile streams carry different frame counts")
-        acc = np.zeros((canvas_h * scale, canvas_w * scale, 3), dtype=np.float32)
-        norm = np.zeros((canvas_h * scale, canvas_w * scale, 1), dtype=np.float32)
+        acc.fill(0.0)
+        norm.fill(0.0)
         for frame, tile, w in zip(frames, tiles, weights, strict=True):
             assert frame is not None  # noqa: S101 — checked above
             ys, xs = tile.y * scale, tile.x * scale
@@ -317,6 +320,11 @@ def stitch_videos(
     are blended with :func:`stitch_frames` and piped to a single encoder, so
     no full-clip array is ever held in memory.
 
+    The encoder is polled after every frame: if it dies, the readers are
+    killed and its stderr is raised at once. (Live on 2026-09-18 the encoder
+    died at startup and the stitch hung for 20 minutes with the pod booked —
+    a write into a dead pipe plus ``communicate()`` on endless readers.)
+
     Args:
         tile_paths: Upscaled tile clips, in ``tiles`` order.
         tiles: The source-pixel tile boxes.
@@ -327,38 +335,76 @@ def stitch_videos(
         out_path: Destination mp4.
 
     Raises:
-        RuntimeError: A reader or the writer exited non-zero.
+        RuntimeError: A reader or the writer exited non-zero (its stderr is in
+            the message).
         ValueError: The tile clips carry different frame counts.
     """
+    import tempfile
+
+    errs = [tempfile.TemporaryFile() for _ in range(len(tile_paths) + 1)]
     readers = [
         subprocess.Popen(  # noqa: S603 — fixed argv, no shell
-            rawvideo_read_argv(p), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            rawvideo_read_argv(p), stdout=subprocess.PIPE, stderr=errs[i]
         )
-        for p in tile_paths
+        for i, p in enumerate(tile_paths)
     ]
     writer = subprocess.Popen(  # noqa: S603 — fixed argv, no shell
         rawvideo_write_argv(canvas_w * scale, canvas_h * scale, fps, out_path),
         stdin=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=errs[-1],
     )
     assert writer.stdin is not None  # noqa: S101 — opened with stdin=PIPE
+    procs = [*readers, writer]
+    names = [*tile_paths, out_path]
+
+    def _stderr(i: int) -> str:
+        errs[i].seek(0)
+        return errs[i].read().decode(errors="replace")[:600]
+
+    def _fail(what: str) -> RuntimeError:
+        for pr in procs:
+            if pr.poll() is None:
+                pr.kill()
+        for pr in procs:
+            pr.wait()
+        detail = [
+            (names[i], pr.returncode, _stderr(i))
+            for i, pr in enumerate(procs)
+            if pr.returncode
+        ]
+        return RuntimeError(f"ffmpeg stitch failed ({what}): {detail}")
+
     try:
         streams = [
             _frames_from(r, t.h * scale, t.w * scale)
             for r, t in zip(readers, tiles, strict=True)
         ]
+        n = 0
         for frame in stitch_frames(
             streams, tiles, canvas_w=canvas_w, canvas_h=canvas_h, scale=scale
         ):
-            writer.stdin.write(frame.tobytes())
+            if writer.poll() is not None:
+                raise _fail(f"encoder exited before frame {n}")
+            try:
+                writer.stdin.write(frame.tobytes())
+            except BrokenPipeError:
+                raise _fail(f"encoder closed its pipe at frame {n}") from None
+            n += 1
+            if n % 50 == 0:
+                _log.info("stitch: %d frames", n)
+        try:
+            writer.stdin.close()
+        except BrokenPipeError:
+            raise _fail("encoder closed its pipe at the end") from None
+        for pr in procs:
+            pr.wait()
+        if any(pr.returncode for pr in procs):
+            raise _fail("non-zero exit")
+        _log.info("stitch: %d frames -> %s", n, out_path)
     finally:
-        writer.stdin.close()
-        codes: list[tuple[str, int, bytes]] = []
-        for r, p in zip(readers, tile_paths, strict=True):
-            _, err = r.communicate()
-            codes.append((p, r.returncode, err))
-        _, werr = writer.communicate()
-        codes.append((out_path, writer.returncode, werr))
-    bad: Any = [(p, rc, err[:300]) for p, rc, err in codes if rc != 0]
-    if bad:
-        raise RuntimeError(f"ffmpeg stitch failed: {bad}")
+        for pr in procs:
+            if pr.poll() is None:
+                pr.kill()
+                pr.wait()
+        for f in errs:
+            f.close()
