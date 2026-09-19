@@ -145,7 +145,8 @@ def _stage(
         fetch=fetch,
         stitch=stitch,
         probe_frames=lambda p: frames,
-        probe_dims=lambda p: (960, 544),
+        # the source is 960x544; every localised upscaled tile is 2048x1152
+        probe_dims=lambda p: (960, 544) if Path(p).name == "in.mp4" else (2048, 1152),
         probe_fps=lambda p: 24.0,
         work_dir=tmp_path / "work",
     )
@@ -328,3 +329,44 @@ def test_remote_source_cannot_be_tiled(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="tile"):
         stage.run(state)
     assert engine.jobs == []
+
+
+def test_tile_scale_comes_from_the_localised_file_not_the_reported_resolution(
+    tmp_path: Path,
+) -> None:
+    # Bug caught: the 2026-09-18 live failure — the pod reported
+    # output_resolution (0, 0), the stage derived scale 0 from it and the
+    # stitch encoder died on "video_size 0x0" (attempt 1 spun forever on
+    # zero-byte frames). The upscaled tile FILE is the only trustworthy source.
+    class _ZeroResEngine(_FakeEngine):
+        def upscale(self, instance, job, cfg, *, cancel_token=None):
+            r = super().upscale(instance, job, cfg, cancel_token=cancel_token)
+            return UpscaleResult(
+                artifact=r.artifact,
+                input_resolution=(0, 0),
+                output_resolution=(0, 0),
+                elapsed_s=r.elapsed_s,
+                engine_meta=r.engine_meta,
+            )
+
+    engine, ffmpeg, fetch, stitch = (
+        _ZeroResEngine(),
+        _FakeFfmpeg(),
+        _FakeFetch(),
+        _FakeStitch(),
+    )
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"src")
+
+    def probe_dims(p: str | Path) -> tuple[int, int]:
+        # the source is 960x544; every localised upscaled tile is 2048x1152
+        return (960, 544) if Path(p) == src else (2048, 1152)
+
+    stage = _stage(tmp_path, engine, ffmpeg, fetch, stitch, tile_grid=(2, 2))
+    stage.probe_dims = probe_dims
+
+    result = stage._run_engine(_art(f"file://{src}"), _X4)
+
+    (call,) = stitch.calls
+    assert call["scale"] == 4
+    assert result.output_resolution == (3840, 2176)

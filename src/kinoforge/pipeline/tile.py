@@ -237,6 +237,11 @@ def stitch_frames(
             assert frame is not None  # noqa: S101 — checked above
             ys, xs = tile.y * scale, tile.x * scale
             h, wd = tile.h * scale, tile.w * scale
+            if frame.shape != (h, wd, 3):
+                raise ValueError(
+                    f"tile frame shape {frame.shape} does not match the expected "
+                    f"({h}, {wd}, 3) for {tile} at scale {scale}"
+                )
             acc[ys : ys + h, xs : xs + wd] += frame.astype(np.float32) * w
             norm[ys : ys + h, xs : xs + wd] += w
         yield (
@@ -294,9 +299,16 @@ def rawvideo_write_argv(
 
 
 def _frames_from(proc: subprocess.Popen[bytes], h: int, w: int) -> Iterator[np.ndarray]:
-    """Yield rgb24 frames of ``h x w`` from a rawvideo reader's stdout."""
-    assert proc.stdout is not None  # noqa: S101 — opened with stdout=PIPE
+    """Yield rgb24 frames of ``h x w`` from a rawvideo reader's stdout.
+
+    Raises:
+        ValueError: A non-positive frame size — ``read(0)`` would return an
+            empty buffer forever and the stitch would spin on empty frames.
+    """
     size = h * w * 3
+    if size <= 0:
+        raise ValueError(f"invalid frame size {w}x{h}")
+    assert proc.stdout is not None  # noqa: S101 — opened with stdout=PIPE
     while True:
         buf = proc.stdout.read(size)
         if len(buf) < size:

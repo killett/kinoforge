@@ -149,13 +149,24 @@ class UpscaleStage:
             tile_path = work / f"tile{i:02d}.mp4"
             self.ffmpeg_run(crop_argv(str(local), tile, str(tile_path)), b"")
             result = self._run_temporal(Artifact(uri=f"file://{tile_path}"), scale)
-            parts.append(
-                str(self._localize(result.artifact, work / f"tileup{i:02d}.mp4"))
-            )
+            up_path = self._localize(result.artifact, work / f"tileup{i:02d}.mp4")
+            parts.append(str(up_path))
             elapsed += result.elapsed_s
             tile_meta.append(dict(result.engine_meta))
+            # The scale comes from the upscaled FILE, never from the engine's
+            # reported output_resolution: the pod reported (0, 0) live on
+            # 2026-09-18, which made a 0x0 canvas and an infinite stitch.
+            up_w, up_h = self.probe_dims(up_path)
+            f = up_w // tile.w
+            if f < 1 or up_w != tile.w * f or up_h != tile.h * f:
+                raise ValueError(
+                    f"upscaled tile {up_path} is {up_w}x{up_h}, not an integer "
+                    f"multiple of its {tile.w}x{tile.h} source tile"
+                )
             if factor is None:
-                factor = int(round(result.output_resolution[0] / tile.w))
+                factor = f
+            elif f != factor:
+                raise ValueError(f"tile {i} came back at {f}x, others at {factor}x")
         assert factor is not None  # noqa: S101 — at least one tile
         stitched = work / "stitched.mp4"
         _log.info("stitching %d tiles -> %s", len(parts), stitched)

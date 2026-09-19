@@ -269,3 +269,28 @@ class TestStitchVideosFailurePath:
             ["pgrep", "-f", "sys.stdout.buffer.write"], capture_output=True, text=True
         )
         assert leftover.stdout.strip() == ""
+
+
+class TestFrameGuards:
+    def test_zero_sized_frames_are_refused_before_any_read(self) -> None:
+        # Bug caught: a 0x0 frame size makes read(0) return b"" forever and the
+        # stitcher spins through infinite empty "frames" (live, 2026-09-18).
+        from kinoforge.pipeline.tile import _frames_from
+
+        class _Proc:
+            stdout = None
+
+        with pytest.raises(ValueError, match="frame size"):
+            next(_frames_from(_Proc(), 0, 2048))  # type: ignore[arg-type]
+
+    def test_stitch_refuses_a_frame_of_the_wrong_shape(self) -> None:
+        # Bug caught: a tile stream decoded at a different size than its spec
+        # implies is pasted with the wrong geometry (or crashes deep in numpy
+        # broadcasting) instead of failing with a clear message.
+        tiles = [TileSpec(x=0, y=0, w=32, h=32), TileSpec(x=32, y=0, w=32, h=32)]
+        good = np.zeros((32, 32, 3), dtype=np.uint8)
+        bad = np.zeros((16, 32, 3), dtype=np.uint8)
+        with pytest.raises(ValueError, match="shape"):
+            list(
+                stitch_frames([[good], [bad]], tiles, canvas_w=64, canvas_h=32, scale=1)
+            )
