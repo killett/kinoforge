@@ -3637,6 +3637,7 @@ None (video-in / video-out). Source clip: §31's first See-also (standard smoke 
 | Stage | Path | Dimensions | Size / SHA-256 |
 |---|---|---|---|
 | source (§31 See-also) | `output/20260918-014621_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` | 960x544, 24 fps, 345 f, 14.375 s, aac stereo 32 kHz | 4,295,182 B / `88cdfa698a37e83fbdb8c0d0879cf5ada06f50ae3e1de190e7b6e2e488b0fc6c` |
+| 1 — full-resolution canvas (kept automatically from the next commit onward; this file is the live run's own stitched canvas, published by a $0 replay of the materialize boundary) | `output/20260918-215636_fullres_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4` | **3840x2176**, 24 fps, 345 f, 14.375 s, no audio | 192,589,388 B / `33b9ed2d46d9028e052dab7db041345aa926c66edc626dedbf8ce4390e4cb8b8` |
 | 1 — tiled upscale | `output/20260918-210733_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4` | **1906x1080**, 24 fps, 345 f, 14.375 s, no audio | 11,893,345 B / `6ea7a9b30ce244d059ba6d2a8c078b081afa14da21607ab3e28e681b16ef439f` |
 | 2 — interpolated | `output/20260918-211003_interpolated_rife_interp_interpolate.mp4` | 1906x1080, 60 fps, 862 f, 14.367 s, no audio | 19,142,971 B / `9f66aedfc647a9af6def01574475e4d6917560a05dac3641ac698bfc12342eb5` |
 | final — re-muxed | `output/20260918-211003_interpolated_rife_interp_interpolate_with-audio.mp4` | 1906x1080, 60 fps, 862 f, **aac stereo 32 kHz** | 19,477,304 B / `a934b1ad8e91b04a33076c76d0ed022c69fbbc2ad26a5df373aabfdc769559ff` |
@@ -3697,6 +3698,10 @@ at frame 272); frame QA PASS; teardown verified from fresh processes.
 
 ### Notes
 
+- **The overshoot is now kept.** A height-target upscale publishes its pre-downscale render as
+  `kind="fullres"` before the 1080p file (orchestrator materialize boundary). The kind
+  deliberately does not contain "upscaled", so the operator's `find -name '*upscaled*.mp4'`
+  still hands RIFE the 1080p file. ~190 MB per 14 s clip at 3840x2176.
 - **Cost shape:** 4 tiles x 5 chunks = 20 pod calls of ~36-40 s; the stitch
   and the 1080p downscale (~5 min) run on the controller while the pod is
   still booked (~$0.20 idle). Releasing compute before local post-work is the

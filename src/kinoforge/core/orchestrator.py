@@ -3033,9 +3033,6 @@ def generate(
             else:
                 body = Path(upscaled.uri.removeprefix("file://")).read_bytes()
 
-            if _downscale_to is not None:
-                _log.info("downscaling upscaled artifact to %dp", _downscale_to)
-                body = finalize_upscaled_bytes(body, _downscale_to)
             provider_tag = cfg.upscale.engine if cfg.upscale is not None else "unknown"
             spec_obj: Any = cfg.spec
             model_tag = (
@@ -3043,6 +3040,25 @@ def generate(
                 or (spec_obj.get("model") if isinstance(spec_obj, dict) else None)
                 or "unknown"
             )
+            if _downscale_to is not None:
+                # A height target overshoots (FlashVSR renders 4x: 3840x2176
+                # from a tiled 960x544 source) and is lanczos'd down below.
+                # Keep the overshoot too — it is the highest-resolution render
+                # the run produced. The kind deliberately does NOT contain
+                # "upscaled": the operator's `find -name '*upscaled*.mp4'`
+                # picks the next stage's input and must keep finding the
+                # downscaled file, not this one.
+                fullres_path = sink.publish(
+                    body,
+                    prompt="upscale",
+                    extension=".mp4",
+                    provider=provider_tag,
+                    model=model_tag,
+                    kind="fullres",
+                )
+                _log.info("full-resolution upscale kept at %s", fullres_path)
+                _log.info("downscaling upscaled artifact to %dp", _downscale_to)
+                body = finalize_upscaled_bytes(body, _downscale_to)
             local_path = sink.publish(
                 body,
                 prompt="upscale",

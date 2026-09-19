@@ -3204,6 +3204,12 @@ no seam signature (overlap-band gradient energy within neighbouring bands on 3 f
   neighbouring bands; the only hard cut is the source's at 272), cross-seam fidelity crop
   markedly sharper than the source, teardown verified from fresh processes.
 
+**Full-resolution intermediates are now kept:** a height-target upscale publishes its
+pre-downscale render as `kind="fullres"` before the 1080p file (operator request; the kind
+avoids the `*upscaled*` glob the commands select on). Verified at $0 by replaying the materialize
+boundary on the live tiled run's stitched canvas → `output/20260918-215636_fullres_..._upscale.mp4`
+(3840x2176, 192 MB) plus a byte-identical-size 1080p replay `output/20260918-215717_upscaled_...`.
+
 **Session totals: ~$5.85 of the $20.** Four commands proven live (cmd 1, 2, 3 and the step-2 and
 step-3 variants of cmd 2), seven commits of features/fixes, full suite 5953 passed.
 
