@@ -3190,10 +3190,32 @@ no seam signature (overlap-band gradient energy within neighbouring bands on 3 f
   (float32 + preset fast + buffer reuse).
 - **Known inefficiency:** the ~4.5 min local stitch runs while the pod is still booked
   (~$0.20 idle A100). A "release compute before local post-work" hook is the fix; not done.
-- **Attempt 2 launched 20:14** (`cmd2c.sh`: 960x544 source → tiled 1080p → RIFE → re-mux).
+- **Attempt 2 (~$0.83) failed at once with the encoder's stderr in hand: `video_size "0x0"`.**
+  Root cause of BOTH wedges: the stage derived the stitch scale from the engine's reported
+  `output_resolution`, and **the pod reports `(0, 0)`** — `wan_t2v_server._probe_resolution`
+  shells out to `ffprobe`, absent on `python:3.13-slim`, and returns zeros by design; every
+  FlashVSR/RIFE result on Modal has carried `[0, 0]` all along. **Fixed `9f26dabf`:** the scale
+  is probed from the localised tile FILE (integer multiple of the source tile enforced), and
+  zero-size / wrong-shape frames are refused. Memory `pod-reported-resolution-is-zero`.
+- **Attempt 3 (~$0.94) — STEP 3 PROVEN LIVE, `successful-generations.md` §33.** 20 pod calls
+  (~36 s per chunk at 2048x1152), stitch 3 m 56 s, **1906x1080 at the source's own aspect** —
+  no downscale, crop or squeeze. Final `output/20260918-211003_interpolated_rife_interp_interpolate_with-audio.mp4`
+  (60 fps / 862 f / aac stereo). QA: no seam signature (overlap-band gradient energy within
+  neighbouring bands; the only hard cut is the source's at 272), cross-seam fidelity crop
+  markedly sharper than the source, teardown verified from fresh processes.
 
-**NEXT ACTION:** QA attempt 2's outputs (seam scan, sheet, fidelity crop, `av_qa`), log it under
-§32, finalise this block. If the stitch encoder dies again, its stderr is now in the exception.
+**Session totals: ~$5.85 of the $20.** Four commands proven live (cmd 1, 2, 3 and the step-2 and
+step-3 variants of cmd 2), seven commits of features/fixes, full suite 5953 passed.
+
+**Open follow-ups (none blocking):**
+- Release compute before local post-work (stitch + 1080p downscale ≈ 5 min idle A100 ≈ $0.20/run).
+- Server: `_probe_resolution` should fall back to imageio metadata (moves the embedded goldens).
+- `_flash_3_hub` never engages on the H3 image (`/health` → `default`); capture the boot log at
+  start on a future run to learn why.
+- RIFE blends across hard cuts (a cut-aware interpolate would split at cuts).
+- A `kinoforge doctor` check for stale capability profiles (from the first 2026-09-18 session).
+
+**NEXT ACTION:** nothing is in flight; pick a follow-up above or a new brief.
 
 ### SESSION 2026-09-18 — Sub-project C BUILT; `main` was red on 21 tests; one self-correction
 

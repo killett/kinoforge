@@ -84,6 +84,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
           eval "$(pixi shell-hook -e live-modal)"
           set -euo pipefail
     - See also: `2026-09-18 16:08:41` — **the 960x544 max-length clip through the same chain, pre-downscaled on the controller** (the operator's step 2: keep the documented H3 canvas for generation, shrink only for FlashVSR). Source `output/20260918-014621_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (§31's first See-also). Pre-step: `ffmpeg -vf "scale=640:-2:flags=lanczos,crop=640:352" -an -c:v libx264 -qp 0` → `output/20260918-014621_diffusers_MiniMax-H3_Photorealistic-cinem_pre640x352.mp4` (23,196,068 B, sha256 `49ae0261504428b0...`) — **crop, not squeeze: FlashVSR source dims must be multiples of 32** (the block-sparse attention window divides the latent grid; a 640x360 attempt died on the booked card with `Dims must divide by window size`, ~$0.04, cfg header updated `ca6ded78`). Then the exact §32 command with `--video "$PRE"` and the re-mux still reading `"$SRC"`. Pods `upscale-20260918-155905` (chunks 15:59:20 → 16:03:26, join 16:04:24, published 16:06:11, destroyed 16:06:17, ~$0.30) and `interpolate-20260918-160618` (cached image, GPU 83 %, published 16:08:41, destroyed 16:08:47, ~$0.03), both verified from fresh processes. Outputs: upscale `output/20260918-160611_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4` (1964x1080 / 24 fps / 345 f; 13,199,057 B, sha256 `3a78c773291dd13c...`) → **final** `output/20260918-160841_interpolated_rife_interp_interpolate_with-audio.mp4` (1964x1080 / 60 fps / 862 f / aac stereo 32 kHz; 21,529,009 B, sha256 `f27caf83ae8fff10...`). **Alignment proof, for free:** `av_qa --no-audio --cut-scan` on the upscale found exactly ONE hard cut, at **frame 272** — the source's known cut (delta 66.9 vs 70.05 in the source) — and nothing at the chunk seams 69/138/207/276, so split → pad → trim → join is frame-exact. Frame QA PASS, high quality: frame-200 crop shows hair strands, cliff texture and dress folds the lanczos'd source smears, no invented structure. ⚠️ On the 60 fps final the scan flags frames 678-680 (= 272 x 2.5): RIFE blends ACROSS the hard cut into a 1-2 frame crossfade — inherent to interpolating over a cut, not a pipeline defect; a cut-aware interpolate (split at cuts, interpolate each side) would remove it.
+33. `2026-09-18 21:10:03` — [960x544 MiniMax-H3 max-length clip → SPATIALLY TILED FlashVSR 1080p (no downscale) → RIFE 60 fps → soundtrack re-mux, on Modal — upscale+interpolate (tiled)](#33-2026-09-18-211003--960x544-minimax-h3-max-length-clip--spatially-tiled-flashvsr-1080p-no-downscale--rife-60-fps--soundtrack-re-mux-on-modal--upscaleinterpolate-tiled)
 
           MARK="$(mktemp)"
 
@@ -3546,3 +3547,162 @@ fresh processes after each orchestrator exit.
   upscale, stitch locally, re-mux — the operator's step 3.
 - `_flash_3_hub` on the H3 source run: `/health` read `attention_backend:
   default` (see the §31 See-also).
+
+## 33. `2026-09-18 21:10:03` — 960x544 MiniMax-H3 max-length clip → SPATIALLY TILED FlashVSR 1080p (no downscale) → RIFE 60 fps → soundtrack re-mux, on Modal — upscale+interpolate (tiled)
+
+**First spatially tiled upscale — every pixel of a source whose 4x canvas fits
+no card reaches FlashVSR.** §32's chain needed a 640x352 source (or a
+pre-downscale, its second See-also) because FlashVSR's attention canvas is its
+4x OUTPUT and 960x544 → 3840x2176 needs a ~40 GiB block mask over a ~69 GiB
+baseline. Here the 960x544 clip is cropped into a 2x2 grid of 32-px-aligned
+tiles, each tile goes through the chunked upscale on the same pod, and the
+controller feather-blends the four 2048x1152 results into the 3840x2176 canvas
+before the usual 1080p downscale — giving a **1906x1080** deliverable at the
+source's own aspect, with no downscale, crop or squeeze anywhere. Operator's
+"step 3".
+
+| | |
+|---|---|
+| **Stack triple** | `Modal / DiffusersEngine (FlashVSR upscaler, spatially tiled + temporally chunked) + DiffusersEngine (RIFE interpolator) / JunhaoZhuang/FlashVSR-v1.1 + hzwer/RIFE RIFEv4.26` |
+| **Mode** | upscale (960x544 → 2x2 tiles of 512x288 → 2048x1152 each → stitched 3840x2176 → 1906x1080) → interpolate (24 → 60 fps) → local audio re-mux |
+| **New capability axis** | **Spatial tiling** (`upscale.tile_grid` / `tile_overlap`, `pipeline/tile.py`, `26e9f2b5`; hardened `4c074092`, `9f26dabf`) composed with temporal chunking (§32). First wide-source FlashVSR upscale on any provider. |
+| **First-success SHA** | `9f26dabf` |
+| **Date (local TZ)** | 2026-09-18 21:10:03 |
+| **GPU** | Stage 1: Modal `A100-80GB`; stage 2: Modal T4-class. |
+| **Wall clock** | Stage 1: `App deployed` 2.5 s (cached), tiles 1-4 started 20:45:54 / 20:50:11 / 20:53:47 / 20:58:51 (**~36 s per 77-frame chunk at 2048x1152**, 5 chunks + join per tile ≈ 4.3 min), stitch 21:02:56 → 21:06:52 (**3 m 56 s** for 345 frames of 3840x2176, local), 1080p downscale + publish 21:07:33, destroyed 21:07:38 — **22 min pod**. Stage 2: `/health` ~21:08, published 21:10:03, destroyed 21:10:08. Re-mux < 2 s. |
+| **Est. spend** | ~$0.92 (A100 22 min, of which ~5 min idle during the local stitch + downscale) + ~$0.02 ≈ **$0.94** for this run; the two failed tiled attempts before it ≈ $1.76 (see below). |
+| **Layer / phase** | Operator brief 2026-09-18, step 3 ("split the original video into pieces that fit, stitch locally, re-attach the audio"). Design + decisions in `PROGRESS.md` RESUME SNAPSHOT. |
+
+### Exact command (from `/workspace`)
+
+```bash
+(
+    eval "$(pixi shell-hook -e live-modal)"
+    set -euo pipefail
+
+    SRC="/workspace/output/20260918-014621_diffusers_MiniMax-H3_Photorealistic-cinem.mp4"
+    MARK="$(mktemp)"
+
+    python -m kinoforge upscale \
+        --config examples/configs/modal-diffusers-flashvsr-1080p-upscale-long-tiled.yaml \
+        --video "$SRC" \
+        --no-reuse
+
+    UPSCALED="$(find /workspace/output -name '*upscaled*.mp4' -newer "$MARK" \
+        | sort | tail -1)"
+    test -n "$UPSCALED" || { echo "stage 1 published no new file"; exit 1; }
+
+    python -m kinoforge interpolate \
+        --config examples/configs/modal-diffusers-rife-60fps-interpolate-long.yaml \
+        --video "$UPSCALED" \
+        --fps 60 \
+        --no-reuse
+
+    INTERPOLATED="$(find /workspace/output -name '*interpolated*.mp4' -newer "$MARK" \
+        | sort | tail -1)"
+    test -n "$INTERPOLATED" || { echo "stage 2 published no new file"; exit 1; }
+
+    FINAL="${INTERPOLATED%.mp4}_with-audio.mp4"
+    ffmpeg -y -loglevel error -i "$INTERPOLATED" -i "$SRC" \
+        -map 0:v:0 -map 1:a:0 -c:v copy -c:a copy -shortest "$FINAL"
+    echo "final: $FINAL"
+)
+```
+
+### YAML config(s)
+
+`examples/configs/modal-diffusers-flashvsr-1080p-upscale-long-tiled.yaml` is
+§32's long FlashVSR cfg plus:
+
+```yaml
+upscale:
+  chunk_frames: 69
+  chunk_overlap: 8
+  tile_grid: [2, 2]      # 960x544 -> 512x288 tiles at x 0/448, y 0/256
+  tile_overlap: 32       # requested; actual 64 px horizontally, 32 vertically
+```
+
+`modal-diffusers-rife-60fps-interpolate-long.yaml` unchanged from §32.
+
+### Prompt
+
+None (video-in / video-out). Source clip: §31's first See-also (standard smoke prompt).
+
+### Env vars / secret names (names only — never values)
+
+`MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, `HF_TOKEN`.
+
+### Output artifacts
+
+| Stage | Path | Dimensions | Size / SHA-256 |
+|---|---|---|---|
+| source (§31 See-also) | `output/20260918-014621_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` | 960x544, 24 fps, 345 f, 14.375 s, aac stereo 32 kHz | 4,295,182 B / `88cdfa698a37e83fbdb8c0d0879cf5ada06f50ae3e1de190e7b6e2e488b0fc6c` |
+| 1 — tiled upscale | `output/20260918-210733_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4` | **1906x1080**, 24 fps, 345 f, 14.375 s, no audio | 11,893,345 B / `6ea7a9b30ce244d059ba6d2a8c078b081afa14da21607ab3e28e681b16ef439f` |
+| 2 — interpolated | `output/20260918-211003_interpolated_rife_interp_interpolate.mp4` | 1906x1080, 60 fps, 862 f, 14.367 s, no audio | 19,142,971 B / `9f66aedfc647a9af6def01574475e4d6917560a05dac3641ac698bfc12342eb5` |
+| final — re-muxed | `output/20260918-211003_interpolated_rife_interp_interpolate_with-audio.mp4` | 1906x1080, 60 fps, 862 f, **aac stereo 32 kHz** | 19,477,304 B / `a934b1ad8e91b04a33076c76d0ed022c69fbbc2ad26a5df373aabfdc769559ff` |
+
+### Tile / frame math
+
+`plan_tiles(960, 544, cols=2, rows=2, overlap=32)`: per axis the tile is
+`ceil((dim + overlap)/2)` rounded up to 32 → 512 (x at 0 and 448, actual
+overlap 64) and 288 (y at 0 and 256, overlap 32). Each tile: 345 frames through
+`plan_chunks(345, 69, 8)` (5 chunks, padded on the pod to 81 = §24's envelope),
+joined → 2048x1152 x 345. Stitch: linear feather ramps over the ACTUAL overlap
+(weights sum to 1), streamed through ffmpeg pipes at 3840x2176; lanczos to
+height 1080 → 1906x1080. RIFE: 862 frames; `-shortest` trims the soundtrack to
+14.336 s.
+
+### Success criterion
+
+Exit 0 through all stages; 1080p-height output at the source's aspect with the
+H3 soundtrack; `av_qa` PASS; **no seam signature** (overlap-band gradient
+energy within neighbouring bands; the only hard cut found is the source's own
+at frame 272); frame QA PASS; teardown verified from fresh processes.
+
+### QA verdicts
+
+- **Tiled upscale: PASS, high quality.** Contact sheet: full composition, no
+  visible seam. Frame-150 crop spanning BOTH seams (x through the figure's
+  back, y through the dress) vs the lanczos'd source: markedly sharper cliff
+  strata, hair, dress folds and grass, no discontinuity across either seam
+  line. `--cut-scan`: exactly one cut, frame 272 (the source's; delta 67.9).
+  On the identical tiles from attempt 1, stitched offline: overlap-band
+  gradient energy 3.24 / 3.09 / 0.80 vs neighbours 3.24-2.49 / 3.49-3.67 /
+  1.12-1.30 on frames 10 / 172 / 300 — no seam term.
+- **Final 60 fps: PASS.** Audio identical to the source (peak 0.556, rms
+  0.093, L/R corr 0.9956); ⚠️ RIFE blends across the source's hard cut into
+  frames 678-680 (as in §32's second See-also) — inherent, not a defect.
+
+### Failure modes encountered before success (all torn down, verified)
+
+1. **Attempt 1 (~$0.93): 20/20 pod calls succeeded, then the stitch WEDGED
+   for 20 minutes** with the pod booked — the encoder had died at startup and
+   the old `stitch_videos` spun on zero-byte frames (state R, tiny RSS; a
+   zero-length write never raises EPIPE) with SIGINT unable to interrupt it.
+   Killed and destroyed by hand. → `4c074092`: encoder polled per frame,
+   readers killed on death, stderr captured and raised; float32 blend +
+   `preset fast` (466 s → 266 s).
+2. **Attempt 2 (~$0.83): the hardened path raised at once — `video_size
+   "0x0"`.** Root cause of BOTH attempts: the stage derived the stitch scale
+   from the engine's reported `output_resolution`, and the pod reports
+   `(0, 0)` — `wan_t2v_server._probe_resolution` shells out to `ffprobe`,
+   which `python:3.13-slim` does not ship, and returns zeros by design. Every
+   FlashVSR/RIFE result on Modal has carried `[0, 0]` all along. → `9f26dabf`:
+   the scale is probed from the localised tile FILE and must be an integer
+   multiple of the source tile; `_frames_from` refuses a non-positive size;
+   `stitch_frames` refuses a wrong-shape frame. Memory
+   `pod-reported-resolution-is-zero`.
+3. A `pkill -f` that matched its own shell (twice) — memory
+   `precommit-all-files-ignores-untracked` carries the bracket-pattern rule.
+
+### Notes
+
+- **Cost shape:** 4 tiles x 5 chunks = 20 pod calls of ~36-40 s; the stitch
+  and the 1080p downscale (~5 min) run on the controller while the pod is
+  still booked (~$0.20 idle). Releasing compute before local post-work is the
+  obvious follow-up.
+- **Fidelity vs §32:** this is a genuine upscale of the 960x544 pixels;
+  §32's routes reconstruct from a 640x352-class input. The seam-free stitch
+  is what makes the tiled route the better one for wide sources.
+- Server follow-up: make `_probe_resolution` fall back to imageio metadata
+  (moves the embedded-server goldens).
