@@ -3171,13 +3171,29 @@ verified from fresh processes after each, ~**$3.10 of the $20** spent in total:
   runs; the startup WARNING had rolled off Modal's 100-line log. Capture the boot log at start on a
   future run to learn why.
 
-**NEXT ACTION (operator's step 3, design presented, awaiting approval):** upscale the 960x544
-source WITHOUT pre-downscaling by **spatial tiling** — split each frame into tiles whose 4x canvas
-fits the proven token window (e.g. 2x2 tiles of 512x304 with 32-px overlap → 2048x1216 each),
-run each tile through the existing chunked upscale, feather-blend the tiles locally, then the
-usual 1080p downscale / RIFE / re-mux. Controller-side, mirroring `pipeline/chunk.py`
-(`upscale.tile_grid` / `tile_overlap`, default off). Est. ~$1, ~25 min (4 tiles × 5 chunks).
-Open risks: visible seams if feathering is too narrow; tile dims must stay multiples of 32.
+**Step 3 — SPATIAL TILING — BUILT (`26e9f2b5`, hardened `4c074092`), live proof in flight.**
+`pipeline/tile.py` + `upscale.tile_grid` / `tile_overlap` (default off): 32-px-aligned tiles
+(the BSA window rule), each through the chunked upscale on the same pod, feather ramps over the
+ACTUAL neighbour overlap (weights sum to 1), streamed through ffmpeg pipes. Cfg
+`modal-diffusers-flashvsr-1080p-upscale-long-tiled.yaml` (2x2 → 512x288 tiles at x 0/448,
+y 0/256, 2048x1152 each). $0 proofs: crop→4x→stitch reproduces a direct 4x at PSNR 44.5 dB;
+on the REAL FlashVSR tiles from the first live attempt (kept on disk) the stitched canvas shows
+no seam signature (overlap-band gradient energy within neighbouring bands on 3 frames) and the
+1906x1080 result is visibly sharper than the source with no seam in the crops.
+- **First live attempt (pod `upscale-20260918-164255`, ~$0.93) WEDGED at the stitch:** all 20 pod
+  calls succeeded (~36 s per 512x288 chunk, 14 min), then the stitch encoder died at startup
+  (reason unknown — its stderr was not captured) and `stitch_videos` hung 20 min with the pod
+  booked (write into a dead pipe + `communicate()` on endless readers; SIGINT could not
+  interrupt it). Killed by hand, pod destroyed by hand, verified. **Fixed `4c074092`:** the
+  encoder is polled per frame, readers are killed on any death, stderr is captured to temp
+  files and raised; regression test drives real subprocesses. Stitch also 466 s → 266 s
+  (float32 + preset fast + buffer reuse).
+- **Known inefficiency:** the ~4.5 min local stitch runs while the pod is still booked
+  (~$0.20 idle A100). A "release compute before local post-work" hook is the fix; not done.
+- **Attempt 2 launched 20:14** (`cmd2c.sh`: 960x544 source → tiled 1080p → RIFE → re-mux).
+
+**NEXT ACTION:** QA attempt 2's outputs (seam scan, sheet, fidelity crop, `av_qa`), log it under
+§32, finalise this block. If the stitch encoder dies again, its stderr is now in the exception.
 
 ### SESSION 2026-09-18 — Sub-project C BUILT; `main` was red on 21 tests; one self-correction
 
