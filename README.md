@@ -1,8 +1,8 @@
 # kinoforge
 
 kinoforge is a configuration-driven video-generation orchestrator. It abstracts over GPU compute
-providers (RunPod, SkyPilot, local), generation engines (ComfyUI, Diffusers, hosted APIs), and
-model sources (HuggingFace, CivitAI, plain HTTPS) behind a single YAML config file and a small
+providers (RunPod, Modal, SkyPilot, local), generation engines (ComfyUI, Diffusers, hosted APIs),
+and model sources (HuggingFace, CivitAI, plain HTTPS) behind a single YAML config file and a small
 CLI. Swapping providers, engines, or model sources requires only a config edit — no code changes,
 no branching on provider names in core logic.
 
@@ -21,7 +21,7 @@ no branching on provider names in core logic.
   - [Wan 2.2 14B — LoRA stack swap](#wan-22-14b--lora-stack-swap)
   - [Wan 2.2 14B — prompt sweep](#wan-22-14b--prompt-sweep)
   - [Wan 2.2 14B mixed path + generate](#wan-22-14b-mixed-path--generate)
-- [Upscaling and keyframes](#upscaling-and-keyframes)
+- [Upscaling, interpolation and keyframes](#upscaling-interpolation-and-keyframes)
 - [Configuration at a glance](#configuration-at-a-glance)
 - [Credentials](#credentials)
 - [Operator concepts](#operator-concepts)
@@ -42,7 +42,7 @@ no branching on provider names in core logic.
 
 ## Quickstart
 
-### Step 1 — verify install (no credentials, ~30 s)
+### Step 1 — verify install (no credentials, ~1 s)
 
 ```bash
 pixi run kinoforge generate \
@@ -89,7 +89,8 @@ pixi install
 
 ```bash
 pixi install -e live-skypilot   # SkyPilot + gcloud + AWS CLI
-pixi install -e live-hosted     # Replicate / Runway / Luma SDKs
+pixi install -e live-hosted     # Replicate / Runway / Luma / fal SDKs
+pixi install -e live-modal      # Modal serverless-GPU SDK
 ```
 
 **Optional system tools:** `aria2c` — multi-connection model weight downloads (recommended for
@@ -112,11 +113,13 @@ pixi run test
 | `provision` | Provision an existing instance | `pixi run kinoforge provision --config cfg.yaml` |
 | `doctor` | Validate config and credentials | `pixi run kinoforge doctor --config cfg.yaml` |
 | `generate` | Run a generation job | `pixi run kinoforge generate --config cfg.yaml --prompt "…" --mode t2v` |
-| `upscale` | Upscale a video clip (FlashVSR 4x default; spandrel 2x) | `pixi run kinoforge upscale --config cfg.yaml --video clip.mp4 --no-reuse` |
+| `upscale` | Upscale a video clip (FlashVSR default; spandrel 2x) | `pixi run kinoforge upscale --config cfg.yaml --video clip.mp4 --no-reuse` |
+| `interpolate` | Raise a video's frame rate (RIFE) | `pixi run kinoforge interpolate --config cfg.yaml --video clip.mp4 --fps 60 --no-reuse` |
 | `list` | List running instances from ledger | `pixi run kinoforge list` |
 | `status` | Show status of one instance | `pixi run kinoforge status --id <id>` |
 | `stop` | Stop an instance | `pixi run kinoforge stop --id <id>` |
 | `destroy` | Destroy an instance | `pixi run kinoforge destroy --id <id>` |
+| `logs` | Fetch a file from a running pod's sidecar | `pixi run kinoforge logs --id <id> --file bootstrap.log` |
 | `forget` | Remove a stale ledger entry | `pixi run kinoforge forget --id <id>` |
 | `reap` | Reap instances matching policy | `pixi run kinoforge reap` |
 | `gc` | Garbage-collect stored artifacts | `pixi run kinoforge gc` |
@@ -126,13 +129,19 @@ pixi run test
 | `sweeper stop` | Stop the reap daemon | `pixi run kinoforge sweeper stop` |
 | `sweeper status` | Read sweeper liveness | `pixi run kinoforge sweeper status` |
 | `sweeper metrics` | Fetch sweeper metrics | `pixi run kinoforge sweeper metrics` |
-| `batch` | Run a batch of generation jobs | `pixi run kinoforge batch --config cfg.yaml` |
-| `grid` | Run a parameter grid of jobs | `pixi run kinoforge grid --config cfg.yaml` |
+| `batch` | Run a batch of generation jobs | `pixi run kinoforge batch --config cfg.yaml --manifest m.yaml` |
+| `grid` | Run a parameter grid of jobs | `pixi run kinoforge grid --spec spec.grid.yaml --out out.mp4` |
+
+Five flags are declared on the top-level parser and reach every subcommand: `--env-file`,
+`--state-dir`, `--vault` (LoRA vault path — a `--loras` override bypasses it and logs
+`cli-loras-bypass-vault`), `--ephemeral` (suppress provider-side record retention; such runs must
+never be logged in `successful-generations.md`), and `--debug-show-secrets`.
 
 ### Pixi tasks
 
 | Task | Purpose | Notes |
 |------|---------|-------|
+| `pixi run kinoforge` | Run the CLI (`python -m kinoforge` shim) | The invocation used throughout this README |
 | `pixi run test` | Run unit tests | Fast; no cloud creds required |
 | `pixi run test-cov` | Run tests with coverage report | Adds `--cov` flag |
 | `pixi run test-live` | Run live integration tests | Needs `KINOFORGE_LIVE_TESTS=1` + cloud creds |
@@ -151,6 +160,9 @@ pixi run test
 | `pixi run smoke-21b-live` | Live smoke: Wan 2.1 21B | Costs ~$0.10–0.30 |
 | `pixi run smoke-wan22-live` | Live smoke: Wan 2.2 14B | Costs ~$0.10–0.30 |
 | `pixi run smoke-leak-sweep` | Sweep for cost/resource leaks | Runs leak-detection checks |
+| `pixi run build-image-wan-comfyui` | Build + push the pre-baked Wan + ComfyUI image | Needs `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` |
+| `pixi run cloud:bootstrap-kms` | Provision AWS + GCP KMS keys | Idempotent; ~$0.04/day once live |
+| `pixi run cloud:perms-probe` | Probe cloud IAM permissions | Diagnostics only |
 
 ## Grid examples — verified
 
@@ -313,18 +325,36 @@ above) + 1 fresh `generate:` cell. ~$0.35.
 
 Evidence: [`tests/live/_grid_examples/wan22_mixed_path.json`](tests/live/_grid_examples/wan22_mixed_path.json).
 
-## Upscaling and keyframes
+## Upscaling, interpolation and keyframes
 
 **Video upscaling** — two engines behind one `upscale:` cfg block and the `kinoforge upscale`
-subcommand. `flashvsr` (v1 default) is a streaming diffusion 4× upscaler (Wan 2.1 1.3B backbone,
+subcommand. `flashvsr` (v1 default) is a streaming diffusion upscaler (Wan 2.1 1.3B backbone,
 Block-Sparse-Attention prebuilt wheel, 80 GB tier) that preserves temporal coherence across the
 clip; `spandrel` is per-frame architecture-agnostic SR (RealESRGAN et al., 2×, fits 48 GB).
-`runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml` chains generate → upscale on ONE pod: the server's LRU registry
-swaps Wan ↔ FlashVSR so both fit, and warm-reuse re-generates reload Wan from the pod-local cache.
+`runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml` chains generate → upscale on ONE pod: the
+server's LRU registry swaps Wan ↔ FlashVSR so both fit, and warm-reuse re-generates reload Wan
+from the pod-local cache.
+
+FlashVSR's native factor is fixed at 4× by its weight shape, but `scale:` also takes a **height
+target** (`1080p`, `720p`), resolved as the native 4× followed by a lanczos downscale. Two knobs
+keep a long or wide clip on the card: `chunk_frames` / `chunk_overlap` split it temporally and join
+the pieces on the controller, while `tile_grid` splits each frame spatially and feather-blends the
+tiles back together. `successful-generations.md` §32–§33 record both end to end.
 
 ```bash
 pixi run kinoforge upscale --config examples/configs/runpod-diffusers-flashvsr-x4-upscale.yaml \
   --video clip.mp4 --no-reuse
+```
+
+**Frame interpolation** — an `interpolate:` cfg block and the `kinoforge interpolate` subcommand
+raise a clip's frame rate. v1 ships `rife` (RIFE v4.26); `--fps` overrides `cfg.interpolate.fps`.
+It rides the same compute seam as upscaling, so a generate → upscale → interpolate chain is three
+commands against three configs (`successful-generations.md` §30).
+
+```bash
+pixi run kinoforge interpolate \
+  --config examples/configs/modal-diffusers-rife-60fps-interpolate.yaml \
+  --video clip.mp4 --fps 60 --no-reuse
 ```
 
 **Keyframe pipelines** — a `keyframe:` cfg block runs an image engine before the video job and
@@ -334,29 +364,33 @@ flf2v, per-role prompts + seeds supported). Image engines: `fal` (flux et al.), 
 as inline data URIs — no storage round-trip. Both flows are live-verified end-to-end
 (`fal-luma-keyframe-i2v.yaml` → fal wan-i2v; `fal-keyframe-flf2v.yaml` → fal wan-flf2v).
 
+**Joint audio** — MiniMax-H3 (`modal-diffusers-minimax-h3-t2va.yaml`) adds a `t2va` mode: the model
+emits a soundtrack jointly with the video and the pod muxes it into the mp4. The upscale and
+interpolate stages are video-only, so a chained run re-muxes the original soundtrack onto the
+finished clip (`successful-generations.md` §31–§33).
+
 ## Configuration at a glance
 
-A kinoforge YAML config has three top-level blocks. **`engine`** declares the inference backend
+A kinoforge YAML config has three required blocks. **`engine`** declares the inference backend
 (e.g. `comfyui`, `diffusers`, `fake`, `hosted`) and its parameters. **`models`** lists the base
 checkpoint, optional LoRAs, and VAE — each with a `source` URI that kinoforge resolves
 automatically from HuggingFace, CivitAI, or plain HTTPS. **`compute`** names the cloud provider
-(e.g. `runpod`, `skypilot`, `local`) and describes what it needs to run on: a **portable**
-`placement` block plus a per-provider **`backend_options`** namespace for anything that doesn't
-generalize across clouds.
+(e.g. `runpod`, `modal`, `skypilot`, `local`) and describes what it needs to run on. Optional
+blocks add pipeline stages and plumbing: `keyframe:`, `upscale:`, `interpolate:`, `store:`,
+`output:`, `lifecycle:`, `loras:`, `spec:`, `params:`.
 
-`placement` states resource constraints every provider understands the same way — `accelerators`
-(an ordered GPU-name preference), `accelerator_count`, `min_vram_gb`, `min_cuda`, `disk_gb`,
-`region`, `spot`, `max_usd_per_hr`. Anything provider-specific — RunPod's `cloud_type` /
-`capacity_wait_s`, SkyPilot's `clouds` / `retry_until_up` — lives under
-`backend_options.<provider>.*` and is validated by that provider's own options model: an unknown
-key or an unknown provider name is a `ConfigError` at load, not a silently-ignored field. The
-`compute` block itself now forbids unknown keys too, so `placemnt:` is refused rather than
-silently applying every placement default.
+`compute` splits into a **portable** `placement` block plus a per-provider **`backend_options`**
+namespace for anything that doesn't generalize across clouds. `placement` states resource
+constraints every provider understands the same way — `accelerators` (an ordered GPU-name
+preference), `accelerator_count`, `min_vram_gb`, `min_cuda`, `disk_gb`, `region`, `spot`,
+`max_usd_per_hr`. Anything provider-specific — RunPod's `cloud_type` / `capacity_wait_s`,
+SkyPilot's `clouds` / `retry_until_up` — lives under `backend_options.<provider>.*`, validated by
+that provider's own options model. An unknown key is a `ConfigError` at load, in `backend_options`
+and in `compute` itself, so `placemnt:` is refused rather than silently applying every default.
 
-**`placement.region` is portable but cloud-scoped.** `None` (the default) leaves the choice to
-the provider's optimizer, which is what every config that omits the key keeps doing. A region
-*string*, though, belongs to ONE cloud's vocabulary — `us-west-2` is AWS, `us-west1` is GCP — so
-pin it alongside the cloud it belongs to:
+**`placement.region` is portable but cloud-scoped.** `None` (the default) leaves the choice to the
+provider's optimizer. A region *string*, though, belongs to ONE cloud's vocabulary — `us-west-2` is
+AWS, `us-west1` is GCP — so pin it alongside the cloud it belongs to:
 
 ```yaml
 compute:
@@ -369,91 +403,25 @@ compute:
 
 Without the `clouds` pin the optimizer may pick a cloud where that region does not exist, and sky
 will refuse or relocate the launch. The project's standing rule is to pin a region on every cloud,
-Oregon by default (AWS `us-west-2` / GCP `us-west1` / Azure `westus2`). Only SkyPilot honours it
-today; RunPod and Modal declare it `UNSUPPORTED` and `kinoforge doctor` reports setting it there
-as an ERROR, because nothing else in the config bounds where the run lands.
+Oregon by default (AWS `us-west-2` / GCP `us-west1` / Azure `westus2`).
 
-Two more `compute`-level keys are worth knowing:
+`kinoforge doctor` checks every `compute` and `placement` field against what the *selected*
+provider declares it consumes. A WARN is informational — the config still runs. Two are worth
+knowing: `disk_gb` is wired nowhere (RunPod and SkyPilot each hardcode their own disk size), and
+SkyPilot's `max_usd_per_hr` does not narrow the request, because the optimizer picks cloud, region
+and SKU itself — instead the orchestrator reads the realized rate off the launched cluster and
+destroys it with `RateCapExceeded` before provisioning, so a violation costs you the boot rather
+than the run. The rate the budget watchdog, `kinoforge list` and `est_spend` carry is that
+read-back one — and at `lifecycle.budget: 0` the budget arm is inactive, leaving that run bounded
+in time only, never in dollars. Two fields are hard `ConfigError`s on the billed providers, because
+nothing else
+bounds the risk they guard: `accelerator_count` (on `runpod` / `skypilot` / `modal`) and
+`placement.region` (on `runpod` / `modal`, neither of which forwards it anywhere).
 
-- **`compute.tags`** — operator labels merged onto every instance the config launches. They reach
-  `Instance.tags`, which is what the ledger, `kinoforge list` and the reaper read. A
-  per-invocation tag (CLI, grid cell) wins over the config's static one; neither can overwrite
-  `kinoforge_engine` / `kinoforge_key`, which warm-reuse matching keys off.
-- **`compute.mode`** (`pod` / `serverless`) now actually reaches RunPod, which is the only
-  provider with two branches to select between. It was written by 46 shipped configs and read by
-  nothing before 2026-08.
-
-Before (pre-2026-08 shape) and after:
-
-```yaml
-# before
-compute:
-  provider: skypilot
-  image: ...
-  cloud: [lambda]                 # skypilot-only, silently ignored on other providers
-  cloud_type: secure              # runpod-only, silently ignored on other providers
-  requirements:
-    min_vram_gb: 48
-    min_cuda: "12.8"
-    max_usd_per_hr: 1.09
-    gpu_preference: [A100-80GB, H100]
-    disk_gb: 200
-
-# after
-compute:
-  provider: skypilot
-  image: ...
-  placement:
-    accelerators: [A100-80GB, H100]   # was gpu_preference
-    accelerator_count: 1
-    min_vram_gb: 48
-    min_cuda: "12.8"
-    max_usd_per_hr: 1.09
-    disk_gb: 200
-  backend_options:
-    skypilot: {clouds: [lambda], retry_until_up: true}
-```
-
-`compute.requirements` and top-level `compute.cloud` / `compute.cloud_type` all raise
-`ConfigError` at load, naming the new path — there is no alias and no silent fallback. The old
-`lifecycle.capacity_wait` knob is gone too: capacity-retry is now RunPod-only, configured at
-`compute.backend_options.runpod.capacity_wait_s` (SkyPilot has its own equivalent,
-`backend_options.skypilot.retry_until_up`).
-
-`kinoforge doctor` checks every `placement` field against what the *selected* provider actually
-declares it consumes, and reports what it can't honour. Two things are worth knowing before
-reading a `doctor` WARN as "the migration broke something" — it didn't, and the config still runs:
-
-- **`disk_gb` is a WARN on every provider, not wired anywhere.** RunPod hardcodes
-  `containerDiskInGb`; SkyPilot hardcodes its own `disk_size` by instance tier. The WARN names the
-  provider's actual value so a mismatch is visible, but nothing about the run changes.
-- **SkyPilot's `max_usd_per_hr` is a WARN about the REQUEST, and a hard cap after launch.**
-  The optimizer does not read it — it picks cloud, region and SKU itself — so nothing narrows the
-  request by price. Since compute-seam S4 (2026-09-01) that is no longer where the story ends: the
-  orchestrator reads the realized rate off the launched cluster
-  (`SkyPilotProvider.realized_rate`) and, if it exceeds the cap, **destroys the cluster and raises
-  `RateCapExceeded`** before `engine.provision` runs. Two things follow. First, a cap violation now
-  costs you the boot, not the run — on SkyPilot the teardown happens after `Task.setup` has already
-  executed, because that is when `sky.launch` returns. Second, `Instance.cost_rate_usd_per_hr` and
-  everything reading it (`kinoforge list`, `est_spend`, the budget watchdog) now carry the rate that
-  was READ BACK rather than the one requested. The watchdog still kills at whichever comes first of
-  `budget_usd` ÷ rate or `max_lifetime`, and **at `lifecycle.budget: 0` the budget arm is inactive —
-  nothing bounds that run in dollars, only in time** (`_skypilot_rate_cap`,
-  `validation/checks/field_support.py`).
-- **`accelerator_count` is the one field that is a hard `ConfigError` on the three billed
-  providers** (`runpod`, `skypilot`, `modal`) when set to anything but its default. No provider
-  reads it, and — unlike `disk_gb` or `max_usd_per_hr` — nothing else bounds that risk, so there is
-  no substitute to warn about. On `local` it is a WARN like every other unsupported field:
-  `_PROVIDER_FALLBACK` (`validation/checks/field_support.py`) downgrades the whole provider,
-  because `local` is unbilled and launches nothing.
-- **`placement.region` is the second such hard `ConfigError`**, on `runpod` and `modal`. RunPod's
-  create mutation sends no `dataCenterId` and Modal is passed no `region=`, so the pin reaches
-  nothing — and no timeout or rate cap substitutes for landing in the wrong jurisdiction. No
-  shipped config sets it on either provider, so this refuses nobody today.
-
-`doctor` covers the `compute` block itself as well as `placement`, so `mode`, `tags`,
-`heartbeat_mode` and `warm_reuse_auto_attach` are checked against the same declarations. Each
-finding names its own path (`compute.mode`, not `compute.placement.mode`).
+The pre-2026-08 shape — `compute.requirements`, top-level `compute.cloud` / `compute.cloud_type`,
+`lifecycle.capacity_wait` — raises `ConfigError` at load naming the new path. There is no alias and
+no silent fallback. [docs/breaking-changes.md](docs/breaking-changes.md) carries the before/after
+YAML, the full per-field verdict catalogue, and the rest of the compute-seam S1–S4 migration.
 
 Canonical example configs in `examples/configs/`:
 
@@ -470,6 +438,9 @@ Canonical example configs in `examples/configs/`:
 | `runpod-diffusers-flashvsr-x4-upscale.yaml` | Standalone FlashVSR 4x video upscale (RunPod A100 80GB) |
 | `runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml` | Wan 2.2 t2v + FlashVSR 4x co-resident multi-stage |
 | `fal-luma-keyframe-i2v.yaml` | Luma UNI-1 keyframe → fal wan-i2v |
+| `modal-diffusers-wan-2_2-14b-t2v.yaml` | Modal serverless GPU + Diffusers + Wan 2.2 14B t2v |
+| `modal-diffusers-minimax-h3-t2va.yaml` | MiniMax-H3 joint video+audio (`t2va`) on Modal |
+| `modal-diffusers-rife-60fps-interpolate.yaml` | RIFE frame interpolation to 60 fps on Modal |
 
 Full reference (all keys, precedence, override flags): [docs/configuration.md](docs/configuration.md).
 
@@ -496,6 +467,10 @@ kinoforge loads `.env` automatically on startup. Shell-exported variables take p
 | `REPLICATE_API_TOKEN` | Replicate hosted | API token from [replicate.com](https://replicate.com) account |
 | `RUNWAYML_API_SECRET` | Runway hosted | API secret from [runwayml.com](https://runwayml.com) dashboard |
 | `LUMAAI_API_KEY` | Luma hosted | API key from [lumalabs.ai](https://lumalabs.ai) developer portal |
+| `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` | Modal provider | Token pair from the [modal.com](https://modal.com) dashboard, Settings → API Tokens |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_DEFAULT_REGION` | Bedrock engines, S3 store | IAM user with Bedrock invoke + S3 access |
+| `LAMBDA_API_KEY` | SkyPilot on Lambda Labs | API key from the Lambda Cloud dashboard |
+| `VAST_API_KEY` | SkyPilot on Vast.ai | API key from the Vast.ai account page |
 
 Precedence: shell environment > `.env` file. See [docs/credentials.md](docs/credentials.md) for
 deeper auth-strategy detail (per-provider auth flows, KMS-backed secrets, CI/CD patterns).
