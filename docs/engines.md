@@ -2,6 +2,24 @@
 
 (Moved from README §Real providers — fal.ai, §Hosted Bearer providers (Replicate / Runway), §Bedrock Video, §Keyframe stage, §Real providers — RunPod, §Diffusers inference-server response contract, §Hosted response URL — url_path, §Cross-engine prompt routing, §Engine asset wiring on 2026-06-27. See [../README.md](../README.md).)
 
+## Registries at a glance
+
+Five registries an operator selects from by config key, all resolved through
+`kinoforge.core.registry`:
+
+| Registry | Selected by | Resolver | Registered keys |
+|---|---|---|---|
+| Compute providers | `compute.provider` | `get_provider` | `runpod`, `modal`, `skypilot`, `local` |
+| Generation engines | `engine.type` | `get_engine` | `comfyui`, `diffusers`, `fal`, `hosted`, `replicate`, `runway`, `bedrock_video`, `fake` |
+| Image engines (keyframes) | `keyframe.engine` | `get_image_engine` | `fal`, `replicate`, `luma_agents`, `fake` |
+| Upscalers | `upscale.engine` | `get_upscaler` | `flashvsr`, `spandrel`, `seedvr2` (extras-gated) |
+| Interpolators | `interpolate.engine` | `get_interpolator` | `rife` |
+
+Artifact stores are a sixth registry, documented in
+[cloud-stores.md](cloud-stores.md). Adding a key to any of them is a config-only
+change for the operator; see [extending.md](extending.md) for the implementer
+side.
+
 ## Real providers — fal.ai
 
 kinoforge ships with a fal.ai sibling engine (`FalEngine`) for video generation
@@ -42,9 +60,10 @@ core-import-ban invariant) and implements 5 wire-shape hooks:
 > provider and now 308-redirects to the consumer dashboard. Reach Luma
 > video models via AWS Bedrock (`luma.ray-v2:0`, see the Bedrock Video
 > section below) or Replicate (`luma/ray-flash-2`, see the Replicate
-> row above). UNI-1 image-keyframe support via `LumaAgentsImageEngine`
-> is planned in Layer 5b — track the `LUMAAI_API_KEY` env var, which
-> is reserved for that engine.
+> row above). Luma lives on for *images*: `LumaAgentsImageEngine`
+> reaches UNI-1 through the agents API and is registered as the
+> `luma_agents` image engine for keyframes, live-verified end to end.
+> `LUMAAI_API_KEY` is what it authenticates with.
 
 Each engine's `provision()` validates the Bearer credential via Layer-1
 `Bearer` strategy. Compute is `requires_compute=False` — no GPU instance
@@ -56,7 +75,7 @@ required. `validate_spec` requires `spec.model`; `key_base` returns it.
 # 1. Wire credentials (any subset; missing ones skip silently)
 echo 'REPLICATE_API_TOKEN=r8_xxxxx' >> .env
 echo 'RUNWAYML_API_SECRET=key_xxxxx' >> .env
-# LUMAAI_API_KEY (reserved for Layer 5b UNI-1 keyframe engine; direct video API retired)
+# LUMAAI_API_KEY (UNI-1 keyframe engine via the agents API; direct video API retired)
 # echo 'LUMAAI_API_KEY=luma-xxxxx' >> .env
 
 # 2. Verify creds present (Layer-4 gate added to preflight)
@@ -263,10 +282,10 @@ Cost guards (triple-locked):
 2. `finally:` block always calls `destroy_instance`
 3. Selfterm script + `idle_timeout_s=600` provides a 10-minute fallback if the test process is killed mid-run
 
-Engine-integration smoke (ComfyUI + Wan i2v producing a real MP4) is
-deferred to a future Layer O — the YAML and manifest at
-`../examples/configs/runpod-comfyui-wan*.yaml` are committed as forward
-scaffolding for that work.
+Engine-integration smoke (ComfyUI + Wan i2v producing a real MP4) has
+since shipped: `../tests/live/test_comfyui_wan_live.py` deploys ComfyUI on
+RunPod and generates an i2v MP4 against
+`../examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml`.
 
 **Note on RUNPOD_TERMINATE_KEY:** the selfterm.py design predates RunPod's
 scoped-key feature; RunPod's current scoped-key UX is two-level (GraphQL
@@ -314,6 +333,52 @@ pixi run kinoforge destroy <pod_id>
 **Configuration files:**
 - `../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml` — Wan 2.1 i2v engine config (lifecycle, params, model entries)
 - `../examples/configs/runpod-comfyui-wan.graph.json` — kijai WanVideoWrapper API-format graph
+
+## Real providers — Modal
+
+`ModalProvider` serves the same diffusers server as a Modal `@web_server` on
+serverless GPUs. It needs the `live-modal` pixi environment
+(`pixi install -e live-modal`) plus `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`.
+Eleven example configs ship as `../examples/configs/modal-*.yaml`, covering
+t2v, FlashVSR upscale, RIFE interpolation and MiniMax-H3 joint audio.
+
+Shape constraints worth knowing before writing a Modal cfg:
+
+- The boot payload is gzipped and **chunked across several Secret values** —
+  Modal caps one Secret at 32768 bytes.
+- The container-init deadline is `@app.function(startup_timeout=…)`, fed from
+  `lifecycle.boot_timeout_s` (default 1800 s). A serialized function drops a
+  `@web_server`-level timeout, so putting it there lets a long boot die at
+  Modal's 300 s default instead.
+- `ON_INSTANCE_DEADLINE` is the `@app.function(timeout=…)` cap; `max_lifetime`
+  is never sent to Modal, which is why `doctor` WARNs when a cfg sets it.
+- `region=` is never passed, so `placement.region` is a hard `ConfigError` here.
+  The web-server port is fixed at 8000.
+
+**Read [modal-command-matrix.md](modal-command-matrix.md) before running
+anything on Modal.** It carries one verdict per `kinoforge` subcommand:
+generation and upscaling work; the deploy-first lifecycle does not.
+
+## Real providers — SkyPilot
+
+`SkyPilotProvider` launches through sky, whose optimizer picks cloud, region and
+SKU itself. The pod-side server is then reached over a **provider-internal ssh
+port-forward** (`ssh -N -T -L`, `_spawn_ssh_tunnel`) rather than a provider
+proxy — that is the seam that differs most from RunPod and Modal. Install the
+`live-skypilot` environment; it carries sky plus the `gcloud` / `aws` CLIs sky
+shells out to for catalog scanning and provisioning.
+
+Two placement notes. `placement.max_usd_per_hr` does not narrow the request —
+the optimizer never reads it — so the orchestrator reads the *realized* rate off
+the launched cluster and destroys it with `RateCapExceeded` if the cap is
+exceeded; a violation costs the boot, not the run. And pin `placement.region`
+alongside `backend_options.skypilot.clouds`, because a bare region may not exist
+on whichever cloud the optimizer picks.
+
+Lambda Labs is the working cloud today
+(`../examples/configs/skypilot-lambda-comfyui.yaml`,
+`../examples/configs/skypilot-lambda-diffusers-flashvsr-upscale.yaml`). Vast.ai
+is blocked on an upstream sky adapter bug — see [roadmap.md](roadmap.md).
 
 ## Diffusers inference-server response contract
 
@@ -374,9 +439,12 @@ non-native engines. ffmpeg must be on `PATH` on whichever host runs the
 engine.
 
 Each engine declares *how* to wire each role through a small config
-contract. Today only the `init_image` role is wired; other roles
-(`first_frame`, `last_frame`, `drive_audio`, `source_video`) are deferred
-— no engine declares support yet.
+contract. `init_image` (i2v) and the `first_frame` / `last_frame` bookends
+(flf2v) are both wired and live-verified — fal's `asset_paths` map is
+role-generic, so `../examples/configs/fal-keyframe-flf2v.yaml` reaches
+wan-flf2v by declaring `first_frame: start_image_url` and
+`last_frame: end_image_url`. `drive_audio` and `source_video` remain
+deferred: no shipped config declares either.
 
 **Diffusers** — `engine.diffusers.asset_paths` maps each supported role
 to a dot-separated path inside the POST `/generate` request body. At
@@ -446,10 +514,44 @@ keyed by `cfg.upscale.engine` and resolved via
 
 | Name | Class | Status | Provision surface |
 |------|-------|--------|-------------------|
-| `spandrel` | `kinoforge.upscalers.spandrel.SpandrelEngine` | v1 default | HTTP via the diffusers server's `/upscale` + `/upscale/status/{id}` |
+| `flashvsr` | `kinoforge.upscalers.flashvsr.FlashVSREngine` | v1 default | HTTP via the diffusers server's `/upscale` + `/upscale/status/{id}` |
+| `spandrel` | `kinoforge.upscalers.spandrel.SpandrelEngine` | shipped — per-frame fallback | same — HTTP via the diffusers server |
 | `seedvr2`  | `kinoforge.upscalers.seedvr2.SeedVR2Engine`   | `kinoforge[seedvr]` extras (Phase 2) | same — HTTP via the diffusers server |
 
-### `spandrel` (v1 default)
+### `flashvsr` (v1 default)
+
+Streaming diffusion video super-resolution (FlashVSR v1.1, Wan 2.1 1.3B
+backbone) — the temporally-coherent upscaler, and the default since it was
+proven live. The native factor is fixed at 4x by the `Causal_LQ4x_Proj` weight
+shape, so a non-4x *factor* is refused at cfg-load; a `scale:` **height target**
+(`1080p`, `720p`) is accepted and resolves to that 4x followed by a lanczos
+downscale. Needs the 80 GB tier plus a prebuilt Block-Sparse-Attention wheel,
+fetched at provision time.
+
+Long or wide sources do not fit the card whole, so `UpscaleStage` can split
+them, and the two splits compose: `chunk_frames` / `chunk_overlap` chunk
+temporally and join on the controller, while `tile_grid` / `tile_overlap` crop
+each frame into a grid and feather-stitch it back via
+`pipeline/tile.py:stitch_frames`.
+
+**Cfg surface.** Per-engine knobs live under `cfg.upscale.flashvsr` —
+`weights_bundle`, `precision`, `window_size`, `tile_size`, `long_video_mode`,
+`bsa_wheel_url`; see [configuration.md](configuration.md) for types and
+defaults. Examples:
+`../examples/configs/runpod-diffusers-flashvsr-x4-upscale.yaml` (upscale-only),
+`../examples/configs/runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml`
+(Wan → FlashVSR co-resident on one pod via the server's LRU registry), and
+`../examples/configs/modal-diffusers-flashvsr-1080p-upscale-long-tiled.yaml`
+(chunked + tiled on Modal).
+
+**A required weight must never be optional.** Upstream loads
+`LQ_proj_in.ckpt` behind a silent `if exists`, so a pod that never fetched it
+ran the LQ projection at random init and produced false-colour garbage — output
+that passed every dimension and duration check it was measured against. The
+loader now raises `FlashVSRWeightsIncomplete` when the ckpt is absent. Frame-QA
+every upscale output: dims and duration cannot see pixels.
+
+### `spandrel` (per-frame fallback)
 
 Per-frame super-resolution via the
 [spandrel](https://github.com/chaiNNer-org/spandrel) library — the SR
@@ -459,13 +561,14 @@ ESRGAN, SwinIR, OmniSR, ...) from a `.pth` or `.safetensors` weights
 file, so a single engine surface supports the entire ecosystem of
 published SR weights.
 
-**Quality tradeoff (v1).** Per-frame inference has no temporal model:
-adjacent frames are upscaled independently, which can introduce subtle
-flicker on high-frequency texture (foliage, hair). The tradeoff was
-made deliberately to ship a packaged default in P2 while video-coherent
-upscaling (SeedVR2) waits on Phase 2 vendoring of an unpackaged
-upstream. Operators who need temporal coherence should hold for the
-`[seedvr]` extras path.
+**Quality tradeoff.** Per-frame inference has no temporal model: adjacent
+frames are upscaled independently, which can introduce subtle flicker on
+high-frequency texture (foliage, hair). `spandrel` shipped first as a packaged
+default while video-coherent upscaling waited on an unpackaged upstream — that
+wait is over. **Operators who need temporal coherence should use `flashvsr`**,
+not hold for `[seedvr]`. `spandrel` stays the right pick when the 80 GB tier is
+unavailable (it fits 48 GB) or when a specific published SR architecture is
+wanted.
 
 **Cfg surface.** See `examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml`
 (upscale-only, for `kinoforge upscale`) and
@@ -497,3 +600,32 @@ A PREFLIGHT validation check (`seedvr2_extras_pending`) refuses
 so operators see the structured remediation hint BEFORE any pod is
 created. The example cfgs are kept under `examples/configs/extras/` as
 forward-compatible references.
+
+## Interpolators
+
+Interpolators are a third parallel registry, keyed by `cfg.interpolate.engine`
+and resolved via `kinoforge.core.registry.get_interpolator`. They reach the pod
+over the same diffusers-server seam as upscalers — `POST /interpolate` +
+`GET /interpolate/status/{id}`.
+
+| Name | Class | Status | Capability |
+|------|-------|--------|-----------|
+| `rife` | `kinoforge.interpolators.rife.RifeEngine` | v1 default | `ARBITRARY_TIMESTEP` |
+
+### `rife`
+
+RIFE v4 frame interpolation. The capability is arbitrary-timestep rather than a
+fixed 2x, so `interpolate.fps` names the target frame rate directly and any
+ratio is reachable — 16 → 60 fps is the proven case. It runs on modest hardware:
+the live proofs used an RTX A4000 on RunPod and a T4 on Modal.
+
+**Cfg surface.** `cfg.interpolate.rife` takes `weights_ref`, `model` and
+`precision` — see [configuration.md](configuration.md). Note that the `model`
+field defaults to `rife49` while the shipped configs pin `rife426` (RIFE v4.26),
+which is the tag the live runs were proven on. Examples:
+`../examples/configs/runpod-diffusers-rife-60fps-interpolate.yaml`,
+`../examples/configs/modal-diffusers-rife-60fps-interpolate.yaml`.
+
+Interpolation is video-only. A clip whose soundtrack came from a `t2va` model
+(MiniMax-H3) needs that audio re-muxed onto the interpolated result — the
+interpolator does not carry it through.
