@@ -19,8 +19,8 @@
     {
       "id": 3,
       "subject": "Task 3: Modal exports the pod paths",
-      "status": "pending",
-      "description": "**Goal:** `ModalProvider.create_instance` exports the same trio, with `HF_HOME` kept byte-identical to today's Volume root so the existing cache is not orphaned.\n\n**Files:**\n- Modify: `src/kinoforge/providers/modal/__init__.py:283-288`\n- Modify: `tests/providers/modal/test_hf_home_env.py` \u2014 **extend it; do NOT create a new test module**\n- Regenerate: Modal launch-payload goldens\n\n**Acceptance Criteria:**\n- [ ] The `ModalAppRequest.env` carries `KINOFORGE_ARTIFACT_DIR` and `KINOFORGE_LORAS_DIR` rooted on the Modal Volume mount\n- [ ] `HF_HOME` is still exactly `/cache/hf` \u2014 the Volume ROOT, unchanged from today\n- [ ] Config-supplied values still win over derived ones (`setdefault`, not assignment)\n- [ ] The four new tests live in `test_hf_home_env.py`; no new test module is created\n- [ ] The regenerated Modal goldens show `HF_HOME` unchanged and exactly two added env keys\n\n**Verify:** `pixi run python -m pytest tests/providers/modal/ -q` \u2192 all PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/__init__.py\", \"tests/providers/modal/test_hf_home_env.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/providers/modal/ -q\", \"acceptanceCriteria\": [\"The `ModalAppRequest.env` carries `KINOFORGE_ARTIFACT_DIR` and `KINOFORGE_LORAS_DIR` rooted on the Modal Volume mount\", \"`HF_HOME` is still exactly `/cache/hf` \\u2014 the Volume ROOT, unchanged from today\", \"Config-supplied values still win over derived ones (`setdefault`, not assignment)\", \"The four new tests live in `test_hf_home_env.py`; no new test module is created\", \"The regenerated Modal goldens show `HF_HOME` unchanged and exactly two added env keys\"], \"modelTier\": \"standard\"}\n```",
+      "status": "completed",
+      "description": "**Goal:** `ModalProvider.create_instance` exports the same trio, with `HF_HOME` kept byte-identical to today's Volume root so the existing cache is not orphaned.\n\nComplete \u2014 see ledger.",
       "blockedBy": [
         1
       ]
@@ -74,5 +74,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-21T10:06:17"
+  "lastUpdated": "2026-09-21T10:14:43"
 }
