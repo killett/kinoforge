@@ -29,6 +29,7 @@ from kinoforge.core.interfaces import (
     combine_steps,
     render_launch,
 )
+from kinoforge.core.pod_paths import pod_path_env
 from kinoforge.core.runtime_probe import RuntimeProbe
 from kinoforge.providers.modal._app import (
     ModalAppRequest,
@@ -283,9 +284,16 @@ class ModalProvider(ComputeProvider):
         volume_mount = spec.volume_mount or "/cache/hf"
         env = dict(spec.env)
         # Persist the HF cache onto the Modal Volume so a preempted/cold
-        # container re-uses downloaded weights instead of re-fetching. The
-        # server's own os.environ.setdefault("HF_HOME", ...) respects this.
-        env.setdefault("HF_HOME", volume_mount)
+        # container re-uses downloaded weights instead of re-fetching, and tell
+        # the server where its writable dirs are rather than letting it guess.
+        #
+        # HF_HOME is the Volume ROOT, not a subdir: Sub-project B's 144 GiB
+        # fetch lives there. Rooting it one level deeper would orphan that
+        # cache silently. RunPod uses a .hf_cache subdir on its own volume;
+        # the difference is deliberate, which is why pod_path_env takes
+        # hf_home rather than deriving it.
+        for key, value in pod_path_env(volume_mount, hf_home=volume_mount).items():
+            env.setdefault(key, value)
 
         # Modal fast-boot: the container boots with the RUNTIME steps only —
         # the bakeable ones are baked into the image below, so re-running them
