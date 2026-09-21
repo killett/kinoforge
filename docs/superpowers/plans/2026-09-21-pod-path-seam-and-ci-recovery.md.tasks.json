@@ -1,0 +1,78 @@
+{
+  "planPath": "docs/superpowers/plans/2026-09-21-pod-path-seam-and-ci-recovery.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 1: The pod-path helper",
+      "status": "pending",
+      "description": "**Goal:** A pure function naming the shared on-pod directory layout, with no provider knowledge and no filesystem access.\n\n**Files:**\n- Create: `src/kinoforge/core/pod_paths.py`\n- Test: `tests/core/test_pod_paths.py`\n\n**Acceptance Criteria:**\n- [ ] `pod_path_env(\"/workspace\")` returns artifact and loras dirs rooted on `/workspace`, and no `HF_HOME` key\n- [ ] `pod_path_env(\"/workspace\", hf_home=\"/workspace/.hf_cache\")` additionally returns that exact `HF_HOME`\n- [ ] `pod_path_env(\"\")` and `pod_path_env(None)` return pod-local scratch dirs and omit `HF_HOME` entirely\n- [ ] A trailing slash on the mount does not produce a doubled separator\n- [ ] The module imports nothing from `kinoforge.providers` and performs no I/O\n\n**Verify:** `pixi run python -m pytest tests/core/test_pod_paths.py -v` \u2192 all PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/pod_paths.py\", \"tests/core/test_pod_paths.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/core/test_pod_paths.py -v\", \"acceptanceCriteria\": [\"`pod_path_env(\\\"/workspace\\\")` returns artifact and loras dirs rooted on `/workspace`, and no `HF_HOME` key\", \"`pod_path_env(\\\"/workspace\\\", hf_home=\\\"/workspace/.hf_cache\\\")` additionally returns that exact `HF_HOME`\", \"`pod_path_env(\\\"\\\")` and `pod_path_env(None)` return pod-local scratch dirs and omit `HF_HOME` entirely\", \"A trailing slash on the mount does not produce a doubled separator\", \"The module imports nothing from `kinoforge.providers` and performs no I/O\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: RunPod exports the pod paths",
+      "status": "pending",
+      "description": "**Goal:** `RunPodProvider._assemble_create_env` exports the artifact, loras and `HF_HOME` vars derived from the mount it already resolves, so the server no longer has to default them.\n\n**Files:**\n- Modify: `src/kinoforge/providers/runpod/__init__.py:1248-1281` (`_assemble_create_env`), `:1403` (`volumeMountPath`)\n- Create: `tests/providers/test_runpod_pod_path_env.py`\n- Regenerate: RunPod launch-payload goldens under `tests/providers/golden/launch_payloads/`\n\n**Acceptance Criteria:**\n- [ ] `_assemble_create_env` includes `KINOFORGE_ARTIFACT_DIR`, `KINOFORGE_LORAS_DIR` and `HF_HOME` rooted on the resolved mount\n- [ ] `HF_HOME` is `<mount>/.hf_cache` \u2014 matching what `wan_t2v_server.py:50` set before this plan removes it\n- [ ] A spec that already carries any of the three keys in `spec.env` keeps its own value (`setdefault`, not overwrite)\n- [ ] The `/workspace` default appears exactly once in the module, as a named constant used by both `_assemble_create_env` and `volumeMountPath`\n- [ ] The existing \"main API key never reaches the pod\" invariant still holds\n- [ ] Every moved golden's diff is the three new env keys and nothing else\n\n**Verify:** `pixi run python -m pytest tests/providers/test_runpod_pod_path_env.py tests/providers/ -q` \u2192 all PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/runpod/__init__.py\", \"tests/providers/test_runpod_pod_path_env.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/providers/test_runpod_pod_path_env.py tests/providers/ -q\", \"acceptanceCriteria\": [\"`_assemble_create_env` includes `KINOFORGE_ARTIFACT_DIR`, `KINOFORGE_LORAS_DIR` and `HF_HOME` rooted on the resolved mount\", \"`HF_HOME` is `<mount>/.hf_cache` \\u2014 matching what `wan_t2v_server.py:50` set before this plan removes it\", \"A spec that already carries any of the three keys in `spec.env` keeps its own value (`setdefault`, not overwrite)\", \"The `/workspace` default appears exactly once in the module, as a named constant used by both `_assemble_create_env` and `volumeMountPath`\", \"The existing \\\"main API key never reaches the pod\\\" invariant still holds\", \"Every moved golden's diff is the three new env keys and nothing else\"], \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Modal exports the pod paths",
+      "status": "pending",
+      "description": "**Goal:** `ModalProvider.create_instance` exports the same trio, with `HF_HOME` kept byte-identical to today's Volume root so the existing cache is not orphaned.\n\n**Files:**\n- Modify: `src/kinoforge/providers/modal/__init__.py:283-288`\n- Create: `tests/providers/modal/test_modal_pod_path_env.py`\n- Regenerate: Modal launch-payload goldens\n\n**Acceptance Criteria:**\n- [ ] The `ModalAppRequest.env` carries `KINOFORGE_ARTIFACT_DIR` and `KINOFORGE_LORAS_DIR` rooted on the Modal Volume mount\n- [ ] `HF_HOME` is still exactly `/cache/hf` \u2014 the Volume ROOT, unchanged from today\n- [ ] Config-supplied values still win over derived ones\n- [ ] The regenerated Modal goldens show `HF_HOME` unchanged and exactly two added env keys\n\n**Verify:** `pixi run python -m pytest tests/providers/modal/ -q` \u2192 all PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/__init__.py\", \"tests/providers/modal/test_modal_pod_path_env.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/providers/modal/ -q\", \"acceptanceCriteria\": [\"The `ModalAppRequest.env` carries `KINOFORGE_ARTIFACT_DIR` and `KINOFORGE_LORAS_DIR` rooted on the Modal Volume mount\", \"`HF_HOME` is still exactly `/cache/hf` \\u2014 the Volume ROOT, unchanged from today\", \"Config-supplied values still win over derived ones\", \"The regenerated Modal goldens show `HF_HOME` unchanged and exactly two added env keys\"], \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        1
+      ]
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Servers stop guessing \u2014 this is what greens CI",
+      "status": "pending",
+      "description": "**Goal:** Neither server module carries a provider-specific absolute path as a runtime default, so importing them or calling `_startup()` touches no path that exists only on one provider's pod.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py:47-50`, `:73-76`\n- Modify: `src/kinoforge/engines/diffusers/servers/minimax_h3_server.py:49-56`, `:77-79`\n- Modify: `tests/smoke/local_cpu/conftest.py:52-57` (delete the now-redundant workaround)\n- Regenerate: ALL diffusers launch-payload goldens + `tests/engines/diffusers/_golden_provision.json`\n\n**Acceptance Criteria:**\n- [ ] `tests/engines/test_wan_t2v_server_torch_build_log.py` passes with NO edit to that file\n- [ ] Neither server module contains `/workspace` or `/cache/hf` in an `os.environ.get`/`setdefault` fallback position\n- [ ] `ARTIFACT_DIR` and `LORAS_DIR` remain module-level attributes (the 8 test files that monkeypatch them keep working)\n- [ ] The ad-hoc redirect in `tests/smoke/local_cpu/conftest.py` is deleted and Tier-1 smoke still passes\n- [ ] Every moved golden's decoded diff shows only the expected server-source lines\n\n**Verify:** `pixi run python -m pytest tests/engines/ tests/smoke/local_cpu/ -q` \u2192 all PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/minimax_h3_server.py\", \"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/diffusers/_golden_provision.json\", \"tests/smoke/local_cpu/conftest.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/engines/ tests/smoke/local_cpu/ -q\", \"acceptanceCriteria\": [\"`tests/engines/test_wan_t2v_server_torch_build_log.py` passes with NO edit to that file\", \"Neither server module contains `/workspace` or `/cache/hf` in an `os.environ.get`/`setdefault` fallback position\", \"`ARTIFACT_DIR` and `LORAS_DIR` remain module-level attributes (the 8 test files that monkeypatch them keep working)\", \"The ad-hoc redirect in `tests/smoke/local_cpu/conftest.py` is deleted and Tier-1 smoke still passes\", \"Every moved golden's decoded diff shows only the expected server-source lines\"], \"modelTier\": \"frontier\"}\n```",
+      "blockedBy": [
+        2,
+        3
+      ]
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: The recurrence guard",
+      "status": "pending",
+      "description": "**Goal:** The next provider-absolute path added as a runtime default fails a test offline, and no test can spill into the repo root again.\n\n**Files:**\n- Create: `tests/test_pod_path_audit.py`\n- Modify: `tests/conftest.py` (add an autouse fixture alongside the existing `_clear_redaction_registry_between_tests`)\n\n**Acceptance Criteria:**\n- [ ] The audit passes over the current `src/kinoforge/` tree\n- [ ] A falsification test plants a violation in a temp tree and proves the audit reports it\n- [ ] The audit does NOT flag `/workspace` in comments, docstrings, or in `providers/runpod/` where it is the correct owner\n- [ ] The autouse fixture redirects both dir vars AND patches the module attributes of any already-imported server module\n- [ ] After a full suite run, neither scratch dir has been created\n\n**Verify:** `pixi run python -m pytest tests/test_pod_path_audit.py -v` \u2192 all PASS\n\n```json:metadata\n{\"files\": [\"tests/conftest.py\", \"tests/test_pod_path_audit.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/test_pod_path_audit.py -v\", \"acceptanceCriteria\": [\"The audit passes over the current `src/kinoforge/` tree\", \"A falsification test plants a violation in a temp tree and proves the audit reports it\", \"The audit does NOT flag `/workspace` in comments, docstrings, or in `providers/runpod/` where it is the correct owner\", \"The autouse fixture redirects both dir vars AND patches the module attributes of any already-imported server module\", \"After a full suite run, neither scratch dir has been created\"], \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        4
+      ]
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Un-rot the weekly smoke",
+      "status": "pending",
+      "description": "**Goal:** The Tier-3 config can actually pass, and the job stops booking pods on a cron nobody reads.\n\n**Files:**\n- Modify: `examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml:49` and its `backend_options` block\n- Modify: `.github/workflows/smoke-wan21-weekly.yml:3-5`\n\n**Acceptance Criteria:**\n- [ ] `max_usd_per_hr` is `0.60`, matching the operator decision of 2026-09-12 (`2c446eef`) on the sibling grid cfg\n- [ ] `backend_options.runpod.cloud_type` is `secure`\n- [ ] The cfg still loads and passes `kinoforge doctor`\n- [ ] The workflow has no `schedule:` trigger and retains `workflow_dispatch:`\n- [ ] The cfg's launch-payload golden reflects the new cap and `cloudType: SECURE`\n\n**Verify:** `pixi run kinoforge doctor -c examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml` \u2192 exit 0\n\n```json:metadata\n{\"files\": [\".github/workflows/smoke-wan21-weekly.yml\", \"examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml\"], \"verifyCommand\": \"pixi run kinoforge doctor -c examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml\", \"acceptanceCriteria\": [\"`max_usd_per_hr` is `0.60`, matching the operator decision of 2026-09-12 (`2c446eef`) on the sibling grid cfg\", \"`backend_options.runpod.cloud_type` is `secure`\", \"The cfg still loads and passes `kinoforge doctor`\", \"The workflow has no `schedule:` trigger and retains `workflow_dispatch:`\", \"The cfg's launch-payload golden reflects the new cap and `cloudType: SECURE`\"], \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        4
+      ]
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Clear the spilled tree",
+      "status": "pending",
+      "description": "**Goal:** Remove the artifacts of the bug from the working tree.\n\n**Files:**\nNo repo files. Removes the untracked `/workspace/artifacts/` and `/workspace/loras/`.\n\n**Acceptance Criteria:**\n- [ ] Contents verified as stub output BEFORE deletion, not assumed\n- [ ] `/workspace/artifacts` and `/workspace/loras` are gone\n- [ ] `git status` is clean afterwards (both were gitignored; nothing tracked moves)\n- [ ] `output/` is untouched\n\n**Verify:** `ls -d /workspace/artifacts /workspace/loras 2>&1` \u2192 \"No such file or directory\" for both; `git status --porcelain` \u2192 empty\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"ls -d /workspace/artifacts /workspace/loras 2>&1\", \"acceptanceCriteria\": [\"Contents verified as stub output BEFORE deletion, not assumed\", \"`/workspace/artifacts` and `/workspace/loras` are gone\", \"`git status` is clean afterwards (both were gitignored; nothing tracked moves)\", \"`output/` is untouched\"], \"modelTier\": \"mechanical\"}\n```",
+      "blockedBy": [
+        5
+      ]
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: Confirm CI is actually green",
+      "status": "pending",
+      "description": "**Goal:** The claim \"CI is fixed\" rests on a green run on the runners, not on a local suite that cannot reproduce the failure.\n\n**Files:**\n`PROGRESS.md` (snapshot update).\n\n**Acceptance Criteria:**\n- [ ] The branch is pushed\n- [ ] The `CI` workflow completes `success` on BOTH `ubuntu-latest` and `macos-latest`\n- [ ] `test_wan_t2v_server_torch_build_log.py` passes on the runners with that file unmodified\n- [ ] `PROGRESS.md` records the outcome\n\n**Verify:** `gh run list --workflow=ci.yml --limit 1` \u2192 `completed success`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"gh run list --workflow=ci.yml --limit 1\", \"acceptanceCriteria\": [\"The branch is pushed\", \"The `CI` workflow completes `success` on BOTH `ubuntu-latest` and `macos-latest`\", \"`test_wan_t2v_server_torch_build_log.py` passes on the runners with that file unmodified\", \"`PROGRESS.md` records the outcome\"], \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        5,
+        6,
+        7
+      ]
+    }
+  ],
+  "lastUpdated": "2026-09-21T09:47:49"
+}
