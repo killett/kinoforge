@@ -9,6 +9,18 @@
         "value": "kinoforge-prod-deadbeef"
       },
       {
+        "key": "KINOFORGE_ARTIFACT_DIR",
+        "value": "/workspace/artifacts"
+      },
+      {
+        "key": "KINOFORGE_LORAS_DIR",
+        "value": "/workspace/loras"
+      },
+      {
+        "key": "HF_HOME",
+        "value": "/workspace/.hf_cache"
+      },
+      {
         "key": "RUNPOD_TERMINATE_KEY",
         "value": "kinoforge-prod-deadbeef"
       },

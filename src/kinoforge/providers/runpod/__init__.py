@@ -58,6 +58,7 @@ from kinoforge.core.interfaces import (
     render_launch,
 )
 from kinoforge.core.offers import filter_offers
+from kinoforge.core.pod_paths import pod_path_env
 from kinoforge.core.runtime_probe import RuntimeProbe
 from kinoforge.core.util_endpoints import UtilSnapshot
 from kinoforge.providers.runpod import selfterm
@@ -81,6 +82,12 @@ _PROXY_URL_PATTERN: str = "https://{pod_id}-{port}.proxy.runpod.net"
 
 #: RunPod serverless run URL pattern.
 _SERVERLESS_RUN_URL: str = "https://api.runpod.ai/v2/{endpoint_id}/run"
+
+# RunPod's volume mount. Named once: `_assemble_create_env` derives the pod's
+# writable dirs from it and the create mutation sends it as `volumeMountPath`.
+# Those two MUST agree — a pod told to write to a path it did not mount fails
+# at the first artifact write, minutes into a booked card.
+_DEFAULT_VOLUME_MOUNT = "/workspace"
 
 #: C28 A3: path to the A0 empirical-probe sidecar that records whether
 #: PodFindAndDeployOnDemandInput accepts ``restartPolicy``. Read at
@@ -1263,6 +1270,17 @@ class RunPodProvider(ComputeProvider):
         # Build env dict: user-supplied vars + self-terminator key + script.
         env: dict[str, str] = dict(spec.env)
 
+        # Tell the pod where its writable dirs are. The server used to hardcode
+        # these as import-time constants defaulting to /workspace — right here by
+        # luck, wrong on Modal, and unwritable on every CI runner. The provider
+        # owns its mount, so the provider answers. `setdefault` so a cfg that
+        # deliberately redirects a dir keeps winning.
+        mount = spec.volume_mount or _DEFAULT_VOLUME_MOUNT
+        for key, value in pod_path_env(
+            mount, hf_home=f"{mount.rstrip('/')}/.hf_cache"
+        ).items():
+            env.setdefault(key, value)
+
         # Inject terminate-only key (scoped; NOT the main API key)
         if self._creds is not None:
             terminate_key = self._creds.get("RUNPOD_TERMINATE_KEY")
@@ -1400,7 +1418,7 @@ class RunPodProvider(ComputeProvider):
                     )
                     if spec.ports
                     else "",
-                    "volumeMountPath": spec.volume_mount or "/workspace",
+                    "volumeMountPath": spec.volume_mount or _DEFAULT_VOLUME_MOUNT,
                     "env": [{"key": k, "value": v} for k, v in env.items()],
                 }
             },
