@@ -47,8 +47,8 @@
     {
       "id": 6,
       "subject": "Task 6: Un-rot the weekly smoke",
-      "status": "pending",
-      "description": "**Goal:** The Tier-3 config can actually pass, and the job stops booking pods on a cron nobody reads.\n\n**Files:**\n- Modify: `examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml:49` and its `backend_options` block\n- Modify: `.github/workflows/smoke-wan21-weekly.yml:3-5`\n\n**Acceptance Criteria:**\n- [ ] `max_usd_per_hr` is `0.60`, matching the operator decision of 2026-09-12 (`2c446eef`) on the sibling grid cfg\n- [ ] `backend_options.runpod.cloud_type` is `secure`\n- [ ] The cfg still loads and passes `kinoforge doctor`\n- [ ] The workflow has no `schedule:` trigger and retains `workflow_dispatch:`\n- [ ] The cfg's launch-payload golden reflects the new cap and `cloudType: SECURE`\n\n**Verify:** `pixi run kinoforge doctor -c examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml` \u2192 exit 0\n\n```json:metadata\n{\"files\": [\".github/workflows/smoke-wan21-weekly.yml\", \"examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml\"], \"verifyCommand\": \"pixi run kinoforge doctor -c examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml\", \"acceptanceCriteria\": [\"`max_usd_per_hr` is `0.60`, matching the operator decision of 2026-09-12 (`2c446eef`) on the sibling grid cfg\", \"`backend_options.runpod.cloud_type` is `secure`\", \"The cfg still loads and passes `kinoforge doctor`\", \"The workflow has no `schedule:` trigger and retains `workflow_dispatch:`\", \"The cfg's launch-payload golden reflects the new cap and `cloudType: SECURE`\"], \"modelTier\": \"standard\"}\n```",
+      "status": "completed",
+      "description": "**Goal:** The Tier-3 config can actually pass, and the job stops booking pods on a cron nobody reads.\n\nComplete \u2014 see ledger.",
       "blockedBy": [
         4
       ]
@@ -74,5 +74,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-21T11:48:46"
+  "lastUpdated": "2026-09-21T11:54:42"
 }
