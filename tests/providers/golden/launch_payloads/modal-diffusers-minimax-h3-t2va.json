@@ -4,7 +4,9 @@
     "add_python": null,
     "env": {
       "HF_HOME": "/cache/hf",
-      "HF_TOKEN": "kinoforge-prod-deadbeef"
+      "HF_TOKEN": "kinoforge-prod-deadbeef",
+      "KINOFORGE_ARTIFACT_DIR": "/cache/hf/artifacts",
+      "KINOFORGE_LORAS_DIR": "/cache/hf/loras"
     },
     "gpu": "H200",
     "image": "python:3.13-slim",
