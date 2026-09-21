@@ -56,8 +56,8 @@
     {
       "id": 7,
       "subject": "Task 7: Clear the spilled tree",
-      "status": "pending",
-      "description": "**Goal:** Remove the artifacts of the bug from the working tree.\n\n**Files:**\nNo repo files. Removes the untracked `/workspace/artifacts/` and `/workspace/loras/`.\n\n**Acceptance Criteria:**\n- [ ] Contents verified as stub output BEFORE deletion, not assumed\n- [ ] `/workspace/artifacts` and `/workspace/loras` are gone\n- [ ] `git status` is clean afterwards (both were gitignored; nothing tracked moves)\n- [ ] `output/` is untouched\n\n**Verify:** `ls -d /workspace/artifacts /workspace/loras 2>&1` \u2192 \"No such file or directory\" for both; `git status --porcelain` \u2192 empty\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"ls -d /workspace/artifacts /workspace/loras 2>&1\", \"acceptanceCriteria\": [\"Contents verified as stub output BEFORE deletion, not assumed\", \"`/workspace/artifacts` and `/workspace/loras` are gone\", \"`git status` is clean afterwards (both were gitignored; nothing tracked moves)\", \"`output/` is untouched\"], \"modelTier\": \"mechanical\"}\n```",
+      "status": "completed",
+      "description": "**Goal:** Remove the artifacts of the bug from the working tree.\n\nComplete \u2014 see ledger.",
       "blockedBy": [
         5
       ]
@@ -74,5 +74,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-21T11:54:42"
+  "lastUpdated": "2026-09-21T11:55:42"
 }
