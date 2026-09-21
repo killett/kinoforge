@@ -6,6 +6,7 @@ Provides ``http_server``: a Range-aware loopback HTTP server for downloader test
 from __future__ import annotations
 
 import re
+import sys
 import tempfile
 import threading
 from collections.abc import Callable, Generator, Iterator, Mapping
@@ -125,6 +126,43 @@ def _clear_redaction_registry_between_tests() -> Generator[None, None, None]:
     RedactionRegistry.instance().clear_session()
     yield
     RedactionRegistry.instance().clear_session()
+
+
+_POD_PATH_SERVER_MODULES: tuple[str, ...] = (
+    "kinoforge.engines.diffusers.servers.wan_t2v_server",
+    "kinoforge.engines.diffusers.servers.minimax_h3_server",
+)
+
+
+@pytest.fixture(autouse=True)
+def _pod_dirs_under_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point every server's pod directories at this test's tmp_path.
+
+    Two mechanisms, because the constants resolve at IMPORT:
+
+    * the env vars cover modules reloaded mid-test (the torch-build-log fixture
+      calls importlib.reload) and subprocess servers (Tier-1 smoke);
+    * the attribute patches cover modules already imported, where the constant
+      is long since bound and changing the env would do nothing.
+
+    Only already-imported modules are patched — this must not force-import a
+    server into every unrelated test. Tests that patch these themselves still
+    win, since their own monkeypatch runs after this fixture's.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory.
+        monkeypatch: pytest's patcher; undoes both mechanisms at teardown.
+    """
+    monkeypatch.setenv("KINOFORGE_ARTIFACT_DIR", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("KINOFORGE_LORAS_DIR", str(tmp_path / "loras"))
+    for name in _POD_PATH_SERVER_MODULES:
+        module = sys.modules.get(name)
+        if module is None:
+            continue
+        monkeypatch.setattr(
+            module, "ARTIFACT_DIR", tmp_path / "artifacts", raising=False
+        )
+        monkeypatch.setattr(module, "LORAS_DIR", tmp_path / "loras", raising=False)
 
 
 @dataclass
