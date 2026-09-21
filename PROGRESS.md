@@ -3104,7 +3104,61 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-09-18 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-21 — read this, then STOP; below is history)
+
+### SESSION 2026-09-21 — the pod-path seam; CI green on both runners for the first time since 2026-09-18
+
+**Branch `fix/pod-path-seam`, 16 commits, PUSHED but NOT merged — the merge is the operator's call.**
+CI run `35642302211`: **ubuntu-latest ✓ and macos-latest ✓**, with all five previously-failing
+`tests/engines/test_wan_t2v_server_torch_build_log.py` tests passing on both **and that test file
+never edited** — the fix is in the server, not in the test.
+
+**What was wrong.** `wan_t2v_server.py` resolved RunPod's volume mount into module constants at
+import (`HF_HOME=/workspace/.hf_cache`, `ARTIFACT_DIR=/workspace/artifacts`,
+`LORAS_DIR=/workspace/loras`) and `_startup()` mkdir'd them. Any test touching startup therefore
+wrote to a path that exists only on a RunPod pod: `PermissionError` on ubuntu, read-only FS on
+macOS. **This container cannot reproduce it** — `/workspace` is the repo root here and is writable,
+so the suite passed locally while spilling 281 stub mp4s into `/workspace/artifacts` between June
+and September. It had been diagnosed once before and fixed in a single conftest
+(`tests/smoke/local_cpu/conftest.py`), which is why the next test re-broke CI.
+
+**The real defect underneath:** `/workspace` is RunPod's contract; Modal mounts at `/cache/hf`.
+Nothing exported these dirs during provisioning, so **every Modal run wrote artifacts to a path
+named after another provider's volume**, landing on ephemeral container disk. `HF_HOME` was the one
+case already done right (Modal exported it), and that pattern is what the fix extends.
+
+**Shipped:** `core/pod_paths.py` names the shared layout once; RunPod and Modal each export the trio
+off the mount they already resolve (`hf_home` is passed EXPLICITLY, never derived — Modal's is the
+Volume ROOT where a 144 GiB fetch lives, RunPod's is a `.hf_cache` subdir; unifying them would
+orphan that cache); the servers fall back to `/tmp/kf-*`; `tests/test_pod_path_audit.py` is a
+standing source audit with four falsification tests; `tests/conftest.py` gained a suite-wide autouse
+fixture. The Tier-3 weekly smoke cfg got the cap raise (0.40→0.60) and `cloud_type: secure` it never
+received from its siblings, and the job is now `workflow_dispatch`-only.
+
+**Two defects filed, NOT fixed: U50** (daemon worker outlives pytest teardown — the mechanism behind
+the 281-file spill; Task 4 defanged the consequence only) and **U51** (`lifecycle.budget` is inert on
+RunPod and reads like a spend guard that is not one).
+
+**Known-incomplete, deliberately:** four `/workspace/models/...` paths survive in `wan_t2v_server.py`
+(spandrel/FlashVSR/SeedVR2/RIFE weights). They are the same defect, but they are PAIRED with
+provisioner-side literals in `upscalers/spandrel/_engine.py`, `upscalers/flashvsr/_engine.py` and
+`interpolators/rife/_engine.py` that write the same paths, so a server-only change breaks the
+pairing. A correct fix spans seven files and relocates Modal's live-green FlashVSR weights — beyond
+what this plan's design covered. **On Modal those weights still land on container disk, not the
+Volume.**
+
+**The weekly smoke cfg fix is a PAPER FIX.** Its golden cannot prove it: the frozen catalog in
+`tools/snapshot_launch_payloads.py` prices every accelerator that cfg names under BOTH the old and
+new caps, so the golden renders identically at 0.40, 0.60 or 5.00. It rests on the logged live
+failure (2026-09-14, `RateCapExceeded: realized $0.4900/hr exceeds cap $0.4000/hr`). Proving it
+needs an operator-authorised `gh workflow run smoke-wan21-weekly.yml`.
+
+**Next action:** operator decides whether to merge `fix/pod-path-seam` to main.
+
+Spec: `docs/superpowers/specs/2026-09-21-pod-path-seam-and-ci-recovery-design.md`
+Plan: `docs/superpowers/plans/2026-09-21-pod-path-seam-and-ci-recovery.md`
+
+## PREVIOUS SNAPSHOT (2026-09-18 — superseded 2026-09-21)
 
 ### SESSION 2026-09-18 (second) — H3 max-length → 1080p → 60 fps chain; two FlashVSR defects found and fixed
 
