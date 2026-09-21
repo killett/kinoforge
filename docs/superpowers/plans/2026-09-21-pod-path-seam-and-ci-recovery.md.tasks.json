@@ -10,8 +10,8 @@
     {
       "id": 2,
       "subject": "Task 2: RunPod exports the pod paths",
-      "status": "pending",
-      "description": "**Goal:** `RunPodProvider._assemble_create_env` exports the artifact, loras and `HF_HOME` vars derived from the mount it already resolves, so the server no longer has to default them.\n\n**Files:**\n- Modify: `src/kinoforge/providers/runpod/__init__.py:1248-1281` (`_assemble_create_env`), `:1403` (`volumeMountPath`)\n- Create: `tests/providers/test_runpod_pod_path_env.py`\n- Regenerate: RunPod launch-payload goldens under `tests/providers/golden/launch_payloads/`\n\n**Acceptance Criteria:**\n- [ ] `_assemble_create_env` includes `KINOFORGE_ARTIFACT_DIR`, `KINOFORGE_LORAS_DIR` and `HF_HOME` rooted on the resolved mount\n- [ ] `HF_HOME` is `<mount>/.hf_cache` \u2014 matching what `wan_t2v_server.py:50` set before this plan removes it\n- [ ] A spec that already carries any of the three keys in `spec.env` keeps its own value (`setdefault`, not overwrite)\n- [ ] The `/workspace` default appears exactly once in the module, as a named constant used by both `_assemble_create_env` and `volumeMountPath`\n- [ ] The existing \"main API key never reaches the pod\" invariant still holds\n- [ ] Every moved golden's diff is the three new env keys and nothing else\n\n**Verify:** `pixi run python -m pytest tests/providers/test_runpod_pod_path_env.py tests/providers/ -q` \u2192 all PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/runpod/__init__.py\", \"tests/providers/test_runpod_pod_path_env.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/providers/test_runpod_pod_path_env.py tests/providers/ -q\", \"acceptanceCriteria\": [\"`_assemble_create_env` includes `KINOFORGE_ARTIFACT_DIR`, `KINOFORGE_LORAS_DIR` and `HF_HOME` rooted on the resolved mount\", \"`HF_HOME` is `<mount>/.hf_cache` \\u2014 matching what `wan_t2v_server.py:50` set before this plan removes it\", \"A spec that already carries any of the three keys in `spec.env` keeps its own value (`setdefault`, not overwrite)\", \"The `/workspace` default appears exactly once in the module, as a named constant used by both `_assemble_create_env` and `volumeMountPath`\", \"The existing \\\"main API key never reaches the pod\\\" invariant still holds\", \"Every moved golden's diff is the three new env keys and nothing else\"], \"modelTier\": \"standard\"}\n```",
+      "status": "completed",
+      "description": "**Goal:** `RunPodProvider._assemble_create_env` exports the artifact, loras and `HF_HOME` vars derived from the mount it already resolves, so the server no longer has to default them.\n\nComplete \u2014 see ledger.",
       "blockedBy": [
         1
       ]
@@ -74,5 +74,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-21T10:00:00"
+  "lastUpdated": "2026-09-21T10:06:17"
 }

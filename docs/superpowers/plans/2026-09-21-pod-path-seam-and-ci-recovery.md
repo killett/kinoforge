@@ -903,7 +903,8 @@ and fixed it in one place, is deleted as redundant."
 
 **Acceptance Criteria:**
 - [ ] The audit passes over the current `src/kinoforge/` tree
-- [ ] A falsification test plants a violation in a temp tree and proves the audit reports it
+- [ ] Falsification tests plant violations in a temp tree and prove the audit reports them —
+      including one the formatter split across lines, which a per-line scan would miss
 - [ ] The audit does NOT flag `/workspace` in comments, docstrings, or in `providers/runpod/` where it is the correct owner
 - [ ] The autouse fixture redirects both dir vars AND patches the module attributes of any already-imported server module
 - [ ] After a full suite run, neither scratch dir has been created
@@ -928,9 +929,10 @@ The dev container cannot reproduce that failure: ``/workspace`` is the repo root
 here and is writable, so the offending test passed locally while spilling 281
 stub files into the tree. This audit is the compensating control for an
 environment difference we cannot reproduce. It is NOT equivalent to it — a path
-spelled differently, built by concatenation, or read through a helper rather
-than ``os.environ.get`` directly is invisible here. See the residual-risk note
-in the spec.
+spelled differently, built by string concatenation, or read through a helper
+rather than ``os.environ.get`` directly is invisible here. A call the formatter
+split across lines IS caught: the scan reads each file as one string precisely
+so that it is. See the residual-risk note in the spec.
 
 Pairs with the autouse fixture in tests/conftest.py, which stops the spill
 regardless of what any individual test does.
@@ -975,11 +977,16 @@ def _scan(root: Path) -> list[tuple[str, int, str]]:
     findings: list[tuple[str, int, str]] = []
     for path in sorted(root.rglob("*.py")):
         rel = path.relative_to(root).as_posix()
-        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
-            match = _FALLBACK.search(line)
-            if match is None:
-                continue
+        source = path.read_text()
+        # Searched as ONE string, not line by line. ruff-format splits an
+        # over-long os.environ.get(...) across lines unprompted, and `\s` in
+        # the pattern spans newlines, so a whole-file search still matches the
+        # split form while a per-line scan silently misses it. That is the
+        # likeliest way a real violation would escape, because nobody has to be
+        # adversarial for it to happen — the formatter does it on its own.
+        for match in _FALLBACK.finditer(source):
             found = match.group("path")
+            lineno = source.count("\n", 0, match.start()) + 1
             for volume_root in _PROVIDER_VOLUME_ROOTS:
                 if not found.startswith(volume_root):
                     continue
@@ -1047,6 +1054,38 @@ def test_audit_fires_on_modals_mount_too(tmp_path: Path) -> None:
     assert [f[2] for f in findings] == ["/cache/hf"]
 
 
+def test_audit_sees_a_violation_the_formatter_split_across_lines(
+    tmp_path: Path,
+) -> None:
+    """A long call that ruff-format wrapped is still caught.
+
+    Catches scanning line by line. ruff-format splits an over-long
+    ``os.environ.get(...)`` across lines on its own, which would leave a real
+    violation invisible to a per-line scan. This is the likeliest way one would
+    actually escape, because nobody has to be adversarial for it to happen.
+    """
+    pkg = tmp_path / "kinoforge" / "engines"
+    pkg.mkdir(parents=True)
+    (pkg / "wrapped.py").write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "\n"
+        "ARTIFACT_DIR = Path(\n"
+        "    os.environ.get(\n"
+        '        "KINOFORGE_ARTIFACT_DIR_WITH_A_LONG_NAME", "/workspace/artifacts"\n'
+        "    )\n"
+        ")\n"
+    )
+
+    findings = _scan(tmp_path / "kinoforge")
+
+    assert len(findings) == 1, findings
+    rel, lineno, found = findings[0]
+    assert rel == "engines/wrapped.py"
+    assert lineno == 5, "the line number must point at the os.environ.get call"
+    assert found == "/workspace/artifacts"
+
+
 def test_audit_ignores_the_owning_provider_and_plain_prose(tmp_path: Path) -> None:
     """The owner may name its own mount; comments are never violations.
 
@@ -1073,7 +1112,7 @@ def test_audit_ignores_the_owning_provider_and_plain_prose(tmp_path: Path) -> No
 - [ ] **Step 2: Run the tests, then prove the guard is not vacuous**
 
 Run: `pixi run python -m pytest tests/test_pod_path_audit.py -v`
-Expected: 4 passed (Task 4 already removed the real violations).
+Expected: 5 passed (Task 4 already removed the real violations).
 
 Then confirm the standing guard actually bites. Temporarily revert one server
 constant to `/workspace/artifacts`:
