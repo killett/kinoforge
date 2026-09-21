@@ -14,6 +14,26 @@ rather than ``os.environ.get`` directly is invisible here. A call the formatter
 split across lines IS caught: the scan reads each file as one string precisely
 so that it is. See the residual-risk note in the spec.
 
+A fallback that is a bare identifier rather than a quoted literal — e.g.
+``os.environ.get("X", _SOME_DEFAULT)`` — IS also caught: the scanner resolves
+``_SOME_DEFAULT`` against a module-level ``NAME = "/..."`` assignment in the
+same file and tests the resolved value. This closes the exact gap that let
+``wan_t2v_server.py``'s ``_SPANDREL_WEIGHTS_DIR_DEFAULT`` and
+``_FLASHVSR_WEIGHTS_DIR_DEFAULT`` escape earlier scans.
+
+Two known violations are allowlisted **by name** (``_ALLOWLISTED_CONSTANTS``
+below), not fixed here: ``_SPANDREL_WEIGHTS_DIR_DEFAULT`` and
+``_FLASHVSR_WEIGHTS_DIR_DEFAULT`` in ``wan_t2v_server.py``. Both are tracked as
+defect **U52** (PROGRESS.md STATUS INDEX) — the real fix spans seven files,
+because provisioner-side writers in three engine modules stage weights at the
+same paths the server reads, and moving only the read side desyncs the pair.
+A green run of this audit is therefore **scoped, not total**: it means no
+*new* provider-volume default was introduced, not that the file it guards is
+free of them. The allowlist is deliberately narrow — keyed by exact constant
+name, not by file — so a *different* named constant holding a provider path in
+an allowlisted file is still caught; see
+``test_allowlist_does_not_swallow_a_different_violation_in_the_same_file``.
+
 Pairs with the autouse fixture in tests/conftest.py, which stops the spill
 regardless of what any individual test does.
 """
@@ -43,6 +63,47 @@ _FALLBACK = re.compile(
     r"os\.environ\.(?:get|setdefault)\(\s*[^,()]+,\s*[\"'](?P<path>/[^\"']*)[\"']"
 )
 
+# Same call shape, but the fallback slot holds a bare identifier — e.g.
+# ``os.environ.get("X", _SOME_DEFAULT)`` — instead of a quoted literal. The
+# quote requirement in _FALLBACK means this never double-matches a call
+# _FALLBACK already caught.
+_FALLBACK_CONST = re.compile(
+    r"os\.environ\.(?:get|setdefault)\(\s*[^,()]+,\s*(?P<const>[A-Za-z_][A-Za-z0-9_]*)\s*[,)]"
+)
+
+# Known violations that are real but deliberately out of scope for this
+# branch — see U52 in PROGRESS.md's STATUS INDEX for the fix direction and
+# why a server-only change would desync from the provisioner-side writers
+# that stage weights at the same paths. Keyed by (file, constant name) so an
+# allowlisted FILE does not blanket-suppress a DIFFERENT constant in it.
+_ALLOWLISTED_CONSTANTS: dict[str, frozenset[str]] = {
+    "engines/diffusers/servers/wan_t2v_server.py": frozenset(
+        {"_SPANDREL_WEIGHTS_DIR_DEFAULT", "_FLASHVSR_WEIGHTS_DIR_DEFAULT"}
+    ),
+}
+
+
+def _resolve_constant(source: str, name: str) -> str | None:
+    """Resolve a bare identifier to a module-level string-literal assignment.
+
+    Args:
+        source: Whole file contents, searched as one string (see module
+            docstring on why line-by-line scanning would miss the formatter's
+            line-wrapped form).
+        name: The identifier to resolve, e.g. ``_SPANDREL_WEIGHTS_DIR_DEFAULT``.
+
+    Returns:
+        The assigned string literal's value, or ``None`` if *name* is not
+        assigned a string literal at module level (e.g. it is a parameter,
+        an imported name, or assigned something other than a bare string).
+    """
+    match = re.search(
+        rf"^{re.escape(name)}(?:\s*:\s*\w+)?\s*=\s*[\"'](?P<path>/[^\"']*)[\"']",
+        source,
+        re.MULTILINE,
+    )
+    return match.group("path") if match else None
+
 
 def _scan(root: Path) -> list[tuple[str, int, str]]:
     """Report provider volume paths used as env fallbacks under *root*.
@@ -52,7 +113,8 @@ def _scan(root: Path) -> list[tuple[str, int, str]]:
 
     Returns:
         ``(relative_path, line_number, offending_path)`` per violation,
-        excluding files inside the owning provider's own package.
+        excluding files inside the owning provider's own package and the two
+        constants named in ``_ALLOWLISTED_CONSTANTS`` (U52).
     """
     findings: list[tuple[str, int, str]] = []
     for path in sorted(root.rglob("*.py")):
@@ -73,6 +135,24 @@ def _scan(root: Path) -> list[tuple[str, int, str]]:
                 if _OWNERS[volume_root] in rel:
                     continue  # the provider that owns this mount may name it
                 findings.append((rel, lineno, found))
+        # A quoted literal isn't the only way to spell the fallback slot — a
+        # bare identifier naming a module-level constant is invisible to
+        # _FALLBACK above. Resolve it and test the SAME way.
+        for const_match in _FALLBACK_CONST.finditer(source):
+            const_name = const_match.group("const")
+            resolved = _resolve_constant(source, const_name)
+            if resolved is None:
+                continue  # not a string-literal module constant; not our business
+            allowlisted = _ALLOWLISTED_CONSTANTS.get(rel, frozenset())
+            if const_name in allowlisted:
+                continue  # U52 — tracked, deliberately out of scope here
+            lineno = source.count("\n", 0, const_match.start()) + 1
+            for volume_root in _PROVIDER_VOLUME_ROOTS:
+                if not resolved.startswith(volume_root):
+                    continue
+                if _OWNERS[volume_root] in rel:
+                    continue
+                findings.append((rel, lineno, resolved))
     return findings
 
 
@@ -187,3 +267,100 @@ def test_audit_ignores_the_owning_provider_and_plain_prose(tmp_path: Path) -> No
     )
 
     assert _scan(root) == []
+
+
+def test_audit_fires_on_a_named_constant_fallback(tmp_path: Path) -> None:
+    """A bare-identifier fallback resolving to a provider path IS caught.
+
+    Catches the exact 2026-09-21 escape: ``wan_t2v_server.py`` fell back to
+    ``os.environ.get("VAR", _SOME_DEFAULT)`` where ``_SOME_DEFAULT`` was a
+    module-level constant holding ``"/workspace/..."``. The old ``_FALLBACK``
+    regex required a quoted literal in the fallback slot, so a bare identifier
+    escaped it entirely even though the resolved value was exactly the
+    defect the audit exists to catch.
+    """
+    pkg = tmp_path / "kinoforge" / "engines"
+    pkg.mkdir(parents=True)
+    (pkg / "rogue_const.py").write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "\n"
+        '_WEIGHTS_DIR_DEFAULT = "/workspace/models/rogue"\n'
+        "\n"
+        "\n"
+        "def weights_dir() -> Path:\n"
+        "    return Path(\n"
+        '        os.environ.get("KINOFORGE_ROGUE_WEIGHTS_DIR", _WEIGHTS_DIR_DEFAULT)\n'
+        "    )\n"
+    )
+
+    findings = _scan(tmp_path / "kinoforge")
+
+    assert len(findings) == 1, findings
+    rel, lineno, found = findings[0]
+    assert rel == "engines/rogue_const.py"
+    assert lineno == 9, "line number must point at the os.environ.get call"
+    assert found == "/workspace/models/rogue"
+
+
+def test_allowlist_does_not_swallow_a_different_violation_in_the_same_file(
+    tmp_path: Path,
+) -> None:
+    """Allowlisting is keyed by constant NAME, not by file.
+
+    Catches an over-broad allowlist — one that suppressed every violation in
+    an allowlisted file rather than only the two named constants. That would
+    be worse than the gap it closes: a fresh violation in the same file could
+    ship silently forever. Plants a fake ``wan_t2v_server.py`` at the SAME
+    relative path the real allowlist entry names, carrying one allowlisted
+    constant (must stay clean) and one NOT allowlisted (must still fire).
+    """
+    pkg = tmp_path / "kinoforge" / "engines" / "diffusers" / "servers"
+    pkg.mkdir(parents=True)
+    (pkg / "wan_t2v_server.py").write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "\n"
+        '_SPANDREL_WEIGHTS_DIR_DEFAULT = "/workspace/models/spandrel"\n'
+        '_NOT_ALLOWLISTED_DEFAULT = "/workspace/models/not-allowlisted"\n'
+        "\n"
+        "\n"
+        "def spandrel_dir() -> Path:\n"
+        "    return Path(\n"
+        '        os.environ.get("A", _SPANDREL_WEIGHTS_DIR_DEFAULT)\n'
+        "    )\n"
+        "\n"
+        "\n"
+        "def other_dir() -> Path:\n"
+        "    return Path(\n"
+        '        os.environ.get("B", _NOT_ALLOWLISTED_DEFAULT)\n'
+        "    )\n"
+    )
+
+    findings = _scan(tmp_path / "kinoforge")
+
+    assert len(findings) == 1, findings
+    rel, _lineno, found = findings[0]
+    assert rel == "engines/diffusers/servers/wan_t2v_server.py"
+    assert found == "/workspace/models/not-allowlisted"
+
+
+def test_allowlisted_constants_are_real_wan_t2v_server_violations() -> None:
+    """The allowlist names two constants that actually exist and resolve.
+
+    Catches a stale or typo'd allowlist entry — one naming a constant that no
+    longer exists (renamed, deleted) in the file it claims to cover, which
+    would silently allowlist nothing while looking like it allowlists
+    something.
+    """
+    server_path = _SRC_ROOT / "engines" / "diffusers" / "servers" / "wan_t2v_server.py"
+    source = server_path.read_text()
+    rel = "engines/diffusers/servers/wan_t2v_server.py"
+
+    for const_name in _ALLOWLISTED_CONSTANTS[rel]:
+        resolved = _resolve_constant(source, const_name)
+        assert resolved is not None, f"{const_name} no longer resolves"
+        assert resolved.startswith("/workspace"), (
+            f"{const_name} resolved to {resolved!r}, not a /workspace path — "
+            "allowlist entry may be stale"
+        )
