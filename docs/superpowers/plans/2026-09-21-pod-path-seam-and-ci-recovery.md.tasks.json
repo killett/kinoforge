@@ -38,8 +38,8 @@
     {
       "id": 5,
       "subject": "Task 5: The recurrence guard",
-      "status": "pending",
-      "description": "**Goal:** The next provider-absolute path added as a runtime default fails a test offline, and no test can spill into the repo root again.\n\n**Files:**\n- Create: `tests/test_pod_path_audit.py`\n- Modify: `tests/conftest.py` (add an autouse fixture alongside the existing `_clear_redaction_registry_between_tests`)\n\n**Acceptance Criteria:**\n- [ ] The audit passes over the current `src/kinoforge/` tree\n- [ ] A falsification test plants a violation in a temp tree and proves the audit reports it\n- [ ] The audit does NOT flag `/workspace` in comments, docstrings, or in `providers/runpod/` where it is the correct owner\n- [ ] The autouse fixture redirects both dir vars AND patches the module attributes of any already-imported server module\n- [ ] After a full suite run, neither scratch dir has been created\n\n**Verify:** `pixi run python -m pytest tests/test_pod_path_audit.py -v` \u2192 all PASS\n\n```json:metadata\n{\"files\": [\"tests/conftest.py\", \"tests/test_pod_path_audit.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/test_pod_path_audit.py -v\", \"acceptanceCriteria\": [\"The audit passes over the current `src/kinoforge/` tree\", \"A falsification test plants a violation in a temp tree and proves the audit reports it\", \"The audit does NOT flag `/workspace` in comments, docstrings, or in `providers/runpod/` where it is the correct owner\", \"The autouse fixture redirects both dir vars AND patches the module attributes of any already-imported server module\", \"After a full suite run, neither scratch dir has been created\"], \"modelTier\": \"standard\"}\n```",
+      "status": "completed",
+      "description": "**Goal:** The next provider-absolute path added as a runtime default fails a test offline, and no test can spill into the repo root again.\n\nComplete \u2014 see ledger.",
       "blockedBy": [
         4
       ]
@@ -74,5 +74,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-21T10:44:23"
+  "lastUpdated": "2026-09-21T11:48:46"
 }
