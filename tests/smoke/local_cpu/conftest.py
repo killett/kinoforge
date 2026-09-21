@@ -43,7 +43,7 @@ def _await_health(base_url: str, *, timeout_s: float = 30.0) -> None:
 
 
 @pytest.fixture
-def uvicorn_server(tmp_path: Path) -> Iterator[str]:
+def uvicorn_server() -> Iterator[str]:
     """Spawn wan_t2v_server on localhost with the stub pipe; yield base URL."""
     port = _pick_free_port()
     env = dict(os.environ)

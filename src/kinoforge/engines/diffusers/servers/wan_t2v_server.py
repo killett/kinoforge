@@ -43,12 +43,13 @@ from typing import Any, Literal, TypedDict
 # transport is reliable and the 70 GB cost of "less efficient" is a
 # rounding error compared to the smoke budget. Set BEFORE any
 # huggingface_hub import so the global xet kill-switch is honored.
-os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+#
 # HF_HOME is the PROVIDER's to set, not this module's: RunPod exports
 # <volume>/.hf_cache and Modal exports the Volume root, both via
 # core.pod_paths.pod_path_env. This module used to hardcode RunPod's answer,
 # which was right on RunPod, wrong on Modal, and unwritable on any CI runner.
 # On a host with no volume, huggingface_hub's own ~/.cache/huggingface applies.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from pydantic import (  # noqa: E402
@@ -71,12 +72,13 @@ logging.basicConfig(
 )
 
 MODEL_ID: str = os.environ.get("WAN_MODEL_ID", "Wan-AI/Wan2.2-T2V-A14B-Diffusers")
-# The provider exports both (core.pod_paths.pod_path_env). The fallbacks are
-# pod-local scratch, matching _UPLOAD_DIR below — never another provider's
-# volume path, which is what made importing this module fail on CI runners.
-# These stay module attributes on purpose: eight test modules monkeypatch them,
-# and on a real pod the env is set before this process starts, so resolving at
-# import is correct.
+# RunPod and Modal export both vars (core.pod_paths.pod_path_env); SkyPilot and
+# Local attach no volume and never call it, so on those runs the fallbacks
+# below are what actually apply. The fallbacks are pod-local scratch, matching
+# _UPLOAD_DIR below — never another provider's volume path, which is what made
+# importing this module fail on CI runners. These stay module attributes on
+# purpose: eight test modules monkeypatch them, and on a real pod the env is
+# set before this process starts, so resolving at import is correct.
 ARTIFACT_DIR: Path = Path(
     os.environ.get("KINOFORGE_ARTIFACT_DIR", "/tmp/kf-artifacts")  # noqa: S108
 )
