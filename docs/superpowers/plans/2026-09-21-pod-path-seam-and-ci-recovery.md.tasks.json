@@ -28,8 +28,8 @@
     {
       "id": 4,
       "subject": "Task 4: Servers stop guessing \u2014 this is what greens CI",
-      "status": "pending",
-      "description": "**Goal:** Neither server module carries a provider-specific absolute path as a runtime default, so importing them or calling `_startup()` touches no path that exists only on one provider's pod.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py:47-50`, `:73-76`\n- Modify: `src/kinoforge/engines/diffusers/servers/minimax_h3_server.py:49-56`, `:77-79`\n- Modify: `tests/smoke/local_cpu/conftest.py:52-57` (delete the now-redundant workaround)\n- Regenerate: ALL diffusers launch-payload goldens + `tests/engines/diffusers/_golden_provision.json`\n\n**Acceptance Criteria:**\n- [ ] `tests/engines/test_wan_t2v_server_torch_build_log.py` passes with NO edit to that file\n- [ ] Neither server module contains `/workspace` or `/cache/hf` in an `os.environ.get`/`setdefault` fallback position\n- [ ] `ARTIFACT_DIR` and `LORAS_DIR` remain module-level attributes (the 8 test files that monkeypatch them keep working)\n- [ ] The ad-hoc redirect in `tests/smoke/local_cpu/conftest.py` is deleted and Tier-1 smoke still passes\n- [ ] Every moved golden's decoded diff shows only the expected server-source lines\n\n**Verify:** `pixi run python -m pytest tests/engines/ tests/smoke/local_cpu/ -q` \u2192 all PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/minimax_h3_server.py\", \"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/diffusers/_golden_provision.json\", \"tests/smoke/local_cpu/conftest.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/engines/ tests/smoke/local_cpu/ -q\", \"acceptanceCriteria\": [\"`tests/engines/test_wan_t2v_server_torch_build_log.py` passes with NO edit to that file\", \"Neither server module contains `/workspace` or `/cache/hf` in an `os.environ.get`/`setdefault` fallback position\", \"`ARTIFACT_DIR` and `LORAS_DIR` remain module-level attributes (the 8 test files that monkeypatch them keep working)\", \"The ad-hoc redirect in `tests/smoke/local_cpu/conftest.py` is deleted and Tier-1 smoke still passes\", \"Every moved golden's decoded diff shows only the expected server-source lines\"], \"modelTier\": \"frontier\"}\n```",
+      "status": "completed",
+      "description": "**Goal:** Neither server module carries a provider-specific absolute path as a runtime default, so importing them or calling `_startup()` touches no path that exists only on one provider's pod.\n\nComplete \u2014 see ledger.",
       "blockedBy": [
         2,
         3
@@ -74,5 +74,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-21T10:14:43"
+  "lastUpdated": "2026-09-21T10:44:23"
 }
