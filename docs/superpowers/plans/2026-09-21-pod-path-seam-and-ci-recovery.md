@@ -50,7 +50,7 @@
 | `src/kinoforge/providers/runpod/__init__.py` | **Modify.** `_assemble_create_env` exports the trio; hoist the duplicated `/workspace` default to a module constant. | 2 |
 | `tests/providers/test_runpod_pod_path_env.py` | **Create.** Proves RunPod exports the trio, including `HF_HOME`. | 2 |
 | `src/kinoforge/providers/modal/__init__.py` | **Modify.** Replace the lone `HF_HOME` setdefault with the full trio. | 3 |
-| `tests/providers/modal/test_modal_pod_path_env.py` | **Create.** Proves Modal exports the trio AND that `HF_HOME` still equals the Volume root. | 3 |
+| `tests/providers/modal/test_hf_home_env.py` | **Modify.** Extend with pod-dir assertions and an `HF_HOME`-stays-at-the-root regression guard. | 3 |
 | `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py` | **Modify.** Drop `/workspace` fallbacks for pod-local scratch; delete the `HF_HOME` setdefault. | 4 |
 | `src/kinoforge/engines/diffusers/servers/minimax_h3_server.py` | **Modify.** Same treatment. | 4 |
 | `tests/smoke/local_cpu/conftest.py` | **Modify.** Delete the now-redundant ad-hoc workaround. | 4 |
@@ -75,6 +75,7 @@
 - [ ] `pod_path_env("")` and `pod_path_env(None)` return pod-local scratch dirs and omit `HF_HOME` entirely
 - [ ] A trailing slash on the mount does not produce a doubled separator
 - [ ] The module imports nothing from `kinoforge.providers` and performs no I/O
+- [ ] Neither provider mount literal appears inside `pod_path_env`'s own source (the module docstring may name them — it explains the seam)
 
 **Verify:** `pixi run python -m pytest tests/core/test_pod_paths.py -v` → all PASS
 
@@ -164,17 +165,26 @@ def test_trailing_slash_does_not_double_the_separator() -> None:
 
 
 def test_helper_is_pure_and_provider_agnostic() -> None:
-    """The module imports no provider and touches no filesystem.
+    """No provider import, and no provider mount inside the logic.
 
     Catches the helper growing a dependency on the providers it serves, which
-    would make it uncallable from inside one without a circular import, and
-    catches either provider's mount being re-hardcoded in the shared layer.
-    """
-    source = inspect.getsource(pod_paths)
+    would make it uncallable from inside one without a circular import.
 
-    assert "kinoforge.providers" not in source
-    assert "/workspace" not in source, "RunPod's mount must not appear here"
-    assert "/cache/hf" not in source, "Modal's mount must not appear here"
+    The mount check is scoped to the FUNCTION, not the module, and that is
+    deliberate: the module docstring names both ``/workspace`` and
+    ``/cache/hf`` to explain why this helper exists, and a module-wide
+    substring check cannot tell an explanation from a runtime default. The
+    function's own source is where a hardcoded mount would actually do harm.
+    Task 5's audit does not cover this file — it scans ``os.environ``
+    fallbacks, and there are none here — so this assertion is the only guard
+    on it.
+    """
+    module_source = inspect.getsource(pod_paths)
+    function_source = inspect.getsource(pod_path_env)
+
+    assert "kinoforge.providers" not in module_source
+    assert "/workspace" not in function_source, "RunPod's mount must not appear here"
+    assert "/cache/hf" not in function_source, "Modal's mount must not appear here"
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -492,13 +502,14 @@ git commit -m "feat(runpod): tell the pod where its writable directories are"
 
 **Files:**
 - Modify: `src/kinoforge/providers/modal/__init__.py:283-288`
-- Create: `tests/providers/modal/test_modal_pod_path_env.py`
+- Modify: `tests/providers/modal/test_hf_home_env.py` — **extend it; do NOT create a new test module**
 - Regenerate: Modal launch-payload goldens
 
 **Acceptance Criteria:**
 - [ ] The `ModalAppRequest.env` carries `KINOFORGE_ARTIFACT_DIR` and `KINOFORGE_LORAS_DIR` rooted on the Modal Volume mount
 - [ ] `HF_HOME` is still exactly `/cache/hf` — the Volume ROOT, unchanged from today
-- [ ] Config-supplied values still win over derived ones
+- [ ] Config-supplied values still win over derived ones (`setdefault`, not assignment)
+- [ ] The four new tests live in `test_hf_home_env.py`; no new test module is created
 - [ ] The regenerated Modal goldens show `HF_HOME` unchanged and exactly two added env keys
 
 **Verify:** `pixi run python -m pytest tests/providers/modal/ -q` → all PASS
@@ -507,67 +518,83 @@ git commit -m "feat(runpod): tell the pod where its writable directories are"
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tests/providers/modal/test_modal_pod_path_env.py`:
+`tests/providers/modal/test_hf_home_env.py` already owns this concern — it
+captures a real `ModalAppRequest` through `create_instance` via its
+`_provider_capturing()` harness and already asserts `HF_HOME` for the default
+mount, a custom mount, and an operator override. **Extend that file. Do not
+create a parallel module** — splitting one seam across two test files is what
+the plan's own File Structure principle argues against, and its harness gives
+you true integration coverage that re-testing Task 1's helper would not.
+
+First broaden its module docstring: it currently describes itself as being
+about `HF_HOME` alone, and after this change it covers every directory var
+Modal exports. Then append four tests, matching the file's existing
+`# Bug caught:` comment style rather than introducing docstrings:
 
 ```python
-"""Behavior: Modal tells the container where its writable directories are.
+def test_pod_dirs_default_to_the_volume_mount():
+    # Bug caught: create_instance seeds HF_HOME but leaves the server to guess
+    # its artifact/loras dirs, so a Modal container writes to /workspace/... —
+    # RunPod's mount — landing on ephemeral container disk, not the Volume.
+    provider, captured = _provider_capturing()
 
-Modal mounts its Volume at ``/cache/hf``, not ``/workspace``. Before this seam
-the server fell back to ``/workspace/artifacts`` on Modal — every generated
-video written to a path named after RunPod's volume, landing on ephemeral
-container disk rather than the mounted one.
-"""
+    provider.create_instance(_spec(env={}))
 
-from __future__ import annotations
-
-from kinoforge.core.pod_paths import pod_path_env
-
-
-def test_dirs_are_rooted_on_the_modal_volume() -> None:
-    """The artifact and loras dirs land on Modal's mount, not RunPod's.
-
-    Catches the pre-seam behaviour directly: a Modal container writing to
-    /workspace/artifacts because the server had to guess.
-    """
-    env = pod_path_env("/cache/hf", hf_home="/cache/hf")
-
-    assert env["KINOFORGE_ARTIFACT_DIR"] == "/cache/hf/artifacts"
-    assert env["KINOFORGE_LORAS_DIR"] == "/cache/hf/loras"
-    assert "/workspace" not in str(env)
-
-
-def test_hf_home_stays_the_volume_root() -> None:
-    """``HF_HOME`` is the Volume root, NOT a .hf_cache subdir.
-
-    Catches unifying HF_HOME with RunPod's subdir layout. Sub-project B put a
-    144 GiB fetch at the Volume root (minimax_h3_server.py:50-54); moving
-    HF_HOME to /cache/hf/.hf_cache would orphan it and silently re-download
-    123.8 GiB on the next run. This test is the guard on that.
-    """
-    env = pod_path_env("/cache/hf", hf_home="/cache/hf")
-
-    assert env["HF_HOME"] == "/cache/hf"
-```
-
-Then add an integration assertion to the Modal provider's own test module.
-Locate the existing test that builds a `ModalAppRequest` with
-`rg -n 'ModalAppRequest' tests/providers/modal/` and extend its assertions:
-
-```python
-    assert req.env["HF_HOME"] == "/cache/hf"
+    req = captured["req"]
     assert req.env["KINOFORGE_ARTIFACT_DIR"] == "/cache/hf/artifacts"
     assert req.env["KINOFORGE_LORAS_DIR"] == "/cache/hf/loras"
+
+
+def test_pod_dirs_track_a_custom_volume_mount():
+    # Bug caught: deriving the dirs from a hardcoded "/cache/hf" instead of the
+    # RESOLVED mount desyncs them from where the Volume actually lives, the
+    # same defect test_hf_home_tracks_a_custom_volume_mount pins for HF_HOME.
+    provider, captured = _provider_capturing()
+
+    provider.create_instance(_spec(env={}, volume_mount="/mnt/weights"))
+
+    req = captured["req"]
+    assert req.env["KINOFORGE_ARTIFACT_DIR"] == "/mnt/weights/artifacts"
+    assert req.env["KINOFORGE_LORAS_DIR"] == "/mnt/weights/loras"
+
+
+def test_pod_dirs_respect_operator_override():
+    # Bug caught: plain assignment instead of setdefault would clobber a cfg
+    # that deliberately redirects its artifact dir — a regression for anyone
+    # already overriding it.
+    provider, captured = _provider_capturing()
+
+    provider.create_instance(_spec(env={"KINOFORGE_ARTIFACT_DIR": "/custom/art"}))
+
+    req = captured["req"]
+    assert req.env["KINOFORGE_ARTIFACT_DIR"] == "/custom/art"
+    assert req.env["KINOFORGE_LORAS_DIR"] == "/cache/hf/loras", (
+        "the key the caller did NOT set must still be derived"
+    )
+
+
+def test_hf_home_is_the_volume_root_never_a_subdir():
+    # Bug caught: "unifying" Modal's layout with RunPod's, which puts HF_HOME at
+    # <mount>/.hf_cache. Sub-project B's 144 GiB fetch lives at the Volume ROOT;
+    # moving HF_HOME one level deeper orphans it and silently re-downloads
+    # 123.8 GiB on the next run. This is the guard on that.
+    provider, captured = _provider_capturing()
+
+    provider.create_instance(_spec(env={}))
+
+    req = captured["req"]
+    assert req.env["HF_HOME"] == "/cache/hf"
+    assert not req.env["HF_HOME"].endswith(".hf_cache")
 ```
 
-- [ ] **Step 2: Run to verify the new integration assertion fails**
+- [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `pixi run python -m pytest tests/providers/modal/ -q`
-Expected: FAIL — `KeyError: 'KINOFORGE_ARTIFACT_DIR'` on the integration assertion.
-
-The two tests in the new file pass immediately — they exercise Task 1's helper.
-They are not redundant: they pin Modal's *specific* layout choice (root, not
-subdir) so a future tidy-up that "unifies" the two providers fails here with an
-explanation, rather than silently orphaning the cache.
+Run: `pixi run python -m pytest tests/providers/modal/test_hf_home_env.py -v`
+Expected: the three `test_pod_dirs_*` tests FAIL with `KeyError:
+'KINOFORGE_ARTIFACT_DIR'`. The three pre-existing `test_hf_home_*` tests and
+`test_hf_home_is_the_volume_root_never_a_subdir` PASS already — the last one is
+a regression guard on behaviour that is currently correct and must stay correct,
+so it passing before your change is expected, not a problem.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -615,7 +642,7 @@ Expected: all PASS
 
 ```bash
 git add src/kinoforge/providers/modal/__init__.py \
-  tests/providers/modal/test_modal_pod_path_env.py
+  tests/providers/modal/test_hf_home_env.py
 pixi run pre-commit run --all-files
 pixi run python tools/snapshot_launch_payloads.py
 git diff tests/providers/golden/launch_payloads/ | grep '^[+-]' | grep -v '^[+-][+-]'
@@ -631,7 +658,7 @@ Stop and fix before committing.
 pixi run python -m pytest tests/providers/ -q
 git add -A tests/providers/golden/launch_payloads/ \
   src/kinoforge/providers/modal/__init__.py \
-  tests/providers/modal/test_modal_pod_path_env.py
+  tests/providers/modal/test_hf_home_env.py
 git commit -m "feat(modal): export the pod directory layout off the Volume mount"
 ```
 
