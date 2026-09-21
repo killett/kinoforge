@@ -3136,9 +3136,12 @@ standing source audit with four falsification tests; `tests/conftest.py` gained 
 fixture. The Tier-3 weekly smoke cfg got the cap raise (0.40→0.60) and `cloud_type: secure` it never
 received from its siblings, and the job is now `workflow_dispatch`-only.
 
-**Two defects filed, NOT fixed: U50** (daemon worker outlives pytest teardown — the mechanism behind
+**Three defects filed, NOT fixed: U50** (daemon worker outlives pytest teardown — the mechanism behind
 the 281-file spill; Task 4 defanged the consequence only) and **U51** (`lifecycle.budget` is inert on
-RunPod and reads like a spend guard that is not one).
+RunPod and reads like a spend guard that is not one), and **U52** (the four `/workspace/models/...`
+weights paths below — filed after final review pointed out that snapshot prose is not a tracked
+defect; `tests/test_pod_path_audit.py` allowlists two of them BY EXACT CONSTANT NAME, so the audit's
+green is scoped, not total, and it still fires on any new violation in the same file).
 
 **Known-incomplete, deliberately:** four `/workspace/models/...` paths survive in `wan_t2v_server.py`
 (spandrel/FlashVSR/SeedVR2/RIFE weights). They are the same defect, but they are PAIRED with
