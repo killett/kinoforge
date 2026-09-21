@@ -105,11 +105,22 @@ and Local are both marked `u` — no volume attached.
 New module `core/pod_paths.py`, one pure function:
 
 ```python
-def pod_path_env(volume_mount: str | None) -> dict[str, str]
+def pod_path_env(volume_mount: str | None, *, hf_home: str | None = None) -> dict[str, str]
 ```
 
-Given a resolved mount it returns the on-pod layout — `KINOFORGE_ARTIFACT_DIR`,
-`KINOFORGE_LORAS_DIR`, `HF_HOME` — rooted there. Given `None` or `""` it returns
+Given a resolved mount it returns `KINOFORGE_ARTIFACT_DIR` and
+`KINOFORGE_LORAS_DIR` rooted there, plus `HF_HOME` when the caller supplies one.
+
+**`hf_home` is an argument, not a derived layout — corrected 2026-09-21 during
+planning.** An earlier draft of this section had the helper root all three vars
+uniformly on the mount. That is wrong and would cause real damage: Modal's
+`HF_HOME` is the Volume root itself (`/cache/hf`, visible in
+`tests/providers/golden/launch_payloads/modal-diffusers-flashvsr-1080p-upscale-long-tiled.json`),
+and that Volume is where Sub-project B put a 144 GiB fetch
+(`minimax_h3_server.py:50-54`). Deriving `/cache/hf/.hf_cache` would orphan it
+and silently re-download 123.8 GiB on the next run. RunPod wants a `.hf_cache`
+subdir; Modal wants the root; the difference is real provider policy, so the
+providers pass it. The helper owns only the layout that genuinely is shared. Given `None` or `""` it returns
 the two dir vars pointed at pod-local scratch and **omits `HF_HOME` entirely**,
 so `huggingface_hub`'s own `~/.cache/huggingface` default applies. Inventing a
 scratch HF cache would be worse than no opinion: the default is already correct
