@@ -1,7 +1,11 @@
 name: smoke-wan21-weekly
+# Dispatch-only since 2026-09-21. This job books real RunPod pods; running it
+# unattended on a cron gave it none of the live-spend discipline CLAUDE.md
+# requires (no authorisation in conversation, no utilisation polling, no frame
+# QA), and it had been red for ten consecutive weeks without anyone reading the
+# result. Live spend is authorised by user statement, so it runs on request.
+# The independent leak-sweep cron remains the standing money guard.
 on:
-  schedule:
-    - cron: '0 12 * * 1'   # Monday 04:00 PT = 12:00 UTC
   workflow_dispatch:
 
 permissions:

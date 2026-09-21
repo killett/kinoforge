@@ -43,10 +43,22 @@ compute:
   warm_reuse_auto_attach: true
   tags:
     smoke_tier: "kinoforge-smoke-tier-3"
+  backend_options:
+    runpod:
+      # This cfg's max_lifetime is 60m and boot_timeout 30m — far past the
+      # ~10 minute window after which RunPod reclaims community-pool pods
+      # (U42; CLAUDE.md "RunPod community-pool deletions 2026-07-03"). The
+      # 2026-09-21 scheduled run died exactly this way: ProvisionFailed,
+      # "pod 'nn7goq4pu1fmnh' boot stalled", 19 minutes of billed nothing.
+      cloud_type: secure
   placement:
     min_vram_gb: 24
     min_cuda: "12.4"
-    max_usd_per_hr: 0.40
+    # Raised 0.40 -> 0.60 on 2026-09-21, matching the operator decision of
+    # 2026-09-12 (2c446eef) on the sibling 1.3B grid cfg and taken for the
+    # identical reason: at 0.40 no current RunPod offer can satisfy this cfg,
+    # so every scheduled run failed in ~47 s with RateCapExceeded.
+    max_usd_per_hr: 0.60
     accelerators:
       - "NVIDIA RTX A5000"
       - "NVIDIA GeForce RTX 4090"
