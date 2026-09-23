@@ -5,7 +5,8 @@ The module under test is the single place that turns a resolved
 Everything here pins one of two things:
 
 * the wire contract — one call, the resolved stack, controller-resolved
-  download specs (so a CivitAI token never leaves the controller);
+  download specs, and the pod's reported inventory written back to the
+  ledger row the CLI and the warm-reuse matcher read;
 * the privacy contract — a LoRA ref is SENSITIVE under vault mode, so no
   log line this module emits may carry one.
 
@@ -30,11 +31,17 @@ from kinoforge.core.errors import LoraFormatUnsupportedError, ValidationError
 from kinoforge.core.interfaces import Artifact, CredentialProvider, ModelSource
 from kinoforge.core.lora import LoraEntry
 from kinoforge.core.lora_apply import ensure_lora_stack, resolve_download_specs
+from kinoforge.core.redaction import RedactionRegistry
 from kinoforge.sources.civitai import CivitAISource
 
 # A ref shaped like the sensitive thing the privacy rule protects. Chosen
 # so a substring search cannot pass by accident.
 _SENSITIVE_REF = "civitai:9876543210@1234567890"
+
+# ``load_config`` emits its own WARNINGs inside these with-blocks, so every
+# level assertion filters to the module under test rather than counting
+# every record caplog saw.
+_LOGGER = "kinoforge.core.lora_apply"
 
 _CFG_HEAD = """\
 engine:
@@ -85,15 +92,25 @@ class _SpyLoraBackend:
             invocation.
     """
 
-    def __init__(self, *, raises: Exception | None = None) -> None:
-        """Record calls; optionally raise ``raises`` after recording.
+    def __init__(
+        self,
+        *,
+        raises: Exception | None = None,
+        response: dict[str, Any] | None = None,
+    ) -> None:
+        """Record calls; optionally raise, optionally return a body.
 
         Args:
             raises: Exception to raise once the call is recorded, so a
                 test can prove the failure is not swallowed.
+            response: Body returned on success. Defaults to an
+                empty-inventory success shape.
         """
         self.calls: list[tuple[str, list[LoraEntry], dict[str, Any]]] = []
         self._raises = raises
+        self._response = (
+            response if response is not None else {"inventory": [], "free_bytes": 0}
+        )
 
     def set_lora_stack(
         self,
@@ -118,7 +135,28 @@ class _SpyLoraBackend:
         self.calls.append((pod_id, list(active_stack), dict(download_specs)))
         if self._raises is not None:
             raise self._raises
-        return {"inventory": [], "free_bytes": 0}
+        return self._response
+
+
+class _SpyLedger:
+    """Ledger stub recording every ``touch`` as ``(instance_id, fields)``."""
+
+    def __init__(self) -> None:
+        """Start with no recorded touches."""
+        self.touches: list[tuple[str, dict[str, Any]]] = []
+
+    def touch(self, instance_id: str, **fields: Any) -> bool:
+        """Record the touch.
+
+        Args:
+            instance_id: Row being updated.
+            **fields: Field values written.
+
+        Returns:
+            Always ``True`` (a write happened).
+        """
+        self.touches.append((instance_id, dict(fields)))
+        return True
 
 
 class _HostedBackend:
@@ -360,7 +398,9 @@ def test_empty_stack_never_touches_the_backend() -> None:
     """
     backend = _SpyLoraBackend()
 
-    ensure_lora_stack(backend=backend, cfg=_cfg([]), pod_id="p1", creds=_NullCreds())
+    ensure_lora_stack(
+        backend=backend, cfg=_cfg([]), pod_id="p1", creds=_NullCreds(), ledger=None
+    )
 
     assert backend.calls == []
 
@@ -375,7 +415,9 @@ def test_non_empty_stack_posts_exactly_one_set_lora_stack() -> None:
     backend = _SpyLoraBackend()
     cfg = _cfg(["hf:org/repo:a.safetensors", "hf:org/repo:b.safetensors"])
 
-    ensure_lora_stack(backend=backend, cfg=cfg, pod_id="p1", creds=_NullCreds())
+    ensure_lora_stack(
+        backend=backend, cfg=cfg, pod_id="p1", creds=_NullCreds(), ledger=None
+    )
 
     assert len(backend.calls) == 1
     pod_id, active_stack, specs = backend.calls[0]
@@ -399,7 +441,9 @@ def test_backend_without_set_lora_stack_is_a_noop() -> None:
     backend = _HostedBackend()
     cfg = _cfg(["hf:org/repo:a.safetensors"])
 
-    ensure_lora_stack(backend=backend, cfg=cfg, pod_id=None, creds=_NullCreds())
+    ensure_lora_stack(
+        backend=backend, cfg=cfg, pod_id=None, creds=_NullCreds(), ledger=None
+    )
 
 
 def test_pod_id_none_does_not_post_to_a_lora_capable_backend() -> None:
@@ -411,7 +455,9 @@ def test_pod_id_none_does_not_post_to_a_lora_capable_backend() -> None:
     backend = _SpyLoraBackend()
     cfg = _cfg(["hf:org/repo:a.safetensors"])
 
-    ensure_lora_stack(backend=backend, cfg=cfg, pod_id=None, creds=_NullCreds())
+    ensure_lora_stack(
+        backend=backend, cfg=cfg, pod_id=None, creds=_NullCreds(), ledger=None
+    )
 
     assert backend.calls == []
 
@@ -430,7 +476,9 @@ def test_format_failure_propagates_untouched() -> None:
     cfg = _cfg(["hf:org/repo:a.safetensors"])
 
     with pytest.raises(LoraFormatUnsupportedError) as exc:
-        ensure_lora_stack(backend=backend, cfg=cfg, pod_id="p1", creds=_NullCreds())
+        ensure_lora_stack(
+            backend=backend, cfg=cfg, pod_id="p1", creds=_NullCreds(), ledger=None
+        )
 
     assert exc.value is boom
 
@@ -448,7 +496,9 @@ def test_cli_override_beats_the_config_stack() -> None:
 
     with EphemeralSession(enabled=False) as session:
         session.cli_loras = list(override)
-        ensure_lora_stack(backend=backend, cfg=cfg, pod_id="p1", creds=_NullCreds())
+        ensure_lora_stack(
+            backend=backend, cfg=cfg, pod_id="p1", creds=_NullCreds(), ledger=None
+        )
 
     assert len(backend.calls) == 1
     _pod_id, active_stack, specs = backend.calls[0]
@@ -467,7 +517,7 @@ def test_creds_default_to_the_environment_when_none() -> None:
     backend = _SpyLoraBackend()
     cfg = _cfg(["hf:org/repo:a.safetensors"])
 
-    ensure_lora_stack(backend=backend, cfg=cfg, pod_id="p1", creds=None)
+    ensure_lora_stack(backend=backend, cfg=cfg, pod_id="p1", creds=None, ledger=None)
 
     assert len(backend.calls) == 1
 
@@ -505,6 +555,7 @@ def test_no_log_line_carries_a_ref_on_the_success_path(
                 cfg=_cfg([]),
                 pod_id="p1",
                 creds=_NullCreds(),
+                ledger=None,
             )
 
     assert len(backend.calls) == 1, "the apply must actually have happened"
@@ -548,21 +599,30 @@ def test_no_log_line_carries_a_ref_when_the_pod_refuses(
                     cfg=_cfg([]),
                     pod_id="p1",
                     creds=_NullCreds(),
+                    ledger=None,
                 )
 
     assert _SENSITIVE_REF not in caplog.text
     assert "9876543210" not in caplog.text
 
 
-def test_hosted_noop_log_line_carries_no_ref(
+def test_hosted_noop_warns_at_warning_level_with_a_count_and_no_ref(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The hosted-engine discard must be visible without naming refs.
+    """The discard must be LOUD, countable, actionable — and ref-free.
 
-    Bug caught: making the "this backend cannot load LoRAs" notice
-    useful by listing what was dropped — which is exactly the leak.
+    Bug caught, three ways. (1) Deleting the ``_log.warning`` outright:
+    this case cannot be made fatal (``--loras`` never enters
+    ``cfg.loras``, and ComfyUI legitimately applies LoRAs through
+    workflow nodes), so the warning IS the protection — without it we
+    are back to the original silent defect. (2) Demoting it to DEBUG or
+    INFO, where it vanishes into a multi-minute boot log. (3) Making it
+    useful by listing what was dropped, which is exactly the ref leak.
     """
-    override = [LoraEntry(ref=_SENSITIVE_REF, strength=1.0)]
+    override = [
+        LoraEntry(ref=_SENSITIVE_REF, strength=1.0),
+        LoraEntry(ref="hf:org/repo:second.safetensors", strength=0.5),
+    ]
 
     with caplog.at_level(logging.DEBUG, logger="kinoforge.core.lora_apply"):
         with EphemeralSession(enabled=False) as session:
@@ -572,7 +632,245 @@ def test_hosted_noop_log_line_carries_no_ref(
                 cfg=_cfg([]),
                 pod_id=None,
                 creds=_NullCreds(),
+                ledger=None,
             )
 
+    warnings = [
+        r for r in caplog.records if r.levelno == logging.WARNING and r.name == _LOGGER
+    ]
+    assert len(warnings) == 1, (
+        "the discard must produce exactly one WARNING — it is the only "
+        f"protection this case gets; got {[r.levelname for r in caplog.records]}"
+    )
+    rendered = warnings[0].getMessage()
+    assert "2" in rendered, "the warning must name how many entries were dropped"
+    assert "NOT APPLYING" in rendered, (
+        "the warning must say plainly that the stack is not being applied"
+    )
+    assert "fake" in rendered, "the warning must name the engine kind"
     assert _SENSITIVE_REF not in caplog.text
     assert "9876543210" not in caplog.text
+
+
+def test_pod_id_none_warns_at_warning_level_with_a_count_and_no_ref(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The no-pod discard is the other silent path; it must be loud too.
+
+    Bug caught: guarding only the missing-surface branch and letting a
+    LoRA-capable backend with no instance fall through quietly — same
+    outcome for the operator (a LoRA-less video), no notice at all.
+    """
+    backend = _SpyLoraBackend()
+    override = [LoraEntry(ref=_SENSITIVE_REF, strength=1.0)]
+
+    with caplog.at_level(logging.DEBUG, logger="kinoforge.core.lora_apply"):
+        with EphemeralSession(enabled=False) as session:
+            session.cli_loras = list(override)
+            ensure_lora_stack(
+                backend=backend,
+                cfg=_cfg([]),
+                pod_id=None,
+                creds=_NullCreds(),
+                ledger=None,
+            )
+
+    assert backend.calls == []
+    warnings = [
+        r for r in caplog.records if r.levelno == logging.WARNING and r.name == _LOGGER
+    ]
+    assert len(warnings) == 1
+    rendered = warnings[0].getMessage()
+    assert "NOT APPLYING" in rendered
+    assert "1" in rendered
+    assert _SENSITIVE_REF not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Ledger write-back
+# ---------------------------------------------------------------------------
+
+
+def test_pod_inventory_is_written_to_the_ledger_row(
+    restore_sources: None,
+) -> None:
+    """What the pod reports back must reach the row the CLI reads.
+
+    Bug caught: discarding the ``set_lora_stack`` response. ``kinoforge
+    list`` / ``inspect`` render the LoRA section straight off
+    ``lora_inventory``, so a pod that just accepted a 2-entry stack
+    would report none — the tool lying about pod state — and
+    ``warm_reuse/matcher.py`` would plan swaps against an inventory it
+    believes is empty.
+    """
+    del restore_sources
+    registry.register_source(
+        _StubSource(
+            scheme="civitai",
+            artifacts=[Artifact(url="https://x/w.safetensors", filename="w.st")],
+        )
+    )
+    inventory = [
+        {"ref": "civitai:11@22", "filename": "w.st", "size_bytes": 4096},
+        {"ref": "hf:org/repo:b.safetensors", "filename": "b.st", "size_bytes": 2048},
+    ]
+    backend = _SpyLoraBackend(response={"inventory": inventory, "free_bytes": 77})
+    ledger = _SpyLedger()
+
+    ensure_lora_stack(
+        backend=backend,
+        cfg=_cfg(["civitai:11@22", "hf:org/repo:b.safetensors"]),
+        pod_id="p1",
+        creds=_NullCreds(),
+        ledger=ledger,
+    )
+
+    assert len(ledger.touches) == 1
+    pod_id, fields = ledger.touches[0]
+    assert pod_id == "p1"
+    assert fields["lora_inventory"] == inventory
+    assert fields["loras_dir_free_bytes"] == 77
+    assert isinstance(fields["loras_dir_free_bytes_observed_at_local"], str)
+    # Local timezone, never UTC: an isoformat() of datetime.now() has no
+    # trailing 'Z' and no '+00:00' offset.
+    assert not fields["loras_dir_free_bytes_observed_at_local"].endswith("Z")
+
+
+def test_observed_refs_are_registered_for_redaction(
+    restore_sources: None,
+) -> None:
+    """Refs the POD reports back must become redactable immediately.
+
+    Bug caught: writing ``lora_inventory`` to disk without routing the
+    refs through ``_register_observed_lora_refs`` first. A vault ref the
+    pod echoes would then be unredactable in every later log line and
+    traceback — the identical hole ``warm_reuse/integration.py`` closes
+    by calling the same helper before its touch.
+    """
+    del restore_sources
+    registry.register_source(
+        _StubSource(
+            scheme="civitai",
+            artifacts=[Artifact(url="https://x/w.safetensors", filename="w.st")],
+        )
+    )
+    observed = "civitai:5555555555@6666666666"
+    backend = _SpyLoraBackend(
+        response={"inventory": [{"ref": observed}], "free_bytes": 1}
+    )
+
+    ensure_lora_stack(
+        backend=backend,
+        cfg=_cfg(["civitai:11@22"]),
+        pod_id="p1",
+        creds=_NullCreds(),
+        ledger=_SpyLedger(),
+    )
+
+    assert observed not in RedactionRegistry.instance().redact(
+        f"pod holds {observed}"
+    ), "a ref the pod reported back must be registered before the ledger write"
+
+
+def test_missing_free_bytes_records_zero_not_none(
+    restore_sources: None,
+) -> None:
+    """An older pod omitting ``free_bytes`` must not poison the row.
+
+    Bug caught: writing ``None`` into ``loras_dir_free_bytes``. The
+    matcher treats ``free_bytes is None`` as "snapshot needs a re-probe"
+    (``warm_reuse/matcher.py``), so every attach would pay a needless
+    round trip — and ``Ledger.touch`` skips ``None`` values outright, so
+    the field would silently never be written at all.
+    """
+    del restore_sources
+    registry.register_source(
+        _StubSource(
+            scheme="civitai",
+            artifacts=[Artifact(url="https://x/w.safetensors", filename="w.st")],
+        )
+    )
+    backend = _SpyLoraBackend(response={"inventory": []})
+    ledger = _SpyLedger()
+
+    ensure_lora_stack(
+        backend=backend,
+        cfg=_cfg(["civitai:11@22"]),
+        pod_id="p1",
+        creds=_NullCreds(),
+        ledger=ledger,
+    )
+
+    assert ledger.touches[0][1]["loras_dir_free_bytes"] == 0
+
+
+def test_ledger_none_skips_the_write_without_failing(
+    restore_sources: None,
+) -> None:
+    """A caller with no ledger still gets the apply.
+
+    Bug caught: an unguarded ``ledger.touch`` turning every ledger-less
+    caller (library embedders, and every unit test of this seam) into an
+    AttributeError AFTER the pod already loaded the stack.
+    """
+    del restore_sources
+    registry.register_source(
+        _StubSource(
+            scheme="civitai",
+            artifacts=[Artifact(url="https://x/w.safetensors", filename="w.st")],
+        )
+    )
+    backend = _SpyLoraBackend(response={"inventory": [], "free_bytes": 1})
+
+    ensure_lora_stack(
+        backend=backend,
+        cfg=_cfg(["civitai:11@22"]),
+        pod_id="p1",
+        creds=_NullCreds(),
+        ledger=None,
+    )
+
+    assert len(backend.calls) == 1
+
+
+def test_a_failing_ledger_write_warns_but_does_not_fail_the_run(
+    caplog: pytest.LogCaptureFixture,
+    restore_sources: None,
+) -> None:
+    """Bookkeeping failure must not destroy a correctly-loaded pod.
+
+    By the time the touch runs the pod has ALREADY accepted the stack,
+    so the generation about to happen is correct. Bug caught: letting an
+    IO error on the state dir abort a run that has already paid for the
+    boot and the LoRA download. The cost is an under-reported row, and
+    the WARNING has to say so — bug also caught: swallowing it silently,
+    which would make `kinoforge list` lie with no trace.
+    """
+    del restore_sources
+    registry.register_source(
+        _StubSource(
+            scheme="civitai",
+            artifacts=[Artifact(url="https://x/w.safetensors", filename="w.st")],
+        )
+    )
+    backend = _SpyLoraBackend(response={"inventory": [], "free_bytes": 1})
+
+    class _BrokenLedger:
+        def touch(self, instance_id: str, **fields: Any) -> bool:
+            raise OSError("state dir is read-only")
+
+    with caplog.at_level(logging.DEBUG, logger="kinoforge.core.lora_apply"):
+        ensure_lora_stack(
+            backend=backend,
+            cfg=_cfg(["civitai:11@22"]),
+            pod_id="p1",
+            creds=_NullCreds(),
+            ledger=_BrokenLedger(),
+        )
+
+    assert len(backend.calls) == 1, "the apply itself must still have happened"
+    warnings = [
+        r for r in caplog.records if r.levelno == logging.WARNING and r.name == _LOGGER
+    ]
+    assert len(warnings) == 1
+    assert "under-report" in warnings[0].getMessage()

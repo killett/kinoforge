@@ -2222,6 +2222,11 @@ def deploy_session(
                     cfg=cfg,
                     pod_id=instance.id if instance is not None else None,
                     creds=creds,
+                    # The pod's post-apply inventory lands on the row the
+                    # `session_start` touch above just wrote, so `kinoforge
+                    # list` / `inspect` and the warm-reuse matcher read what
+                    # this pod actually holds rather than an empty section.
+                    ledger=Ledger(store=store),
                 )
                 yield session
             finally:

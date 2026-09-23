@@ -32,6 +32,7 @@ from kinoforge.core.interfaces import (
     Instance,
     ModelProfile,
 )
+from kinoforge.core.lifecycle import Ledger
 from kinoforge.core.lora import LoraEntry
 from kinoforge.core.orchestrator import deploy_session
 from kinoforge.core.pool import ConcurrentPool
@@ -100,7 +101,13 @@ class _LoraSpyBackend(FakeBackend):
         self.events.append("set_lora_stack")
         if self._raises is not None:
             raise self._raises
-        return {"inventory": [], "free_bytes": 0}
+        return {
+            "inventory": [
+                {"ref": r.ref, "filename": f"{i}.safetensors", "size_bytes": 4096}
+                for i, r in enumerate(active_stack)
+            ],
+            "free_bytes": 12345,
+        }
 
     def submit(
         self, job: GenerationJob, *, cancel_token: CancelToken | None = None
@@ -316,6 +323,80 @@ def test_stack_is_applied_before_the_first_submit(tmp_path: Path) -> None:
     assert pod_id, "the applied stack must be addressed at a real pod id"
     assert [e.ref for e in active_stack] == ["hf:org/repo:a.safetensors"]
     assert set(specs) == {"hf:org/repo:a.safetensors"}
+
+
+def test_the_applied_inventory_reaches_the_real_ledger_row(tmp_path: Path) -> None:
+    """End to end, `kinoforge list` must see what the pod just loaded.
+
+    Bug caught: dropping the `set_lora_stack` response on the floor. The
+    CLI renders its LoRA section straight off the row's
+    ``lora_inventory`` (`cli/_commands.py`), and `warm_reuse/matcher.py`
+    plans swaps from the same field — so a pod that just accepted a
+    2-entry stack would report an empty inventory to both. A unit test
+    with a ledger spy cannot catch a row written under the wrong
+    instance id; this one reads the row back through the real Ledger.
+    """
+    engine = _LoraSpyEngine()
+    store = LocalArtifactStore(tmp_path)
+
+    with deploy_session(
+        _cfg(["hf:org/repo:a.safetensors", "hf:org/repo:b.safetensors"]),
+        store=store,
+        engine=engine,
+        provider=LocalProvider(),
+        creds=_NullCreds(),
+        run_id="r",
+    ) as session:
+        assert session.instance is not None
+        pod_id = session.instance.id
+
+    entry = Ledger(store=store).read(pod_id)
+    assert entry is not None, "deploy_session must have recorded a row for this pod"
+    inventory = entry["lora_inventory"]
+    assert len(inventory) == 2, (
+        "the row must carry one entry per LoRA the pod reported holding"
+    )
+    assert [e["filename"] for e in inventory] == ["0.safetensors", "1.safetensors"]
+    assert entry["loras_dir_free_bytes"] == 12345
+    assert isinstance(entry["loras_dir_free_bytes_observed_at_local"], str)
+    # Every ref the pod reported back is a redaction PLACEHOLDER on disk,
+    # not the raw ref. That is the canonical ledger shape
+    # (``Ledger._persist`` runs ``redact_json`` over the whole payload) and
+    # it only happens if ``_register_observed_lora_refs`` ran BEFORE the
+    # touch. Asserting it here pins that ordering end to end: reverse the
+    # two and these rows persist unredacted vault refs to disk.
+    assert all(e["ref"].startswith("<lora:ref:") for e in inventory), (
+        f"pod-reported refs must be registered before the write; got {inventory}"
+    )
+
+
+def test_a_run_without_loras_leaves_the_inventory_field_alone(
+    tmp_path: Path,
+) -> None:
+    """No LoRAs must not mean "wipe whatever the row already knew".
+
+    Bug caught: writing an unconditional empty ``lora_inventory`` on
+    every session. Attaching to a warm pod that genuinely holds two
+    adapters with a no-LoRA config would then erase the matcher's only
+    record of them.
+    """
+    engine = _LoraSpyEngine()
+    store = LocalArtifactStore(tmp_path)
+
+    with deploy_session(
+        _cfg([]),
+        store=store,
+        engine=engine,
+        provider=LocalProvider(),
+        creds=_NullCreds(),
+        run_id="r",
+    ) as session:
+        assert session.instance is not None
+        pod_id = session.instance.id
+
+    entry = Ledger(store=store).read(pod_id)
+    assert entry is not None
+    assert "lora_inventory" not in entry
 
 
 def test_hosted_engine_with_loras_still_runs(tmp_path: Path) -> None:
