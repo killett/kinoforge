@@ -881,6 +881,7 @@ class LoraTarget(BaseModel):
     ref: str = Field(min_length=1)
     strength: float = Field(default=1.0, ge=-2.0, le=2.0)
     branch: Literal["high_noise", "low_noise", "auto"] = Field(default="auto")
+    target: str | None = Field(default=None)
 
     @field_validator("branch", mode="before")
     @classmethod
@@ -895,6 +896,31 @@ class LoraTarget(BaseModel):
         if v == "l":
             return "low_noise"
         return v
+
+    @model_validator(mode="after")
+    def _resolve_branch_to_target(self) -> LoraTarget:
+        """Mirror of ``LoraEntry._resolve_branch_to_target`` in core/lora.py.
+
+        Parity is load-bearing — ``tests/test_lora_schema_parity.py``
+        asserts both classes resolve `branch`/`target` identically. DO
+        NOT diverge. **Additive only:** Wan still routes on `branch` via
+        ``_check_branch_legal`` / ``_detect_moe_arity`` /
+        ``_resolve_transformer`` — this validator does not touch those.
+        """
+        implied = None if self.branch == "auto" else self.branch
+        if implied is not None and self.target is not None and implied != self.target:
+            raise ValueError(
+                f"branch and target disagree: branch={self.branch!r} implies "
+                f"target={implied!r}, but target={self.target!r} was set; "
+                f"set only `target` (branch is deprecated)"
+            )
+        if implied is not None and self.target is None:
+            object.__setattr__(self, "target", implied)
+            _log.warning(
+                "deprecated-lora-branch: 1 entry used `branch`; it is mapped to "
+                "`target`. Use `target:` — see docs/breaking-changes.md"
+            )
+        return self
 
 
 class SetStackRequest(BaseModel):

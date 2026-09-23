@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import get_args, get_type_hints
 
+import pytest
 from pydantic import BaseModel
 
 from kinoforge.core.lora import LoraEntry
@@ -109,3 +110,25 @@ def test_branch_default_matches() -> None:
         == LoraTarget.model_fields["branch"].default
         == "auto"
     )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_target"),
+    [
+        ({"branch": "h"}, "high_noise"),
+        ({"branch": "l"}, "low_noise"),
+        ({"branch": "auto"}, None),
+        ({"target": "transformer_ref"}, "transformer_ref"),
+        ({}, None),
+    ],
+)
+def test_core_and_server_resolve_target_identically(
+    kwargs: dict[str, str], expected_target: str | None
+) -> None:
+    """Both schemas resolve routing identically.
+
+    Catches the alias being taught to one side only, which produces a cfg
+    value the pod rejects at 422 after the card is already booked.
+    """
+    assert LoraEntry(ref="civitai:1@2", **kwargs).target == expected_target  # type: ignore[arg-type]
+    assert LoraTarget(ref="civitai:1@2", **kwargs).target == expected_target  # type: ignore[arg-type]

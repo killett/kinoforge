@@ -18,7 +18,7 @@ import re
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import ParseResult, parse_qs, urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from kinoforge.core.redaction import RedactionRegistry
 
@@ -128,6 +128,13 @@ class LoraEntry(BaseModel):
             and require explicit branch (see server-side
             ``_resolve_transformer`` for the dispatch). NON-SENSITIVE
             (low-entropy enum; same posture as ``strength``).
+        target: Generalised routing token superseding ``branch``.
+            ``branch`` names only Wan's MoE noise split; ``target`` also
+            names workflow partitions (e.g. H3's ``transformer`` /
+            ``transformer_ref``) that ``branch``'s Literal cannot
+            express. ``None`` means "the pod profile's default target",
+            which reproduces ``branch="auto"`` exactly. ``branch`` is
+            deprecated in favor of this field; the two may not disagree.
     """
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
@@ -136,6 +143,7 @@ class LoraEntry(BaseModel):
     strength: float = Field(default=1.0, ge=-2.0, le=2.0)
     sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$|^$")
     branch: Literal["high_noise", "low_noise", "auto"] = Field(default="auto")
+    target: str | None = Field(default=None)
 
     @field_validator("ref", mode="before")
     @classmethod
@@ -166,6 +174,30 @@ class LoraEntry(BaseModel):
         if v == "l":
             return "low_noise"
         return v
+
+    @model_validator(mode="after")
+    def _resolve_branch_to_target(self) -> LoraEntry:
+        """Map the deprecated `branch` onto `target`; refuse disagreement.
+
+        `branch` is Wan's MoE vocabulary and cannot name H3's workflow
+        partitions. `target` is resolved against the server profile's
+        vocabulary instead. `None` means "the profile's default target",
+        which reproduces `branch="auto"` exactly.
+        """
+        implied = None if self.branch == "auto" else self.branch
+        if implied is not None and self.target is not None and implied != self.target:
+            raise ValueError(
+                f"branch and target disagree: branch={self.branch!r} implies "
+                f"target={implied!r}, but target={self.target!r} was set; "
+                f"set only `target` (branch is deprecated)"
+            )
+        if implied is not None and self.target is None:
+            object.__setattr__(self, "target", implied)
+            logger.warning(
+                "deprecated-lora-branch: 1 entry used `branch`; it is mapped to "
+                "`target`. Use `target:` — see docs/breaking-changes.md"
+            )
+        return self
 
 
 def resolve_active_lora_stack(
