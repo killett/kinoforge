@@ -1,0 +1,130 @@
+# MiniMax-H3 t2va on Modal H200 — turbo LoRA at 8 inference steps.
+#
+# Sibling of modal-diffusers-minimax-h3-t2va-long-640.yaml (640x352 canvas,
+# see that file's header for the canvas math and the FlashVSR-chain
+# rationale). This config changes only three things relative to it:
+# `spec.num_inference_steps: 8` (down from 50), `spec.num_frames: 124` (down
+# from 345, the model's SHORTEST legal clip — 5.167 s, `17*n+5` aligned, per
+# modal-diffusers-minimax-h3-t2va.yaml note 6), and the `loras:` block below.
+# Compute placement, lifecycle, and the `capability.max_frames: 345` ceiling
+# are left untouched deliberately — they describe what the pod CAN do, not
+# what this run asks of it, and reusing the wider envelope avoids drifting
+# two numbers that must already agree with the server's own probe.
+#
+# The turbo LoRA (Task 9, H3-lora-shared-seam) is what makes 8 steps viable:
+# it is a step-distilled adapter trained to reproduce the base model's
+# 50-step output in 8, so this config is expected to be visually comparable
+# to the reference recipe (modal-diffusers-minimax-h3-t2va.yaml) at roughly
+# 1/6th the inference-step cost. UNTESTED live as of 2026-09-22 — this is the
+# first config wired for it; frame-QA before trusting the output.
+#
+# loras: ref, below, is PINNED — do not substitute a similar-looking file.
+# The repo ships two H3 turbo LoRA files in the same HF repo:
+#   * minimax_h3_fl2v_turbo_8step_v1.0_bf16.safetensors (1.38 GB, 624 BF16
+#     tensors, __metadata__ alpha=8) — the one this config loads. Trained
+#     against the FULL released MiniMax-H3 checkpoint, which is what
+#     `hf:MiniMaxAI/MiniMax-H3` (this config's `models:` entry) resolves to.
+#   * minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors (1.96 GB) —
+#     do NOT use this one here. It is trained against a PRUNED checkpoint
+#     shaped for ComfyUI, and diffusers refuses it with a tensor size
+#     mismatch on load (`_explain_load_failure` in minimax_h3_server.py
+#     recognises this exact failure and returns a hint naming this file as
+#     the likely cause — see it before reaching for a different fix).
+# `target:` is omitted deliberately: under `workflow="t2va"` the pod holds
+# exactly one LoRA-eligible partition (`transformer`) and resolves the
+# target itself; naming `transformer` explicitly would work identically but
+# add nothing, and naming `transformer_ref` would be refused (t2va never
+# loads that partition — see minimax_h3_server.py's LORA_TARGET_UNIVERSE
+# narrowing).
+#
+# Usage:
+#   pixi run -e live-modal kinoforge generate \
+#     --config examples/configs/modal-diffusers-minimax-h3-t2va-lora-turbo.yaml \
+#     --mode t2va \
+#     --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+#     --no-reuse
+
+mode: t2va
+prompt: "Photorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace — luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking."
+
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    image: "python:3.13-slim"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.minimax_h3_server"
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "diffusers==0.40.0"
+      - "transformers>=4.57"
+      - "accelerate>=1.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      - "psutil>=5.9"
+      - "nvidia-ml-py>=12"
+      # `_flash_3_hub` resolves its kernels through huggingface_hub's kernels
+      # integration; without it set_attention_backend raises and the server
+      # degrades to the stock backend (see the header).
+      - "kernels>=0.4"
+    base_url: "http://localhost:8000"
+    prompt_body_key: "prompt"
+    embed_modules: ["kinoforge.engines.diffusers.servers"]
+    attention_backend: "_flash_3_hub"
+    capability:
+      supported_modes: ["t2va"]
+      max_frames: 345          # 14.375 s — the real ceiling, NOT 360
+      fps: 24
+      max_resolution: [1344, 768]   # the model's cap, not this cfg's canvas
+      supports_joint_audio: true
+
+models:
+  - ref: "hf:MiniMaxAI/MiniMax-H3"
+    kind: base
+    target: checkpoints
+
+loras:
+  # PROBED 2026-09-22 — 1.38 GB, 624 BF16 tensors, __metadata__ alpha=8.
+  # Do NOT substitute the 1.96 GB `_comfyui_bf16` sibling: it is trained
+  # against the pruned checkpoint and diffusers refuses it with a size
+  # mismatch. Target is omitted deliberately — under workflow="t2va" the pod
+  # holds one partition and resolves it itself.
+  - ref: "hf:lightx2v/Minimax-h3-Turbo:minimax_h3_fl2v_turbo_8step_v1.0_bf16.safetensors"
+    strength: 1.0
+
+compute:
+  provider: modal
+  image: "python:3.13-slim"
+  mode: pod
+  placement:
+    min_vram_gb: 120
+    min_cuda: "12.4"
+    max_usd_per_hr: 5.00
+    accelerators:
+      - "H200"
+  lifecycle:
+    heartbeat_interval_s: 30
+    idle_timeout: 20m
+    job_timeout: 40m
+    time_buffer: 3m
+    max_lifetime: 90m
+    # Also Modal's @app.function(timeout=...). Sized for the -long-640
+    # sibling's 14.375 s generation; an 8-step/124-frame turbo run finishes
+    # far inside it, so the envelope is conservative rather than tight.
+    boot_timeout: 60m
+    budget: 8.0
+
+spec:
+  model: "MiniMax-H3"
+  pipeline: "MiniMaxH3ModularPipeline"
+  scheduler: "MiniMaxH3Scheduler"
+  width: 640
+  height: 352
+  num_frames: 124
+  fps: 24
+  num_inference_steps: 8
