@@ -470,7 +470,31 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site.
 
-**STATUS INDEX (current as of 2026-09-17. Provenance, newest first: **U49 ANSWERED — NO DEFECT**:
+**STATUS INDEX (current as of 2026-09-23. Provenance, newest first: **U57 FILED, OPEN** — three
+LoRA-resolution failure classes (`LoraStackConflict`, `UnknownAdapter`, the zero-artifact
+`ValidationError`) first fire inside `ensure_lora_stack` only after the pod has already booted
+and billed, not at preflight; found by the MiniMax-H3 LoRA shared seam build, not fixed there.
+Before that: **U56 FILED, OPEN** — a hosted-engine cfg carrying `loras:` still generates
+LoRA-less; the gap is now WARNED instead of silent, but the real fix needs per-engine LoRA
+capability declared in the registry, which this build did not add. Before that: **U55 FILED,
+OPEN** — an H3 inventory row's `branch` field is stamped with H3's `target` vocabulary (e.g.
+`"transformer"`), a landmine that will fail warm-attach's branch comparison the moment H3 gets
+matcher integration; harmless today only because that wiring does not exist yet. Before that:
+**U54 FILED, OPEN** — a persisted ledger `lora_inventory` row can be silently corrupted into
+redaction placeholders (`<lora:ref:…>`) before any cross-process reader, including the
+warm-reuse matcher, ever sees it; pre-existing and equally true of the older swap path. Before
+that: **U53 FILED, OPEN** — every RunPod diffusers config embedding the FlashVSR/RIFE/spandrel
+bootstraps is already over the ~101 KB point where `podFindAndDeployOnDemand` returns a raw
+HTTP 500; pre-existing, and CLAUDE.md's "~4× headroom" note (Known infra gotchas) is rotted.
+Before that: **U52 FILED, OPEN** — four `/workspace/models/...` paths survive as
+provider-volume runtime defaults in `wan_t2v_server.py`, paired with provisioner-side writers a
+server-only fix cannot reach; on Modal these weights land on ephemeral container disk, not the
+mounted Volume. Before that: **U51 FILED, OPEN** — `lifecycle.budget` is inert on RunPod and
+reads like a dollar guard that is not one; only SkyPilot's watchdog consumes it. Before that:
+**U50 FILED, OPEN** — the `wan_t2v_server` job-worker is a daemon thread with no shutdown
+handler; this is the mechanism that put 281 stub mp4s in `/workspace/artifacts` between June and
+September 2026, and the pod-path seam defanged only the consequence, not the mechanism. Before
+that: **U49 ANSWERED — NO DEFECT**:
 RunPod's `unknown` GPU-type row is neither priced nor reachable (`memoryInGb: 0`, both prices null,
 and in NEITHER pool), three independent filters already exclude it, and a wide-open `find_offers`
 against the live catalog returns 31 offers without it. The filing that called it "priced and
@@ -554,7 +578,7 @@ U30 filed and fixed 2026-09-10 from that run; U16 fixed 2026-09-10
 U18 LIVE-PROVEN and U21 fixed 2026-09-09; U29 filed and fixed 2026-09-09; U17 fixed 2026-09-08.
 This table is authoritative — every paragraph BELOW it is dated campaign commentary and is not.)**
 
-Forty-nine items, U1-U49. **Forty-five are fixed or answered** (U1, U2, U3, U4, U6, U7, U8, U9,
+Fifty-seven items, U1-U57. **Forty-five are fixed or answered** (U1, U2, U3, U4, U6, U7, U8, U9,
 U11, U12, U14, U15, U16, U17, U18, U19, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U30,
 U31, U32, U33, U34, U36, U37, U38, U39, U35, U40, U41, U42, U43, U44, U47, U48, U49), **two are
 partly fixed** (U5, U10), **NO live proof is owed** (U24 discharged 2026-09-11), **two are OPEN, both on the serverless path and both found by the golden U35 brought into
@@ -565,6 +589,10 @@ over building or deleting the mode, so a RunPod `mode: serverless` cfg fails `ge
 with the reason and the one-line fix, while still LOADING so the golden stays in the ratchet. U43 and U44 were both filed AND fixed on 2026-09-14, hours apart, out of U36's root cause. U37 — CLOSED the same day it was filed: the FlashVSR cu128 half
 was never real (those cfgs pin no torch), and the Modal half is now MEASURED — pod `eph-aab25c06`
 reports `torch 2.6.0+cu124` on `/health`, so the index decides the build on both providers),
+**eight more are OPEN, filed across two later sessions and none yet fixed** (U50, U51, U52 —
+found by the final review of the pod-path seam work, 2026-09-21; U53, U54, U55, U56, U57 —
+found by the MiniMax-H3 LoRA shared seam build, 2026-09-22/23; one-line mechanism for each is in
+the "Provenance, newest first" paragraph above, full detail in each row of the table below),
 and
 **U13 is NOT
 REPRODUCIBLE at HEAD** — hunted live on 2026-09-11 across two engines, both reaching a real
