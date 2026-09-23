@@ -47,7 +47,7 @@
     {
       "id": 6,
       "subject": "Task 6: client error mapping + target on the wire",
-      "status": "in_progress",
+      "status": "completed",
       "description": "**Goal:** The two new error bodies map to typed exceptions instead of RuntimeError, and target reaches the pod only when set.\n\n**Files:**\n- Modify: `src/kinoforge/core/errors.py`\n- Modify: `src/kinoforge/engines/diffusers/__init__.py:718-724` (payload) and `:872-929` (_raise_lora_swap_error)\n- Test: `tests/engines/test_diffusers_set_lora_stack.py` (extend)\n\n**Acceptance Criteria:**\n- [ ] lora_format_unsupported at 400 raises LoraFormatUnsupportedError carrying ref + hint\n- [ ] lora_load_failed at 500 raises LoraLoadFailedError\n- [ ] Both expose manual_cleanup_command() like their siblings\n- [ ] An entry with target=None produces a payload with NO target key\n- [ ] An entry with target='transformer' produces ref/strength/branch/target\n- [ ] Unknown bodies still raise RuntimeError\n\n**Verify:** `pixi run python -m pytest tests/engines/test_diffusers_set_lora_stack.py -v` -> all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/errors.py\", \"src/kinoforge/engines/diffusers/__init__.py\", \"tests/engines/test_diffusers_set_lora_stack.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/engines/test_diffusers_set_lora_stack.py -v\", \"acceptanceCriteria\": [\"typed format error carries hint\", \"typed load error\", \"target omitted when None (old-pod 422 guard)\", \"unknown body still RuntimeError\"], \"modelTier\": \"standard\"}\n```",
       "blockedBy": [
         1,
@@ -57,7 +57,7 @@
     {
       "id": 7,
       "subject": "Task 7: apply the stack before the first generation",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Every generate path applies the resolved stack after the pod is ready, and a failure fails the run.\n\n**Files:**\n- Create: `src/kinoforge/core/lora_apply.py`\n- Modify: `src/kinoforge/core/orchestrator.py:2158-2206` (immediately before `yield session`)\n- Test: `tests/core/test_lora_apply.py`, `tests/integration/test_lora_apply_gates_generate.py`\n\n**Acceptance Criteria:**\n- [ ] An empty stack makes no HTTP call\n- [ ] A non-empty stack resolves each ref via registry.source_for_ref and POSTs one set_lora_stack\n- [ ] A backend without set_lora_stack (hosted engines) is a no-op\n- [ ] On LoraFormatUnsupportedError the error propagates and submit is NEVER called\n- [ ] Refs never appear in any log line emitted by this module\n- [ ] hf: and civitai: refs both produce url/headers/filename/size_hint\n\n**Verify:** `pixi run python -m pytest tests/core/test_lora_apply.py tests/integration/test_lora_apply_gates_generate.py -v` -> all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/lora_apply.py\", \"src/kinoforge/core/orchestrator.py\", \"tests/core/test_lora_apply.py\", \"tests/integration/test_lora_apply_gates_generate.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/core/test_lora_apply.py tests/integration/test_lora_apply_gates_generate.py -v\", \"acceptanceCriteria\": [\"failed apply prevents generation\", \"empty stack issues no call\", \"hosted backends no-op\", \"logs carry counts not refs\"], \"modelTier\": \"frontier\"}\n```",
       "blockedBy": [
         5,
@@ -67,7 +67,7 @@
     {
       "id": 8,
       "subject": "Task 8: delete the lossy adapter bridge",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** One payload builder, not two.\n\n**Files:**\n- Modify: `src/kinoforge/_adapters.py:341-374` (delete build_set_stack_request)\n- Delete: `tests/test_adapters_build_set_stack_request.py`\n- Modify: `tests/integration/test_loras_cli_e2e.py`\n\n**Acceptance Criteria:**\n- [ ] build_set_stack_request no longer exists anywhere in src/\n- [ ] tests/integration/test_loras_cli_e2e.py asserts the same behaviour through DiffusersBackend\n- [ ] Full suite green\n\n**Verify:** `pixi run python -m pytest tests/ -q` -> 0 failures\n\n```json:metadata\n{\"files\": [\"src/kinoforge/_adapters.py\", \"tests/integration/test_loras_cli_e2e.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/ -q\", \"acceptanceCriteria\": [\"no build_set_stack_request in src\", \"e2e ported to the backend payload builder\", \"full suite green\"], \"modelTier\": \"mechanical\"}\n```",
       "blockedBy": [
         6,
@@ -77,7 +77,7 @@
     {
       "id": 9,
       "subject": "Task 9: turbo config, goldens, payload ceiling",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** A shipped H3 LoRA config exists, the golden ratchet is re-baked deliberately, and the env payload can never silently cross RunPod's limit.\n\n**Files:**\n- Create: `examples/configs/modal-diffusers-minimax-h3-t2va-lora-turbo.yaml`\n- Create: `tests/providers/test_env_payload_ceiling.py`\n- Modify: `tests/providers/golden/launch_payloads/*.json` + `_golden_provision.json` (REGENERATED, never hand-edited)\n\n**Acceptance Criteria:**\n- [ ] kinoforge doctor on the new config exits 0\n- [ ] The config names the exact turbo ref (lightx2v ..._8step_v1.0_bf16.safetensors), num_inference_steps: 8, 640x352, 124 frames\n- [ ] A new golden exists and every pre-existing golden diff is blob-only\n- [ ] test_env_payload_ceiling asserts < 90 KB for every RunPod diffusers config\n- [ ] Goldens regenerated AFTER `pre-commit run --all-files`\n\n**Verify:** `pixi run python -m pytest tests/providers/ -q` -> 0 failures\n\n```json:metadata\n{\"files\": [\"examples/configs/modal-diffusers-minimax-h3-t2va-lora-turbo.yaml\", \"tests/providers/test_env_payload_ceiling.py\", \"tests/providers/golden/launch_payloads\"], \"verifyCommand\": \"pixi run python -m pytest tests/providers/ -q\", \"acceptanceCriteria\": [\"doctor exits 0\", \"exact probed ref pinned\", \"golden diffs blob-only\", \"90 KB env ceiling guarded\", \"format before snapshot\"], \"modelTier\": \"standard\"}\n```",
       "blockedBy": [
         5
@@ -86,7 +86,7 @@
     {
       "id": 10,
       "subject": "Task 10: docs, PROGRESS, deprecation record",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** The deprecation and the debt are written down where the next session will find them.\n\n**Files:**\n- Modify: `docs/breaking-changes.md`, `docs/warm-reuse.md`, `PROGRESS.md`\n\n**Acceptance Criteria:**\n- [ ] breaking-changes.md describes branch -> target with a before/after YAML pair\n- [ ] warm-reuse.md states H3 serves set_stack WITHOUT eviction\n- [ ] PROGRESS.md RESUME SNAPSHOT records: two coexisting implementations, no eviction on H3, Wan cold-boot cfg.loras still a no-op\n- [ ] Full suite green\n\n**Verify:** `pixi run python -m pytest tests/ -q` -> 0 failures\n\n```json:metadata\n{\"files\": [\"docs/breaking-changes.md\", \"docs/warm-reuse.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run python -m pytest tests/ -q\", \"acceptanceCriteria\": [\"before/after YAML in breaking-changes\", \"H3 eviction gap documented\", \"PROGRESS debt list updated\"], \"modelTier\": \"mechanical\"}\n```",
       "blockedBy": [
         7,
@@ -104,5 +104,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-09-22T21:37:26.792224"
+  "lastUpdated": "2026-09-23T00:07:08.732646"
 }
