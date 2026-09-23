@@ -122,22 +122,39 @@ This change trades a create-time HTTP 500 for a possible boot-time `ImportError`
 under-embed one module and the pod boots, reports ready, then dies serving. That safety
 property needs a mechanism, not a hand-maintained list.
 
-A new test computes each config's pod-side **module-level** import closure — rooted at
-the entry points its rendered provision script actually runs (`python -m …` lines) — and
-asserts it in both directions, **restricted to modules under
-`kinoforge.engines.diffusers.servers`**, matching §3's scope:
+A new test computes each config's pod-side import closure — rooted at the entry points
+its rendered provision script actually runs (`python -m …` lines) — and asserts it in both
+directions, **restricted to modules under `kinoforge.engines.diffusers.servers`**, matching
+§3's scope:
 
 * **nothing in the closure is unembedded** — catches the under-embed that kills a pod at
   boot;
 * **nothing embedded is outside the closure** — stops the fat creeping back, which is how
   the breach arrived in the first place.
 
-**Module-level only, deliberately.** `wan_t2v_server` imports the flashvsr, rife,
-spandrel and seedvr2 runtimes *lazily, inside functions* — which is why
-`runpod-diffusers-wan-2_2-14b-t2v` works today while embedding none of them. A closure
-following nested imports would demand all of them on every config and re-inflate the
-payload past where it started. Feature-lazy modules stay declared per config, as now, and
-stay exercised by the per-feature live smokes.
+**Nested imports count; the package restriction does the narrowing.** An earlier draft of
+this section said *module-level imports only*, reasoning that `wan_t2v_server` imports the
+flashvsr / rife / spandrel / seedvr2 runtimes lazily inside functions and a nested-inclusive
+closure would demand all of them. **That rule is wrong and would ship a bug.**
+`wan_t2v_server`'s only *module-level* `kinoforge` import is
+`servers._video_io` (line 63); `servers._util_stats` is imported lazily inside a function —
+yet every pod needs it, because it backs the `/util` route that CLAUDE.md's live-smoke
+polling rule depends on. A module-level-only closure drops `_util_stats` and breaks `/util`
+on all thirteen configs.
+
+The correct rule is the **full closure — nested imports included — restricted to
+`servers/`**. The restriction alone does all the narrowing the module-level rule was
+reaching for, because the lazily-imported feature runtimes live in `upscalers.*` and
+`interpolators.*`, outside the restriction. Measured, that rule gives exactly:
+
+| entry point | closure inside `servers/` |
+|---|---|
+| `wan_t2v_server` | `wan_t2v_server`, `_util_stats`, `_video_io` |
+| `minimax_h3_server` | `minimax_h3_server`, `_lora`, `_av_io`, `_util_stats`, `__init__` |
+
+Three of the seven files in `servers/` for a RunPod pod; the three dropped modules appear
+only in H3's closure. Feature-lazy modules outside `servers/` stay declared per config, as
+now, and stay exercised by the per-feature live smokes.
 
 The closure must skip `if TYPE_CHECKING:` blocks — those imports never execute, and
 counting them would demand embedding controller-side modules the pod never loads.
