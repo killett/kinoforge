@@ -787,6 +787,17 @@ def _resolve_transformer_attr(pipe_obj: Any, branch: str) -> tuple[Any, str]:  #
     return target, attr
 
 
+#: Every target a Wan 2.2 MoE LoRA can name. ``auto`` is deliberately absent:
+#: it is a request to CHOOSE a target, not a target, and the two MoE experts
+#: are the whole universe a controller may name.
+#:
+#: Mirrors ``kinoforge.core.lora_profiles._REGISTRY``'s entry for this module and
+#: is locked to it by ``tests/engines/diffusers/test_lora_profile_parity.py`` —
+#: the client accepts a stack at config load, minutes of boot before this pod
+#: could refuse it, so the two declarations have to be checked against each
+#: other somewhere, and here is the only place that costs nothing.
+LORA_TARGET_UNIVERSE: tuple[str, ...] = ("high_noise", "low_noise")
+
 _BRANCH_SHORT: dict[str, str] = {
     "high_noise": "h",
     "low_noise": "l",

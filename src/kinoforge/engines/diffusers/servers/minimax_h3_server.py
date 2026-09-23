@@ -63,6 +63,7 @@ import numpy as np  # noqa: E402
 from fastapi import FastAPI, HTTPException  # noqa: E402
 from pydantic import BaseModel, ConfigDict, Field, field_validator  # noqa: E402
 
+from kinoforge.engines.diffusers.servers import _lora  # noqa: E402
 from kinoforge.engines.diffusers.servers._av_io import (  # noqa: E402
     write_mp4_with_audio,
 )
@@ -81,6 +82,21 @@ MODEL_ID: str = os.environ.get("WAN_MODEL_ID", "MiniMaxAI/MiniMax-H3")
 ARTIFACT_DIR: Path = Path(
     os.environ.get("KINOFORGE_ARTIFACT_DIR", "/tmp/kf-artifacts")  # noqa: S108
 )
+#: Root the LoRA router downloads into. Same env var and same default as the Wan
+#: server: one boot script sets it, and the shared client talks to both pods.
+LORAS_DIR: Path = Path(
+    os.environ.get("KINOFORGE_LORAS_DIR", "/tmp/kf-loras")  # noqa: S108
+)
+
+#: Every partition an H3 checkpoint can carry a LoRA for, across ALL workflows.
+#:
+#: This is the CLIENT-side vocabulary, mirrored from
+#: ``kinoforge.core.lora_profiles._REGISTRY`` and locked to it by
+#: ``tests/engines/diffusers/test_lora_profile_parity.py`` — it is what a
+#: controller can know without a pod. It is deliberately NOT what this pod
+#: serves: ``_build_lora_profile`` narrows it to the partitions the loaded
+#: pipeline actually holds, because only the pod knows that.
+LORA_TARGET_UNIVERSE: tuple[str, ...] = ("transformer", "transformer_ref")
 
 # --- geometry, from diffusers v0.40.0 -------------------------------------
 #
@@ -167,6 +183,10 @@ manager: Any = None  # the ComponentsManager holding the offload hooks
 #: degraded run is visible without reading the boot log — on Modal that log is
 #: unreadable once an ephemeral app stops.
 attention_backend: str = "default"
+#: Built in ``_startup`` from the loaded pipeline, and None until then. The
+#: router reads it through ``_require_lora_profile``; ``/health`` reports the
+#: None state as "no LoRA support", which is the truth while the weights load.
+lora_profile: _lora.LoraProfile | None = None
 jobs: dict[str, JobState] = {}
 _q: queue.Queue[str] = queue.Queue()
 _worker_thread: threading.Thread | None = None
@@ -485,6 +505,151 @@ def _apply_attention_backend(pipe_obj: Any) -> str:  # noqa: ANN401 — a Modula
     return _ATTENTION_BACKEND
 
 
+_PRUNED_HINT = (
+    "this looks like a LoRA trained against a PRUNED MiniMax-H3 checkpoint "
+    "(the `*_pruned_*` / `*_comfyui_*` files in Comfy-Org/MiniMax-H3; "
+    "joyfox/MiniMax-H3-Turbo is one). diffusers cannot load those. Use "
+    "lightx2v/Minimax-h3-Turbo (…_8step_v1.0_bf16.safetensors) or "
+    "larryvrh/MiniMax-H3-Turbo-Lora instead."
+)
+
+
+def _explain_load_failure(exc: BaseException) -> str | None:
+    """Return the pruned-checkpoint hint for a size mismatch, else None.
+
+    A hint is not cosmetic: the router maps a hinted failure to 400 (permanent,
+    stop) and an unhinted one to 500 (unexplained, retryable). Hinting a
+    transient OOM would turn a retry into a dead end; failing to hint a real
+    mismatch sends the controller back for another 1.96 GB of a file that can
+    never load.
+
+    Args:
+        exc: The exception the profile's ``load`` raised.
+
+    Returns:
+        The hint text, or ``None`` when the cause is not a shape mismatch.
+    """
+    text = str(exc).lower()
+    if "size mismatch" in text or "shape mismatch" in text:
+        return _PRUNED_HINT
+    return None
+
+
+def _build_lora_profile(pipe_obj: Any) -> _lora.LoraProfile:  # noqa: ANN401 — a ModularPipeline; diffusers is pod-only
+    """Build the H3 LoRA profile from the partitions this workflow loaded.
+
+    Read off the pipeline, never from a constant: ``t2va`` holds ``transformer``
+    alone, ``ref2va`` holds ``transformer_ref`` alone, and only a pipeline
+    holding BOTH is ambiguous enough to require an explicit target. The two
+    partitions carry IDENTICAL module names, so a LoRA aimed at the one this pod
+    did not load applies without raising anywhere and merely degrades the output
+    — which is why a profile built from :data:`LORA_TARGET_UNIVERSE` would be
+    actively dangerous rather than merely over-broad.
+
+    Args:
+        pipe_obj: The loaded pipeline.
+
+    Returns:
+        The profile the shared seam drives this pipeline through.
+    """
+    present = tuple(
+        name
+        for name in LORA_TARGET_UNIVERSE
+        if getattr(pipe_obj, name, None) is not None
+    )
+    default = present[0] if len(present) == 1 else None
+
+    def _load_one(p: Any, path: str, adapter_name: str, target: str) -> None:  # noqa: ANN401 — the pipeline again
+        """Attach one adapter to the named partition.
+
+        Args:
+            p: The loaded pipeline.
+            path: LoRA file on disk.
+            adapter_name: Positional adapter name from the shared seam.
+            target: The partition to load into.
+        """
+        p.load_lora_weights(
+            path,
+            adapter_name=adapter_name,
+            load_into_transformer_ref=(target == "transformer_ref"),
+        )
+
+    def _after_load(p: Any) -> None:  # noqa: ANN401 — the pipeline again
+        """Restore bf16 on every partition this pipeline holds.
+
+        Args:
+            p: The loaded pipeline.
+        """
+        # DiffSynth-Studio H3 LoRAs carry fp32 factors; without this the
+        # unfused path computes in fp32 and the bf16 memory budget is gone on
+        # a card already at ~77 GB of 131 GiB. Iterates `present`, not the
+        # universe: reaching for a partition this workflow never loaded would
+        # AttributeError inside apply_stack's rollback boundary and refuse
+        # every otherwise-valid stack.
+        import torch
+
+        for name in present:
+            getattr(p, name).to(torch.bfloat16)
+
+    return _lora.LoraProfile(
+        name="minimax-h3-t2va",
+        targets=present,
+        default_target=default,
+        load=_load_one,
+        module_for=lambda p, target: getattr(p, target),
+        after_load=_after_load,
+        explain_load_failure=_explain_load_failure,
+    )
+
+
+def _require_lora_profile() -> _lora.LoraProfile:
+    """Return the built profile, refusing to serve without one.
+
+    The router is mounted inside ``_startup``, after the profile is built and
+    before ``ready`` is set, so this cannot fire in the normal life of the pod.
+    It exists because the alternative — handing the seam a ``None`` — turns a
+    missing profile into an ``AttributeError`` deep inside an apply job.
+
+    Returns:
+        The profile built from the loaded pipeline.
+
+    Raises:
+        RuntimeError: No pipeline was ever loaded.
+    """
+    if lora_profile is None:
+        raise RuntimeError(
+            "LoRA profile unavailable: the pipeline has not finished loading"
+        )
+    return lora_profile
+
+
+def _lora_health() -> dict[str, Any]:
+    """Return the ``/health`` LoRA block, truthful in every state.
+
+    Returns:
+        ``supported`` / ``targets`` / ``default_target`` / ``profile``.
+        Support is claimed only once the pipeline is up, a profile was built
+        from it, AND that profile found a partition to load into — the
+        controller's pre-flight reads this to decide whether to POST a stack,
+        and a pod claiming support it cannot honour is the cross-boot lie the
+        whole parity check exists to prevent.
+    """
+    profile = lora_profile
+    if not ready.is_set() or profile is None or not profile.targets:
+        return {
+            "supported": False,
+            "targets": [],
+            "default_target": None,
+            "profile": None,
+        }
+    return {
+        "supported": True,
+        "targets": list(profile.targets),
+        "default_target": profile.default_target,
+        "profile": profile.name,
+    }
+
+
 def _seed_to_generator(seed: int | None) -> Any:  # noqa: ANN401 — torch.Generator is opaque here (torch is pod-only)
     """Return a seeded CPU generator, or None.
 
@@ -632,11 +797,21 @@ def _worker_loop() -> None:
 
 @app.on_event("startup")
 def _startup() -> None:
-    """Log the environment, load the pipeline, spawn the worker, report ready."""
-    global pipe, manager, _worker_thread
+    """Log the environment, load the pipeline, spawn the worker, report ready.
+
+    The LoRA profile is built and the router mounted BEFORE ``ready.set()``.
+    That ordering is load-bearing: the orchestrator fires ``/lora/set_stack``
+    the moment ``/health`` flips to ready, and a pod that is ready with no
+    router behind it answers 404 — a status the shared client has no mapping
+    for, on a card that is already billing.
+    """
+    global pipe, manager, _worker_thread, lora_profile
     _log.info("startup: torch build %s", _torch_build())
     _log_memory_facts()
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    # shutil.disk_usage raises FileNotFoundError on a missing path, and the
+    # router reads free disk on every inventory GET and every completed apply.
+    LORAS_DIR.mkdir(parents=True, exist_ok=True)
     _log.info("startup: loading %s workflow=t2va", MODEL_ID)
     t0 = time.monotonic()
     pipe, manager = _load()
@@ -644,6 +819,27 @@ def _startup() -> None:
     attention_backend = _apply_attention_backend(pipe)
     _log.info("startup: loaded in %.1f s", time.monotonic() - t0)
     _log_memory_facts()
+    lora_profile = _build_lora_profile(pipe)
+    app.include_router(
+        _lora.build_lora_router(lambda: pipe, _require_lora_profile, LORAS_DIR)
+    )
+    if lora_profile.targets:
+        _log.info(
+            "startup: LoRA profile %s targets=%s default=%s",
+            lora_profile.name,
+            list(lora_profile.targets),
+            lora_profile.default_target,
+        )
+    else:
+        # Degrade, loudly — the same trade as the attention backend. Generation
+        # is untouched; only LoRAs are unavailable, and /health says so. Aborting
+        # the boot here would cost the whole pod over an optional capability.
+        _log.warning(
+            "startup: the loaded pipeline holds NONE of %s, so this pod serves "
+            "no LoRAs; /health reports lora.supported=false. Expect every "
+            "set_stack to be refused — this is a degraded pod, not a bad stack.",
+            list(LORA_TARGET_UNIVERSE),
+        )
     _worker_thread = threading.Thread(target=_worker_loop, daemon=True)
     _worker_thread.start()
     ready.set()
@@ -657,12 +853,15 @@ def health() -> dict[str, Any]:
     Returns:
         The health payload. ``capabilities`` carries ``t2va`` once the pipeline
         is up — the matcher's pre-flight treats that list as a closed vocabulary.
+        ``lora`` declares what this pod can actually be told to hold; see
+        :func:`_lora_health`.
     """
     return {
         "ready": ready.is_set(),
         "model": MODEL_ID,
         "capabilities": ["t2va"] if ready.is_set() else [],
         "attention_backend": attention_backend,
+        "lora": _lora_health(),
         "torch": _torch_build(),
     }
 
