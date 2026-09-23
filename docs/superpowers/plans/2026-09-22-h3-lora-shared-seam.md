@@ -18,7 +18,7 @@
 - **Refs are sensitive under vault mode.** Never log a ref; log counts. Never put a stack in the pod env.
 - **Golden regeneration order:** `pixi run pre-commit run --all-files` FIRST, then `pixi run python tools/snapshot_launch_payloads.py`. Reversed, goldens bake against unformatted bytes and move twice.
 - **Pinned constants** (probed 2026-09-22, do not re-derive, do not substitute the `_comfyui_` variants — diffusers cannot load those):
-  - Turbo: `hf:lightx2v/Minimax-h3-Turbo:minimax_h3_fl2v_turbo_8step_v1.0_bf16.safetensors` — 1,383,677,808 B, 624 BF16 tensors, `__metadata__ = {"alpha": "8"}`, keys carry `.default.`
+  - Turbo: `hf:lightx2v/Minimax-h3-Turbo:minimax_h3_fl2v_turbo_8step_v1.0_bf16.safetensors` — 1,383,677,768 B (corrected 2026-09-22 — the byte count was originally transcribed from the `..._768p_bf16.safetensors` sibling's probe output; the pin itself, the filename, was always correct, and a live HEAD confirmed the true size), 624 BF16 tensors, `__metadata__ = {"alpha": "8"}`, keys carry `.default.`
   - Style: `hf:DiffSynth-Studio/MiniMax-H3-LoRA-LineartAnime:model.safetensors` — 1,258,532,696 B, 518 **F32** tensors, no `__metadata__`, keys start `blocks.`
   - Fallback turbo if the fl2v distillation reads poorly on t2va: `hf:larryvrh/MiniMax-H3-Turbo-Lora:minimax_h3_turbo_4step.safetensors` — 779,849,872 B, 4-step, alpha-less.
 - **Env payload budget:** 90 KB total rendered env per RunPod diffusers config (ceiling is ~101 KB).

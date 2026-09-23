@@ -98,6 +98,18 @@ lock is non-blocking — a contended pod is skipped and the matcher
 considers the next candidate. Multi-process kinoforge instances do
 NOT share the lock; that's a documented deferral (Layer H follow-up).
 
+### MiniMax-H3 serves the same contract, without eviction
+
+H3 pods mount the identical `/lora/set_stack` router this section describes
+(`kinoforge.engines.diffusers.servers._lora`, shared with Wan) — the wire
+contract, the HTTP surface, and the client that speaks to it are the same
+code, not a lookalike. What H3 does **not** have is the LRU eviction policy
+above or any integration with the matcher: nothing today routes a warm-attach
+decision onto an H3 pod, so every H3 run either cold-boots or is driven
+manually against a known pod id. Without eviction, `<volume>/loras` on an H3
+pod only ever grows — there is no mechanism that ever removes a LoRA once
+it's downloaded.
+
 ### `kinoforge generate --loras` — CLI LoRA stack override
 
 Override `cfg.loras` (and bypass `vault.loras` with an audit warning)

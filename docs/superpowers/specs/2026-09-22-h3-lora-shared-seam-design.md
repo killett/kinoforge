@@ -71,7 +71,7 @@ of which that helper reads.
 | D5 | Reuse the existing `/lora/set_stack` async contract, minus eviction | A new `/lora/apply`: same job, divergent semantics, duplicate client code |
 | D6 | `branch` generalises to `target`, `branch` kept as a deprecated alias | Widening the `branch` Literal per model; deferring until ref2va lands |
 | D7 | A failed apply **fails the run** | Logging and generating anyway — the defect this design exists to remove |
-| D8 | Wan is untouched this increment | Extracting from Wan now: entangled with the `/upscale` + `/interpolate` co-residency LRU |
+| D8 | Wan's serving logic (registry, LRU, `/generate`, job worker, audio mux) is untouched this increment — see §3 for the one forced, purely additive schema exception (`target` on `LoraTarget`) | Extracting from Wan now: entangled with the `/upscale` + `/interpolate` co-residency LRU |
 
 ## 3. Schema — `branch` becomes `target`
 

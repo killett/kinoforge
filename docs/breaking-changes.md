@@ -4,6 +4,44 @@
 
 ## Breaking changes
 
+### MiniMax-H3 LoRA shared seam — `branch` becomes `target`
+
+`branch` was Wan's MoE noise-split vocabulary (`high_noise` / `low_noise` /
+`auto`) baked into a `LoraEntry` field name. H3 has no MoE split — it routes
+LoRAs onto workflow partitions (`transformer`, and `transformer_ref` once
+`ref2va` lands) that `branch`'s `Literal` cannot express. `target: str | None`
+generalises the concept: it names a routing token drawn from the **server
+profile's own vocabulary**, not a fixed global enum.
+
+```yaml
+# before (still works, warns)
+loras:
+  - ref: "civitai:1234@5678"
+    branch: high_noise
+# after
+loras:
+  - ref: "civitai:1234@5678"
+    target: high_noise
+```
+
+`branch` still loads. Setting only `branch` maps it onto `target` and logs one
+`deprecated-lora-branch` warning per entry that did so, pointing back at this
+section. Setting both fields to **disagreeing** values is a load-time
+`ValueError` — `branch=high_noise` implies `target=high_noise`, so a cfg that
+also writes `target=low_noise` on the same entry is refused rather than
+silently picking one. `target: null` (the default — simply omitting the key)
+means "the pod profile's default target", which reproduces `branch="auto"`
+exactly: single-transformer pipelines resolve it to their sole denoiser, a
+Wan 2.2 MoE pod still requires an explicit choice between `high_noise` /
+`low_noise`, and an H3 `t2va` pod resolves it to `transformer`.
+
+`LoraTarget` in `wan_t2v_server.py` gained the same additive `target` field
+for the identical reason on the wire side: it is `extra="forbid"`, so a
+`/lora/set_stack` payload carrying `target` would 422 every Wan pod without
+it. The client omits `target` from the payload when it is `None`, so an
+already-running pod from an older image (no `target` field) still accepts a
+swap.
+
 ### Compute-seam S4 — selection moved into the providers; the rate cap is verified
 
 Three breaks, in the order an operator is likely to meet them.
