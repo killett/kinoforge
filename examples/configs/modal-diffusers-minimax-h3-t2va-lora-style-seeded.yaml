@@ -1,0 +1,137 @@
+# MiniMax-H3 t2va + a STYLE LoRA, seeded, at the adapter's own step count.
+#
+# Sibling of modal-diffusers-minimax-h3-t2va-lora-turbo.yaml. That config
+# exists to exercise the metadata-alpha branch of the shared LoRA profile with
+# a step-distillation adapter at 8 steps; this one exists to exercise the
+# OTHER branch — the fp32->bf16 restore path — with an F32 style adapter, and
+# it differs from its sibling in exactly four places:
+#
+#   1. `loras:` carries the DiffSynth LineartAnime style LoRA instead of the
+#      lightx2v turbo LoRA. It is F32 throughout (1,258,532,696 B on the pod),
+#      which is the whole point: the profile's bf16 restore only runs for an
+#      adapter whose tensors are not already bf16.
+#   2. `spec.num_inference_steps: 20` — the DiffSynth model card's own
+#      inference example uses 20. The turbo config's 8 is only viable because
+#      the turbo adapter is step-distilled; evicting it and keeping 8 steps
+#      under-denoises, which is a confound when the question is whether a
+#      STYLE adapter expressed itself. Probed 2026-09-23: the card specifies
+#      NO trigger word, so the prompt needs no activation keyword.
+#   3. `spec.seed` is PINNED. Without it the server's `seed: int | None = None`
+#      path runs unseeded and every render draws a different sample, so an
+#      A/B across two strengths is two unrelated samples rather than a
+#      comparison. Do not remove it from this config — it is the reason the
+#      config exists as a separate file rather than a CLI override.
+#   4. `spec.num_frames: 124` is kept (the model's SHORTEST legal clip,
+#      `17*n+5` aligned) because the question is about style, not length, and
+#      a short clip is the cheap way to ask it.
+#
+# The loras: ref is PINNED — do not substitute a similar-looking filename.
+# `target:` is omitted deliberately: under `workflow="t2va"` the pod holds
+# exactly one LoRA-eligible partition (`transformer`) and resolves the target
+# itself — live-confirmed 2026-09-23, `/health` reports
+# `targets: ["transformer"]` on a real t2va pod.
+#
+# Strength is a CLI axis, not a config one: run the second cell with
+# `--loras "<ref> 2.0"` to override this file's 1.0 on the same warm pod.
+#
+# Usage:
+#   # cell A — strength 1.0, cold boot, keep the pod
+#   pixi run -e live-modal kinoforge generate \
+#     --config examples/configs/modal-diffusers-minimax-h3-t2va-lora-style-seeded.yaml \
+#     --mode t2va \
+#     --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+#     --emit-provision-record /tmp/h3-style-pod.json
+#
+#   # cell B — strength 2.0 on the SAME pod (--attach-pod and --no-reuse are
+#   # mutually exclusive, so teardown is an explicit destroy afterwards)
+#   pixi run -e live-modal kinoforge generate \
+#     --config examples/configs/modal-diffusers-minimax-h3-t2va-lora-style-seeded.yaml \
+#     --attach-pod <pod-id> --mode t2va \
+#     --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+#     --loras "hf:DiffSynth-Studio/MiniMax-H3-LoRA-LineartAnime:model.safetensors 2.0"
+#
+#   pixi run -e live-modal kinoforge destroy --id <pod-id>
+
+mode: t2va
+prompt: "Photorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace — luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking."
+
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    image: "python:3.13-slim"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.minimax_h3_server"
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "diffusers==0.40.0"
+      - "transformers>=4.57"
+      - "accelerate>=1.0"
+      # REQUIRED by diffusers' LoRA loaders — without it the pod boots clean,
+      # /health still advertises lora.supported=true, and the first
+      # /lora/set_stack dies with HTTP 500 "PEFT backend is required for this
+      # method." Learned live 2026-09-23 at the cost of a full H200 boot; see
+      # test_diffusers_lora_configs_pip_install_peft.
+      - "peft>=0.13"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      - "psutil>=5.9"
+      - "nvidia-ml-py>=12"
+      - "kernels>=0.4"
+    base_url: "http://localhost:8000"
+    prompt_body_key: "prompt"
+    embed_modules: ["kinoforge.engines.diffusers.servers"]
+    attention_backend: "_flash_3_hub"
+    capability:
+      supported_modes: ["t2va"]
+      max_frames: 345
+      fps: 24
+      max_resolution: [1344, 768]
+      supports_joint_audio: true
+
+models:
+  - ref: "hf:MiniMaxAI/MiniMax-H3"
+    kind: base
+    target: checkpoints
+
+loras:
+  # PROBED 2026-09-22 — 1.26 GB, F32 throughout. This is the adapter the
+  # profile's fp32->bf16 restore path exists for.
+  - ref: "hf:DiffSynth-Studio/MiniMax-H3-LoRA-LineartAnime:model.safetensors"
+    strength: 1.0
+
+compute:
+  provider: modal
+  image: "python:3.13-slim"
+  mode: pod
+  placement:
+    min_vram_gb: 120
+    min_cuda: "12.4"
+    max_usd_per_hr: 5.00
+    accelerators:
+      - "H200"
+  lifecycle:
+    heartbeat_interval_s: 30
+    idle_timeout: 20m
+    job_timeout: 40m
+    time_buffer: 3m
+    max_lifetime: 90m
+    boot_timeout: 60m
+    budget: 8.0
+
+spec:
+  model: "MiniMax-H3"
+  pipeline: "MiniMaxH3ModularPipeline"
+  scheduler: "MiniMaxH3Scheduler"
+  width: 640
+  height: 352
+  num_frames: 124
+  fps: 24
+  num_inference_steps: 20
+  # PINNED so the two strength cells are the same sample. See header note 3.
+  seed: 424242
