@@ -8,6 +8,7 @@ controller believes a LoRA is active that is not.
 from __future__ import annotations
 
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -33,11 +34,17 @@ class FakeModule:
 
 
 class FakePipe:
-    """Records load/unload ordering the way the real mixin would see it."""
+    """Records load/unload ordering the way the real mixin would see it.
+
+    ``log`` is the SHARED ordering record: loads and the profile's after_load
+    both append to it, so a test can pin that after_load ran after every load
+    and not merely that it ran once.
+    """
 
     def __init__(self, *, fail_on: str | None = None) -> None:
         self.module = FakeModule()
         self.loaded: list[tuple[str, str, str]] = []
+        self.log: list[str] = []
         self.unload_count = 0
         self._fail_on = fail_on
 
@@ -49,19 +56,19 @@ class FakePipe:
         if self._fail_on is not None and self._fail_on in path:
             raise RuntimeError("size mismatch for blocks.0.attn.out_proj.lora_B")
         self.loaded.append((path, adapter_name, target))
+        self.log.append(f"load:{adapter_name}")
 
 
 def _profile(
-    pipe: FakePipe, *, after_load: list[str] | None = None
+    pipe: FakePipe, *, after_load: Callable[[Any], None] | None = None
 ) -> _lora.LoraProfile:
-    calls = after_load if after_load is not None else []
     return _lora.LoraProfile(
         name="fake",
         targets=("transformer",),
         default_target="transformer",
         load=lambda p, path, adapter_name, target: p.load(path, adapter_name, target),
         module_for=lambda p, target: p.module,
-        after_load=lambda p: calls.append("after_load"),
+        after_load=after_load or (lambda p: p.log.append("after_load")),
         explain_load_failure=lambda exc: (
             "pruned-checkpoint hint" if "size mismatch" in str(exc) else None
         ),
@@ -107,12 +114,15 @@ def test_apply_loads_in_order_with_positional_adapter_names(
 
 
 def test_after_load_runs_once_after_every_entry(files: dict[str, Path]) -> None:
-    """The dtype restore must not run per-entry — it is a whole-model fixup."""
+    """The dtype restore runs ONCE and AFTER the last load — not per-entry.
+
+    Loads and after_load share one log, so hoisting after_load above the loop
+    (which the 'exactly once' half of the criterion cannot see) fails here too.
+    """
     pipe = FakePipe()
-    calls: list[str] = []
     _lora.apply_stack(
         pipe,
-        _profile(pipe, after_load=calls),
+        _profile(pipe),
         entries=[
             _lora.ResolvedEntry(
                 ref="r:a", path=files["a.safetensors"], strength=1.0, target=None
@@ -122,7 +132,7 @@ def test_after_load_runs_once_after_every_entry(files: dict[str, Path]) -> None:
             ),
         ],
     )
-    assert calls == ["after_load"]
+    assert pipe.log == ["load:lora_0", "load:lora_1", "after_load"]
 
 
 def test_failure_midway_rolls_back_to_empty(files: dict[str, Path]) -> None:
@@ -288,6 +298,92 @@ def test_inventory_snapshot_tracks_the_live_stack(files: dict[str, Path]) -> Non
     assert _lora.inventory_snapshot() == []
 
 
+def test_failing_after_load_also_unloads(files: dict[str, Path]) -> None:
+    """Rollback covers every step that can leave an adapter attached, not just loads.
+
+    load_lora_weights attaches an ACTIVE adapter. If after_load raises and the
+    pod does not unload, it generates WITH the LoRA — at weight 1.0, since
+    set_adapters never ran — while /lora/inventory reports nothing loaded.
+    """
+    pipe = FakePipe()
+
+    def boom(_pipe: Any) -> None:
+        raise RuntimeError("bf16 restore failed")
+
+    with pytest.raises(RuntimeError, match="bf16 restore failed"):
+        _lora.apply_stack(
+            pipe,
+            _profile(pipe, after_load=boom),
+            entries=[
+                _lora.ResolvedEntry(
+                    ref="r:a", path=files["a.safetensors"], strength=1.0, target=None
+                )
+            ],
+        )
+    assert pipe.unload_count == 2  # once at entry, once rolling back
+    assert pipe.loaded == []
+    assert _lora.inventory_snapshot() == []
+
+
+def test_a_file_vanishing_before_publish_rolls_back(files: dict[str, Path]) -> None:
+    """A row that cannot be built must not publish the rows before it.
+
+    The LoRA dir is shared and Wan already runs LRU eviction over it, so a file
+    CAN disappear between load and stat. Catches both a partial inventory and a
+    pipeline left holding the full weighted stack under an empty one.
+    """
+    pipe = FakePipe()
+
+    def load_then_evict(p: Any, path: str, adapter_name: str, target: str) -> None:
+        """Entry 1 loads fine, then its file is evicted out from under us."""
+        p.load(path, adapter_name, target)
+        if "b.safetensors" in path:
+            files["b.safetensors"].unlink()
+
+    profile = _lora.LoraProfile(
+        name="fake",
+        targets=("transformer",),
+        default_target="transformer",
+        load=load_then_evict,
+        module_for=lambda p, target: p.module,
+        after_load=lambda p: None,
+        explain_load_failure=lambda exc: None,
+    )
+    with pytest.raises(FileNotFoundError):
+        _lora.apply_stack(
+            pipe,
+            profile,
+            entries=[
+                _lora.ResolvedEntry(
+                    ref="r:a", path=files["a.safetensors"], strength=1.0, target=None
+                ),
+                _lora.ResolvedEntry(
+                    ref="r:b", path=files["b.safetensors"], strength=1.0, target=None
+                ),
+            ],
+        )
+    assert _lora.inventory_snapshot() == []
+    assert pipe.unload_count == 2
+    assert pipe.loaded == []
+
+
+def test_same_ref_twice_reports_two_rows(files: dict[str, Path]) -> None:
+    """Two adapters means two inventory rows, even when the ref repeats.
+
+    Catches keying the inventory by (ref, target): both entries load and both
+    reach set_adapters, so a one-row inventory under-reports what is active.
+    """
+    pipe = FakePipe()
+    entry = _lora.ResolvedEntry(
+        ref="r:a", path=files["a.safetensors"], strength=0.5, target=None
+    )
+    inv = _lora.apply_stack(pipe, _profile(pipe), entries=[entry, entry])
+    assert [e.adapter_name for e in inv] == ["lora_0", "lora_1"]
+    assert [e.ref for e in inv] == ["r:a", "r:a"]
+    assert pipe.module.adapter_calls == [(["lora_0", "lora_1"], [0.5, 0.5])]
+    assert len(_lora.inventory_snapshot()) == 2
+
+
 @dataclass
 class FakeSpec:
     """Duck-typed stand-in for the orchestrator's download spec."""
@@ -380,12 +476,66 @@ def test_ensure_downloaded_reuses_the_file_already_on_disk(
     def explode(*_a: Any, **_k: Any) -> None:
         raise AssertionError("ensure_downloaded must not hit the network")
 
-    monkeypatch.setattr(urllib.request, "urlopen", explode)
-    (tmp_path / "x.safetensors").write_bytes(b"z" * 42)
-    path, size = _lora.ensure_downloaded(
-        "r:x",
-        FakeSpec(url="https://vendor/x.safetensors", filename="x.safetensors"),
-        tmp_path,
+    spec = FakeSpec(url="https://vendor/x.safetensors", filename="x.safetensors")
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda req, timeout=None: _FakeResponse([b"z" * 42])
     )
-    assert path == tmp_path / "x.safetensors"
+    first, _ = _lora.ensure_downloaded("r:x", spec, tmp_path)
+    assert first.read_bytes() == b"z" * 42
+
+    monkeypatch.setattr(urllib.request, "urlopen", explode)
+    again, size = _lora.ensure_downloaded("r:x", spec, tmp_path)
+    assert again == first
     assert size == 42
+
+
+def test_ensure_downloaded_does_not_serve_another_refs_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Vendor basenames collide; the ref is the identity, so bytes are per ref.
+
+    ``pytorch_lora_weights.safetensors`` is a common CivitAI/HF basename. Reuse
+    keyed on the filename alone would hand ref B whatever ref A downloaded
+    first — the wrong LoRA, silently, for the life of a warm pod.
+    """
+    name = "pytorch_lora_weights.safetensors"
+
+    def serve(payload: bytes) -> Callable[..., _FakeResponse]:
+        return lambda req, timeout=None: _FakeResponse([payload])
+
+    monkeypatch.setattr(urllib.request, "urlopen", serve(b"AAAA"))
+    path_a, _ = _lora.ensure_downloaded(
+        "civitai:1@1", FakeSpec(url="https://vendor/a", filename=name), tmp_path
+    )
+    monkeypatch.setattr(urllib.request, "urlopen", serve(b"BBBBBB"))
+    path_b, size_b = _lora.ensure_downloaded(
+        "civitai:2@2", FakeSpec(url="https://vendor/b", filename=name), tmp_path
+    )
+
+    assert path_a != path_b
+    assert path_a.read_bytes() == b"AAAA"
+    assert path_b.read_bytes() == b"BBBBBB"
+    assert size_b == 6
+
+
+@pytest.mark.parametrize(
+    "ref",
+    ["../../etc/passwd", "hf:org/repo/file.safetensors", "..", "/abs/path", "."],
+)
+def test_ref_directories_stay_inside_the_lora_dir(ref: str, tmp_path: Path) -> None:
+    """A ref is cfg-supplied data; it must never escape the LoRA directory.
+
+    Catches interpolating the ref into a path unsanitized, which for
+    ``../../etc/passwd`` would write outside the LoRA directory entirely.
+    """
+    resolved = (tmp_path / _lora._ref_dirname(ref)).resolve()
+    assert resolved.parent == tmp_path.resolve()
+
+
+def test_ref_directories_do_not_collide_after_sanitizing() -> None:
+    """Two refs that sanitize to the same text must still get separate dirs.
+
+    ``hf:a/b`` and ``hf:a_b`` both flatten to ``hf_a_b``; without the digest
+    suffix that reintroduces exactly the wrong-bytes bug the split prevents.
+    """
+    assert _lora._ref_dirname("hf:a/b") != _lora._ref_dirname("hf:a_b")

@@ -24,12 +24,18 @@ Two invariants carry the weight:
 
 from __future__ import annotations
 
+import hashlib
+import re
 import shutil
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+
+# Anything outside this set becomes "_" in a per-ref directory name, so a ref
+# can never contribute a path separator or a ".." segment.
+_UNSAFE_REF_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 
 
 @dataclass(frozen=True)
@@ -124,9 +130,12 @@ class DownloadSpec(Protocol):
 
 
 # Module-level because the pod serves one pipeline per process and the router
-# reads this to answer /lora/inventory. Keyed by (ref, target): the same ref may
-# legitimately be loaded into two different partitions of the same model.
-_INVENTORY: dict[tuple[str, str], InventoryEntry] = {}
+# reads this to answer /lora/inventory. A LIST, not a dict: a stack may hold two
+# entries with the same ref AND the same resolved target (two adapters, two
+# rows), which any keying would silently collapse into one row — an under-report
+# from the one module whose job is inventory truthfulness. Nothing looks a row
+# up by key, so a key buys nothing. One row per loaded adapter, in stack order.
+_INVENTORY: list[InventoryEntry] = []
 
 
 def inventory_snapshot() -> list[InventoryEntry]:
@@ -134,10 +143,11 @@ def inventory_snapshot() -> list[InventoryEntry]:
 
     Returns:
         A new list of the live rows — same shape ``apply_stack`` returns, so
-        the router has exactly one inventory shape to serialize. Empty whenever
-        no stack is applied, including after a rolled-back failure.
+        the router has exactly one inventory shape to serialize. One row per
+        loaded adapter. Empty whenever no stack is applied, including after a
+        rolled-back failure.
     """
-    return list(_INVENTORY.values())
+    return list(_INVENTORY)
 
 
 def disk_free_bytes(path: Path) -> int:
@@ -197,10 +207,13 @@ def apply_stack(
     * Every target is resolved BEFORE anything is unloaded, so a
       :class:`TargetRequired` entry anywhere in the stack leaves the pod's
       current stack and inventory untouched.
-    * A load that raises unloads everything that already landed, empties the
-      inventory, and re-raises as :class:`LoraLoadError`. The pod is then
-      LoRA-free and honestly reports so; it never serves a partial stack under
-      a full inventory.
+    * EVERY other failure — a load, the ``after_load`` fixup, a ``module_for``
+      lookup, a ``set_adapters``, a vanished file at inventory time — unloads
+      whatever landed and propagates, leaving the pod genuinely LoRA-free with
+      an empty inventory. A load failure propagates as :class:`LoraLoadError`;
+      anything else propagates unchanged.
+    * The inventory is published in a single assignment, after the last row is
+      built. It is empty or it is the whole stack; never a prefix.
 
     Args:
         pipe: The loaded diffusers pipeline.
@@ -218,38 +231,54 @@ def apply_stack(
 
     pipe.unload_lora_weights()
     # The stack the inventory described no longer exists, so the inventory must
-    # not outlive it: emptying here (rather than only on the failure path) means
-    # EVERY exit below this point short of success reports an empty stack.
+    # not outlive it.
     _INVENTORY.clear()
-    for i, (entry, target) in enumerate(resolved):
-        try:
-            profile.load(pipe, str(entry.path), f"lora_{i}", target)
-        except BaseException as exc:
-            pipe.unload_lora_weights()
-            raise LoraLoadError(
-                entry.ref, profile.explain_load_failure(exc), exc
-            ) from exc
+    # ONE rollback boundary around everything that can leave adapters attached.
+    # load_lora_weights attaches an adapter that is ACTIVE from that moment on:
+    # an escape anywhere below — a raising after_load, a module_for lookup, a
+    # set_adapters that fails on the second target after the first took, a stat
+    # of a file evicted from under us — would otherwise leave the pod generating
+    # WITH LoRAs (at default weight 1.0 if set_adapters never ran) while the
+    # inventory reports none. Same real-vs-reported lie as a half-applied stack,
+    # merely inverted, and equally invisible outside the pixels.
+    try:
+        for i, (entry, target) in enumerate(resolved):
+            try:
+                profile.load(pipe, str(entry.path), f"lora_{i}", target)
+            except BaseException as exc:
+                raise LoraLoadError(
+                    entry.ref, profile.explain_load_failure(exc), exc
+                ) from exc
 
-    profile.after_load(pipe)
+        profile.after_load(pipe)
 
-    by_target: dict[str, tuple[list[str], list[float]]] = {}
-    for i, (entry, target) in enumerate(resolved):
-        names, weights = by_target.setdefault(target, ([], []))
-        names.append(f"lora_{i}")
-        weights.append(entry.strength)
-    for target, (names, weights) in by_target.items():
-        profile.module_for(pipe, target).set_adapters(names, weights)
+        by_target: dict[str, tuple[list[str], list[float]]] = {}
+        for i, (entry, target) in enumerate(resolved):
+            names, weights = by_target.setdefault(target, ([], []))
+            names.append(f"lora_{i}")
+            weights.append(entry.strength)
+        for target, (names, weights) in by_target.items():
+            profile.module_for(pipe, target).set_adapters(names, weights)
 
-    # Published last: the inventory only ever describes a stack that fully landed.
-    for i, (entry, target) in enumerate(resolved):
-        _INVENTORY[(entry.ref, target)] = InventoryEntry(
-            ref=entry.ref,
-            filename=entry.path.name,
-            size_bytes=entry.path.stat().st_size,
-            adapter_name=f"lora_{i}",
-            strength=entry.strength,
-            target=target,
-        )
+        # Built locally, published in one assignment below: a row that cannot be
+        # built (the stat, typically) must not leave rows 0..k-1 on show against
+        # a pipeline holding the whole weighted stack.
+        rows = [
+            InventoryEntry(
+                ref=entry.ref,
+                filename=entry.path.name,
+                size_bytes=entry.path.stat().st_size,
+                adapter_name=f"lora_{i}",
+                strength=entry.strength,
+                target=target,
+            )
+            for i, (entry, target) in enumerate(resolved)
+        ]
+    except BaseException:
+        pipe.unload_lora_weights()
+        raise
+
+    _INVENTORY[:] = rows
     return inventory_snapshot()
 
 
@@ -300,18 +329,42 @@ def download_one(spec: DownloadSpec, dest_dir: Path) -> tuple[Path, int]:
         raise
 
 
+def _ref_dirname(ref: str) -> str:
+    """Return the per-ref subdirectory name that holds that ref's bytes.
+
+    Vendor filenames are NOT unique — ``pytorch_lora_weights.safetensors`` is a
+    common CivitAI/HF basename — so a flat directory plus reuse-by-basename
+    would serve one ref's bytes under another ref's name, silently and forever
+    on a warm pod. The ref is the only identity available here (``DownloadSpec``
+    carries no digest or size), so it becomes the directory.
+
+    Args:
+        ref: Controller-side LoRA reference, e.g. ``civitai:1234@5678``.
+
+    Returns:
+        A single path segment: every character outside ``[A-Za-z0-9._-]``
+        replaced, so no separator and no ``..`` can survive, plus a short digest
+        of the RAW ref so two refs cannot collide by sanitizing to the same text.
+    """
+    safe = _UNSAFE_REF_CHARS.sub("_", ref).lstrip(".")[:80] or "ref"
+    return f"{safe}-{hashlib.sha256(ref.encode()).hexdigest()[:8]}"
+
+
 def ensure_downloaded(
     ref: str, spec: DownloadSpec, loras_dir: Path
 ) -> tuple[Path, int]:
-    """Return the file's path, downloading it only if it is not already there.
+    """Return the file's path, downloading it only if this REF already has it.
 
     Warm-reuse pods call this on every stack change, so re-fetching bytes that
-    are already on disk is a per-call bandwidth and wall-clock tax.
+    are already on disk is a per-call bandwidth and wall-clock tax. The reuse
+    check is per ref, not per filename — see :func:`_ref_dirname`.
 
     Args:
-        ref: Controller-side LoRA reference, used to name the cause on failure.
+        ref: Controller-side LoRA reference. Namespaces the bytes on disk, and
+            names the cause on failure.
         spec: Vendor-resolved download instruction.
-        loras_dir: Directory LoRA files live in.
+        loras_dir: Root directory LoRA files live under. This ref's bytes land
+            in a subdirectory of it.
 
     Returns:
         Tuple of (path on disk, size in bytes).
@@ -319,11 +372,12 @@ def ensure_downloaded(
     Raises:
         RuntimeError: The download failed; the underlying cause is chained.
     """
-    existing = loras_dir / spec.filename
+    dest_dir = loras_dir / _ref_dirname(ref)
+    existing = dest_dir / spec.filename
     if existing.exists():
         return existing, existing.stat().st_size
     try:
-        return download_one(spec, loras_dir)
+        return download_one(spec, dest_dir)
     except Exception as exc:
         raise RuntimeError(
             f"downloading LoRA {ref} ({spec.filename}) failed: {exc}"
