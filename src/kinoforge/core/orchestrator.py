@@ -76,6 +76,7 @@ from kinoforge.core.lifecycle import (
     destroy_confirmed,
 )
 from kinoforge.core.logging import get_logger
+from kinoforge.core.lora_apply import ensure_lora_stack
 from kinoforge.core.pool import ConcurrentPool
 from kinoforge.core.profiles import JsonImageProfileCache, JsonProfileCache
 from kinoforge.core.provision_state import (
@@ -2203,6 +2204,25 @@ def deploy_session(
                         touch_exc,
                     )
             try:
+                # The LoRA stack is applied HERE — after the pod reports ready
+                # and before any job is submitted — so cold pods and
+                # caller-supplied warm pods take the same path. A failure
+                # raises: generating with a stack that did not load is the
+                # silent defect this closes.
+                #
+                # Deliberately INSIDE this ``try`` rather than just above it:
+                # by Step 8.5 the pool exists and (on the compute path) the
+                # heartbeat thread is running, so a raise from here must still
+                # run the ``finally`` below — otherwise every refused stack
+                # strands a ThreadPoolExecutor plus a heartbeat thread and
+                # skips the ``session_end`` ledger write. Ordering relative to
+                # ``yield`` is unchanged: nothing has been submitted yet.
+                ensure_lora_stack(
+                    backend=backend,
+                    cfg=cfg,
+                    pod_id=instance.id if instance is not None else None,
+                    creds=creds,
+                )
                 yield session
             finally:
                 if hb_loop is not None:
