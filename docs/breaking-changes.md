@@ -13,20 +13,47 @@ LoRAs onto workflow partitions (`transformer`, and `transformer_ref` once
 generalises the concept: it names a routing token drawn from the **server
 profile's own vocabulary**, not a fixed global enum.
 
+**Which spelling to use today — read this before migrating a config.**
+`target:` is the forward-looking field and it is the ONLY spelling that can
+name an H3 partition, but on a **Wan 2.2 MoE pod it is accepted at config load
+and then ignored by the pod's routing** (see the caveat below). So:
+
 ```yaml
-# before (still works, warns)
+# Wan 2.2 MoE (high_noise / low_noise) — KEEP `branch:`. `target:` loads,
+# then fails on the pod. Do NOT migrate this form yet.
 loras:
   - ref: "civitai:1234@5678"
     branch: high_noise
-# after
+
+# MiniMax-H3 and any single-transformer pipeline — use `target:`.
+# `branch:` cannot name these partitions at all.
 loras:
   - ref: "civitai:1234@5678"
-    target: high_noise
+    target: transformer
 ```
+
+**Caveat — `target:` is accepted at load but NOT yet honoured for routing by
+the Wan pod.** `core/lora_profiles.py` registers `wan_t2v_server` with the
+target universe `("high_noise", "low_noise")`, so `validation/checks/loras.py`
+**accepts** `target: high_noise` on a Wan config. The pod does not act on it.
+`LoraEntry._resolve_branch_to_target` maps `branch` → `target` one way only, so
+an entry that sets `target` alone still carries `branch="auto"`; the client
+ships `{"branch": "auto", "target": "high_noise"}`, and `wan_t2v_server`'s
+`/lora/set_stack` gates and routes on `branch`, never on `target`. On a MoE
+pipeline `branch="auto"` is illegal, so the swap is refused with
+`BranchAutoNotAllowedOnMoE` (HTTP 400) — **after** the 25-30 minute Wan 2.2
+boot and its ~70 GB weight fetch. Until the Wan migration lands, a Wan 2.2 MoE
+config must spell its routing `branch:`. The symmetric `target` → `branch` map
+that would close this is filed as **U60** in `PROGRESS.md`; it needs a live Wan
+re-proof, which is why it was not taken at the end of this branch. H3 configs
+are unaffected — H3 routes on `target` natively.
 
 `branch` still loads. Setting only `branch` maps it onto `target` and logs one
 `deprecated-lora-branch` warning per entry that did so, pointing back at this
-section. Setting both fields to **disagreeing** values is a load-time
+section — that warning is **premature for a Wan MoE config**, where `branch:`
+is still the only spelling that routes, and it should be read as "this field
+is going away later", not "change it now". Setting both fields to
+**disagreeing** values is a load-time
 `ValueError` — `branch=high_noise` implies `target=high_noise`, so a cfg that
 also writes `target=low_noise` on the same entry is refused rather than
 silently picking one. `target: null` (the default — simply omitting the key)
@@ -40,7 +67,8 @@ for the identical reason on the wire side: it is `extra="forbid"`, so a
 `/lora/set_stack` payload carrying `target` would 422 every Wan pod without
 it. The client omits `target` from the payload when it is `None`, so an
 already-running pod from an older image (no `target` field) still accepts a
-swap.
+swap. That field is **additive only**: `wan_t2v_server` accepts and stores
+`target`, and routes on `branch` — which is the whole of the caveat above.
 
 ### Compute-seam S4 — selection moved into the providers; the rate cap is verified
 

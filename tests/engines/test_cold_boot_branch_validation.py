@@ -23,10 +23,12 @@ raises and the server NEVER reports ready.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 
 from kinoforge.engines.diffusers.servers import wan_t2v_server
 
@@ -214,3 +216,78 @@ def test_single_transformer_pipe_with_explicit_branch_rejected_at_boot(
     ]
     with pytest.raises(wan_t2v_server.BranchUnsupportedOnSingleTransformer):
         wan_t2v_server._load_pipeline(initial_lora_stack=stack)
+
+
+def test_a_wan_moe_cfg_spelling_its_routing_as_target_is_refused_by_the_pod(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U60 tripwire: `target:` loads on a Wan cfg, then 400s on the pod.
+
+    ``core/lora_profiles.py`` registers ``wan_t2v_server`` with the target
+    universe ``("high_noise", "low_noise")``, so ``target: high_noise``
+    passes config validation. It does not route. ``LoraEntry`` maps
+    ``branch`` -> ``target`` ONE WAY, so a ``target``-only entry still
+    carries ``branch="auto"``, the client ships that verbatim, and this
+    endpoint gates on ``branch`` — which on a MoE pipe is illegal. The
+    operator pays a 25-30 minute Wan 2.2 boot to find out.
+
+    This test asserts a KNOWN DEFECT, deliberately, because the claim spans
+    two modules that no single test covered: the entry that config load
+    accepted is the entry the pod refuses. It is a tripwire, not a
+    specification — **when U60's symmetric ``target`` -> ``branch`` map
+    lands, this test MUST go red**, and whoever makes it green has to
+    update it together with the caveat in ``core/lora_profiles.py`` and the
+    "MiniMax-H3 LoRA shared seam" section of ``docs/breaking-changes.md``,
+    which both currently tell operators to keep using ``branch:`` on Wan.
+
+    Bug caught meanwhile: silently "fixing" one half — e.g. dropping the
+    Wan row from the client registry so the cfg is refused at load, or
+    teaching ``LoraEntry`` the reverse map without touching the pod — while
+    leaving the docs claiming the other behaviour.
+    """
+    from kinoforge.core.lora import LoraEntry
+    from kinoforge.core.lora_profiles import client_profile_for_server_module
+
+    wan = client_profile_for_server_module(
+        "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    )
+    assert wan is not None
+    assert "high_noise" in wan.target_universe, (
+        "config load accepts `target: high_noise` on Wan precisely because "
+        "this universe lists it"
+    )
+
+    entry = LoraEntry(ref="civitai:F@1", strength=1.0, target="high_noise")
+    assert entry.branch == "auto", (
+        "the branch<->target map is one-directional; setting `target` alone "
+        f"must leave branch at 'auto', got {entry.branch!r}"
+    )
+
+    # Exactly what DiffusersBackend._wire_entry ships for this entry —
+    # pinned independently by tests/engines/test_diffusers_set_lora_stack.py
+    # ::test_set_lora_stack_set_target_reaches_the_wire.
+    req = wan_t2v_server.SetStackRequest.model_validate(
+        {
+            "target": [
+                {
+                    "ref": entry.ref,
+                    "strength": entry.strength,
+                    "branch": entry.branch,
+                    "target": entry.target,
+                }
+            ],
+            "download_specs": {},
+        }
+    )
+    monkeypatch.setattr(wan_t2v_server, "_pipe_arity", 2)
+
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(wan_t2v_server.set_stack(req))
+
+    assert ei.value.status_code == 400
+    detail: Any = ei.value.detail
+    assert detail == {
+        "error": "branch_routing",
+        "reason": "branch_auto_disallowed_on_moe",
+        "arity": 2,
+    }

@@ -30,6 +30,17 @@ class ClientLoraProfile:
 
 
 _REGISTRY: dict[str, ClientLoraProfile] = {
+    # CAVEAT (U60, PROGRESS.md): this universe makes `target: high_noise`
+    # ACCEPTED at config load — but the Wan pod does not route on `target`.
+    # `LoraEntry._resolve_branch_to_target` maps branch -> target one way
+    # only, so a `target`-only entry still ships `branch="auto"`, and
+    # `wan_t2v_server`'s `/lora/set_stack` gates and routes on `branch`:
+    # on a MoE pipeline that is `BranchAutoNotAllowedOnMoE` -> HTTP 400,
+    # AFTER a 25-30 minute boot. Wan 2.2 MoE configs must keep using
+    # `branch:` until the symmetric target -> branch map (U60) lands with a
+    # live Wan re-proof. Do NOT read this row as "target works on Wan"; it
+    # means "target is a legal token here", which is a weaker claim. See
+    # docs/breaking-changes.md, "MiniMax-H3 LoRA shared seam".
     "kinoforge.engines.diffusers.servers.wan_t2v_server": ClientLoraProfile(
         supported=True, target_universe=("high_noise", "low_noise")
     ),

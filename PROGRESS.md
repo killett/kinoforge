@@ -470,13 +470,20 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site.
 
-**STATUS INDEX (current as of 2026-09-23. Provenance, newest first: **U59 FILED, OPEN** — a
+**STATUS INDEX (current as of 2026-09-23. Provenance, newest first: **U60 FILED, OPEN** — a
+`target:` naming a Wan MoE branch is ACCEPTED at config load (the client registry lists Wan's
+universe) and then INERT on the pod, because `branch` -> `target` maps one way only and
+`wan_t2v_server` routes on `branch`; the swap is refused with HTTP 400 after a 25-30 minute Wan
+2.2 boot. Documented and tripwired on this branch, NOT fixed — the symmetric map needs a live
+Wan re-proof. Before that: **U59 FILED, OPEN** — a
 diffusers pod whose image lacks `peft` boots clean and reports `lora.supported: true`, then 500s
 on the first `/lora/set_stack`; found LIVE at the cost of a full H200 boot (~$0.42), example
-configs now guarded by a test, the server-side probe not built. Before that: **U58 FILED, OPEN**
-— `--loras ""` does NOT clear a warm-attached pod's stack despite the CLI help saying it does,
-so a supposedly LoRA-less control silently renders with the previous run's adapters; confirmed
-live on pod `run-20260923-002836`. Before that: **U57 FILED, OPEN** — three
+configs now guarded by a test, the server-side probe not built. Before that: **U58 FILED +
+FIXED** — `--loras ""` did NOT clear a warm-attached pod's stack despite the CLI help saying it
+does, so a supposedly LoRA-less control silently rendered with the previous run's adapters;
+confirmed live on pod `run-20260923-002836`, fixed offline by the final review of the H3 LoRA
+shared seam build (an explicitly empty CLI stack now issues the clearing `set_stack` and empties
+the ledger row). Before that: **U57 FILED, OPEN** — three
 LoRA-resolution failure classes (`LoraStackConflict`, `UnknownAdapter`, the zero-artifact
 `ValidationError`) first fire inside `ensure_lora_stack` only after the pod has already booted
 and billed, not at preflight; found by the MiniMax-H3 LoRA shared seam build, not fixed there.
@@ -584,9 +591,11 @@ U30 filed and fixed 2026-09-10 from that run; U16 fixed 2026-09-10
 U18 LIVE-PROVEN and U21 fixed 2026-09-09; U29 filed and fixed 2026-09-09; U17 fixed 2026-09-08.
 This table is authoritative — every paragraph BELOW it is dated campaign commentary and is not.)**
 
-Fifty-nine items, U1-U59. **Forty-five are fixed or answered** (U1, U2, U3, U4, U6, U7, U8, U9,
+Sixty items, U1-U60. **Forty-five are fixed or answered** (U1, U2, U3, U4, U6, U7, U8, U9,
 U11, U12, U14, U15, U16, U17, U18, U19, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U30,
-U31, U32, U33, U34, U36, U37, U38, U39, U35, U40, U41, U42, U43, U44, U47, U48, U49), **two are
+U31, U32, U33, U34, U36, U37, U38, U39, U35, U40, U41, U42, U43, U44, U47, U48, U49, U58 —
+that last one fixed 2026-09-23 by the final whole-branch review of the H3 LoRA seam, which also
+brought the label and the enumeration back into agreement: both now say forty-five), **two are
 partly fixed** (U5, U10), **NO live proof is owed** (U24 discharged 2026-09-11), **two are OPEN, both on the serverless path and both found by the golden U35 brought into
 existence** (U45 — that path discards `placement` and sends no `env`; U46 — its mutation is INVALID
 GRAPHQL and has never worked, proven for $0.00 against the live schema. **Both are now REFUSED
@@ -597,9 +606,11 @@ was never real (those cfgs pin no torch), and the Modal half is now MEASURED —
 reports `torch 2.6.0+cu124` on `/health`, so the index decides the build on both providers),
 **ten more are OPEN, filed across two later sessions and none yet fixed** (U50, U51, U52 —
 found by the final review of the pod-path seam work, 2026-09-21; U53, U54, U55, U56, U57 —
-found by the MiniMax-H3 LoRA shared seam build, 2026-09-22/23; U58 and U59 — found LIVE by that
-build's Task 11 proof on 2026-09-23, the only two items in this table discovered by a real pod
-rather than by reading code; one-line mechanism for each is in
+found by the MiniMax-H3 LoRA shared seam build, 2026-09-22/23; U59 — found LIVE by that
+build's Task 11 proof on 2026-09-23, one of only two items in this table discovered by a real
+pod rather than by reading code (the other, U58, is now FIXED); U60 — found by that build's
+final whole-branch review, documented and tripwired there but deliberately not fixed because the
+symmetric map needs a live Wan re-proof; one-line mechanism for each is in
 the "Provenance, newest first" paragraph above, full detail in each row of the table below),
 and
 **U13 is NOT
@@ -685,8 +696,9 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | U55 | FILED 2026-09-22, OPEN — pre-existing landmine, flagged by reviewer during Task 4 of the MiniMax-H3 LoRA shared seam build, not fixed because matcher integration for H3 is out of scope this increment | **An H3 inventory row's `branch` field is stamped with H3's `target` vocabulary, which will fail warm-attach's branch comparison the moment H3 gets matcher integration.** `servers/_lora.py:566` sets `branch=row.target` when building an H3 pod's `LoraInventoryEntryModel`, so a `t2va` pod's row reads `branch="transformer"` rather than one of Wan's MoE tokens. `warm_reuse/matcher.py:84` (`if [getattr(a, "branch", "auto") for a in active] != [t.branch for t in target]`) compares that against the run-side resolved stack's `.branch`, which `LoraEntry._resolve_branch_to_target` (`core/lora.py`) leaves at its default `"auto"` for any cfg that sets `target:` directly (only the deprecated `branch:` key writes into `.branch`). So an H3 cfg using `target: transformer` produces `active.branch="transformer"` vs. `target.branch="auto"` — a guaranteed mismatch. Harmless today (nothing routes a warm-attach decision onto an H3 pod — see the RESUME SNAPSHOT / U54-adjacent debt item "no eviction on H3"), but the moment that wiring lands, **every warm H3 pod fails the stack comparison and re-swaps on every run** — a ~1.4 GB turbo-LoRA re-download each time. Compounds with U54: if the persisted `lora_inventory` is also redaction-corrupted, the comparison fails twice over. Fix direction: give H3 rows a `branch` field that reflects Wan's MoE vocabulary only where meaningful (e.g. always `"auto"` for a non-MoE model) and compare on `target` instead of `branch` once target is the generalised field everywhere |
 | U56 | FILED 2026-09-22, OPEN — pre-existing gap, now WARNed instead of silent as of Task 7 of the MiniMax-H3 LoRA shared seam build, not fully fixed | **A hosted-engine config carrying `loras:` still generates LoRA-less — the defect is now WARNED, not silent, but not actually closed.** `ensure_lora_stack` (`core/lora_apply.py:201-226`) logs `"lora-apply: NOT APPLYING %d LoRA entries — engine %r's backend (%s) has no set_lora_stack surface…"` at WARNING level when `backend` is not `SupportsSetLoraStack`, and a second WARNING at line 228-241 when the backend supports it but `pod_id is None` (the hosted path). `LoraServerSupportCheck` (`validation/checks/loras.py`) — the STATIC ERROR check that would refuse an unserveable `loras:` block at config load — explicitly does NOT apply here: `applies_to` returns `False` whenever `cfg.engine.kind != "diffusers"` (`loras.py:36-47`), by design, because its registry (`kinoforge.core.lora_profiles`) only knows diffusers server modules. **The correct gate cannot be a cfg-load check, which is why this was not built as one:** `--loras` on the CLI never enters `cfg.loras` (it lives on the `EphemeralSession`), so a static check reading only the cfg misses the CLI path entirely; and a ComfyUI config legitimately carries `loras:` to feed `capability_key()` while applying the adapters through workflow nodes, so a fatal gate on `engine.kind != "diffusers"` would reject configs that are correct. A real fix needs per-engine LoRA capability declared in the registry (parallel to `Capability.RATE_READBACK` / `RATE_DETERMINISTIC` on `ComputeProvider`), not another cfg-load special case. Fix direction: add a `Capability`-style LoRA-support flag per generation engine and gate both the WARNING and a real STATIC check off it |
 | U57 | FILED 2026-09-22, OPEN — pre-existing gap, deliberately not moved to preflight this increment | **Three LoRA-resolution failure classes cost a pod boot instead of failing at preflight, because they first fire only after the instance already exists.** `LoraStackConflict` (`core/errors.py:499`, raised by `resolve_active_lora_stack` at `core/lora.py:266`) and the zero-artifact `ValidationError` / `UnknownAdapter` (raised inside `resolve_download_specs`, `core/lora_apply.py:122` and `core/registry.py:165` respectively) are all reachable only through `ensure_lora_stack` (`core/lora_apply.py:140`), called from `core/orchestrator.py:2220` — a call site whose own comment says "The LoRA stack is applied HERE — after the pod reports ready and before any job is submitted." A vault/cfg disagreement, an unresolvable ref, or a ref that resolves to zero downloadable artifacts is loud (every one of these raises and propagates — that is D7, the whole point of this seam) but not CHEAP: by the time any of the three can fire, `create_instance` has already run and the pod has already booted and billed. None of the three depends on anything the pod reports back — `resolve_active_lora_stack` only reads `cfg`/`vault`/CLI, and `resolve_download_specs` only reads the ref + credentials — so all three are, in principle, answerable before any spend. Fix direction: run the same resolution (stack conflict + download-spec resolution) as a STATIC or preflight validation check before `create_instance`, and have `ensure_lora_stack` reuse the already-resolved result rather than re-deriving it after boot |
-| U58 | FILED 2026-09-23, OPEN — found live by Task 11 of the MiniMax-H3 LoRA shared seam build; not fixed there (a CLI-behaviour change at the end of a branch) | **`--loras ""` does NOT clear a warm-attached pod's LoRA stack, though the CLI help says it does.** `p_generate`'s `--loras` help (`cli/_main.py:615`) states "Empty heredoc clears the stack for this run", but `ensure_lora_stack` (`core/lora_apply.py:140`, docstring line ~154) explicitly "No-ops when the stack is empty" — so on a `--attach-pod` run the pod silently retains the PREVIOUS run's adapters and renders with them. Confirmed live 2026-09-23 on pod `run-20260923-002836`: a `--loras ""` render produced NO `lora-apply` line in the run log at all, and `/lora/inventory` afterwards still listed the LineartAnime adapter from the prior run. Consequence: a control or baseline cell an operator believes is LoRA-less is not, which silently contaminates any warm-reuse A/B (it invalidated the first bare-base control in Task 11 and cost an extra render to redo). Workaround that does work: POST `/lora/set_stack` with `{"target": [], "download_specs": {}}` and poll `/lora/inventory` until empty. Fix direction: either make an explicitly-empty `--loras` (as distinct from an absent one) issue a clearing `set_stack`, or correct the help text and make the CLI refuse the ambiguous form |
+| U58 | FILED 2026-09-23, **FIXED 2026-09-23** by the final whole-branch review of the MiniMax-H3 LoRA shared seam build (found live by that build's Task 11) | **`--loras ""` does NOT clear a warm-attached pod's LoRA stack, though the CLI help says it does.** `p_generate`'s `--loras` help (`cli/_main.py:615`) states "Empty heredoc clears the stack for this run", but `ensure_lora_stack` (`core/lora_apply.py:140`, docstring line ~154) explicitly "No-ops when the stack is empty" — so on a `--attach-pod` run the pod silently retains the PREVIOUS run's adapters and renders with them. Confirmed live 2026-09-23 on pod `run-20260923-002836`: a `--loras ""` render produced NO `lora-apply` line in the run log at all, and `/lora/inventory` afterwards still listed the LineartAnime adapter from the prior run. Consequence: a control or baseline cell an operator believes is LoRA-less is not, which silently contaminates any warm-reuse A/B (it invalidated the first bare-base control in Task 11 and cost an extra render to redo). It also reached `kinoforge grid`: `core/grid/executor.py` emits `--loras ""` to mean "clear" for a swap grid's control cell, and cells 2..N share one warm pod, so a strength sweep's no-LoRA baseline rendered with the previous cell's adapter. **Fix:** `ensure_lora_stack` now reads the distinction `resolve_active_lora_stack` already carries — `cli_loras is None` (nothing asked) vs `[]` (explicit clear) — and on an explicit clear issues `set_lora_stack` with an empty stack and no download specs, then writes the emptied inventory back to the ledger row so `kinoforge list` and the warm-reuse matcher stop naming adapters the pod dropped. A run with no LoRAs configured still costs ZERO HTTP calls (pinned by test). Clearing against a backend with no `set_lora_stack`, or with no pod, logs an INFO "nothing to clear" rather than the discard WARNING — there is no stale stack for those to be lying about. RED-first; the grid path is pinned end to end by `tests/integration/test_lora_apply_gates_generate.py::test_a_grid_control_cell_clears_the_previous_cells_lora`, which drives the real `_build_swap_generate_cmd` argv through the real CLI parser into `deploy_session`. NOT re-proven live (no spend authorised at the end of the branch); the live symptom that filed it is reproduced offline by the RED test |
 | U59 | FILED 2026-09-23, OPEN — found live by Task 11 of the MiniMax-H3 LoRA shared seam build; the example-config half is FIXED (`cb5be928`), the server half is not | **A diffusers pod whose image lacks `peft` boots clean and advertises `lora.supported: true`, then 500s on the first apply — the gap is invisible until money has been spent.** Diffusers' `load_lora_weights` / `set_adapters` / `unload_lora_weights` require the PEFT backend at runtime; nothing in the config schema, the provisioner, or the server's own `/health` capability probe checks that it is installed. Confirmed live 2026-09-23: `modal-diffusers-minimax-h3-t2va-lora-turbo.yaml` omitted `peft` from `engine.diffusers.pip`, pod `run-20260923-001929` booted an H200 to ready with `/health` reporting `lora.supported: true`, and the first `/lora/set_stack` returned `{'error': 'lora_swap_failed', 'underlying': 'PEFT backend is required for this method.', 'status': 500}`. Cost: one full H200 boot, ~$0.42. The example set is now guarded by `tests/test_examples.py::test_diffusers_lora_configs_pip_install_peft` (any diffusers cfg with a non-empty `loras:` block must pip-install `peft`), but an operator-authored config outside `examples/` still buys the same lesson. Fix direction: have the diffusers server probe `import peft` at startup and either degrade `lora.supported` to `false` with a reason on `/health`, or refuse to report ready when the cfg declares a LoRA stack |
+| U60 | FILED 2026-09-23, OPEN — found by the final whole-branch review of the MiniMax-H3 LoRA shared seam build; documented + tripwired there, deliberately NOT fixed | **`target:` naming a Wan MoE branch is ACCEPTED at config load and then INERT on the Wan pod, so the refusal costs a 25-30 minute boot.** `core/lora_profiles.py` registers `wan_t2v_server` with `target_universe=("high_noise", "low_noise")`, so `validation/checks/loras.py` accepts `target: high_noise` on a Wan config. It does not route. `LoraEntry._resolve_branch_to_target` (`core/lora.py`) maps `branch` -> `target` ONE WAY, so a `target`-only entry still carries `branch="auto"`; `DiffusersBackend.set_lora_stack` ships `{"branch": "auto", "target": "high_noise"}`; and `wan_t2v_server`'s `/lora/set_stack` gates and routes on `branch`, never on `target`. On a MoE pipeline `branch="auto"` is illegal, so the swap is refused with `BranchAutoNotAllowedOnMoE` -> HTTP 400 — after the Wan 2.2 boot and its ~70 GB weight fetch. This is the D4 failure the config-load check exists to prevent, caused by that check. **Not fixed on this branch by ruling:** the symmetric map would make Wan routing newly functional through a path the branch never exercised live (the H3 proof was Modal-only) and Wan's LoRA path is offline-tested here, so it needs its own live re-proof. **Mitigated meanwhile:** `docs/breaking-changes.md` now tells operators to keep `branch:` on Wan 2.2 MoE configs and says plainly that `target:` is accepted-but-not-routed there; `core/lora_profiles.py` carries the same caveat at the row where the acceptance decision is made; and `tests/engines/test_cold_boot_branch_validation.py::test_a_wan_moe_cfg_spelling_its_routing_as_target_is_refused_by_the_pod` pins the end-to-end consequence as a TRIPWIRE that goes red the moment the map lands. **Fix direction:** a ~4-line map in `wan_t2v_server.LoraTarget._resolve_branch_to_target` setting `branch` from `target` when `branch == "auto"` and `target` is in that module's `LORA_TARGET_UNIVERSE` (mirror it in `core/lora.LoraEntry` only if the schema-parity test demands it), plus a LIVE Wan 2.2 MoE re-proof that a `target:`-only cfg actually routes to the named transformer — dims and exit code cannot see which branch a LoRA landed in, so the proof needs the `/lora/inventory` `target` readback and frame QA against a `branch:`-spelled control. Then update the two docs and this tripwire test in the same commit |
 
 **Live proof cost for the whole money-leak campaign: $0.82** — $0.16 for the four fixes' own live
 cells (Task 5, Modal A10), $0.12 for U14's re-proof and $0.54 to reproduce and diagnose it
@@ -3150,6 +3162,46 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 
 ## RESUME SNAPSHOT (updated 2026-09-23 — read this, then STOP; below is history)
 
+### SESSION 2026-09-23 (later) — final whole-branch review; both blockers FIXED, branch ready for a merge decision
+
+**Branch `feat/h3-lora-shared-seam` — the final whole-branch review found TWO blockers, both seam
+defects no task owned, and BOTH are now closed. Verdict record:
+`.superpowers/sdd/2026-09-22-h3-lora-shared-seam/progress.md` (tail); fix record:
+`.superpowers/sdd/2026-09-22-h3-lora-shared-seam/final-fix-report.md`.** No spend; nothing live
+was run in this wave.
+
+1. **`--loras ""` now actually clears (U58, FIXED).** `core/lora_apply.py` reads the distinction
+   `resolve_active_lora_stack` already carried — `cli_loras is None` (nothing asked about) vs `[]`
+   (explicit clear) — and on an explicit clear issues `set_lora_stack` with an empty stack and no
+   download specs, then writes the emptied inventory back to the ledger row. A run with no LoRAs
+   configured still costs ZERO HTTP calls. Clearing where there is no `set_lora_stack` surface, or
+   no pod, logs an INFO "nothing to clear" instead of the discard WARNING. Pinned RED-first,
+   including an integration test that drives the real `kinoforge grid` control-cell argv through
+   the real CLI parser into `deploy_session` — that grid path (cells 2..N sharing one warm pod)
+   is where a stale stack silently contaminated a strength sweep's baseline.
+2. **`target:` on a Wan MoE config is DOCUMENTED as inert, not made to work (U60, FILED OPEN).**
+   It is accepted at config load and then refused by the pod with HTTP 400 after a 25-30 minute
+   Wan 2.2 boot, because `branch` -> `target` maps one way only and `wan_t2v_server` routes on
+   `branch`. Operator ruling: docs + registry caveat ONLY — the symmetric map would make Wan
+   routing newly functional through a path this branch never exercised live (the proof was
+   H3-on-Modal), so it needs its own live Wan re-proof. `docs/breaking-changes.md` now says
+   plainly which spelling to use today and why; `core/lora_profiles.py` carries the caveat at the
+   row where the acceptance decision is made; and a TRIPWIRE test
+   (`tests/engines/test_cold_boot_branch_validation.py::test_a_wan_moe_cfg_spelling_its_routing_as_target_is_refused_by_the_pod`)
+   goes red the moment the map lands, forcing both docs to be updated with it.
+
+**Hygiene closed from the same review:** `tools/_t11_tail.py` rode into `cb5be928` (a config-fix
+commit) undisclosed and no document recorded it. It is the sibling of the disclosed
+`tools/_t11_probe.py`: a 51-line stdin/file log summariser that prints only the tail of the
+*interesting* lines from a Modal orchestrator log (progress, errors, artifact paths) with image-
+build and validation chatter collapsed to a count, so polling a detached live run does not cost
+thousands of transcript tokens per read. It is read-only, spends nothing, and is referenced by no
+code. KEPT and recorded here rather than deleted, so the Task-11 pair stays intact.
+
+**Next action: merge decision on `feat/h3-lora-shared-seam`.** Nothing live is owed; still not
+pushed (`git ls-remote origin feat/h3-lora-shared-seam` returns nothing).
+
+
 ### SESSION 2026-09-23 — MiniMax-H3 LoRA shared seam; Task 11 (live proof) RUN — seam proven, style LoRA a frame-QA FAIL
 
 **Branch `feat/h3-lora-shared-seam`, all 11 tasks complete (`a0ce295f..HEAD`), NOT pushed, NOT merged — `git ls-remote origin feat/h3-lora-shared-seam` returns
@@ -3265,10 +3317,12 @@ method." Cost ~$0.42. Fixed red/green with
 `tests/test_examples.py::test_diffusers_lora_configs_pip_install_peft`, which makes "any diffusers
 example with a non-empty `loras:` block must pip-install `peft`" a property of the example set.
 
-**Two new defects filed, NOT fixed: U58 and U59** (the only two items in the table discovered by a
-real pod rather than by reading code) — `--loras ""` does not clear a warm-attached pod's stack
-despite the CLI help saying it does, and the `peft` gap is invisible until the first apply on ANY
-operator-authored config outside `examples/`. See the STATUS INDEX.
+**Two new defects filed here, neither fixed by Task 11: U58 and U59** (the only two items in the
+table discovered by a real pod rather than by reading code) — `--loras ""` did not clear a
+warm-attached pod's stack despite the CLI help saying it does (**U58 is now FIXED**, by the final
+whole-branch review — see the newer snapshot block above), and the `peft` gap is invisible until
+the first apply on ANY operator-authored config outside `examples/` (**U59 still OPEN**). See the
+STATUS INDEX.
 
 **Spend: ~$1.60** (`run-20260923-001929` est<=$0.42, the boot the `peft` bug cost;
 `run-20260923-002836` est<=$1.18 for four renders). Both are the CLI's `est<=` upper bound, not
@@ -3277,8 +3331,9 @@ Modal billing. **Teardown verified from a fresh process after the orchestrators 
 `kinoforge destroy` must run under `pixi run -e live-modal` — in the default env it dies with
 `TeardownError: ... No such file or directory: 'modal'`.
 
-**Next action: take the branch to review/merge.** All 11 tasks are complete and the one open
-question that bore on our own code — whether the fp32->bf16 restore path was mangling the F32
+**Next action at the time this block was written: take the branch to review/merge** — that review
+has since run; see the newer snapshot block above for its two blockers and their fixes. All 11
+tasks are complete and the one open question that bore on our own code — whether the fp32->bf16 restore path was mangling the F32
 adapter — is CLOSED by the seeded strength A/B above. Nothing live is owed. Total Task 11 spend
 including the follow-up: **~$2.11**. Still not pushed:
 `git ls-remote origin feat/h3-lora-shared-seam` returns nothing.
