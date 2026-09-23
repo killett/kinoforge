@@ -85,7 +85,8 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
           set -euo pipefail
     - See also: `2026-09-18 16:08:41` — **the 960x544 max-length clip through the same chain, pre-downscaled on the controller** (the operator's step 2: keep the documented H3 canvas for generation, shrink only for FlashVSR). Source `output/20260918-014621_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (§31's first See-also). Pre-step: `ffmpeg -vf "scale=640:-2:flags=lanczos,crop=640:352" -an -c:v libx264 -qp 0` → `output/20260918-014621_diffusers_MiniMax-H3_Photorealistic-cinem_pre640x352.mp4` (23,196,068 B, sha256 `49ae0261504428b0...`) — **crop, not squeeze: FlashVSR source dims must be multiples of 32** (the block-sparse attention window divides the latent grid; a 640x360 attempt died on the booked card with `Dims must divide by window size`, ~$0.04, cfg header updated `ca6ded78`). Then the exact §32 command with `--video "$PRE"` and the re-mux still reading `"$SRC"`. Pods `upscale-20260918-155905` (chunks 15:59:20 → 16:03:26, join 16:04:24, published 16:06:11, destroyed 16:06:17, ~$0.30) and `interpolate-20260918-160618` (cached image, GPU 83 %, published 16:08:41, destroyed 16:08:47, ~$0.03), both verified from fresh processes. Outputs: upscale `output/20260918-160611_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4` (1964x1080 / 24 fps / 345 f; 13,199,057 B, sha256 `3a78c773291dd13c...`) → **final** `output/20260918-160841_interpolated_rife_interp_interpolate_with-audio.mp4` (1964x1080 / 60 fps / 862 f / aac stereo 32 kHz; 21,529,009 B, sha256 `f27caf83ae8fff10...`). **Alignment proof, for free:** `av_qa --no-audio --cut-scan` on the upscale found exactly ONE hard cut, at **frame 272** — the source's known cut (delta 66.9 vs 70.05 in the source) — and nothing at the chunk seams 69/138/207/276, so split → pad → trim → join is frame-exact. Frame QA PASS, high quality: frame-200 crop shows hair strands, cliff texture and dress folds the lanczos'd source smears, no invented structure. ⚠️ On the 60 fps final the scan flags frames 678-680 (= 272 x 2.5): RIFE blends ACROSS the hard cut into a 1-2 frame crossfade — inherent to interpolating over a cut, not a pipeline defect; a cut-aware interpolate (split at cuts, interpolate each side) would remove it.
 33. `2026-09-18 21:10:03` — [960x544 MiniMax-H3 max-length clip → SPATIALLY TILED FlashVSR 1080p (no downscale) → RIFE 60 fps → soundtrack re-mux, on Modal — upscale+interpolate (tiled)](#33-2026-09-18-211003--960x544-minimax-h3-max-length-clip--spatially-tiled-flashvsr-1080p-no-downscale--rife-60-fps--soundtrack-re-mux-on-modal--upscaleinterpolate-tiled)
-34. `2026-09-23 00:33:31` — [MiniMax-H3 t2va + LoRA on Modal H200 — the first LoRA on H3 and the first on a t2va model, two applies on one pod — t2va+lora](#34-2026-09-23-003331--minimax-h3-t2va--lora-on-modal-h200--the-first-lora-on-h3-and-the-first-on-a-t2va-model-two-applies-on-one-pod--t2valora) — **⚠️ mechanically green; the style LoRA did NOT produce its named style (frame-QA FAIL) — read §7 of the report before reusing the recipe**
+34. `2026-09-23 00:33:31` — [MiniMax-H3 t2va + LoRA on Modal H200 — the first LoRA on H3 and the first on a t2va model, two applies on one pod — t2va+lora](#34-2026-09-23-003331--minimax-h3-t2va--lora-on-modal-h200--the-first-lora-on-h3-and-the-first-on-a-t2va-model-two-applies-on-one-pod--t2valora)
+    - See also: `2026-09-23 01:17:02` — **the seeded strength A/B that explains this entry's frame-QA FAIL.** Same tuple `(modal, DiffusersEngine, MiniMaxAI/MiniMax-H3, t2va)`, new cfg `examples/configs/modal-diffusers-minimax-h3-t2va-lora-style-seeded.yaml` (20 steps, **`spec.seed: 424242` PINNED** — the first seeded comparison in this whole task). Pod `run-20260923-011131` (H200), two cells: LineartAnime at **strength 1.0** → `output/20260923-011408_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (1,398,302 B, sha256 `bc617c3b01b9fb20…`) is photorealistic with **no style at all**; the same seed at **strength 2.0** (the schema maximum) → `output/20260923-011702_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (910,484 B, sha256 `8d3b0a26dacf7e99…`) is a **total stylistic transformation** — photorealism gone, flat painterly brushwork, stylised foliage, saturated illustrative colour, the subject a painted character. Both cells share composition, camera path and figure placement (the seed pin visibly holding), so the ONLY difference is style. **Verdict: strength was the variable, not dtype — the profile's fp32→bf16 restore path is EXONERATED**, and §34's FAIL was a config artifact (strength 1.0 compounded by 8 steps). Cell A isolates it: 20 steps alone does NOT produce the style. `/health` held a third time; GPU probe read **100 %** mid-denoise, resolving §34's low-utilisation caveat as point-sampling. Spend **est≤$0.51**, teardown verified from a fresh process. Full delta in `.superpowers/sdd/2026-09-22-h3-lora-shared-seam/task-11-report.md`.
 
           MARK="$(mktemp)"
 
@@ -3719,11 +3720,18 @@ at frame 272); frame QA PASS; teardown verified from fresh processes.
 
 > ⚠️ **Read this banner before reusing the recipe.** Run 1 (turbo LoRA, 8 steps)
 > is a clean, publishable clip and the LoRA seam itself is proven end to end.
-> Run 2 (LineartAnime style LoRA) is **mechanically green but a frame-QA FAIL**:
-> the adapter provably loaded and provably changed the output, but the output is
-> not lineart. And a bare-base control fired on the same pod shows that H3 at 8
-> steps is already coherent **without** any step-distillation LoRA — so this run
-> does **not** establish that the turbo LoRA is what makes 8 steps viable.
+> Run 2 (LineartAnime style LoRA) was **mechanically green but a frame-QA FAIL**:
+> the adapter provably loaded and provably changed the output, but the output was
+> not lineart. **That FAIL is now EXPLAINED — see the strength A/B in the
+> See-also above.** It was a config artifact: **strength 1.0 is too low for this
+> adapter on this base**, compounded by run 2 inheriting the turbo config's 8
+> steps with the step-distillation adapter evicted. At **strength 2.0** the same
+> LoRA, on the same pinned seed, repaints the frame completely. **Use strength
+> 2.0, not 1.0, and 20 steps, if you want this style** — and the profile's
+> fp32→bf16 restore path is exonerated, not suspect. What remains true and
+> unchanged: a bare-base control fired on the same pod shows H3 at 8 steps is
+> already coherent **without** any step-distillation LoRA, so this run does
+> **not** establish that the turbo LoRA is what makes 8 steps viable.
 
 **Two capability firsts:** the first LoRA ever applied on MiniMax-H3, and the
 first LoRA ever applied on a **t2va** (joint video+audio) model in this repo.
@@ -3870,7 +3878,8 @@ the example set (RED against the unfixed tree: exactly one offender).
   no temporal flicker, no undercooked noise. Quality comparable to the 50-step H3
   reference bar. Only the "glowing wisps trailing ribbons of light" read as
   generic bokeh.
-- **Run 2 (LineartAnime style LoRA) — ❌ FAIL on the binary criterion.** Not
+- **Run 2 (LineartAnime style LoRA) — ❌ FAIL on the binary criterion, since
+  EXPLAINED as under-expression (strength 1.0 + 8 steps); see the See-also.** Not
   lineart. The output is photorealistic: a soft, hazy, bloom-heavy treatment of
   the same scene, pushing much harder into the close-up, with markedly lower
   micro-contrast and no foreground flower detail. No line work, no flat cel

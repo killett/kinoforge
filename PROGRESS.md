@@ -3236,14 +3236,20 @@ non-zero during every denoise, 0.0 % only after each completion.
 
 **Two things the run did NOT establish, and one it overturned — do not read §34 as an unqualified
 green:**
-1. **Run 2's frame QA is a FAIL.** The LineartAnime LoRA provably loaded and provably changed the
-   output (a soft, bloom-heavy, low-micro-contrast signature that reproduced across two
-   independent seeds), but the frames are **not lineart** — no line work, no cel shading, no anime
-   stylisation. Prime suspects, all untested: a missing trigger word (the standard prompt opens
-   "Photorealistic, cinematic", which fights the adapter, and the ref was pinned without reading
-   the model card for an activation keyword), strength 1.0 being too low, or **the profile's
-   F32-to-bf16 restore path attenuating the weights** — that last one matters most, because that
-   restore exists specifically for this F32 file.
+1. **Run 2's frame QA was a FAIL — now EXPLAINED, and our code is CLEARED.** A follow-up seeded
+   A/B on 2026-09-23 (cfg `examples/configs/modal-diffusers-minimax-h3-t2va-lora-style-seeded.yaml`,
+   20 steps, `spec.seed: 424242` pinned, pod `run-20260923-011131`, est<=$0.51) ran the same
+   LineartAnime adapter at strength **1.0** and **2.0** on one seed. At 1.0: no style at all,
+   photorealistic. At 2.0: **total stylistic transformation** — photorealism gone, flat painterly
+   brushwork, stylised foliage, the subject a painted character. Both cells share composition and
+   camera path (the seed pin visibly holding), so style is the ONLY difference. **Verdict:
+   strength was the variable, not dtype — the profile's fp32->bf16 restore path is EXONERATED.**
+   Run 2's FAIL was a config artifact: strength 1.0, compounded by inheriting the turbo config's 8
+   steps with the step-distillation adapter evicted. Cell A isolates it — 20 steps ALONE does not
+   produce the style. The model card was also checked ($0): it specifies **no trigger word**, so
+   that hypothesis is dead. Use **strength 2.0 and 20 steps** for this adapter. The `/health`
+   assertion held a third time, and the GPU probe read **100 %** mid-denoise, resolving the
+   low-utilisation caveat below as point-sampling on short renders.
 2. **The turbo LoRA's premise is disproven, not confirmed.** A bare-base control fired on the same
    pod with a VERIFIED-empty stack (`output/20260923-004448_...`) is perfectly coherent and
    publishable at 8 steps. So "8 steps is only viable because of the turbo LoRA" is false as
@@ -3271,12 +3277,20 @@ Modal billing. **Teardown verified from a fresh process after the orchestrators 
 `kinoforge destroy` must run under `pixi run -e live-modal` — in the default env it dies with
 `TeardownError: ... No such file or directory: 'modal'`.
 
-**Next action:** the branch's 11 tasks are complete. Either (a) chase the style-LoRA FAIL with a
-seeded A/B at two strengths plus a style-neutral prompt, capturing the `set_stack` job record's
-key-match count to see how many adapter keys actually bound — this is the one open question that
-bears on whether the bf16 restore path is correct — or (b) take the branch to review/merge with
-the FAIL recorded as-is. Still not pushed:
+**Next action: take the branch to review/merge.** All 11 tasks are complete and the one open
+question that bore on our own code — whether the fp32->bf16 restore path was mangling the F32
+adapter — is CLOSED by the seeded strength A/B above. Nothing live is owed. Total Task 11 spend
+including the follow-up: **~$2.11**. Still not pushed:
 `git ls-remote origin feat/h3-lora-shared-seam` returns nothing.
+
+**One cheap improvement this campaign kept wanting and never had:** the `/lora/set_stack` job
+record carries only `inventory`, `free_bytes` and `swap_rejected` — **no matched/unmatched
+adapter-key counts**, and nothing in `servers/_lora.py` captures what diffusers'
+`load_lora_weights` reports about unmatched keys (those go to pod stderr only). So "did this
+adapter actually bind, or bind almost nothing?" can only ever be answered by looking at pixels.
+Surfacing those counts in the `done` record would have answered the whole style-LoRA question for
+$0 instead of ~$0.51. Not filed as a U-item (it is an enhancement, not a defect) but worth doing
+the next time that file is open.
 
 ## PREVIOUS SNAPSHOT (2026-09-21 — superseded 2026-09-22)
 
