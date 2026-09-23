@@ -1,0 +1,19 @@
+config       : runpod-diffusers-spandrel-x2-upscale
+rendered env : 112,831 B
+ceiling      : ~101,000 B (CLAUDE.md 'Known infra gotchas')
+
+=== Step 1: --dry-run confirms config resolves (no spend) ===
+Pixi task (kinoforge in default): python -m kinoforge upscale --config examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml --video examples/configs/grids/_fixtures/wan21_strength_cell0.mp4 --dry-run
+2026-09-23 16:54:52,856 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (39 keys)
+2026-09-23 16:54:52,873 WARNING kinoforge.validation provider_capabilities: runpod guardrail gaps:
+  [WARN] compute.lifecycle.idle_timeout: runpod cannot enforce IDLE_AUTOSTOP (the instance is alive but doing nothing) — provider-side autostop does not fire at workload shape server; bounded instead by ON_INSTANCE_DEADLINE at min(2*idle_timeout, max_lifetime-time_buffer)=3420.0s
+2026-09-23 16:54:52,873 WARNING kinoforge.validation unsupported_fields: runpod field-support gaps:
+  [WARN] compute.placement.disk_gb=40: runpod does not read it (the run runs out of disk mid-download) — bounded instead by the create-pod mutation's hardcoded containerDiskInGb=250 GB, above the 40 GB you asked for
+[instance overview] No running instances.
+upscale plan:
+  source: examples/configs/grids/_fixtures/wan21_strength_cell0.mp4
+  scale: 2x
+  engine: spandrel
+  no_reuse: False
+  attach_pod: None
+dry-run exit code: 0
