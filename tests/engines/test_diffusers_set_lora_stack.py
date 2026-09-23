@@ -11,6 +11,8 @@ from typing import Any
 import pytest
 
 from kinoforge.core.errors import (
+    LoraFormatUnsupportedError,
+    LoraLoadFailedError,
     LoraSwapDegradedPodError,
     LoraSwapDiskFullError,
     LoraSwapDownloadError,
@@ -137,9 +139,23 @@ def test_set_lora_stack_threads_explicit_branch_to_wire() -> None:
         ],
         download_specs={},
     )
+    # An explicit non-"auto" branch is resolved onto `target` by LoraEntry's
+    # own validator (Task 1), so it now rides along on the wire too — the
+    # payload builder omits `target` only when the entry's resolved value is
+    # None (see test_set_lora_stack_unset_target_omitted_from_payload).
     assert captured["body"]["target"] == [
-        {"ref": "civitai:1@1", "strength": 1.0, "branch": "high_noise"},
-        {"ref": "civitai:2@2", "strength": 0.8, "branch": "low_noise"},
+        {
+            "ref": "civitai:1@1",
+            "strength": 1.0,
+            "branch": "high_noise",
+            "target": "high_noise",
+        },
+        {
+            "ref": "civitai:2@2",
+            "strength": 0.8,
+            "branch": "low_noise",
+            "target": "low_noise",
+        },
     ]
 
 
@@ -721,3 +737,124 @@ def test_unrecognised_error_body_still_raises_runtime_error() -> None:
         backend.set_lora_stack(
             pod_id="pod-b3", active_stack=[_entry("r1")], download_specs={}
         )
+
+
+def test_lora_format_unsupported_raises_typed_error() -> None:
+    """A pruned-checkpoint refusal is typed and carries the hint + ref.
+
+    Bug caught: without a dedicated branch, this body lands in the
+    ``unknown /lora/set_stack error body`` RuntimeError, which loses the
+    one piece of information (``hint``) that tells the operator what to do
+    next — e.g. "use lightx2v/... instead" rather than retrying (which
+    just re-downloads the same ~1.4 GB and fails identically).
+    """
+    backend = _branch_error_backend(
+        {
+            "error": "lora_format_unsupported",
+            "hint": "use lightx2v/Wan2.2-Lightning instead",
+            "ref": "hf:o/r:f",
+            "underlying": "size mismatch: expected 5120, got 3072",
+        },
+        400,
+    )
+    with pytest.raises(LoraFormatUnsupportedError) as ei:
+        backend.set_lora_stack(
+            pod_id="pod-fu1", active_stack=[_entry("hf:o/r:f")], download_specs={}
+        )
+    assert ei.value.pod_id == "pod-fu1"
+    assert ei.value.ref == "hf:o/r:f"
+    assert "lightx2v" in ei.value.hint
+    assert ei.value.manual_cleanup_command() == "kinoforge destroy --id pod-fu1"
+
+
+def test_lora_load_failed_raises_typed_error() -> None:
+    """An unexplained load failure (no recognised hint) is typed too.
+
+    Bug caught: same RuntimeError sink as the format-unsupported case, but
+    for the profile-didn't-recognise-the-cause 500, which also loses
+    ``underlying`` — the only clue an operator has for an unexplained load
+    crash.
+    """
+    backend = _branch_error_backend(
+        {
+            "error": "lora_load_failed",
+            "ref": "civitai:9@9",
+            "underlying": "RuntimeError: CUDA out of memory",
+        },
+        500,
+    )
+    with pytest.raises(LoraLoadFailedError) as ei:
+        backend.set_lora_stack(
+            pod_id="pod-lf1", active_stack=[_entry("civitai:9@9")], download_specs={}
+        )
+    assert ei.value.pod_id == "pod-lf1"
+    assert ei.value.ref == "civitai:9@9"
+    assert "CUDA out of memory" in ei.value.underlying
+    assert ei.value.manual_cleanup_command() == "kinoforge destroy --id pod-lf1"
+
+
+def test_set_lora_stack_unset_target_omitted_from_payload() -> None:
+    """An entry with ``target=None`` produces a payload with no ``target`` key.
+
+    Bug caught: an already-running warm pod from an older image has a
+    ``LoraTarget`` with ``extra="forbid"`` and no ``target`` field (Task 1,
+    ``13e4dfe3``); an always-present ``target: None`` key 422s every swap
+    against it.
+    """
+    captured: dict[str, Any] = {}
+
+    def _post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        captured["body"] = body
+        return {"job_id": "s-target-none"}
+
+    def _get(url: str) -> dict[str, Any]:
+        return {
+            "state": "done",
+            "inventory": [],
+            "free_bytes": 0,
+            "swap_rejected": None,
+            "error": None,
+        }
+
+    backend = _backend_with_get(_post, _get)
+    backend.set_lora_stack(
+        pod_id="pod-t1", active_stack=[_entry("civitai:1@1")], download_specs={}
+    )
+    entry = captured["body"]["target"][0]
+    assert "target" not in entry
+
+
+def test_set_lora_stack_set_target_reaches_the_wire() -> None:
+    """An entry with an explicit ``target`` sends it alongside ref/strength/branch.
+
+    Bug caught: the omission fix above could over-apply and drop ``target``
+    even when the caller set one, silently defeating H3's routing.
+    """
+    captured: dict[str, Any] = {}
+
+    def _post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        captured["body"] = body
+        return {"job_id": "s-target-set"}
+
+    def _get(url: str) -> dict[str, Any]:
+        return {
+            "state": "done",
+            "inventory": [],
+            "free_bytes": 0,
+            "swap_rejected": None,
+            "error": None,
+        }
+
+    backend = _backend_with_get(_post, _get)
+    backend.set_lora_stack(
+        pod_id="pod-t2",
+        active_stack=[LoraEntry(ref="civitai:1@1", strength=0.5, target="transformer")],
+        download_specs={},
+    )
+    entry = captured["body"]["target"][0]
+    assert entry == {
+        "ref": "civitai:1@1",
+        "strength": 0.5,
+        "branch": "auto",
+        "target": "transformer",
+    }

@@ -323,6 +323,50 @@ class LoraSwapDownloadError(LoraSwapError):
         )
 
 
+class LoraFormatUnsupportedError(LoraSwapError):
+    """The pod refused a LoRA file it can never load on this checkpoint lineage.
+
+    Raised for the server's ``lora_format_unsupported`` body (a HTTP 400
+    surfaced through the job's terminal ``error`` record) — the profile
+    recognised the cause, typically a LoRA trained against a pruned
+    checkpoint being applied to a full one. Non-retryable: the retry
+    wrapper in this module exists for transient proxy faults, and retrying
+    this one just re-downloads the same ~1.4 GB and fails identically.
+    """
+
+    def __init__(self, *, pod_id: str, ref: str, hint: str) -> None:
+        """Carry the ref that can't load and the profile's hint why."""
+        super().__init__(pod_id=pod_id)
+        self.ref = ref
+        self.hint = hint
+
+    def __str__(self) -> str:
+        """Render the ref + hint + non-retryable note."""
+        return (
+            f"LoRA {self.ref} cannot load on pod {self.pod_id}: {self.hint}. "
+            f"Non-retryable — retrying re-downloads the same bytes and fails "
+            f"identically."
+        )
+
+
+class LoraLoadFailedError(LoraSwapError):
+    """A LoRA download succeeded but the load raised; the stack was rolled back.
+
+    Raised for the server's ``lora_load_failed`` body (HTTP 500) — an
+    unexplained load failure the profile did not recognise a cause for.
+    """
+
+    def __init__(self, *, pod_id: str, ref: str, underlying: str) -> None:
+        """Carry the ref that failed to load and the underlying cause."""
+        super().__init__(pod_id=pod_id)
+        self.ref = ref
+        self.underlying = underlying
+
+    def __str__(self) -> str:
+        """Render the ref + underlying cause."""
+        return f"LoRA {self.ref} failed to load on pod {self.pod_id}: {self.underlying}"
+
+
 class LoraSwapDegradedPodError(LoraSwapError):
     """Download failed AFTER eviction started.
 

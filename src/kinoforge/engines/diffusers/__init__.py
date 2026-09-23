@@ -705,6 +705,7 @@ class DiffusersBackend(GenerationBackend):
         )
 
         url = f"{self._base_url}/lora/set_stack"
+
         # P1 (2026-06-21): wire shape is tagged objects
         # ``target: [{ref, strength}, ...]`` — pod-side migrator promotes
         # legacy ``target_refs`` to default strength=1.0 if present,
@@ -715,11 +716,26 @@ class DiffusersBackend(GenerationBackend):
         # ``LoraEntry.branch`` is always one of ``"high_noise"`` /
         # ``"low_noise"`` / ``"auto"`` (canonical form — h/l aliases are
         # already normalized at LoraEntry validation time).
+        def _wire_entry(e: LoraEntry) -> dict[str, Any]:
+            """Build one LoraTarget dict, omitting ``target`` when unset.
+
+            An already-running warm pod from an older image has a
+            ``LoraTarget`` with ``extra="forbid"`` and no ``target`` field
+            (Task 1, ``13e4dfe3``) — an always-present ``target: None`` key
+            would 422 every swap against it, so the key is added only when
+            the entry actually names one.
+            """
+            entry: dict[str, Any] = {
+                "ref": e.ref,
+                "strength": e.strength,
+                "branch": e.branch,
+            }
+            if e.target is not None:
+                entry["target"] = e.target
+            return entry
+
         body: dict[str, Any] = {
-            "target": [
-                {"ref": e.ref, "strength": e.strength, "branch": e.branch}
-                for e in active_stack
-            ],
+            "target": [_wire_entry(e) for e in active_stack],
             "download_specs": download_specs,
         }
 
@@ -887,9 +903,16 @@ class DiffusersBackend(GenerationBackend):
                 eviction in progress.
             LoraSwapBranchRoutingError: For ``error="branch_routing"`` (400
                 legality refusals and the defensive 500 ``branch_unknown``).
+            LoraFormatUnsupportedError: For ``error="lora_format_unsupported"``
+                — the LoRA can never load on this checkpoint lineage.
+                Non-retryable.
+            LoraLoadFailedError: For ``error="lora_load_failed"`` — an
+                unexplained load failure; the stack was rolled back.
             RuntimeError: For an unrecognised body shape.
         """
         from kinoforge.core.errors import (
+            LoraFormatUnsupportedError,
+            LoraLoadFailedError,
             LoraSwapBranchRoutingError,
             LoraSwapDegradedPodError,
             LoraSwapDiskFullError,
@@ -907,6 +930,21 @@ class DiffusersBackend(GenerationBackend):
                 reason=str(body.get("reason", "branch_routing")),
                 branch=body.get("branch"),
                 arity=int(arity) if arity is not None else None,
+            )
+        if err == "lora_format_unsupported":
+            # Non-retryable: this is _lora.py's own re-download-fails-again
+            # case, distinct from the retry_proxy_call transient-fault
+            # retries this module otherwise applies.
+            raise LoraFormatUnsupportedError(
+                pod_id=pod_id,
+                ref=str(body.get("ref", "")),
+                hint=str(body.get("hint", "")),
+            )
+        if err == "lora_load_failed":
+            raise LoraLoadFailedError(
+                pod_id=pod_id,
+                ref=str(body.get("ref", "")),
+                underlying=str(body.get("underlying", "")),
             )
         evict = list(body.get("evict_completed", []))
         failed = body.get("download_failed", "") or ""
