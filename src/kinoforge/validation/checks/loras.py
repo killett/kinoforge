@@ -47,11 +47,24 @@ class LoraServerSupportCheck:
         return bool(getattr(cfg, "loras", []))
 
     def run(self, cfg: Config) -> CheckResult:
-        """Refuse an unsupported server module, or a target outside its vocabulary."""
+        """Refuse an unresolvable/unsupported server module, or an illegal target."""
         module = server_module_from_cfg(cfg)
-        profile = (
-            client_profile_for_server_module(module) if module is not None else None
-        )
+        if module is None:
+            return CheckResult(
+                name=self.name,
+                passed=False,
+                severity=Severity.ERROR,
+                message=(
+                    f"cfg declares {len(cfg.loras)} LoRA(s) but "
+                    f"engine.diffusers.server_cmd names no server module — "
+                    f"nothing can serve them"
+                ),
+                fix_suggestion=(
+                    "declare `engine.diffusers.server_cmd: [python, -m, "
+                    "<server module>]`, or remove the `loras:` block"
+                ),
+            )
+        profile = client_profile_for_server_module(module)
         if profile is None or not profile.supported:
             return CheckResult(
                 name=self.name,

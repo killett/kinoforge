@@ -28,7 +28,17 @@ from kinoforge.core.config import Config, load_config
 def _wan_cfg_with_loras(loras: list[dict[str, object]]) -> dict[str, object]:
     """Build a minimal Wan-shape cfg dict with the given LoRA list."""
     return {
-        "engine": {"kind": "diffusers", "precision": "fp16"},
+        "engine": {
+            "kind": "diffusers",
+            "precision": "fp16",
+            "diffusers": {
+                "server_cmd": [
+                    "python",
+                    "-m",
+                    "kinoforge.engines.diffusers.servers.wan_t2v_server",
+                ],
+            },
+        },
         "models": [
             {
                 "ref": "hf:Wan-AI/Wan2.2-T2V-A14B:high_noise_model/x.safetensors",

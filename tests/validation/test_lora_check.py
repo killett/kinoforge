@@ -75,3 +75,44 @@ def test_empty_stack_does_not_apply() -> None:
     """No LoRAs, no opinion — the check must not fire on ordinary configs."""
     cfg = _cfg("pkg.mod.some_new_server", [])
     assert LoraServerSupportCheck().applies_to(cfg) is False
+
+
+def test_no_server_cmd_at_all_is_an_error_naming_server_cmd() -> None:
+    """No ``engine.diffusers.server_cmd`` at all is distinct from an
+    unregistered module — the message must blame the missing ``server_cmd``,
+    not render a literal ``None`` as if it were a module name.
+    """
+    cfg = Config.model_validate(
+        {
+            "mode": "t2v",
+            "engine": {"kind": "diffusers", "precision": "fp8"},
+            "models": [
+                {"ref": "hf:org/repo", "kind": "base", "target": "diffusion_models"}
+            ],
+            "loras": [{"ref": "civitai:1@2"}],
+        }
+    )
+    result = LoraServerSupportCheck().run(cfg)
+    assert result.passed is False
+    assert result.severity is Severity.ERROR
+    assert "server_cmd" in result.message
+    assert "None" not in result.message
+
+
+def test_comfyui_engine_with_loras_does_not_apply() -> None:
+    """ComfyUI's node-graph LoRA loading is a different serving path this
+    registry has no opinion on — the check must not fire on it.
+
+    Regression guard for the engine-kind gate in ``applies_to``: without it,
+    the shipped ``runpod-comfyui-wan-2_2-14b-t2v.yaml`` example config would
+    fail ``load_config()`` even though ComfyUI genuinely serves its LoRAs.
+    """
+    cfg = Config.model_validate(
+        {
+            "mode": "t2v",
+            "engine": {"kind": "comfyui", "precision": "fp16"},
+            "models": [{"ref": "hf:org/repo", "kind": "base", "target": "checkpoints"}],
+            "loras": [{"ref": "civitai:1@2"}],
+        }
+    )
+    assert LoraServerSupportCheck().applies_to(cfg) is False
