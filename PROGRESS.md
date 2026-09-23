@@ -3162,13 +3162,18 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 
 ## RESUME SNAPSHOT (updated 2026-09-23 — read this, then STOP; below is history)
 
-### SESSION 2026-09-23 (later) — final whole-branch review; both blockers FIXED, branch ready for a merge decision
+### SESSION 2026-09-23 (later) — final whole-branch review; both blockers FIXED; branch MERGED to main and PUSHED
 
 **Branch `feat/h3-lora-shared-seam` — the final whole-branch review found TWO blockers, both seam
-defects no task owned, and BOTH are now closed. Verdict record:
-`.superpowers/sdd/2026-09-22-h3-lora-shared-seam/progress.md` (tail); fix record:
-`.superpowers/sdd/2026-09-22-h3-lora-shared-seam/final-fix-report.md`.** No spend; nothing live
-was run in this wave.
+defects no task owned, BOTH closed, and the branch is now MERGED (fast-forward) into `main` and
+PUSHED: `main` == `origin/main` == `acade34f`, 29 commits, full suite 6160 passed / 0 failed on
+that exact commit.** No spend in this wave.
+
+**The SDD workspace `.superpowers/sdd/2026-09-22-h3-lora-shared-seam/` WAS DELETED at branch
+close — every path below pointing into it is dangling, deliberately.** The durable record is:
+this snapshot, the U53-U60 rows in the table above, the 29 commit messages (`git log
+a4fe7f74..acade34f`), and `successful-generations.md` §34. Nothing was lost that is not in one
+of those four places.
 
 1. **`--loras ""` now actually clears (U58, FIXED).** `core/lora_apply.py` reads the distinction
    `resolve_active_lora_stack` already carried — `cli_loras is None` (nothing asked about) vs `[]`
@@ -3346,6 +3351,40 @@ adapter actually bind, or bind almost nothing?" can only ever be answered by loo
 Surfacing those counts in the `done` record would have answered the whole style-LoRA question for
 $0 instead of ~$0.51. Not filed as a U-item (it is an enhancement, not a defect) but worth doing
 the next time that file is open.
+
+**SINGLE NEXT ACTION (2026-09-23): nothing is owed on the H3 LoRA work — it is merged, pushed and
+live-proven. The next session picks from the eight defects this build filed, U53-U60 (full rows in
+the table above, each with mechanism, file:line, why it was not fixed, and a fix direction).**
+Suggested order, by what costs money soonest:
+
+1. **U53 — every RunPod diffusers config is past the ~101 KB create-mutation ceiling** (largest
+   127,917 B against a 101,000 B limit; 8 of 13 over). PRE-EXISTING, not caused by the H3 work,
+   and the only symptom is a raw HTTP 500 with no GraphQL error body — the exact shape that cost a
+   session to root-cause on 2026-07-05. `tests/providers/test_env_payload_ceiling.py` ratchets
+   growth but does NOT fix the breach. Note while working it: CLAUDE.md's "~4x headroom" claim for
+   the gzip fix is ROTTED — the outer gzip buys ~0 because the script body is already
+   base64-of-gzip. Fix that note in the same pass.
+2. **U54 + U55 together — warm-reuse LoRA matching is broken on BOTH axes.** U54: `Ledger`
+   redacts the whole payload before persisting (`core/lifecycle.py:532` `_write_entries`, the
+   `redact_json` call at `:556`), so a persisted `lora_inventory` row holds `<lora:ref:...>`
+   placeholders while `warm_reuse/matcher.py:307` compares them against RAW cfg refs — in-process
+   it works, ACROSS processes (warm-reuse's actual case) every ref mismatches. U55: H3 rows carry
+   `branch=row.target`, which fails `matcher.py:84`'s branch comparison. Either alone makes a warm
+   pod re-swap its whole stack on every run (~1.4 GB re-download); both are live today on the Wan
+   path too. Fix them in one pass — they share a test surface.
+3. **U60 — `target:` is accepted at config load but inert on the Wan pod**, so the documented
+   migration 400s AFTER a 25-30 min Wan 2.2 boot. Needs the ~4-line symmetric map in
+   `wan_t2v_server.LoraTarget` AND the mirror in `core/lora.LoraEntry` (NOT conditional — see the
+   row; a server-only map re-creates U55), plus a live Wan re-proof. When it lands,
+   `tests/engines/test_cold_boot_branch_validation.py::test_a_wan_moe_cfg_spelling_its_routing_as_target_is_refused_by_the_pod`
+   goes RED BY DESIGN — it is a tripwire, not a spec; update it and the two docs in the same commit.
+4. **U59, U57, U56** — cheaper and independent: probe `import peft` before `/health` claims
+   `lora.supported` (U59); move the three LoRA-resolution failures to preflight so they stop
+   costing a pod boot (U57); give the registry per-engine LoRA capability so a hosted cfg with
+   `loras:` errors instead of warning (U56).
+
+**Also unfixed and NOT filed as a U-item** (enhancement, not defect): surfacing matched/unmatched
+adapter-key counts in the `/lora/set_stack` done record — see the paragraph directly above.
 
 ## PREVIOUS SNAPSHOT (2026-09-21 — superseded 2026-09-22)
 
