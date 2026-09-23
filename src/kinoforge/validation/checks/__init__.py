@@ -13,6 +13,7 @@ from kinoforge.validation.checks import (  # noqa: F401 — self-register
     image,
     ledger,
     lifecycle,
+    loras,
     models,
     unimplemented_mode,
     upscale,
