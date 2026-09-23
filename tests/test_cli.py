@@ -115,8 +115,13 @@ def test_dry_run_prints_plan(
 # ---------------------------------------------------------------------------
 
 
-def test_generate_produces_artifact(tmp_path: Path) -> None:
+def test_generate_produces_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """AC2: generate command produces a stored artifact via LocalProvider + FakeEngine."""
+    # No --output-dir here, so the default sink resolves to cwd/"output" —
+    # chdir keeps the placeholder clip out of the repo's real output/ dir.
+    monkeypatch.chdir(tmp_path)
     cfg_path = _write_cfg(tmp_path)
     state_dir = tmp_path / "state"
 
@@ -149,8 +154,12 @@ def test_generate_produces_artifact(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_gc_removes_run_artifacts(tmp_path: Path) -> None:
+def test_gc_removes_run_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """AC3: ``gc --run r1`` removes all artifacts for run r1."""
+    # See test_generate_produces_artifact: chdir isolates the default sink.
+    monkeypatch.chdir(tmp_path)
     cfg_path = _write_cfg(tmp_path)
     state_dir = tmp_path / "state"
 

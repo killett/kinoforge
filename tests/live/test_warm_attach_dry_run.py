@@ -33,6 +33,10 @@ def test_full_cli_warm_attach_smoke(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Warm-attach path skips create_instance; reuses operator-supplied pod."""
+    # No --output-dir here, so the default sink resolves to cwd/"output" —
+    # chdir keeps the placeholder clip out of the repo's real output/ dir.
+    monkeypatch.chdir(tmp_path)
+
     from kinoforge.cli import main
     from kinoforge.cli.context import SessionContext
     from kinoforge.core.interfaces import Instance

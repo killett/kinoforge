@@ -165,6 +165,45 @@ def _pod_dirs_under_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
         monkeypatch.setattr(module, "LORAS_DIR", tmp_path / "loras", raising=False)
 
 
+_REPO_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
+
+
+def _repo_output_entries() -> frozenset[str]:
+    """Return the current top-level entry names in the repo's ``output/`` dir.
+
+    Returns:
+        Entry names, or an empty set when the directory does not exist.
+    """
+    try:
+        return frozenset(p.name for p in _REPO_OUTPUT_DIR.iterdir())
+    except FileNotFoundError:
+        return frozenset()
+
+
+@pytest.fixture(autouse=True)
+def _no_writes_to_repo_output_dir() -> Generator[None, None, None]:
+    """Fail any test that publishes into the repo's real ``output/`` directory.
+
+    The default output sink resolves to ``Path.cwd() / "output"``, so a test
+    that drives the full generate path without ``--output-dir`` /
+    ``--no-output-dir`` — and without ``monkeypatch.chdir(tmp_path)`` — writes
+    a 24-byte ``artifact_bytes`` placeholder into the developer's real output
+    folder. Three tests did exactly that for ~27 suite runs before anyone
+    noticed, so the isolation is asserted per-test rather than trusted.
+
+    Raises:
+        AssertionError: New entries appeared under ``output/`` during the test.
+    """
+    before = _repo_output_entries()
+    yield
+    leaked = sorted(_repo_output_entries() - before)
+    assert not leaked, (
+        f"test wrote into the repo output/ directory: {leaked}. "
+        "Isolate it with monkeypatch.chdir(tmp_path), --output-dir, "
+        "or --no-output-dir."
+    )
+
+
 @dataclass
 class HttpServerInfo:
     """Info and helpers yielded to tests by the ``http_server`` fixture.
