@@ -2,7 +2,9 @@
 
 Runs INSIDE the pod, where ``kinoforge.core`` does NOT exist — the whole
 ``servers/`` package is base64-embedded into the boot script, so this module
-imports stdlib only, exactly like its siblings ``_av_io`` and ``_util_stats``.
+imports stdlib plus the two packages every pod server already runs on,
+``fastapi`` and ``pydantic``. Nothing from ``kinoforge.*`` may ever be imported
+here; ``_av_io`` and ``_util_stats`` are the siblings under the same rule.
 
 The mechanism here knows nothing model-specific. Everything that differs
 between Wan and MiniMax-H3 — which submodule a LoRA loads into, how the load
@@ -20,18 +22,30 @@ Two invariants carry the weight:
   the inventory before re-raising. A half-applied stack that still reports a
   full inventory is the worst outcome available: the controller believes a LoRA
   is active that is not, and the defect only ever shows up in the pixels.
+
+:func:`build_lora_router` puts the HTTP contract in front of that mechanism —
+the same three endpoints ``DiffusersBackend.set_lora_stack`` already speaks to
+the Wan server, so one client serves both pods.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 import re
 import shutil
 import urllib.request
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+_log = logging.getLogger(__name__)
 
 # Anything outside this set becomes "_" in a per-ref directory name, so a ref
 # can never contribute a path separator or a ".." segment.
@@ -382,3 +396,510 @@ def ensure_downloaded(
         raise RuntimeError(
             f"downloading LoRA {ref} ({spec.filename}) failed: {exc}"
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Wire contract
+# ---------------------------------------------------------------------------
+#
+# Field names below are NOT free to change: `DiffusersBackend.set_lora_stack`
+# and `_poll_set_stack` are ONE client shared by the Wan pod and this one, so a
+# rename here silently breaks whichever pod answers. The shapes are copied from
+# `wan_t2v_server` (`ArtifactDownloadSpec`, `LoraTarget`, `SetStackRequest`,
+# `LoraInventoryEntry`, `InventoryResponse`) rather than imported, because the
+# pod cannot import `kinoforge.*` and the Wan server is not importable here
+# either — it pulls torch at module scope.
+
+
+class ArtifactDownloadSpec(BaseModel):
+    """Pre-resolved LoRA download instruction sent by the orchestrator.
+
+    The orchestrator resolves vendor-specific download URLs + headers (CivitAI
+    bearer tokens, HF auth) on its side and ships an opaque spec to the pod, so
+    no vendor credential and no vendor-specific code path ever reaches here.
+    """
+
+    url: str
+    headers: dict[str, str] = Field(default_factory=dict)
+    filename: str
+    size_hint: int | None = None
+
+
+class LoraTarget(BaseModel):
+    """One entry in the ``/lora/set_stack`` target list.
+
+    The THIRD copy of this schema — ``kinoforge.core.lora.LoraEntry`` is the
+    config-side one and ``wan_t2v_server.LoraTarget`` the Wan pod's. Copies,
+    not imports, because a pod has no ``kinoforge.core``. Three copies is how
+    schemas drift, so ``tests/test_lora_schema_parity.py`` runs the same
+    assertions over every server copy against core. DO NOT diverge.
+
+    ``branch`` is Wan's MoE vocabulary and is DEPRECATED in favour of
+    ``target``, which can also name a workflow partition (H3's ``transformer``
+    / ``transformer_ref``) that ``branch``'s Literal cannot express. The two
+    may not disagree; ``branch`` is mapped onto ``target`` when only it is set.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ref: str = Field(min_length=1)
+    strength: float = Field(default=1.0, ge=-2.0, le=2.0)
+    branch: Literal["high_noise", "low_noise", "auto"] = Field(default="auto")
+    target: str | None = Field(default=None)
+
+    @field_validator("branch", mode="before")
+    @classmethod
+    def _normalize_branch_alias(cls, v: Any) -> Any:  # noqa: ANN401 — arbitrary wire input.
+        """Mirror of ``LoraEntry._normalize_branch_alias`` in core/lora.py.
+
+        Parity is load-bearing — ``tests/test_lora_schema_parity.py`` asserts
+        every copy normalizes identically. DO NOT diverge.
+        """
+        if v == "h":
+            return "high_noise"
+        if v == "l":
+            return "low_noise"
+        return v
+
+    @model_validator(mode="after")
+    def _resolve_branch_to_target(self) -> LoraTarget:
+        """Mirror of ``LoraEntry._resolve_branch_to_target`` in core/lora.py.
+
+        Parity is load-bearing — ``tests/test_lora_schema_parity.py`` asserts
+        every copy resolves ``branch`` / ``target`` identically. DO NOT
+        diverge.
+        """
+        implied = None if self.branch == "auto" else self.branch
+        if implied is not None and self.target is not None and implied != self.target:
+            raise ValueError(
+                f"branch and target disagree: branch={self.branch!r} implies "
+                f"target={implied!r}, but target={self.target!r} was set; "
+                f"set only `target` (branch is deprecated)"
+            )
+        if implied is not None and self.target is None:
+            object.__setattr__(self, "target", implied)
+            # Deliberately ref-free: this line lands in the pod log, and a LoRA
+            # ref is prompt-laden under vault mode.
+            _log.warning(
+                "deprecated-lora-branch: 1 entry used `branch`; it is mapped to "
+                "`target`. Use `target:` — see docs/breaking-changes.md"
+            )
+        return self
+
+
+class SetStackRequest(BaseModel):
+    """Declarative target LoRA stack for the pod.
+
+    The order of ``target`` is the activation order. Every ref in ``target``
+    needs an entry in ``download_specs``; the pod reuses bytes it already holds
+    for that ref, so a warm pod pays nothing for a spec it has already fetched.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: list[LoraTarget]
+    download_specs: dict[str, ArtifactDownloadSpec]
+
+
+class LoraInventoryEntryModel(BaseModel):
+    """One row of the pod's LoRA inventory on the wire.
+
+    Names match ``wan_t2v_server.LoraInventoryEntry`` field-for-field for every
+    value this seam actually has: ``last_strength`` is the per-adapter
+    ``set_adapters`` weight and ``branch`` carries the resolved routing token
+    (Wan types it ``str``, not a Literal, so ``"transformer"`` is legal in it).
+    ``target`` is the same value under the name that supersedes ``branch``.
+
+    Wan's two LRU clocks — ``downloaded_at_local`` / ``last_used_at_local`` —
+    are deliberately absent: this seam has no eviction, so there is no LRU and
+    nothing truthful to put in them. Every shared consumer reads them with a
+    default (``e.get("last_used_at_local", "?")``), so the absence renders, it
+    does not break.
+    """
+
+    ref: str
+    filename: str
+    size_bytes: int
+    adapter_name: str
+    last_strength: float | None = None
+    branch: str = "auto"
+    target: str | None = None
+
+
+class InventoryResponse(BaseModel):
+    """Read-only snapshot of the pod's LoRA inventory + free disk bytes."""
+
+    inventory: list[LoraInventoryEntryModel]
+    free_bytes: int
+
+
+# ---------------------------------------------------------------------------
+# Router
+# ---------------------------------------------------------------------------
+#
+# Module-level, not per-router: a pod serves ONE pipeline per process, so one
+# lock serialises every stack change against every inventory read, and one job
+# table answers every status poll. Build two routers in one process and they
+# correctly contend on the same pipeline.
+_SET_STACK_LOCK: asyncio.Lock = asyncio.Lock()
+_JOBS: dict[str, dict[str, Any]] = {}
+# asyncio keeps only a weak reference to a bare create_task result, so a job
+# can be garbage-collected mid-download; hold a strong one until it finishes.
+_BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
+
+
+def _inventory_rows() -> list[LoraInventoryEntryModel]:
+    """Return the live inventory in wire shape, in activation order.
+
+    Returns:
+        One row per loaded adapter — the same rows :func:`inventory_snapshot`
+        reports, so ``/lora/inventory`` and a ``done`` job record can never
+        disagree about what is loaded.
+    """
+    return [
+        LoraInventoryEntryModel(
+            ref=row.ref,
+            filename=row.filename,
+            size_bytes=row.size_bytes,
+            adapter_name=row.adapter_name,
+            last_strength=row.strength,
+            branch=row.target,
+            target=row.target,
+        )
+        for row in inventory_snapshot()
+    ]
+
+
+def _check_target_legal(entry: LoraTarget, profile: LoraProfile) -> None:
+    """Refuse an entry this pipeline cannot route, before anything downloads.
+
+    Runs on the SYNCHRONOUS submit path. A legality gate inside the job spends
+    a 1.4 GB download first and then fails for a reason that was knowable at
+    the POST.
+
+    Args:
+        entry: One requested stack entry.
+        profile: The loaded pipeline's profile, owning the legal vocabulary.
+
+    Raises:
+        HTTPException: 400 ``lora_target_unsupported``, listing what is legal.
+            Raised both for a named target this pipeline does not hold and for
+            an unnamed one on a pipeline that has no default to fall back on
+            (``target: null`` in the body) — guessing a partition loads the
+            wrong one without erroring and merely degrades the output.
+    """
+    named_but_absent = entry.target is not None and entry.target not in profile.targets
+    unnamed_and_undecidable = entry.target is None and profile.default_target is None
+    if named_but_absent or unnamed_and_undecidable:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "lora_target_unsupported",
+                "target": entry.target,
+                "legal": list(profile.targets),
+            },
+        )
+
+
+def _load_error_to_http(exc: LoraLoadError) -> HTTPException:
+    """Turn a failed load into the status the controller can act on.
+
+    A hint means the profile recognised the cause — a LoRA trained against a
+    pruned checkpoint, typically — which no retry can fix, so it is a 400. No
+    hint means an unexplained load failure, which is a 500.
+
+    Args:
+        exc: The load failure, carrying the ref and the profile's hint.
+
+    Returns:
+        The HTTPException whose detail becomes the job's ``error`` body.
+    """
+    if exc.hint:
+        return HTTPException(
+            status_code=400,
+            detail={
+                "error": "lora_format_unsupported",
+                "hint": exc.hint,
+                "ref": exc.ref,
+                "underlying": str(exc.underlying),
+            },
+        )
+    return HTTPException(
+        status_code=500,
+        detail={
+            "error": "lora_load_failed",
+            "ref": exc.ref,
+            "underlying": str(exc.underlying),
+        },
+    )
+
+
+def _download_failed(
+    ref: str, download_completed: list[str], underlying: str
+) -> HTTPException:
+    """Build the 502 body for a ref whose bytes never landed.
+
+    ``evict_completed`` is always empty — this seam never evicts — and that is
+    load-bearing, not decorative: the shared client reads a non-empty
+    ``evict_completed`` as "the pod is in a half-state" and raises
+    ``LoraSwapDegradedPodError`` instead of the retryable download error.
+
+    Args:
+        ref: The ref that failed.
+        download_completed: Refs whose bytes did land, in download order.
+        underlying: Operator-readable cause.
+
+    Returns:
+        The HTTPException whose detail becomes the job's ``error`` body.
+    """
+    return HTTPException(
+        status_code=502,
+        detail={
+            "error": "lora_download_failed",
+            "phase": "download",
+            "evict_completed": [],
+            "download_completed": list(download_completed),
+            "download_failed": ref,
+            "underlying": underlying,
+        },
+    )
+
+
+async def _download_stack(req: SetStackRequest, loras_dir: Path) -> dict[str, Path]:
+    """Land every requested ref's bytes on disk, reusing what is already there.
+
+    Each download runs via ``asyncio.to_thread``: ``ensure_downloaded`` is sync
+    urllib plus blocking file IO, and running a multi-hundred-MB fetch inline
+    blocks the event loop, which hangs ``/health``, which makes the provider
+    proxy answer 502 while uvicorn is perfectly alive.
+
+    Args:
+        req: The declarative target stack + per-ref download specs.
+        loras_dir: Root directory LoRA bytes live under.
+
+    Returns:
+        Map of ref -> path on disk, one entry per DISTINCT ref.
+
+    Raises:
+        HTTPException: 502 ``lora_download_failed`` naming the ref that failed.
+            ``evict_completed`` is always empty — this seam never evicts — which
+            is what tells the client the pod's stack is untouched and the call
+            is safe to retry.
+    """
+    paths: dict[str, Path] = {}
+    download_completed: list[str] = []
+    for entry in req.target:
+        if entry.ref in paths:
+            continue
+        spec = req.download_specs.get(entry.ref)
+        if spec is None:
+            # A ref with no spec is a client bug, but it surfaces as a download
+            # failure so it still reaches the controller as a TYPED error
+            # naming the ref, rather than as an unmapped body it can only
+            # stringify.
+            raise _download_failed(
+                entry.ref, download_completed, "no download spec supplied for this ref"
+            )
+        try:
+            path, _size = await asyncio.to_thread(
+                ensure_downloaded, entry.ref, spec, loras_dir
+            )
+        except Exception as exc:
+            # Log before raising: the raised detail only travels in the job
+            # record, and the bootstrap sidecar log is where a live smoke looks.
+            _log.warning("set_stack download failed for ref=%s: %r", entry.ref, exc)
+            raise _download_failed(entry.ref, download_completed, str(exc)) from exc
+        paths[entry.ref] = path
+        download_completed.append(entry.ref)
+    return paths
+
+
+def _record_done(job_id: str, loras_dir: Path) -> None:
+    """Write the terminal ``done`` record for an apply job.
+
+    The result fields are written BEFORE ``state`` so a status poll can never
+    observe a ``done`` job without its result.
+
+    Args:
+        job_id: Key into the job table.
+        loras_dir: Root LoRA directory, for the free-disk snapshot.
+    """
+    _JOBS[job_id]["inventory"] = [row.model_dump() for row in _inventory_rows()]
+    _JOBS[job_id]["free_bytes"] = disk_free_bytes(loras_dir)
+    # No VRAM-OOM rollback on this seam, but the key is part of the contract:
+    # the shared client reads `swap_rejected` on every done record.
+    _JOBS[job_id]["swap_rejected"] = None
+    _JOBS[job_id]["state"] = "done"
+
+
+def _record_error(job_id: str, status: int, detail: dict[str, Any]) -> None:
+    """Write the terminal ``error`` record, ``error`` body before ``state``.
+
+    Args:
+        job_id: Key into the job table.
+        status: HTTP status the controller should map this failure to.
+        detail: The structured error body; ``status`` is merged into it.
+    """
+    _JOBS[job_id]["error"] = {**detail, "status": status}
+    _JOBS[job_id]["state"] = "error"
+
+
+async def _run_apply_job(
+    job_id: str,
+    req: SetStackRequest,
+    get_pipe: Callable[[], Any],
+    get_profile: Callable[[], LoraProfile],
+    loras_dir: Path,
+) -> None:
+    """Download the stack, apply it, and write the job's terminal record.
+
+    Target legality was already settled on the submit path, so everything that
+    can fail here is a download, a load, or the rollback behind a load.
+
+    NOTHING may escape this coroutine: an unhandled exception leaves the job
+    stuck in ``running`` with no ``error`` body, and the controller learns that
+    only when its wall-clock poll budget expires — minutes of a booked GPU
+    spent discovering a failure that happened immediately. That includes the
+    secondary exception from a rollback: ``apply_stack`` calls
+    ``unload_lora_weights`` on its way out, and if THAT raises it replaces the
+    ``LoraLoadError`` on the way up, so the generic handler below is the one
+    that catches it.
+
+    Args:
+        job_id: Key into the job table.
+        req: The declarative target stack + per-ref download specs.
+        get_pipe: Accessor for the loaded pipeline.
+        get_profile: Accessor for the model's LoRA profile.
+        loras_dir: Root directory LoRA bytes live under.
+    """
+    _JOBS[job_id]["state"] = "running"
+    try:
+        async with _SET_STACK_LOCK:
+            paths = await _download_stack(req, loras_dir)
+            entries = [
+                ResolvedEntry(
+                    ref=entry.ref,
+                    path=paths[entry.ref],
+                    strength=entry.strength,
+                    target=entry.target,
+                )
+                for entry in req.target
+            ]
+            try:
+                # to_thread: the load is synchronous, slow, and CUDA-bound.
+                # Inline it and the event loop stops answering /health for the
+                # duration, which the provider proxy reports as a 502.
+                await asyncio.to_thread(
+                    apply_stack, get_pipe(), get_profile(), entries=entries
+                )
+            except LoraLoadError as exc:
+                raise _load_error_to_http(exc) from exc
+            _record_done(job_id, loras_dir)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {"error": exc.detail}
+        _record_error(job_id, exc.status_code, detail)
+    except Exception as exc:  # noqa: BLE001 — terminal record beats an escaped crash.
+        _log.exception("lora apply job %s failed", job_id)
+        _record_error(
+            job_id, 500, {"error": "lora_swap_failed", "underlying": str(exc)}
+        )
+
+
+def build_lora_router(
+    get_pipe: Callable[[], Any],
+    get_profile: Callable[[], LoraProfile],
+    loras_dir: Path,
+) -> APIRouter:
+    """Build the three LoRA endpoints for a pod server to mount.
+
+    Accessors rather than objects: a server includes this router during startup
+    and the pipeline may not exist until that startup finishes, and the later
+    Wan migration must not care how its server holds its pipeline.
+
+    Endpoints, matching what ``DiffusersBackend`` already speaks:
+
+    * ``GET /lora/inventory`` -> ``{inventory, free_bytes}``, read under the
+      swap lock so a snapshot cannot catch a stack mid-change.
+    * ``POST /lora/set_stack`` -> ``{"job_id": ...}``. Async is not optional: a
+      ~1.4 GB download through a provider proxy is why this contract was made
+      a job in the first place.
+    * ``GET /lora/set_stack/status/{job_id}`` -> the job record; 404 when
+      unknown.
+
+    Args:
+        get_pipe: Accessor for the loaded pipeline.
+        get_profile: Accessor for the model's LoRA profile.
+        loras_dir: Root directory LoRA bytes live under.
+
+    Returns:
+        The router, ready for ``app.include_router``.
+    """
+    router = APIRouter()
+
+    @router.get("/lora/inventory")
+    async def inventory() -> InventoryResponse:
+        """Return the pod's current LoRA inventory + free disk, under the lock."""
+        async with _SET_STACK_LOCK:
+            return InventoryResponse(
+                inventory=_inventory_rows(),
+                free_bytes=disk_free_bytes(loras_dir),
+            )
+
+    @router.post("/lora/set_stack")
+    async def set_stack(req: SetStackRequest) -> dict[str, str]:
+        """Validate synchronously, enqueue the apply job, return its id.
+
+        Args:
+            req: Declarative target stack + per-ref download specs.
+
+        Returns:
+            ``{"job_id": ...}``; poll the status endpoint for the result.
+
+        Raises:
+            HTTPException: 400 ``lora_target_unsupported`` — refused here, on
+                the submit path, so no byte is downloaded for a stack that
+                could never have been routed.
+        """
+        profile = get_profile()
+        for entry in req.target:
+            _check_target_legal(entry, profile)
+
+        job_id = f"s-{uuid.uuid4().hex}"
+        _JOBS[job_id] = {
+            "state": "queued",
+            "inventory": None,
+            "free_bytes": None,
+            "swap_rejected": None,
+            "error": None,
+        }
+        task = asyncio.create_task(
+            _run_apply_job(job_id, req, get_pipe, get_profile, loras_dir)
+        )
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
+        return {"job_id": job_id}
+
+    @router.get("/lora/set_stack/status/{job_id}")
+    def set_stack_status(job_id: str) -> dict[str, Any]:
+        """Return the apply job's record.
+
+        States: ``queued`` -> ``running`` -> ``done`` | ``error``. A ``done``
+        record carries ``inventory``, ``free_bytes`` and ``swap_rejected``; an
+        ``error`` record carries an ``error`` body whose ``status`` is the code
+        the controller maps.
+
+        Args:
+            job_id: The id returned by the submit POST.
+
+        Returns:
+            The job record.
+
+        Raises:
+            HTTPException: 404 when no such job exists.
+        """
+        payload = _JOBS.get(job_id)
+        if payload is None:
+            raise HTTPException(status_code=404, detail=f"unknown job_id: {job_id}")
+        return payload
+
+    return router
