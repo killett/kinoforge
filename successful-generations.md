@@ -85,6 +85,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
           set -euo pipefail
     - See also: `2026-09-18 16:08:41` — **the 960x544 max-length clip through the same chain, pre-downscaled on the controller** (the operator's step 2: keep the documented H3 canvas for generation, shrink only for FlashVSR). Source `output/20260918-014621_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (§31's first See-also). Pre-step: `ffmpeg -vf "scale=640:-2:flags=lanczos,crop=640:352" -an -c:v libx264 -qp 0` → `output/20260918-014621_diffusers_MiniMax-H3_Photorealistic-cinem_pre640x352.mp4` (23,196,068 B, sha256 `49ae0261504428b0...`) — **crop, not squeeze: FlashVSR source dims must be multiples of 32** (the block-sparse attention window divides the latent grid; a 640x360 attempt died on the booked card with `Dims must divide by window size`, ~$0.04, cfg header updated `ca6ded78`). Then the exact §32 command with `--video "$PRE"` and the re-mux still reading `"$SRC"`. Pods `upscale-20260918-155905` (chunks 15:59:20 → 16:03:26, join 16:04:24, published 16:06:11, destroyed 16:06:17, ~$0.30) and `interpolate-20260918-160618` (cached image, GPU 83 %, published 16:08:41, destroyed 16:08:47, ~$0.03), both verified from fresh processes. Outputs: upscale `output/20260918-160611_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4` (1964x1080 / 24 fps / 345 f; 13,199,057 B, sha256 `3a78c773291dd13c...`) → **final** `output/20260918-160841_interpolated_rife_interp_interpolate_with-audio.mp4` (1964x1080 / 60 fps / 862 f / aac stereo 32 kHz; 21,529,009 B, sha256 `f27caf83ae8fff10...`). **Alignment proof, for free:** `av_qa --no-audio --cut-scan` on the upscale found exactly ONE hard cut, at **frame 272** — the source's known cut (delta 66.9 vs 70.05 in the source) — and nothing at the chunk seams 69/138/207/276, so split → pad → trim → join is frame-exact. Frame QA PASS, high quality: frame-200 crop shows hair strands, cliff texture and dress folds the lanczos'd source smears, no invented structure. ⚠️ On the 60 fps final the scan flags frames 678-680 (= 272 x 2.5): RIFE blends ACROSS the hard cut into a 1-2 frame crossfade — inherent to interpolating over a cut, not a pipeline defect; a cut-aware interpolate (split at cuts, interpolate each side) would remove it.
 33. `2026-09-18 21:10:03` — [960x544 MiniMax-H3 max-length clip → SPATIALLY TILED FlashVSR 1080p (no downscale) → RIFE 60 fps → soundtrack re-mux, on Modal — upscale+interpolate (tiled)](#33-2026-09-18-211003--960x544-minimax-h3-max-length-clip--spatially-tiled-flashvsr-1080p-no-downscale--rife-60-fps--soundtrack-re-mux-on-modal--upscaleinterpolate-tiled)
+34. `2026-09-23 00:33:31` — [MiniMax-H3 t2va + LoRA on Modal H200 — the first LoRA on H3 and the first on a t2va model, two applies on one pod — t2va+lora](#34-2026-09-23-003331--minimax-h3-t2va--lora-on-modal-h200--the-first-lora-on-h3-and-the-first-on-a-t2va-model-two-applies-on-one-pod--t2valora) — **⚠️ mechanically green; the style LoRA did NOT produce its named style (frame-QA FAIL) — read §7 of the report before reusing the recipe**
 
           MARK="$(mktemp)"
 
@@ -3711,3 +3712,202 @@ at frame 272); frame QA PASS; teardown verified from fresh processes.
   is what makes the tiled route the better one for wide sources.
 - Server follow-up: make `_probe_resolution` fall back to imageio metadata
   (moves the embedded-server goldens).
+
+---
+
+## 34. `2026-09-23 00:33:31` — MiniMax-H3 t2va + LoRA on Modal H200 — the first LoRA on H3 and the first on a t2va model, two applies on one pod — t2va+lora
+
+> ⚠️ **Read this banner before reusing the recipe.** Run 1 (turbo LoRA, 8 steps)
+> is a clean, publishable clip and the LoRA seam itself is proven end to end.
+> Run 2 (LineartAnime style LoRA) is **mechanically green but a frame-QA FAIL**:
+> the adapter provably loaded and provably changed the output, but the output is
+> not lineart. And a bare-base control fired on the same pod shows that H3 at 8
+> steps is already coherent **without** any step-distillation LoRA — so this run
+> does **not** establish that the turbo LoRA is what makes 8 steps viable.
+
+**Two capability firsts:** the first LoRA ever applied on MiniMax-H3, and the
+first LoRA ever applied on a **t2va** (joint video+audio) model in this repo.
+Both outputs carry an audio stream. It is also the first live exercise of the
+H3 branch of the shared LoRA profile seam — the one that decides which
+checkpoint partitions a pod holds.
+
+- **Design:** `docs/superpowers/specs/2026-09-22-h3-lora-shared-seam-design.md`
+- **Plan:** `docs/superpowers/plans/2026-09-22-h3-lora-shared-seam.md` (Task 11)
+- **Full evidence report:** `.superpowers/sdd/2026-09-22-h3-lora-shared-seam/task-11-report.md`
+- **Config:** `examples/configs/modal-diffusers-minimax-h3-t2va-lora-turbo.yaml`
+- **Server:** `src/kinoforge/engines/diffusers/servers/minimax_h3_server.py`
+- **HEAD at run time:** `cb5be928`
+
+### The assertion this run existed to settle
+
+The H3 profile decides which partitions a pod holds by
+`getattr(pipe, name, None) is not None`. If a real `MiniMaxH3ModularPipeline`
+exposed an *unloaded* partition as a truthy lazy placeholder, a `t2va` pod would
+advertise BOTH partitions and a LoRA aimed at the wrong one would load silently
+and degrade the output with no error anywhere. **It does not.** Raw `/health`,
+identical on both pods:
+
+```json
+{"ready":true,"model":"MiniMaxAI/MiniMax-H3","capabilities":["t2va"],"attention_backend":"default","lora":{"supported":true,"targets":["transformer"],"default_target":"transformer","profile":"minimax-h3-t2va"},"torch":{"version":"2.6.0+cu124","cuda":"12.4"}}
+```
+
+`targets == ["transformer"]`, `default_target == "transformer"`,
+`profile == "minimax-h3-t2va"`. `transformer_ref` is genuinely absent on a t2va
+pod; the partition-detection contract is correct against real weights.
+
+### Reproduction
+
+```bash
+# Run 1 — turbo LoRA at 8 steps, keep the pod warm
+pixi run -e live-modal kinoforge generate \
+    --config examples/configs/modal-diffusers-minimax-h3-t2va-lora-turbo.yaml \
+    --mode t2va \
+    --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+    --emit-provision-record /tmp/h3-lora-pod.json
+
+# Run 2 — second apply on the SAME pod, style LoRA replaces turbo
+pixi run -e live-modal kinoforge generate \
+    --config examples/configs/modal-diffusers-minimax-h3-t2va-lora-turbo.yaml \
+    --attach-pod "$(python -c 'import json;print(json.load(open("/tmp/h3-lora-pod.json"))["pod_id"])')" \
+    --mode t2va \
+    --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+    --loras "hf:DiffSynth-Studio/MiniMax-H3-LoRA-LineartAnime:model.safetensors"
+
+# Teardown is EXPLICIT — see the gotcha below
+pixi run -e live-modal kinoforge destroy --id <pod-id>
+pixi run -e live-modal kinoforge list
+```
+
+**Gotcha — `--attach-pod` and `--no-reuse` are mutually exclusive**
+(`src/kinoforge/cli/_commands.py:748`, exit 1). A warm-attached run cannot
+auto-destroy; teardown must be an explicit `destroy` from a fresh process.
+`destroy` itself must run under `-e live-modal` or it dies with
+`TeardownError: ... No such file or directory: 'modal'`.
+
+### Pinned refs — do not substitute a similar-looking filename
+
+| Role | Ref | Bytes on the pod |
+|------|-----|------------------|
+| turbo (step-distill, in the config) | `hf:lightx2v/Minimax-h3-Turbo:minimax_h3_fl2v_turbo_8step_v1.0_bf16.safetensors` | 1,383,677,768 |
+| style (run 2, CLI `--loras`) | `hf:DiffSynth-Studio/MiniMax-H3-LoRA-LineartAnime:model.safetensors` | 1,258,532,696 (F32 throughout) |
+
+### The two applies
+
+`/lora/inventory` after run 1 — the turbo adapter, target resolved by the pod
+from the profile (the config omits `target:` deliberately):
+
+```json
+{"inventory":[{"ref":"hf:lightx2v/Minimax-h3-Turbo:minimax_h3_fl2v_turbo_8step_v1.0_bf16.safetensors","filename":"minimax_h3_fl2v_turbo_8step_v1.0_bf16.safetensors","size_bytes":1383677768,"adapter_name":"lora_0","last_strength":1.0,"branch":"transformer","target":"transformer"}],"free_bytes":409600000000}
+```
+
+`/lora/inventory` after run 2 — **exactly one entry, the style LoRA; the turbo
+adapter was evicted, not stacked**:
+
+```json
+{"inventory":[{"ref":"hf:DiffSynth-Studio/MiniMax-H3-LoRA-LineartAnime:model.safetensors","filename":"model.safetensors","size_bytes":1258532696,"adapter_name":"lora_0","last_strength":1.0,"branch":"transformer","target":"transformer"}],"free_bytes":409600000000}
+```
+
+Second apply on a warm pod, correct target resolution, clean eviction: the
+shared seam works on real weights.
+
+### Timings, pods, spend
+
+Pod 2 `run-20260923-002836` (H200, $4.54/hr) carried four renders:
+
+| # | Stack | Apply | Generate | Output |
+|---|-------|-------|----------|--------|
+| 1 | turbo | 2 s (file already in the HF-cache Volume) | 00:31:31 → 00:33:31 (~2 min) | `output/20260923-003331_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` |
+| 2 | style | 39 s (cold 1.26 GB download) | 00:36:17 → 00:37:58 | `output/20260923-003758_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` |
+| 3 | style (unchanged — see the `--loras ""` gotcha) | — | 00:39:14 → 00:40:52 | `output/20260923-004052_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` |
+| 4 | **verified empty** | manual clear | 00:43:14 → 00:44:48 | `output/20260923-004448_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` |
+
+All four: h264 **640x352 / 124 frames / 5.166667 s** + **AAC audio @ 32 kHz**.
+Provision → serving was **49 s** on the cached image; the ~70 GB H3 weights came
+off the `kinoforge-hf-cache` Volume rather than the network.
+
+sha256: run 1 `0dfd23a2ac7d49b2…`, run 2 `c9be669da4b1f392…`,
+run 3 `87d906e933cadb75…`, run 4 `f28f7fbd07c34ded…` (the published filename is
+the sha256 prefix).
+
+**Spend ≈ $1.60** — `run-20260923-001929` est≤$0.42 (the failed first boot,
+below) + `run-20260923-002836` est≤$1.18. Both are the CLI's `est≤` upper bound
+(age × published rate); Modal billing was not queried. Teardown verified from a
+fresh process: `[instance overview] No running instances.` **and**
+`No instances recorded in ledger.`
+
+Util was polled every 60–90 s with the pod's own `/util` route (never
+`est_spend`): GPU read **3–13 %** during each denoise and exactly **0.0 %** only
+after each `generate completed` line. ⚠️ 3–13 % is low for an H200 where Wan
+entries report 100 %; likely point-sampling across a ~100 s render, but
+unverified.
+
+### The config bug this run found — `peft` was missing
+
+The **first** boot (`run-20260923-001929`) died on the first apply:
+
+```
+{'error': 'lora_swap_failed', 'underlying': 'PEFT backend is required for this method.', 'status': 500}
+```
+
+`modal-diffusers-minimax-h3-t2va-lora-turbo.yaml` did not list `peft` in
+`engine.diffusers.pip`. Diffusers' `load_lora_weights` / `set_adapters` /
+`unload_lora_weights` need the PEFT backend at runtime; every LoRA-capable Wan
+config already carried `peft>=0.13`, the new H3 one did not, and **nothing
+surfaces the gap until the first apply** — the pod boots clean and `/health`
+still advertises `lora.supported: true`. Cost to learn it live: one full H200
+boot, **$0.42**. Fixed in `cb5be928` together with
+`test_diffusers_lora_configs_pip_install_peft`, which makes "any diffusers
+example with a non-empty `loras:` block must pip-install `peft`" a property of
+the example set (RED against the unfixed tree: exactly one offender).
+
+### Frame QA
+
+- **Run 1 (turbo, 8 steps) — PASS.** Crisp, coherent, photorealistic. Waterfall
+  over mossy cliffs with convincing mist, genuine wildflower micro-detail in the
+  foreground, the subject tracking consistently across all five frames, the
+  push-in from wide to intimate close-up landing along with the over-the-shoulder
+  glance, translucent butterflies, warm golden-hour backlight. No false colour,
+  no temporal flicker, no undercooked noise. Quality comparable to the 50-step H3
+  reference bar. Only the "glowing wisps trailing ribbons of light" read as
+  generic bokeh.
+- **Run 2 (LineartAnime style LoRA) — ❌ FAIL on the binary criterion.** Not
+  lineart. The output is photorealistic: a soft, hazy, bloom-heavy treatment of
+  the same scene, pushing much harder into the close-up, with markedly lower
+  micro-contrast and no foreground flower detail. No line work, no flat cel
+  shading, no anime stylisation. The adapter **did** load (inventory, byte-exact,
+  right target, 39 s of real download+load) and **did** change the output — run 3
+  reproduces the same soft/bloomy/deep-close-up signature on an independent seed,
+  a signature neither run 1 nor run 4 shows. The weights do something consistent;
+  it just is not the style they are named for.
+- **Run 4 (verified bare base, 8 steps) — reference.** Also coherent and
+  photorealistic: waterfall, meadow, consistent subject, clean push-in, a
+  butterfly, no artifacts. Flatter and hazier than run 1 with less foreground
+  micro-detail — a quality delta, not the coherent/incoherent gap the turbo
+  hypothesis predicted.
+
+**What the control overturns.** The expectation going in was that 8 steps
+without a step-distillation LoRA would be visibly incoherent. It is not. So this
+run proves the turbo LoRA *applied cleanly and produced a good clip*; it does
+**not** prove that 8 steps is only viable because of it.
+
+⚠️ **Confound, stated plainly:** these configs pin **no seed** (`spec:` has no
+`seed`; the server's `seed: int | None = None` path runs unseeded), so all four
+renders used different random seeds. Every single-sample cross-stack comparison
+here is weak. The style LoRA's signature is the better-supported observation
+only because it reproduced across two seeds. A seeded A/B is the right next
+experiment and was not run.
+
+### Two more gotchas worth carrying forward
+
+- **`--loras ""` does NOT clear a warm pod's stack.** The CLI help promises
+  "Empty heredoc clears the stack for this run", but `ensure_lora_stack` no-ops
+  on an empty stack (`src/kinoforge/core/lora_apply.py:154`) and the run log
+  carries no `lora-apply` line at all — a warm-attached pod silently keeps the
+  previous run's adapters. This invalidated the first control attempt (run 3).
+  To genuinely clear, POST `/lora/set_stack` with
+  `{"target": [], "download_specs": {}}` and poll `/lora/inventory` until empty.
+  On a warm-reuse benchmark this would silently contaminate a baseline cell.
+- **`attention_backend` reports `"default"`, not the requested `_flash_3_hub`**,
+  despite `kernels>=0.4` being installed. The config header documents the
+  degradation as possible; nothing warns when it happens. Performance impact
+  unmeasured.

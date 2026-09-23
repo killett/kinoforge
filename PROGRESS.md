@@ -470,7 +470,13 @@ Found by the Modal command-matrix campaign (plan
 items, not only in the matrix follow-up list. Each carries the symptom, the reproducer, and the
 suspected site.
 
-**STATUS INDEX (current as of 2026-09-23. Provenance, newest first: **U57 FILED, OPEN** — three
+**STATUS INDEX (current as of 2026-09-23. Provenance, newest first: **U59 FILED, OPEN** — a
+diffusers pod whose image lacks `peft` boots clean and reports `lora.supported: true`, then 500s
+on the first `/lora/set_stack`; found LIVE at the cost of a full H200 boot (~$0.42), example
+configs now guarded by a test, the server-side probe not built. Before that: **U58 FILED, OPEN**
+— `--loras ""` does NOT clear a warm-attached pod's stack despite the CLI help saying it does,
+so a supposedly LoRA-less control silently renders with the previous run's adapters; confirmed
+live on pod `run-20260923-002836`. Before that: **U57 FILED, OPEN** — three
 LoRA-resolution failure classes (`LoraStackConflict`, `UnknownAdapter`, the zero-artifact
 `ValidationError`) first fire inside `ensure_lora_stack` only after the pod has already booted
 and billed, not at preflight; found by the MiniMax-H3 LoRA shared seam build, not fixed there.
@@ -578,7 +584,7 @@ U30 filed and fixed 2026-09-10 from that run; U16 fixed 2026-09-10
 U18 LIVE-PROVEN and U21 fixed 2026-09-09; U29 filed and fixed 2026-09-09; U17 fixed 2026-09-08.
 This table is authoritative — every paragraph BELOW it is dated campaign commentary and is not.)**
 
-Fifty-seven items, U1-U57. **Forty-five are fixed or answered** (U1, U2, U3, U4, U6, U7, U8, U9,
+Fifty-nine items, U1-U59. **Forty-five are fixed or answered** (U1, U2, U3, U4, U6, U7, U8, U9,
 U11, U12, U14, U15, U16, U17, U18, U19, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U30,
 U31, U32, U33, U34, U36, U37, U38, U39, U35, U40, U41, U42, U43, U44, U47, U48, U49), **two are
 partly fixed** (U5, U10), **NO live proof is owed** (U24 discharged 2026-09-11), **two are OPEN, both on the serverless path and both found by the golden U35 brought into
@@ -589,9 +595,11 @@ over building or deleting the mode, so a RunPod `mode: serverless` cfg fails `ge
 with the reason and the one-line fix, while still LOADING so the golden stays in the ratchet. U43 and U44 were both filed AND fixed on 2026-09-14, hours apart, out of U36's root cause. U37 — CLOSED the same day it was filed: the FlashVSR cu128 half
 was never real (those cfgs pin no torch), and the Modal half is now MEASURED — pod `eph-aab25c06`
 reports `torch 2.6.0+cu124` on `/health`, so the index decides the build on both providers),
-**eight more are OPEN, filed across two later sessions and none yet fixed** (U50, U51, U52 —
+**ten more are OPEN, filed across two later sessions and none yet fixed** (U50, U51, U52 —
 found by the final review of the pod-path seam work, 2026-09-21; U53, U54, U55, U56, U57 —
-found by the MiniMax-H3 LoRA shared seam build, 2026-09-22/23; one-line mechanism for each is in
+found by the MiniMax-H3 LoRA shared seam build, 2026-09-22/23; U58 and U59 — found LIVE by that
+build's Task 11 proof on 2026-09-23, the only two items in this table discovered by a real pod
+rather than by reading code; one-line mechanism for each is in
 the "Provenance, newest first" paragraph above, full detail in each row of the table below),
 and
 **U13 is NOT
@@ -677,6 +685,8 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | U55 | FILED 2026-09-22, OPEN — pre-existing landmine, flagged by reviewer during Task 4 of the MiniMax-H3 LoRA shared seam build, not fixed because matcher integration for H3 is out of scope this increment | **An H3 inventory row's `branch` field is stamped with H3's `target` vocabulary, which will fail warm-attach's branch comparison the moment H3 gets matcher integration.** `servers/_lora.py:566` sets `branch=row.target` when building an H3 pod's `LoraInventoryEntryModel`, so a `t2va` pod's row reads `branch="transformer"` rather than one of Wan's MoE tokens. `warm_reuse/matcher.py:84` (`if [getattr(a, "branch", "auto") for a in active] != [t.branch for t in target]`) compares that against the run-side resolved stack's `.branch`, which `LoraEntry._resolve_branch_to_target` (`core/lora.py`) leaves at its default `"auto"` for any cfg that sets `target:` directly (only the deprecated `branch:` key writes into `.branch`). So an H3 cfg using `target: transformer` produces `active.branch="transformer"` vs. `target.branch="auto"` — a guaranteed mismatch. Harmless today (nothing routes a warm-attach decision onto an H3 pod — see the RESUME SNAPSHOT / U54-adjacent debt item "no eviction on H3"), but the moment that wiring lands, **every warm H3 pod fails the stack comparison and re-swaps on every run** — a ~1.4 GB turbo-LoRA re-download each time. Compounds with U54: if the persisted `lora_inventory` is also redaction-corrupted, the comparison fails twice over. Fix direction: give H3 rows a `branch` field that reflects Wan's MoE vocabulary only where meaningful (e.g. always `"auto"` for a non-MoE model) and compare on `target` instead of `branch` once target is the generalised field everywhere |
 | U56 | FILED 2026-09-22, OPEN — pre-existing gap, now WARNed instead of silent as of Task 7 of the MiniMax-H3 LoRA shared seam build, not fully fixed | **A hosted-engine config carrying `loras:` still generates LoRA-less — the defect is now WARNED, not silent, but not actually closed.** `ensure_lora_stack` (`core/lora_apply.py:201-226`) logs `"lora-apply: NOT APPLYING %d LoRA entries — engine %r's backend (%s) has no set_lora_stack surface…"` at WARNING level when `backend` is not `SupportsSetLoraStack`, and a second WARNING at line 228-241 when the backend supports it but `pod_id is None` (the hosted path). `LoraServerSupportCheck` (`validation/checks/loras.py`) — the STATIC ERROR check that would refuse an unserveable `loras:` block at config load — explicitly does NOT apply here: `applies_to` returns `False` whenever `cfg.engine.kind != "diffusers"` (`loras.py:36-47`), by design, because its registry (`kinoforge.core.lora_profiles`) only knows diffusers server modules. **The correct gate cannot be a cfg-load check, which is why this was not built as one:** `--loras` on the CLI never enters `cfg.loras` (it lives on the `EphemeralSession`), so a static check reading only the cfg misses the CLI path entirely; and a ComfyUI config legitimately carries `loras:` to feed `capability_key()` while applying the adapters through workflow nodes, so a fatal gate on `engine.kind != "diffusers"` would reject configs that are correct. A real fix needs per-engine LoRA capability declared in the registry (parallel to `Capability.RATE_READBACK` / `RATE_DETERMINISTIC` on `ComputeProvider`), not another cfg-load special case. Fix direction: add a `Capability`-style LoRA-support flag per generation engine and gate both the WARNING and a real STATIC check off it |
 | U57 | FILED 2026-09-22, OPEN — pre-existing gap, deliberately not moved to preflight this increment | **Three LoRA-resolution failure classes cost a pod boot instead of failing at preflight, because they first fire only after the instance already exists.** `LoraStackConflict` (`core/errors.py:499`, raised by `resolve_active_lora_stack` at `core/lora.py:266`) and the zero-artifact `ValidationError` / `UnknownAdapter` (raised inside `resolve_download_specs`, `core/lora_apply.py:122` and `core/registry.py:165` respectively) are all reachable only through `ensure_lora_stack` (`core/lora_apply.py:140`), called from `core/orchestrator.py:2220` — a call site whose own comment says "The LoRA stack is applied HERE — after the pod reports ready and before any job is submitted." A vault/cfg disagreement, an unresolvable ref, or a ref that resolves to zero downloadable artifacts is loud (every one of these raises and propagates — that is D7, the whole point of this seam) but not CHEAP: by the time any of the three can fire, `create_instance` has already run and the pod has already booted and billed. None of the three depends on anything the pod reports back — `resolve_active_lora_stack` only reads `cfg`/`vault`/CLI, and `resolve_download_specs` only reads the ref + credentials — so all three are, in principle, answerable before any spend. Fix direction: run the same resolution (stack conflict + download-spec resolution) as a STATIC or preflight validation check before `create_instance`, and have `ensure_lora_stack` reuse the already-resolved result rather than re-deriving it after boot |
+| U58 | FILED 2026-09-23, OPEN — found live by Task 11 of the MiniMax-H3 LoRA shared seam build; not fixed there (a CLI-behaviour change at the end of a branch) | **`--loras ""` does NOT clear a warm-attached pod's LoRA stack, though the CLI help says it does.** `p_generate`'s `--loras` help (`cli/_main.py:615`) states "Empty heredoc clears the stack for this run", but `ensure_lora_stack` (`core/lora_apply.py:140`, docstring line ~154) explicitly "No-ops when the stack is empty" — so on a `--attach-pod` run the pod silently retains the PREVIOUS run's adapters and renders with them. Confirmed live 2026-09-23 on pod `run-20260923-002836`: a `--loras ""` render produced NO `lora-apply` line in the run log at all, and `/lora/inventory` afterwards still listed the LineartAnime adapter from the prior run. Consequence: a control or baseline cell an operator believes is LoRA-less is not, which silently contaminates any warm-reuse A/B (it invalidated the first bare-base control in Task 11 and cost an extra render to redo). Workaround that does work: POST `/lora/set_stack` with `{"target": [], "download_specs": {}}` and poll `/lora/inventory` until empty. Fix direction: either make an explicitly-empty `--loras` (as distinct from an absent one) issue a clearing `set_stack`, or correct the help text and make the CLI refuse the ambiguous form |
+| U59 | FILED 2026-09-23, OPEN — found live by Task 11 of the MiniMax-H3 LoRA shared seam build; the example-config half is FIXED (`cb5be928`), the server half is not | **A diffusers pod whose image lacks `peft` boots clean and advertises `lora.supported: true`, then 500s on the first apply — the gap is invisible until money has been spent.** Diffusers' `load_lora_weights` / `set_adapters` / `unload_lora_weights` require the PEFT backend at runtime; nothing in the config schema, the provisioner, or the server's own `/health` capability probe checks that it is installed. Confirmed live 2026-09-23: `modal-diffusers-minimax-h3-t2va-lora-turbo.yaml` omitted `peft` from `engine.diffusers.pip`, pod `run-20260923-001929` booted an H200 to ready with `/health` reporting `lora.supported: true`, and the first `/lora/set_stack` returned `{'error': 'lora_swap_failed', 'underlying': 'PEFT backend is required for this method.', 'status': 500}`. Cost: one full H200 boot, ~$0.42. The example set is now guarded by `tests/test_examples.py::test_diffusers_lora_configs_pip_install_peft` (any diffusers cfg with a non-empty `loras:` block must pip-install `peft`), but an operator-authored config outside `examples/` still buys the same lesson. Fix direction: have the diffusers server probe `import peft` at startup and either degrade `lora.supported` to `false` with a reason on `/health`, or refuse to report ready when the cfg declares a LoRA stack |
 
 **Live proof cost for the whole money-leak campaign: $0.82** — $0.16 for the four fixes' own live
 cells (Task 5, Modal A10), $0.12 for U14's re-proof and $0.54 to reproduce and diagnose it
@@ -3138,12 +3148,11 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-09-22 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-23 — read this, then STOP; below is history)
 
-### SESSION 2026-09-22 — MiniMax-H3 LoRA shared seam; Task 10 (docs) in progress, Task 11 (live proof) not run
+### SESSION 2026-09-23 — MiniMax-H3 LoRA shared seam; Task 11 (live proof) RUN — seam proven, style LoRA a frame-QA FAIL
 
-**Branch `feat/h3-lora-shared-seam`, 16 commits (`a0ce295f..293d4501`) plus this task's docs
-commit, NOT pushed, NOT merged — `git ls-remote origin feat/h3-lora-shared-seam` returns
+**Branch `feat/h3-lora-shared-seam`, all 11 tasks complete (`a0ce295f..HEAD`), NOT pushed, NOT merged — `git ls-remote origin feat/h3-lora-shared-seam` returns
 nothing.** Design
 `docs/superpowers/specs/2026-09-22-h3-lora-shared-seam-design.md`, plan
 `docs/superpowers/plans/2026-09-22-h3-lora-shared-seam.md` (`.tasks.json` co-located — do not
@@ -3199,12 +3208,75 @@ note in `.superpowers/sdd/2026-09-22-h3-lora-shared-seam/progress.md`) — fixed
 plan already recorded this deviation correctly (line ~1597), only the spec needed the
 cross-reference.
 
-**Next action: Task 11, the live proof.** Nothing in this branch has run against a real H3 pod
-yet. Per the plan's live-run section: two runs on Modal (cold LoRA-less H3 boot, then the
-turbo-LoRA config), each getting a `successful-generations.md` entry (new capability axis:
-first LoRA on H3, first LoRA on a t2va model), budget ~$1.0-1.5. Read
-`.superpowers/sdd/2026-09-22-h3-lora-shared-seam/task-10-report.md` for this session's verify
-output and acceptance-criterion status before starting Task 11.
+**TASK 11 IS DONE — it ran live on 2026-09-23. Full evidence:
+`.superpowers/sdd/2026-09-22-h3-lora-shared-seam/task-11-report.md`; the capability entry is
+`successful-generations.md` §34.** Read both before touching this branch again; the one-paragraph
+version follows.
+
+**The assertion the whole offline build rested on HELD.** The H3 profile decides which partitions
+a pod holds by `getattr(pipe, name, None) is not None`; if a real `MiniMaxH3ModularPipeline`
+exposed an unloaded partition as a truthy lazy placeholder, a `t2va` pod would advertise BOTH and
+a LoRA aimed at the wrong one would load silently and degrade output with no error anywhere. It
+does not. `/health` on two independent H200 pods returned, byte-identically,
+`"lora":{"supported":true,"targets":["transformer"],"default_target":"transformer","profile":"minimax-h3-t2va"}`.
+`transformer_ref` is genuinely absent on a t2va pod. The feature's central protection is not
+inverted.
+
+**The seam works on real weights.** Run 1 applied the pinned turbo LoRA
+(`hf:lightx2v/Minimax-h3-Turbo:minimax_h3_fl2v_turbo_8step_v1.0_bf16.safetensors`,
+1,383,677,768 B on the pod — the right sibling, not the 1.96 GB comfyui one) at 8 steps and
+produced `output/20260923-003331_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` — 640x352 / 124
+frames / 5.167 s **with AAC audio**. Run 2 attached to the SAME pod and applied the style LoRA
+(`hf:DiffSynth-Studio/MiniMax-H3-LoRA-LineartAnime:model.safetensors`, 1,258,532,696 B, F32),
+producing `output/20260923-003758_..._Photorealistic-cinem.mp4`; `/lora/inventory` afterwards
+listed **exactly one entry, the style LoRA, on `target: "transformer"`** — the turbo adapter was
+evicted, not stacked. Second apply on a warm pod, correct target resolution, clean eviction. GPU
+utilisation was polled every 60-90 s off the pod's own `/util` route (never `est_spend`) and read
+non-zero during every denoise, 0.0 % only after each completion.
+
+**Two things the run did NOT establish, and one it overturned — do not read §34 as an unqualified
+green:**
+1. **Run 2's frame QA is a FAIL.** The LineartAnime LoRA provably loaded and provably changed the
+   output (a soft, bloom-heavy, low-micro-contrast signature that reproduced across two
+   independent seeds), but the frames are **not lineart** — no line work, no cel shading, no anime
+   stylisation. Prime suspects, all untested: a missing trigger word (the standard prompt opens
+   "Photorealistic, cinematic", which fights the adapter, and the ref was pinned without reading
+   the model card for an activation keyword), strength 1.0 being too low, or **the profile's
+   F32-to-bf16 restore path attenuating the weights** — that last one matters most, because that
+   restore exists specifically for this F32 file.
+2. **The turbo LoRA's premise is disproven, not confirmed.** A bare-base control fired on the same
+   pod with a VERIFIED-empty stack (`output/20260923-004448_...`) is perfectly coherent and
+   publishable at 8 steps. So "8 steps is only viable because of the turbo LoRA" is false as
+   stated; run 1 is visibly better than the control (more micro-detail, deeper contrast) but that
+   is a quality delta, not a coherent/incoherent gap.
+3. **Every comparison here is single-sample.** These configs pin no `seed`, so all four renders
+   used different random seeds. A seeded A/B is the correct next experiment and was not run.
+
+**A real config bug was found and FIXED mid-run (`cb5be928`):** the turbo-LoRA config omitted
+`peft` from `engine.diffusers.pip`, so the first H200 booted clean, advertised
+`lora.supported: true`, and 500'd on the first apply with "PEFT backend is required for this
+method." Cost ~$0.42. Fixed red/green with
+`tests/test_examples.py::test_diffusers_lora_configs_pip_install_peft`, which makes "any diffusers
+example with a non-empty `loras:` block must pip-install `peft`" a property of the example set.
+
+**Two new defects filed, NOT fixed: U58 and U59** (the only two items in the table discovered by a
+real pod rather than by reading code) — `--loras ""` does not clear a warm-attached pod's stack
+despite the CLI help saying it does, and the `peft` gap is invisible until the first apply on ANY
+operator-authored config outside `examples/`. See the STATUS INDEX.
+
+**Spend: ~$1.60** (`run-20260923-001929` est<=$0.42, the boot the `peft` bug cost;
+`run-20260923-002836` est<=$1.18 for four renders). Both are the CLI's `est<=` upper bound, not
+Modal billing. **Teardown verified from a fresh process after the orchestrators exited:
+`[instance overview] No running instances.` AND `No instances recorded in ledger.`** NB
+`kinoforge destroy` must run under `pixi run -e live-modal` — in the default env it dies with
+`TeardownError: ... No such file or directory: 'modal'`.
+
+**Next action:** the branch's 11 tasks are complete. Either (a) chase the style-LoRA FAIL with a
+seeded A/B at two strengths plus a style-neutral prompt, capturing the `set_stack` job record's
+key-match count to see how many adapter keys actually bound — this is the one open question that
+bears on whether the bf16 restore path is correct — or (b) take the branch to review/merge with
+the FAIL recorded as-is. Still not pushed:
+`git ls-remote origin feat/h3-lora-shared-seam` returns nothing.
 
 ## PREVIOUS SNAPSHOT (2026-09-21 — superseded 2026-09-22)
 
