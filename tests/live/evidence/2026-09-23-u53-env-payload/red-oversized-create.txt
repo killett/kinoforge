@@ -17,3 +17,136 @@ upscale plan:
   no_reuse: False
   attach_pod: None
 dry-run exit code: 0
+
+=== Step 3: live create attempt (unfixed config, --no-reuse) ===
+Wed Sep 23 16:55:59 PDT 2026
+Pixi task (kinoforge in default): python -m kinoforge upscale --config examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml --video examples/configs/grids/_fixtures/wan21_strength_cell0.mp4 --no-reuse
+2026-09-23 16:56:00,760 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (39 keys)
+2026-09-23 16:56:00,777 WARNING kinoforge.validation provider_capabilities: runpod guardrail gaps:
+  [WARN] compute.lifecycle.idle_timeout: runpod cannot enforce IDLE_AUTOSTOP (the instance is alive but doing nothing) — provider-side autostop does not fire at workload shape server; bounded instead by ON_INSTANCE_DEADLINE at min(2*idle_timeout, max_lifetime-time_buffer)=3420.0s
+2026-09-23 16:56:00,777 WARNING kinoforge.validation unsupported_fields: runpod field-support gaps:
+  [WARN] compute.placement.disk_gb=40: runpod does not read it (the run runs out of disk mid-download) — bounded instead by the create-pod mutation's hardcoded containerDiskInGb=250 GB, above the 40 GB you asked for
+2026-09-23 16:56:00,824 WARNING kinoforge.orchestrator [capabilities] compute.lifecycle.idle_timeout: provider-side autostop does not fire at workload shape server; bounded instead by ON_INSTANCE_DEADLINE at min(2*idle_timeout, max_lifetime-time_buffer)=3420.0s
+[runpod-http] 500 Internal Server Error from https://api.runpod.io/graphql?api_key=<redacted>: Internal Server Error
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/workspace/src/kinoforge/__main__.py", line 6, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/workspace/src/kinoforge/cli/_main.py", line 1201, in main
+    return _DISPATCH[args.cmd](args, ctx)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/workspace/src/kinoforge/cli/_commands.py", line 1135, in _cmd_upscale
+    artifact, returned_instance = _orchestrator.generate(
+                                  ~~~~~~~~~~~~~~~~~~~~~~^
+        cfg,
+        ^^^^
+    ...<11 lines>...
+        on_instance_created=_ephemeral_row_upgrade_hook(ctx, cfg, launch),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/workspace/src/kinoforge/core/orchestrator.py", line 2751, in generate
+    with deploy_session(
+         ~~~~~~~~~~~~~~^
+        cfg,
+        ^^^^
+    ...<11 lines>...
+        on_instance_created=on_instance_created,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ) as session:
+    ^
+  File "/workspace/.pixi/envs/default/lib/python3.13/contextlib.py", line 141, in __enter__
+    return next(self.gen)
+  File "/workspace/src/kinoforge/core/orchestrator.py", line 2116, in deploy_session
+    _result = _provision_instance_and_build_backend(
+        resolved_engine=resolved_engine,
+    ...<14 lines>...
+        provisional_ledger=_provisional_ledger,
+    )
+  File "/workspace/src/kinoforge/core/orchestrator.py", line 1486, in _provision_instance_and_build_backend
+    instance = _create_with_capacity_wait(
+        create=lambda: resolved_provider.create_instance(_build_spec()),
+        capacity_wait_s=capacity_wait_s,
+    )
+  File "/workspace/src/kinoforge/core/orchestrator.py", line 1050, in _create_with_capacity_wait
+    return create()
+  File "/workspace/src/kinoforge/core/orchestrator.py", line 1487, in <lambda>
+    create=lambda: resolved_provider.create_instance(_build_spec()),
+                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "/workspace/src/kinoforge/providers/runpod/__init__.py", line 686, in create_instance
+    instance = self._create_with_offer_retry(spec)
+  File "/workspace/src/kinoforge/providers/runpod/__init__.py", line 738, in _create_with_offer_retry
+    return self._create_once(spec, offer)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/workspace/src/kinoforge/providers/runpod/__init__.py", line 703, in _create_once
+    return self._create_pod(spec, offer)
+           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/workspace/src/kinoforge/providers/runpod/__init__.py", line 1251, in _create_pod
+    resp = self._http_post(self._base_url, body)
+  File "/workspace/src/kinoforge/providers/runpod/__init__.py", line 282, in authed_post
+    return _request(req)
+  File "/workspace/src/kinoforge/providers/runpod/__init__.py", line 249, in _request
+    with urllib.request.urlopen(req) as resp:  # noqa: S310
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/workspace/.pixi/envs/default/lib/python3.13/urllib/request.py", line 189, in urlopen
+    return opener.open(url, data, timeout)
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/.pixi/envs/default/lib/python3.13/urllib/request.py", line 495, in open
+    response = meth(req, response)
+  File "/workspace/.pixi/envs/default/lib/python3.13/urllib/request.py", line 604, in http_response
+    response = self.parent.error(
+        'http', request, response, code, msg, hdrs)
+  File "/workspace/.pixi/envs/default/lib/python3.13/urllib/request.py", line 533, in error
+    return self._call_chain(*args)
+           ~~~~~~~~~~~~~~~~^^^^^^^
+  File "/workspace/.pixi/envs/default/lib/python3.13/urllib/request.py", line 466, in _call_chain
+    result = func(*args)
+  File "/workspace/.pixi/envs/default/lib/python3.13/urllib/request.py", line 613, in http_error_default
+    raise HTTPError(req.full_url, code, msg, hdrs, fp)
+urllib.error.HTTPError: HTTP Error 500: Internal Server Error
+[instance overview] No running instances.
+ORCHESTRATOR_EXIT=1
+
+=== Step 4: teardown verification (kinoforge list AFTER orchestrator exit) ===
+Pixi task (kinoforge in default): python -m kinoforge list
+2026-09-23 16:56:09,674 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (39 keys)
+[instance overview]
+  upscale-20260923-165600  age=0.0h  est≤$0.0000 (age×rate; $0 if pod already dead)
+  upscale-20260923-165600  provider=runpod  capability_key=<unknown>
+
+=== Investigating stale ledger entry 'upscale-20260923-165600' ===
+Checking RunPod REST API directly for any real pods (independent of local ledger):
+RunPod REST /v1/pods returned 0 pod(s)
+
+=== Clearing stale local ledger entry (no real RunPod pod behind it, confirmed above) ===
+Pixi task (kinoforge in default): python -m kinoforge forget --id upscale-20260923-165600
+2026-09-23 16:56:41,714 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (39 keys)
+[instance overview]
+  upscale-20260923-165600  age=0.0h  est≤$0.0000 (age×rate; $0 if pod already dead)
+forgot: upscale-20260923-165600
+
+=== Re-check: kinoforge list after forget ===
+Pixi task (kinoforge in default): python -m kinoforge list
+2026-09-23 16:56:42,600 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (39 keys)
+[instance overview] No running instances.
+No instances recorded in ledger.
+
+=== SUMMARY ===
+Config under test : runpod-diffusers-spandrel-x2-upscale (examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml)
+Rendered env size  : 112,831 B (measured via tests.providers.test_env_payload_ceiling._rendered_env_bytes)
+Ceiling            : ~101,000 B (CLAUDE.md "Known infra gotchas" — podFindAndDeployOnDemand)
+Probe path         : shipped `kinoforge upscale` CLI (--dry-run then live --no-reuse), no bespoke GraphQL tool
+Outcome            : REFUSED — raw HTTP 500 "Internal Server Error" from api.runpod.io/graphql
+                     (NOT a GraphQL errors[] body — matches the recorded ~101KB-ceiling hypothesis)
+Pod created        : NO — confirmed independently via RunPod REST GET /v1/pods (0 pods returned)
+Spend              : $0.00
+Local ledger note  : the orchestrator wrote a provisional ledger row
+                     (upscale-20260923-165600, est<=$0.0000) before the create call failed;
+                     this was a local-only bookkeeping leak, not a billing resource (RunPod API
+                     confirmed 0 real pods). Cleared with `kinoforge forget --id
+                     upscale-20260923-165600` per CLAUDE.md's documented recovery pattern for a
+                     stale ledger entry with no live pod behind it.
+Final teardown check: `kinoforge list` shows BOTH "[instance overview] No running instances."
+                      AND "No instances recorded in ledger." (see final block above)
