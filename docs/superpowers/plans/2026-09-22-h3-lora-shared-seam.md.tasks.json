@@ -97,12 +97,12 @@
     {
       "id": 11,
       "subject": "Task 11: live proof \u2014 one pod, two applies",
-      "status": "pending",
+      "status": "in_progress",
       "description": "**Goal:** Prove on real weights that both profile branches work and that the LoRAs visibly engage.\n\n> **USER-ORDERED GATE \u2014 NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it \"verified inline\", or by substituting a cheaper check. Close only after every item in `acceptanceCriteria` has been re-validated independently, with output captured.\n\n**Files:**\n- Modify: `successful-generations.md` (new section + See-also)\n- Modify: `PROGRESS.md` (evidence + spend)\n\n**Acceptance Criteria:**\n- [ ] pixi run preflight exits 0 before any spend; `git status --porcelain` empty\n- [ ] Run 1: turbo LoRA applied, 8 steps, 640x352 / 124 frames, MP4 with audio produced\n- [ ] Run 2: second apply of the style LoRA on the SAME pod, MP4 produced\n- [ ] /lora/inventory after run 2 lists exactly the style LoRA as active\n- [ ] GPU utilisation observed non-zero during each denoise (probe every 60-90 s)\n- [ ] Frame QA on BOTH outputs: contact sheets read, verdict recorded; run 2 is lineart or the run is a FAIL\n- [ ] kinoforge list from a FRESH process AFTER the orchestrator exits shows no running instances AND an empty ledger\n- [ ] Total spend recorded; successful-generations.md entry written\n\n**Verify:** `pixi run kinoforge list` -> `[instance overview] No running instances.` AND `No instances recorded in ledger.`\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"acceptanceCriteria\": [\"preflight 0 on a clean tree before spend\", \"run 1 turbo 8-step MP4 produced\", \"run 2 style LoRA MP4 produced on the same pod\", \"inventory after run 2 lists only the style LoRA\", \"GPU util non-zero during each denoise\", \"frame QA verdict recorded for BOTH outputs\", \"teardown verified from a fresh process after exit\"], \"modelTier\": \"frontier\", \"userGate\": true, \"tags\": [\"user-gate\", \"live-spend\"], \"requiresUserSpecification\": false, \"gateScope\": \"task\", \"failurePolicy\": \"stop-and-report\", \"requireEvidenceTokens\": [[\"run-1\", \"turbo\", \"8-step\"], [\"run-2\", \"lineart\", \"style\"]], \"subagentBrief\": \"Live Modal H200 spend, budget ~$1.0-1.5. Poll gpuUtilPercent every 60-90s; 0% for 3 consecutive probes during a denoise -> capture log, destroy, fail fast. Verify teardown with `pixi run kinoforge list` from a fresh process AFTER the orchestrator exits; a mid-run 'No running instances' line is NOT proof.\"}\n```",
       "blockedBy": [
         10
       ]
     }
   ],
-  "lastUpdated": "2026-09-23T00:07:08.732646"
+  "lastUpdated": "2026-09-23T00:17:13.559599"
 }
