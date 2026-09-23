@@ -641,6 +641,9 @@ real Modal A10s under `grid --ephemeral` and both published as opaque `kinoforge
 | U41 | FIXED 2026-09-12 (`67556648`, $0.00 offline; found live) | **The stall grace ignored the cfg's own declared `boot_timeout`.** The shipped 1.3B grid declares `boot_timeout: 30m`; the probe aborted at `grace 90 s + 3x30 s` ≈ **3 min**, one-tenth of the declared budget, on pods `rohjrsmre9obsp` and `e7wo3ffamgiqln`. With U40's log channel unavailable in that window, the operator's declaration is the only honest signal left. `boot_grace_seconds()` takes 25% of the declared budget clamped to **[90 s, 900 s]** — the floor is the old constant so no working cfg gets LESS grace than before, and the ceiling keeps the fast-fail a fast-fail (unbounded, a `boot_timeout: 24h` would buy a 6-hour grace and silently disable the guard). The 30 m cfg now gets **450 s**. Orchestrator passes `lifecycle.boot_timeout_s` with a `TypeError` fallback for providers whose factory predates the parameter. **The falsification is the part worth keeping:** deleting the orchestrator's argument left ALL 23 boot-liveness tests GREEN — exactly how U40 shipped inert — so the SEAM is now pinned by its own test, not just the helper it calls. *A helper's unit coverage is not evidence that production reaches it.* |
 | U42 | FIXED 2026-09-12 (`29c87291`, $0.00; found live, twice) | **The swap-group base cfg was the one RunPod cfg not pinned to secure hosts.** RunPod's COMMUNITY pool reclaims pods minutes after create: pods `i5mvj3oxljkyaa` and `ag0ntjnovabxqt` were both killed 2-3 min into a boot needing ~6, on 2026-09-12. The symptom is indirect and easy to misread — the terminate call then fails `POD_NOT_FOUND: pod not found to terminate`, so the cell reports a GraphQL error rather than 'the host took your pod'. Every sibling cfg with a boot longer than a couple of minutes already pins `backend_options.runpod.cloud_type: secure`, several citing the same 2026-07-03 incident; the swap base did not — so the config whose entire purpose is a shared warm pod serving three cells was the one left exposed. **A pricing surprise worth carrying, because it inverts the natural assumption:** the secure host billed **$0.27/hr**, CHEAPER than the community pods that had been realizing $0.49-$0.59. So secure is not a cost trade here, and **U36's advertised-vs-realized gap looks substantially like a community-pool artifact** — worth testing before building U36's retry |
 | U29 | FIXED, OFFLINE-PROVEN | `424e52d1` (2026-09-09, Task 2 regression fix) — `p_batch` re-declared the ROOT `--env-file` with an implicit `default=None`, and argparse copies every key of a subparser's fresh namespace onto the parent, so `kinoforge --env-file X batch …` parsed to `env_file=None` and `main()` loaded the DEFAULT secrets file instead of `X` — a batch run (which books GPUs) against the wrong credentials or provider account, with no warning and exit 0. Same mechanism and same one-token remedy as the `p_grid`/`--ephemeral` half of U11: `default=argparse.SUPPRESS`. These two were the ONLY root/subparser `dest` collisions in the whole parser, so the class is now closed. Covered by a test that feeds each composed argv through the real `_build_parser().parse_args()` and asserts `args.env_file` — not argv membership — with a `generate` case guarding the path that already worked. RED confirmed first (`args.env_file=None, expected '/x/creds-a'`). Offline-proven; no provider or network call. Filed and fixed the same day, on a controller ruling that a known one-token money hazard should not ship filed-open from the branch that discovered it |
+| U50 | FILED 2026-09-21, OPEN — found offline during the pod-path seam work, NOT fixed there | **The wan_t2v_server job-worker is a daemon thread with no shutdown handler, and it reads `ARTIFACT_DIR` dynamically at write time.** Modules imported at pytest COLLECTION time bake the module's own fallback in as monkeypatch's restore baseline; fire-and-forget `/generate` tests (e.g. `test_generate_returns_job_id`, which asserts a `job_id` came back and never polls `/status`, while `FakePipe.__call__` sleeps 50 ms) leave the worker alive past teardown, where it writes to the reverted baseline. **This is the mechanism that put 281 stub mp4s in `/workspace/artifacts` between June and September 2026.** Task 4 of the pod-path plan defanged the CONSEQUENCE — the fallback is now `/tmp/kf-artifacts`, so the repo tree no longer grows (verified: 281 before and after a full 5974-test run) — but the thread-lifecycle defect itself is untouched, and the new suite-wide autouse fixture in `tests/conftest.py` measurably WIDENS the race: before, only the ~10 `fresh_server`-based modules patched-and-reverted these attributes; now every test does, once `wan_t2v_server` is imported at collection. Symptom is now cosmetic (`/tmp/kf-artifacts` reappears in ~3 of 5 full-suite runs). Fix direction: join the worker at shutdown (an `on_event("shutdown")` handler), or make the fire-and-forget tests poll to completion. Until then, do NOT write an acceptance criterion asserting the scratch dirs are absent after a suite run — that bar is unreachable while the thread outlives teardown, and one such criterion was already written and had to be relaxed |
+| U51 | FILED 2026-09-21, OPEN — pre-existing, found by review during the pod-path seam work | **`lifecycle.budget` is INERT on RunPod and reads like a dollar guard that is not one.** Only SkyPilot's watchdog consumes it; RunPod's `ON_INSTANCE_DEADLINE` (`providers/runpod/__init__.py:1292-1293`) is `min(2x idle_timeout, max_lifetime - time_buffer)` and never references budget, and `validation/checks/field_support.py:358-371` already documents the budget arm as dead when the rate is unknown at load. So a RunPod cfg carrying `budget: 0.50` is bounded by TIME only. Found while assessing whether raising `max_usd_per_hr` 0.40->0.60 on the Tier-3 smoke cfg was safe: it is, but because the 20-minute deadline caps worst case at ~$0.20/run, NOT because the budget field does anything. Fix direction: either enforce budget in the RunPod deadline arithmetic, or reject/warn at config load when a RunPod cfg sets it, so nobody reads it as a spend guard |
+| U52 | FILED 2026-09-21, OPEN — pre-existing, found by the final whole-branch review of the pod-path seam work | **Four `/workspace/models/...` paths survive as provider-volume runtime defaults in `wan_t2v_server.py`, paired with provisioner-side writers that put the same defect out of a server-only fix's reach.** Survivors: `_SPANDREL_WEIGHTS_DIR_DEFAULT` and `_FLASHVSR_WEIGHTS_DIR_DEFAULT` (named-constant `os.environ.get` fallbacks — allowlisted by name in `tests/test_pod_path_audit.py` pending this item, since the audit's `_FALLBACK` regex now resolves named constants and would otherwise flag them) and the SeedVR2 and RIFE weight dirs (hardcoded `Path("/workspace/models/{seedvr2,rife}")` with no override at all, so they do not even reach the audit's `os.environ.get` pattern). The pairing that makes a server-only fix wrong: `upscalers/spandrel/_engine.py:88`, `upscalers/flashvsr/_engine.py:178,189,200`, and `interpolators/rife/_engine.py:101,106` write those same literal paths into the provision script — moving only the server's read side would desync it from the side that actually populates the directory. Consequence: **on Modal these weights land on ephemeral container disk, not the mounted Volume**, so `tests/test_pod_path_audit.py` going green is a SCOPED green, not a total one — read its updated docstring before trusting a clean run on this file. Fix direction: extend `core/pod_paths.py` with a models dir and have both the server (reader) and each engine module (writer) resolve it from there, moved together in one change, same shape as the `HF_HOME`/`ARTIFACT_DIR`/`LORAS_DIR` fix this session already shipped |
 
 **Live proof cost for the whole money-leak campaign: $0.82** — $0.16 for the four fixes' own live
 cells (Task 5, Modal A10), $0.12 for U14's re-proof and $0.54 to reproduce and diagnose it
@@ -3102,7 +3105,64 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-09-18 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-09-21 — read this, then STOP; below is history)
+
+### SESSION 2026-09-21 — the pod-path seam; CI green on both runners for the first time since 2026-09-18
+
+**Branch `fix/pod-path-seam`, 16 commits, PUSHED but NOT merged — the merge is the operator's call.**
+CI run `35642302211`: **ubuntu-latest ✓ and macos-latest ✓**, with all five previously-failing
+`tests/engines/test_wan_t2v_server_torch_build_log.py` tests passing on both **and that test file
+never edited** — the fix is in the server, not in the test.
+
+**What was wrong.** `wan_t2v_server.py` resolved RunPod's volume mount into module constants at
+import (`HF_HOME=/workspace/.hf_cache`, `ARTIFACT_DIR=/workspace/artifacts`,
+`LORAS_DIR=/workspace/loras`) and `_startup()` mkdir'd them. Any test touching startup therefore
+wrote to a path that exists only on a RunPod pod: `PermissionError` on ubuntu, read-only FS on
+macOS. **This container cannot reproduce it** — `/workspace` is the repo root here and is writable,
+so the suite passed locally while spilling 281 stub mp4s into `/workspace/artifacts` between June
+and September. It had been diagnosed once before and fixed in a single conftest
+(`tests/smoke/local_cpu/conftest.py`), which is why the next test re-broke CI.
+
+**The real defect underneath:** `/workspace` is RunPod's contract; Modal mounts at `/cache/hf`.
+Nothing exported these dirs during provisioning, so **every Modal run wrote artifacts to a path
+named after another provider's volume**, landing on ephemeral container disk. `HF_HOME` was the one
+case already done right (Modal exported it), and that pattern is what the fix extends.
+
+**Shipped:** `core/pod_paths.py` names the shared layout once; RunPod and Modal each export the trio
+off the mount they already resolve (`hf_home` is passed EXPLICITLY, never derived — Modal's is the
+Volume ROOT where a 144 GiB fetch lives, RunPod's is a `.hf_cache` subdir; unifying them would
+orphan that cache); the servers fall back to `/tmp/kf-*`; `tests/test_pod_path_audit.py` is a
+standing source audit with four falsification tests; `tests/conftest.py` gained a suite-wide autouse
+fixture. The Tier-3 weekly smoke cfg got the cap raise (0.40→0.60) and `cloud_type: secure` it never
+received from its siblings, and the job is now `workflow_dispatch`-only.
+
+**Three defects filed, NOT fixed: U50** (daemon worker outlives pytest teardown — the mechanism behind
+the 281-file spill; Task 4 defanged the consequence only) and **U51** (`lifecycle.budget` is inert on
+RunPod and reads like a spend guard that is not one), and **U52** (the four `/workspace/models/...`
+weights paths below — filed after final review pointed out that snapshot prose is not a tracked
+defect; `tests/test_pod_path_audit.py` allowlists two of them BY EXACT CONSTANT NAME, so the audit's
+green is scoped, not total, and it still fires on any new violation in the same file).
+
+**Known-incomplete, deliberately:** four `/workspace/models/...` paths survive in `wan_t2v_server.py`
+(spandrel/FlashVSR/SeedVR2/RIFE weights). They are the same defect, but they are PAIRED with
+provisioner-side literals in `upscalers/spandrel/_engine.py`, `upscalers/flashvsr/_engine.py` and
+`interpolators/rife/_engine.py` that write the same paths, so a server-only change breaks the
+pairing. A correct fix spans seven files and relocates Modal's live-green FlashVSR weights — beyond
+what this plan's design covered. **On Modal those weights still land on container disk, not the
+Volume.**
+
+**The weekly smoke cfg fix is a PAPER FIX.** Its golden cannot prove it: the frozen catalog in
+`tools/snapshot_launch_payloads.py` prices every accelerator that cfg names under BOTH the old and
+new caps, so the golden renders identically at 0.40, 0.60 or 5.00. It rests on the logged live
+failure (2026-09-14, `RateCapExceeded: realized $0.4900/hr exceeds cap $0.4000/hr`). Proving it
+needs an operator-authorised `gh workflow run smoke-wan21-weekly.yml`.
+
+**Next action:** operator decides whether to merge `fix/pod-path-seam` to main.
+
+Spec: `docs/superpowers/specs/2026-09-21-pod-path-seam-and-ci-recovery-design.md`
+Plan: `docs/superpowers/plans/2026-09-21-pod-path-seam-and-ci-recovery.md`
+
+## PREVIOUS SNAPSHOT (2026-09-18 — superseded 2026-09-21)
 
 ### SESSION 2026-09-18 (second) — H3 max-length → 1080p → 60 fps chain; two FlashVSR defects found and fixed
 

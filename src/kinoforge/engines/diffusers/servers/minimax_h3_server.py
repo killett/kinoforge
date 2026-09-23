@@ -47,13 +47,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-# Force-disable huggingface_hub's xet transport before any HF import, and pin
-# HF_HOME onto the Modal Volume. Both are `setdefault`, so the provider's own
-# values win: ModalProvider.create_instance exports HF_HOME=<volume_mount>, and
-# that Volume is where Sub-project B put the 144 GB fetch. Getting this wrong
-# does not fail — it silently re-downloads 123.8 GiB onto container disk.
+# Force-disable huggingface_hub's xet transport before any HF import. That one
+# is a transport kill-switch, not a path, so it belongs here.
+#
+# HF_HOME is the PROVIDER's to set, not this module's: Modal exports the Volume
+# root and RunPod exports <volume>/.hf_cache, both via core.pod_paths.
+# pod_path_env. This module used to hardcode Modal's answer, which was right on
+# Modal, wrong on RunPod, and unwritable on any CI runner. Getting it wrong does
+# not fail loudly — it silently re-downloads 123.8 GiB onto container disk, so
+# the provider, which alone knows its own mount, is authoritative. On a host
+# with no volume, huggingface_hub's own ~/.cache/huggingface applies.
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
-os.environ.setdefault("HF_HOME", "/cache/hf")
 
 import numpy as np  # noqa: E402
 from fastapi import FastAPI, HTTPException  # noqa: E402
@@ -75,7 +79,7 @@ logging.basicConfig(
 # goldens for configs that have nothing to do with H3. Read it, do not rename it.
 MODEL_ID: str = os.environ.get("WAN_MODEL_ID", "MiniMaxAI/MiniMax-H3")
 ARTIFACT_DIR: Path = Path(
-    os.environ.get("KINOFORGE_ARTIFACT_DIR", "/workspace/artifacts")
+    os.environ.get("KINOFORGE_ARTIFACT_DIR", "/tmp/kf-artifacts")  # noqa: S108
 )
 
 # --- geometry, from diffusers v0.40.0 -------------------------------------

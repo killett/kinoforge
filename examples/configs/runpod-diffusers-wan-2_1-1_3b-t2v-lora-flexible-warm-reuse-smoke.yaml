@@ -1,12 +1,13 @@
 # Wan 2.1 T2V-1.3B + LoRA-flexible warm-reuse smoke cfg (Tier 3)
 #
 # Smaller-sibling counterpart to runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release.yaml.
-# Runs weekly via .github/workflows/smoke-wan21-weekly.yml (Mon 04:00 PT) on a
-# RunPod A5000 24GB pod. Validates the real-diffusers LoRA-swap matrix
-# (single-LoRA per Wan 2.1's single-transformer architecture) at ~$0.20/fire.
+# Runs on demand via `gh workflow run smoke-wan21-weekly.yml` (dispatch-only
+# since 2026-09-21) on a RunPod A5000 24GB pod. Validates the real-diffusers
+# LoRA-swap matrix (single-LoRA per Wan 2.1's single-transformer architecture)
+# at ~$0.20/fire.
 #
 # Operator must populate `smoke.lora_a` + `smoke.lora_b` with two
-# Wan 2.1 1.3B-compatible single LoRA refs BEFORE enabling the cron
+# Wan 2.1 1.3B-compatible single LoRA refs before dispatching the
 # workflow. Per user-scope `fetch-lora-metadata-not-just-ids` memory,
 # include trigger word + recommended strength in the README comment.
 
@@ -43,10 +44,30 @@ compute:
   warm_reuse_auto_attach: true
   tags:
     smoke_tier: "kinoforge-smoke-tier-3"
+  backend_options:
+    runpod:
+      # This cfg's max_lifetime is 60m and boot_timeout 30m — far past the
+      # ~10 minute window after which RunPod reclaims community-pool pods
+      # (U42; CLAUDE.md "RunPod community-pool deletions 2026-07-03"). The
+      # 2026-09-21 scheduled run died exactly this way: ProvisionFailed,
+      # "pod 'nn7goq4pu1fmnh' boot stalled", 19 minutes of billed nothing.
+      cloud_type: secure
   placement:
     min_vram_gb: 24
     min_cuda: "12.4"
-    max_usd_per_hr: 0.40
+    # Raised 0.40 -> 0.60 on 2026-09-21, matching the operator decision of
+    # 2026-09-12 (2c446eef) on the sibling 1.3B grid cfg and taken for the
+    # identical reason: at 0.40 no current RunPod offer can satisfy this cfg,
+    # so every scheduled run failed in ~47 s with RateCapExceeded. 2c446eef's
+    # own message says verbatim "Not licence to raise other shipped caps" —
+    # and its $0.49/hr measurement was taken on pods booked with NO
+    # cloud_type pin, while this cfg now pins cloud_type: secure (above) in
+    # the same change. SECURE-pool rates run materially above community/ALL,
+    # so 0.60 is UNPROVEN against the pool this cfg actually books into. The
+    # failure mode if it's still too low is a fast, cheap RateCapExceeded
+    # (~47 s), and with the cron gone the first dispatch is a watched manual
+    # run — treat it as a probe, not a validation.
+    max_usd_per_hr: 0.60
     accelerators:
       - "NVIDIA RTX A5000"
       - "NVIDIA GeForce RTX 4090"
