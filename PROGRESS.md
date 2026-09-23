@@ -8580,6 +8580,7 @@ ALL 28 MVP tasks complete. All 9 phases complete. Post-MVP layers shipped throug
 - Deferred (interface + 1 path only, layers NOT built): stitching, audio, keyframe stage, cross-process discovery lock. (Splitter, uri_for, continuity, S3/GCS, .env loader, concurrent pool now built.)
 - Deps stdlib-first: pydantic + PyYAML + python-dotenv runtime; boto3 + google-cloud-storage lazy-import-gated; skypilot optional/lazy; urllib for all HTTP; stdlib logging.
 - TDD red-first, fully offline (LocalProvider/FakeProvider/FakeSource/FakeEngine + injectable clock + Fake cloud clients). No real cloud/net/GPU/weights in any test.
+- Tests that drive the full CLI generate path must isolate the output sink — the default sink resolves to `Path.cwd() / "output"`, so a fake-engine CLI test with neither `--output-dir` / `--no-output-dir` nor `monkeypatch.chdir(tmp_path)` publishes a 24-byte `artifact_bytes` placeholder (`clip-<hex12>.mp4|[]` — the uri/url-less fallback) into the developer's real `output/`. Three tests did this on every `pixi run test` for ~27 runs before anyone noticed; the autouse `_no_writes_to_repo_output_dir` guard in `tests/conftest.py` now fails the offending test by name (commit `75ebc38b`).
 
 ## Established patterns for layer development
 
