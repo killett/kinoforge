@@ -1,0 +1,107 @@
+{
+  "planPath": "docs/superpowers/plans/2026-09-22-h3-lora-shared-seam.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 1: target on the schema, branch deprecated",
+      "status": "pending",
+      "description": "**Goal:** Both LoRA models carry `target`; `branch` still works and maps onto it; disagreement is refused.\n\n**Files:**\n- Modify: `src/kinoforge/core/lora.py:105-170`\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py:866-897` (ADDITIVE ONLY \u2014 extra=forbid means a payload with `target` 422s without it)\n- Test: `tests/test_lora_target_field.py` (create), `tests/test_lora_schema_parity.py` (extend)\n\n**Acceptance Criteria:**\n- [ ] LoraEntry(ref='x', branch='h').target == 'high_noise' and .branch == 'high_noise'\n- [ ] LoraEntry(ref='x', branch='high_noise', target='low_noise') raises ValidationError\n- [ ] LoraEntry(ref='x').target is None\n- [ ] LoraTarget accepts target and resolves the alias identically to LoraEntry\n- [ ] One WARNING per instance that used branch, naming a count, never a ref\n- [ ] Wan behaviour unchanged: _check_branch_legal still reads branch\n\n**Verify:** `pixi run python -m pytest tests/test_lora_target_field.py tests/test_lora_schema_parity.py -v` -> all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/lora.py\", \"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/test_lora_target_field.py\", \"tests/test_lora_schema_parity.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/test_lora_target_field.py tests/test_lora_schema_parity.py -v\", \"acceptanceCriteria\": [\"branch alias populates target\", \"disagreeing branch+target refused\", \"target defaults to None\", \"both schemas resolve identically\", \"warning names a count not a ref\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: client capability registry + config check",
+      "status": "pending",
+      "description": "**Goal:** A `loras:` stack against a server that cannot serve it, or naming a target that model does not have, is an ERROR before any pod is created.\n\n**Files:**\n- Create: `src/kinoforge/core/lora_profiles.py`\n- Create: `src/kinoforge/validation/checks/loras.py`\n- Test: `tests/core/test_lora_profiles.py`, `tests/validation/test_lora_check.py`\n\n**Acceptance Criteria:**\n- [ ] client_profile_for_server_module for wan reports targets ('high_noise','low_noise')\n- [ ] client_profile_for_server_module for H3 reports ('transformer','transformer_ref')\n- [ ] An unregistered module returns None\n- [ ] Cfg with loras: + unregistered server_cmd module -> Severity.ERROR naming the module\n- [ ] Cfg with target: 'high_noise' on the H3 module -> Severity.ERROR naming H3's legal targets\n- [ ] Cfg with loras: [] -> applies_to is False\n\n**Verify:** `pixi run python -m pytest tests/core/test_lora_profiles.py tests/validation/test_lora_check.py -v` -> all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/lora_profiles.py\", \"src/kinoforge/validation/checks/loras.py\", \"tests/core/test_lora_profiles.py\", \"tests/validation/test_lora_check.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/core/test_lora_profiles.py tests/validation/test_lora_check.py -v\", \"acceptanceCriteria\": [\"unregistered module + loras is ERROR\", \"wrong-family target is ERROR naming legal values\", \"empty stack does not apply\", \"registry reports per-family universes\"], \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: shared seam \u2014 profile, inventory, apply",
+      "status": "pending",
+      "description": "**Goal:** `servers/_lora.py` owns the LoRA mechanism as pure functions over a LoraProfile, with rollback and replace correct, and no FastAPI yet.\n\n**Files:**\n- Create: `src/kinoforge/engines/diffusers/servers/_lora.py`\n- Test: `tests/engines/diffusers/servers/test_lora_apply_core.py`\n\n**Acceptance Criteria:**\n- [ ] apply_stack loads each entry in order with adapter names lora_0, lora_1, ...\n- [ ] Strengths reach set_adapters(names, weights) on the module the profile names\n- [ ] after_load runs exactly once, after every entry has loaded\n- [ ] A failure on entry k leaves the inventory EMPTY and re-raises LoraLoadError\n- [ ] Applying [A] then [B] leaves exactly [B] active; both files remain on disk\n- [ ] target=None resolves to profile.default_target; a None default raises TargetRequired naming legal targets\n- [ ] explain_load_failure output is carried on the raised LoraLoadError\n\n**Verify:** `pixi run python -m pytest tests/engines/diffusers/servers/test_lora_apply_core.py -v` -> all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/_lora.py\", \"tests/engines/diffusers/servers/test_lora_apply_core.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/engines/diffusers/servers/test_lora_apply_core.py -v\", \"acceptanceCriteria\": [\"positional adapter names in order\", \"after_load once\", \"failure rolls back to empty\", \"second apply replaces\", \"missing default target refused\"], \"modelTier\": \"frontier\"}\n```",
+      "blockedBy": [
+        1
+      ]
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: the router \u2014 endpoints, async job, errors",
+      "status": "pending",
+      "description": "**Goal:** The three endpoints exist behind build_lora_router, matching the wire contract DiffusersBackend already speaks.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/_lora.py`\n- Test: `tests/engines/diffusers/servers/test_lora_router.py`\n\n**Acceptance Criteria:**\n- [ ] POST /lora/set_stack returns {'job_id': ...} and runs the work in the background\n- [ ] GET /lora/set_stack/status/{job_id} walks queued -> running -> done with inventory + free_bytes\n- [ ] Unknown job_id is a 404\n- [ ] LoraLoadError with a hint -> {'status':400,'error':'lora_format_unsupported','hint':...,'ref':...}\n- [ ] LoraLoadError without a hint -> {'status':500,'error':'lora_load_failed',...}\n- [ ] Download failure -> {'status':502,'error':'lora_download_failed','download_failed':ref}\n- [ ] GET /lora/inventory returns {'inventory': [...], 'free_bytes': int}\n- [ ] A target outside profile.targets is a 400 BEFORE any download\n\n**Verify:** `pixi run python -m pytest tests/engines/diffusers/servers/test_lora_router.py -v` -> all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/_lora.py\", \"tests/engines/diffusers/servers/test_lora_router.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/engines/diffusers/servers/test_lora_router.py -v\", \"acceptanceCriteria\": [\"job lifecycle states\", \"format failure 400 with hint\", \"load failure 500\", \"download failure 502\", \"illegal target rejected before download\", \"blocking load runs via asyncio.to_thread\"], \"modelTier\": \"frontier\"}\n```",
+      "blockedBy": [
+        3
+      ]
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: mount the router in the H3 server",
+      "status": "pending",
+      "description": "**Goal:** The H3 server builds its profile from the loaded pipeline, mounts the router, and declares its LoRA capability in /health.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/minimax_h3_server.py` (_startup, health, new _build_lora_profile, LORA_TARGET_UNIVERSE)\n- Modify: `tests/engines/diffusers/servers/h3_stub_pipe.py`\n- Test: `tests/engines/diffusers/test_minimax_h3_server.py` (extend), `tests/engines/diffusers/test_lora_profile_parity.py` (create)\n\n**Acceptance Criteria:**\n- [ ] /health reports lora.targets == ['transformer'] when the stub holds only transformer\n- [ ] /health reports both targets and default_target None when the stub holds both\n- [ ] lora.profile == 'minimax-h3-t2va'\n- [ ] profile.load passes load_into_transformer_ref=True only for target == 'transformer_ref'\n- [ ] after_load calls .to(torch.bfloat16) on the loaded partition\n- [ ] explain_load_failure returns the pruned-checkpoint hint for a size mismatch and None otherwise\n- [ ] Parity: every module in core.lora_profiles._REGISTRY declares a matching universe\n\n**Verify:** `pixi run python -m pytest tests/engines/diffusers/test_minimax_h3_server.py tests/engines/diffusers/test_lora_profile_parity.py -v` -> all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/minimax_h3_server.py\", \"tests/engines/diffusers/servers/h3_stub_pipe.py\", \"tests/engines/diffusers/test_minimax_h3_server.py\", \"tests/engines/diffusers/test_lora_profile_parity.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/engines/diffusers/ -v\", \"acceptanceCriteria\": [\"targets read off the loaded pipeline not a constant\", \"dual-partition needs an explicit target\", \"bf16 restore in after_load\", \"pruned hint on size mismatch\", \"client/server parity\"], \"modelTier\": \"frontier\"}\n```",
+      "blockedBy": [
+        2,
+        4
+      ]
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: client error mapping + target on the wire",
+      "status": "pending",
+      "description": "**Goal:** The two new error bodies map to typed exceptions instead of RuntimeError, and target reaches the pod only when set.\n\n**Files:**\n- Modify: `src/kinoforge/core/errors.py`\n- Modify: `src/kinoforge/engines/diffusers/__init__.py:718-724` (payload) and `:872-929` (_raise_lora_swap_error)\n- Test: `tests/engines/test_diffusers_set_lora_stack.py` (extend)\n\n**Acceptance Criteria:**\n- [ ] lora_format_unsupported at 400 raises LoraFormatUnsupportedError carrying ref + hint\n- [ ] lora_load_failed at 500 raises LoraLoadFailedError\n- [ ] Both expose manual_cleanup_command() like their siblings\n- [ ] An entry with target=None produces a payload with NO target key\n- [ ] An entry with target='transformer' produces ref/strength/branch/target\n- [ ] Unknown bodies still raise RuntimeError\n\n**Verify:** `pixi run python -m pytest tests/engines/test_diffusers_set_lora_stack.py -v` -> all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/errors.py\", \"src/kinoforge/engines/diffusers/__init__.py\", \"tests/engines/test_diffusers_set_lora_stack.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/engines/test_diffusers_set_lora_stack.py -v\", \"acceptanceCriteria\": [\"typed format error carries hint\", \"typed load error\", \"target omitted when None (old-pod 422 guard)\", \"unknown body still RuntimeError\"], \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        1,
+        4
+      ]
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: apply the stack before the first generation",
+      "status": "pending",
+      "description": "**Goal:** Every generate path applies the resolved stack after the pod is ready, and a failure fails the run.\n\n**Files:**\n- Create: `src/kinoforge/core/lora_apply.py`\n- Modify: `src/kinoforge/core/orchestrator.py:2158-2206` (immediately before `yield session`)\n- Test: `tests/core/test_lora_apply.py`, `tests/integration/test_lora_apply_gates_generate.py`\n\n**Acceptance Criteria:**\n- [ ] An empty stack makes no HTTP call\n- [ ] A non-empty stack resolves each ref via registry.source_for_ref and POSTs one set_lora_stack\n- [ ] A backend without set_lora_stack (hosted engines) is a no-op\n- [ ] On LoraFormatUnsupportedError the error propagates and submit is NEVER called\n- [ ] Refs never appear in any log line emitted by this module\n- [ ] hf: and civitai: refs both produce url/headers/filename/size_hint\n\n**Verify:** `pixi run python -m pytest tests/core/test_lora_apply.py tests/integration/test_lora_apply_gates_generate.py -v` -> all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/lora_apply.py\", \"src/kinoforge/core/orchestrator.py\", \"tests/core/test_lora_apply.py\", \"tests/integration/test_lora_apply_gates_generate.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/core/test_lora_apply.py tests/integration/test_lora_apply_gates_generate.py -v\", \"acceptanceCriteria\": [\"failed apply prevents generation\", \"empty stack issues no call\", \"hosted backends no-op\", \"logs carry counts not refs\"], \"modelTier\": \"frontier\"}\n```",
+      "blockedBy": [
+        5,
+        6
+      ]
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: delete the lossy adapter bridge",
+      "status": "pending",
+      "description": "**Goal:** One payload builder, not two.\n\n**Files:**\n- Modify: `src/kinoforge/_adapters.py:341-374` (delete build_set_stack_request)\n- Delete: `tests/test_adapters_build_set_stack_request.py`\n- Modify: `tests/integration/test_loras_cli_e2e.py`\n\n**Acceptance Criteria:**\n- [ ] build_set_stack_request no longer exists anywhere in src/\n- [ ] tests/integration/test_loras_cli_e2e.py asserts the same behaviour through DiffusersBackend\n- [ ] Full suite green\n\n**Verify:** `pixi run python -m pytest tests/ -q` -> 0 failures\n\n```json:metadata\n{\"files\": [\"src/kinoforge/_adapters.py\", \"tests/integration/test_loras_cli_e2e.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/ -q\", \"acceptanceCriteria\": [\"no build_set_stack_request in src\", \"e2e ported to the backend payload builder\", \"full suite green\"], \"modelTier\": \"mechanical\"}\n```",
+      "blockedBy": [
+        6
+      ]
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: turbo config, goldens, payload ceiling",
+      "status": "pending",
+      "description": "**Goal:** A shipped H3 LoRA config exists, the golden ratchet is re-baked deliberately, and the env payload can never silently cross RunPod's limit.\n\n**Files:**\n- Create: `examples/configs/modal-diffusers-minimax-h3-t2va-lora-turbo.yaml`\n- Create: `tests/providers/test_env_payload_ceiling.py`\n- Modify: `tests/providers/golden/launch_payloads/*.json` + `_golden_provision.json` (REGENERATED, never hand-edited)\n\n**Acceptance Criteria:**\n- [ ] kinoforge doctor on the new config exits 0\n- [ ] The config names the exact turbo ref (lightx2v ..._8step_v1.0_bf16.safetensors), num_inference_steps: 8, 640x352, 124 frames\n- [ ] A new golden exists and every pre-existing golden diff is blob-only\n- [ ] test_env_payload_ceiling asserts < 90 KB for every RunPod diffusers config\n- [ ] Goldens regenerated AFTER `pre-commit run --all-files`\n\n**Verify:** `pixi run python -m pytest tests/providers/ -q` -> 0 failures\n\n```json:metadata\n{\"files\": [\"examples/configs/modal-diffusers-minimax-h3-t2va-lora-turbo.yaml\", \"tests/providers/test_env_payload_ceiling.py\", \"tests/providers/golden/launch_payloads\"], \"verifyCommand\": \"pixi run python -m pytest tests/providers/ -q\", \"acceptanceCriteria\": [\"doctor exits 0\", \"exact probed ref pinned\", \"golden diffs blob-only\", \"90 KB env ceiling guarded\", \"format before snapshot\"], \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        5
+      ]
+    },
+    {
+      "id": 10,
+      "subject": "Task 10: docs, PROGRESS, deprecation record",
+      "status": "pending",
+      "description": "**Goal:** The deprecation and the debt are written down where the next session will find them.\n\n**Files:**\n- Modify: `docs/breaking-changes.md`, `docs/warm-reuse.md`, `PROGRESS.md`\n\n**Acceptance Criteria:**\n- [ ] breaking-changes.md describes branch -> target with a before/after YAML pair\n- [ ] warm-reuse.md states H3 serves set_stack WITHOUT eviction\n- [ ] PROGRESS.md RESUME SNAPSHOT records: two coexisting implementations, no eviction on H3, Wan cold-boot cfg.loras still a no-op\n- [ ] Full suite green\n\n**Verify:** `pixi run python -m pytest tests/ -q` -> 0 failures\n\n```json:metadata\n{\"files\": [\"docs/breaking-changes.md\", \"docs/warm-reuse.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run python -m pytest tests/ -q\", \"acceptanceCriteria\": [\"before/after YAML in breaking-changes\", \"H3 eviction gap documented\", \"PROGRESS debt list updated\"], \"modelTier\": \"mechanical\"}\n```",
+      "blockedBy": [
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "id": 11,
+      "subject": "Task 11: live proof \u2014 one pod, two applies",
+      "status": "pending",
+      "description": "**Goal:** Prove on real weights that both profile branches work and that the LoRAs visibly engage.\n\n> **USER-ORDERED GATE \u2014 NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it \"verified inline\", or by substituting a cheaper check. Close only after every item in `acceptanceCriteria` has been re-validated independently, with output captured.\n\n**Files:**\n- Modify: `successful-generations.md` (new section + See-also)\n- Modify: `PROGRESS.md` (evidence + spend)\n\n**Acceptance Criteria:**\n- [ ] pixi run preflight exits 0 before any spend; `git status --porcelain` empty\n- [ ] Run 1: turbo LoRA applied, 8 steps, 640x352 / 124 frames, MP4 with audio produced\n- [ ] Run 2: second apply of the style LoRA on the SAME pod, MP4 produced\n- [ ] /lora/inventory after run 2 lists exactly the style LoRA as active\n- [ ] GPU utilisation observed non-zero during each denoise (probe every 60-90 s)\n- [ ] Frame QA on BOTH outputs: contact sheets read, verdict recorded; run 2 is lineart or the run is a FAIL\n- [ ] kinoforge list from a FRESH process AFTER the orchestrator exits shows no running instances AND an empty ledger\n- [ ] Total spend recorded; successful-generations.md entry written\n\n**Verify:** `pixi run kinoforge list` -> `[instance overview] No running instances.` AND `No instances recorded in ledger.`\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"acceptanceCriteria\": [\"preflight 0 on a clean tree before spend\", \"run 1 turbo 8-step MP4 produced\", \"run 2 style LoRA MP4 produced on the same pod\", \"inventory after run 2 lists only the style LoRA\", \"GPU util non-zero during each denoise\", \"frame QA verdict recorded for BOTH outputs\", \"teardown verified from a fresh process after exit\"], \"modelTier\": \"frontier\", \"userGate\": true, \"tags\": [\"user-gate\", \"live-spend\"], \"requiresUserSpecification\": false, \"gateScope\": \"task\", \"failurePolicy\": \"stop-and-report\", \"requireEvidenceTokens\": [[\"run-1\", \"turbo\", \"8-step\"], [\"run-2\", \"lineart\", \"style\"]], \"subagentBrief\": \"Live Modal H200 spend, budget ~$1.0-1.5. Poll gpuUtilPercent every 60-90s; 0% for 3 consecutive probes during a denoise -> capture log, destroy, fail fast. Verify teardown with `pixi run kinoforge list` from a fresh process AFTER the orchestrator exits; a mid-run 'No running instances' line is NOT proof.\"}\n```",
+      "blockedBy": [
+        10
+      ]
+    }
+  ],
+  "lastUpdated": "2026-09-22T19:52:02.965271"
+}

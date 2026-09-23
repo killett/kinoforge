@@ -52,6 +52,10 @@ of which that helper reads.
   and fails with a size mismatch. The diffusers-compatible 8-step files are
   `lightx2v/Minimax-h3-Turbo` (records its training alpha in `__metadata__`) and
   `larryvrh/MiniMax-H3-Turbo-Lora` (alpha-less, loads at `alpha == rank`).
+  **Probed 2026-09-22** (HF API + safetensors headers over ranged GETs): the 1.96 GB size is
+  the `_comfyui_bf16` variant; `lightx2v`'s diffusers-loadable twin is
+  `minimax_h3_fl2v_turbo_8step_v1.0_bf16.safetensors` at 1.38 GB, 624 BF16 tensors,
+  `__metadata__ = {"alpha": "8"}`, keys carrying peft's `.default.` infix.
 - DiffSynth-Studio H3 LoRAs carry fp32 factors that push the unfused LoRA path into fp32
   compute. diffusers' stated remedy is `.to(torch.bfloat16)` on the model after loading.
   The Wan path has no such step, so it is not inherited for free.
@@ -178,7 +182,7 @@ H3 mounts the **existing** endpoints, from a shared router:
 - `GET /lora/set_stack/status/{job_id}`
 
 `DiffusersBackend.set_lora_stack`, `_poll_set_stack`, the error mapping and the proxy-retry
-wrapper are reused unchanged. Async is not optional: a 1.96 GB download through a provider
+wrapper are reused unchanged. Async is not optional: a ~1.4 GB download through a provider
 proxy is why that contract was made async (`2026-07-13-lora-set-stack-async-job-design.md`).
 
 H3's version is **set_stack minus eviction**: same request, same job polling, same inventory
