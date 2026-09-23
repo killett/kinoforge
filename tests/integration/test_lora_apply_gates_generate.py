@@ -14,6 +14,7 @@ generation proceeds, the feature is worse than not having it.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -22,10 +23,15 @@ import pytest
 import kinoforge.engines.fake  # noqa: F401
 import kinoforge.providers.local  # noqa: F401
 import kinoforge.sources.huggingface  # noqa: F401
+from kinoforge.cli._main import _build_parser
+from kinoforge.cli.loras_arg import parse_loras_heredoc
 from kinoforge.core import orchestrator
 from kinoforge.core.cancel import CancelToken
 from kinoforge.core.config import Config, load_config
+from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import LoraFormatUnsupportedError
+from kinoforge.core.grid.executor import _build_swap_generate_cmd, _ResolvedCell
+from kinoforge.core.grid.spec import LoraStackEntry
 from kinoforge.core.interfaces import (
     CredentialProvider,
     GenerationJob,
@@ -443,3 +449,107 @@ def test_hosted_lora_capable_backend_without_a_pod_does_not_post(
         assert session.instance is None
 
     assert engine.backends[-1].set_stack_calls == []
+
+
+# ---------------------------------------------------------------------------
+# `kinoforge grid` control cells — the path where a stale stack bites hardest
+# ---------------------------------------------------------------------------
+
+_LAUNCHER_PREFIX = ["pixi", "run", "kinoforge"]
+
+
+def _swap_cell(tmp_path: Path, *, stack: list[LoraStackEntry]) -> _ResolvedCell:
+    """Build one swap-mode grid cell carrying ``stack``.
+
+    Args:
+        tmp_path: Directory the cell's rendered config is written into.
+        stack: The cell's ``lora_swap_stack``; empty means a no-LoRA
+            control cell.
+
+    Returns:
+        A minimal :class:`_ResolvedCell` accepted by
+        ``_build_swap_generate_cmd``.
+    """
+    cfg_path = tmp_path / "cell.yaml"
+    cfg_path.write_text("model: fake\nprompt: hi\n")
+    return _ResolvedCell(
+        idx=1,
+        caption="control",
+        cfg_path=cfg_path,
+        effective_cfg=SimpleNamespace(prompt="hi", mode="t2v"),
+        mp4_path=None,
+        is_lora_swap=True,
+        lora_swap_stack=list(stack),
+    )
+
+
+def test_a_grid_control_cell_clears_the_previous_cells_lora(tmp_path: Path) -> None:
+    """A swap grid's no-LoRA control cell must render LoRA-free.
+
+    Drives the REAL chain a grid cell takes — ``_build_swap_generate_cmd``
+    renders the argv, the production CLI parser reads ``--loras`` off it,
+    ``parse_loras_heredoc`` turns the empty body into ``[]``, that lands on
+    the ``EphemeralSession`` exactly as ``_cmd_generate`` stashes it, and
+    ``deploy_session`` applies it. Nothing here restates the fix; every hop
+    is production code.
+
+    Bug caught: cells 2..N of a ``lora_swap`` grid share ONE warm pod
+    (``executor.py`` passes ``--attach-pod`` and never ``--no-reuse``), and
+    ``executor.py``'s ``_stack_to_loras_heredoc`` emits ``""`` to mean
+    "clear". If the empty stack is a no-op the control cell renders with
+    the PREVIOUS cell's adapter still loaded, so a strength sweep's
+    baseline is silently the wrong picture — and every cell downstream is
+    compared against it.
+    """
+    cmd = _build_swap_generate_cmd(
+        _swap_cell(tmp_path, stack=[]),
+        grid_id="grid_clear",
+        output_dir=tmp_path / "out",
+        attach_pod_id="pod-warm",
+        emit_provision_record=None,
+    )
+    assert cmd[:3] == _LAUNCHER_PREFIX, (
+        f"cell argv must start with the pixi launcher prefix, got {cmd[:3]}"
+    )
+    args = _build_parser().parse_args(cmd[3:])
+    assert args.loras == "", (
+        f"the control cell must pass an EMPTY --loras body, got {args.loras!r}"
+    )
+
+    cli_loras = parse_loras_heredoc(args.loras)
+    assert cli_loras == [], "an empty heredoc parses to the explicit empty stack"
+
+    engine = _LoraSpyEngine()
+    store = LocalArtifactStore(tmp_path)
+
+    with EphemeralSession(enabled=False) as session:
+        session.cli_loras = cli_loras
+        with deploy_session(
+            _cfg(["hf:org/repo:previous-cell.safetensors"]),
+            store=store,
+            engine=engine,
+            provider=LocalProvider(),
+            creds=_NullCreds(),
+            run_id="r",
+        ) as gen_session:
+            assert gen_session.instance is not None
+            pod_id = gen_session.instance.id
+
+    backend = engine.backends[-1]
+    assert len(backend.set_stack_calls) == 1, (
+        "the control cell must issue exactly one clearing set_lora_stack; got "
+        f"{len(backend.set_stack_calls)}"
+    )
+    called_pod, active_stack, specs = backend.set_stack_calls[0]
+    assert called_pod == pod_id
+    assert active_stack == [], (
+        f"the pod must be told to hold nothing; got {[e.ref for e in active_stack]}"
+    )
+    assert specs == {}
+
+    entry = Ledger(store=store).read(pod_id)
+    assert entry is not None
+    assert entry["lora_inventory"] == [], (
+        "a cleared pod's row must say it holds nothing, or `kinoforge list` "
+        f"and the warm-reuse matcher keep planning against ghosts; got {entry}"
+    )

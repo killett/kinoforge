@@ -874,3 +874,182 @@ def test_a_failing_ledger_write_warns_but_does_not_fail_the_run(
     ]
     assert len(warnings) == 1
     assert "under-report" in warnings[0].getMessage()
+
+
+# ---------------------------------------------------------------------------
+# `--loras ""` — an explicitly empty CLI stack is a CLEAR, not an absence
+# ---------------------------------------------------------------------------
+
+
+def test_an_explicitly_empty_cli_stack_clears_the_pod() -> None:
+    """``--loras ""`` must reach the pod as a clearing ``set_stack``.
+
+    Bug caught: the early ``return`` on an empty resolved stack, which
+    treats "the operator asked for no LoRAs" and "no LoRAs were asked
+    about" as the same thing. On a warm/attached pod the previous run's
+    adapters then stay loaded and the render is silently contaminated —
+    observed live on pod ``run-20260923-002836``, where
+    ``/lora/inventory`` still held the prior adapter after a
+    ``--loras ""`` render.
+
+    Expected values come from the two contracts, not from the code: the
+    CLI help promises "Empty heredoc clears the stack for this run", and
+    the pod clears on ``{"target": [], "download_specs": {}}``
+    (``servers/_lora.apply_stack``: "Empty clears the pod").
+    """
+    backend = _SpyLoraBackend()
+    cfg = _cfg(["hf:org/repo:from-cfg.safetensors"])
+
+    with EphemeralSession(enabled=False) as session:
+        session.cli_loras = []
+        ensure_lora_stack(
+            backend=backend, cfg=cfg, pod_id="p1", creds=_NullCreds(), ledger=None
+        )
+
+    assert len(backend.calls) == 1, (
+        "an explicitly empty --loras stack must issue exactly one clearing "
+        f"set_lora_stack; got {len(backend.calls)} calls"
+    )
+    pod_id, active_stack, specs = backend.calls[0]
+    assert pod_id == "p1"
+    assert active_stack == [], (
+        f"the clearing call must carry an empty stack; got {active_stack}"
+    )
+    assert specs == {}, f"a clear downloads nothing; got {specs}"
+
+
+def test_an_absent_cli_stack_still_issues_nothing() -> None:
+    """A plain run with no LoRAs anywhere must still cost zero HTTP calls.
+
+    Bug caught: implementing the clear as "empty resolved stack => always
+    POST". Every LoRA-less run would then hit ``/lora/set_stack``, which
+    is a 404 against any server build without the route. Distinct from
+    ``test_empty_stack_never_touches_the_backend``: that one runs with no
+    ``EphemeralSession`` at all, while this is the shape a real
+    ``kinoforge generate`` takes — a session is always entered, and
+    ``cli_loras`` stays ``None`` unless ``--loras`` was passed.
+    """
+    backend = _SpyLoraBackend()
+
+    with EphemeralSession(enabled=False) as session:
+        assert session.cli_loras is None
+        ensure_lora_stack(
+            backend=backend, cfg=_cfg([]), pod_id="p1", creds=_NullCreds(), ledger=None
+        )
+
+    assert backend.calls == []
+
+
+def test_a_cleared_pod_has_its_ledger_inventory_emptied() -> None:
+    """A successful clear must leave the row saying the pod holds nothing.
+
+    Bug caught: issuing the clearing call and returning without the
+    ledger write. ``kinoforge list`` / ``inspect`` render straight off
+    ``lora_inventory`` and ``warm_reuse/matcher.py`` plans swaps from it,
+    so the row would keep naming adapters the pod dropped seconds ago —
+    the same real-vs-reported lie the apply path's ``_record_inventory``
+    exists to prevent, merely inverted.
+    """
+    backend = _SpyLoraBackend(response={"inventory": [], "free_bytes": 999})
+    ledger = _SpyLedger()
+
+    with EphemeralSession(enabled=False) as session:
+        session.cli_loras = []
+        ensure_lora_stack(
+            backend=backend,
+            cfg=_cfg(["hf:org/repo:from-cfg.safetensors"]),
+            pod_id="p1",
+            creds=_NullCreds(),
+            ledger=ledger,
+        )
+
+    assert len(ledger.touches) == 1, (
+        f"the clear must write the emptied inventory back; got {ledger.touches}"
+    )
+    instance_id, fields = ledger.touches[0]
+    assert instance_id == "p1"
+    assert fields["lora_inventory"] == []
+    assert fields["loras_dir_free_bytes"] == 999
+
+
+def test_an_explicit_clear_is_logged_so_it_cannot_be_silent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The clear must announce itself, naming the pod.
+
+    Bug caught: the live symptom was that a ``--loras ""`` render
+    produced NO ``lora-apply`` line at all, so nothing in the run log
+    distinguished "cleared" from "quietly kept the old stack". A clear
+    that issues the HTTP call but logs nothing leaves the operator with
+    the same unreadable log.
+    """
+    backend = _SpyLoraBackend()
+
+    with caplog.at_level(logging.DEBUG, logger=_LOGGER):
+        with EphemeralSession(enabled=False) as session:
+            session.cli_loras = []
+            ensure_lora_stack(
+                backend=backend,
+                cfg=_cfg(["hf:org/repo:from-cfg.safetensors"]),
+                pod_id="p1",
+                creds=_NullCreds(),
+                ledger=None,
+            )
+
+    lines = [r.getMessage() for r in caplog.records if r.name == _LOGGER]
+    assert any("clear" in line and "p1" in line for line in lines), (
+        f"the clear must log a line naming the pod; got {lines}"
+    )
+
+
+def test_an_explicit_clear_without_a_lora_surface_does_not_cry_discard(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Clearing on a hosted backend is a no-op, not a discarded stack.
+
+    Bug caught: routing the explicit clear through the existing
+    discard-WARNING branch. It would render "NOT APPLYING 0 LoRA
+    entries" on every hosted run that passes ``--loras ""`` — a loud
+    alarm about a discrepancy that does not exist, which is how a
+    genuinely load-bearing WARNING gets trained out of the reader.
+    """
+    with caplog.at_level(logging.DEBUG, logger=_LOGGER):
+        with EphemeralSession(enabled=False) as session:
+            session.cli_loras = []
+            ensure_lora_stack(
+                backend=_HostedBackend(),
+                cfg=_cfg(["hf:org/repo:from-cfg.safetensors"]),
+                pod_id=None,
+                creds=_NullCreds(),
+                ledger=None,
+            )
+
+    warnings = [
+        r for r in caplog.records if r.levelno == logging.WARNING and r.name == _LOGGER
+    ]
+    assert warnings == [], (
+        "clearing a backend that never held a stack must not warn about a "
+        f"discard; got {[r.getMessage() for r in warnings]}"
+    )
+
+
+def test_an_explicit_clear_with_no_pod_does_not_post() -> None:
+    """With no instance there is nothing to clear; do not invent a pod.
+
+    Bug caught: sending ``pod_id=None`` onto the wire for the clearing
+    call, which lands in an exception's "kinoforge destroy --id None"
+    recovery hint — the same defect the apply path already guards.
+    """
+    backend = _SpyLoraBackend()
+
+    with EphemeralSession(enabled=False) as session:
+        session.cli_loras = []
+        ensure_lora_stack(
+            backend=backend,
+            cfg=_cfg(["hf:org/repo:from-cfg.safetensors"]),
+            pod_id=None,
+            creds=_NullCreds(),
+            ledger=None,
+        )
+
+    assert backend.calls == []

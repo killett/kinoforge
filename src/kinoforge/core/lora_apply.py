@@ -151,10 +151,16 @@ def ensure_lora_stack(
     ready and before any job is submitted, so cold pods and
     caller-supplied warm pods take the identical path.
 
-    No-ops when the stack is empty, when the backend has no
+    No-ops when no stack was asked about at all, when the backend has no
     ``set_lora_stack`` (hosted engines), or when there is no pod to
     address. Any failure propagates: a stack that did not load must
     fail the run rather than silently produce a LoRA-less video.
+
+    An **explicitly empty CLI stack** (``--loras ""``) is not an absence
+    — it is a request to clear — and against a pod it issues a clearing
+    ``set_lora_stack`` with an empty stack and no download specs. See
+    the ``explicit_clear`` comment in the body for why the two cases
+    cannot be collapsed.
 
     Args:
         backend: The generation backend for this session. Duck-typed —
@@ -193,12 +199,38 @@ def ensure_lora_stack(
     _cli_loras = getattr(_session, "cli_loras", None) if _session else None
     stack = resolve_active_lora_stack(cfg, _vault, cli_loras=_cli_loras)
 
-    if not stack:
+    # `--loras ""` is a REQUEST ("hold nothing"), not an absence ("nothing
+    # was said about LoRAs"). `resolve_active_lora_stack` is the only place
+    # that still keeps the two apart — `cli_loras is None` vs `[]`, see its
+    # docstring — and the resolved stack is `[]` either way, so the
+    # distinction has to be read off `_cli_loras` here or it is lost. It
+    # matters because a warm pod carries the PREVIOUS run's adapters:
+    # `kinoforge grid` emits `--loras ""` for a swap grid's control cell
+    # (`core/grid/executor.py`, cells 2..N sharing one pod), and without
+    # the clearing call that control renders with the previous cell's LoRA.
+    explicit_clear = _cli_loras is not None and not stack
+
+    if not stack and not explicit_clear:
         # Zero HTTP calls for runs without LoRAs: an unconditional POST
         # would 404 against every server build with no LoRA surface.
         return
 
     if not isinstance(backend, SupportsSetLoraStack):
+        if explicit_clear:
+            # Nothing to clear: this seam never loaded anything onto a
+            # backend without the surface, so there is no stale stack for
+            # `--loras ""` to be lying about. Deliberately NOT the discard
+            # WARNING below — "NOT APPLYING 0 LoRA entries" would be a loud
+            # alarm about a discrepancy that does not exist, and that is how
+            # a load-bearing warning gets trained out of its reader.
+            _log.info(
+                "lora-apply: nothing to clear — engine %r's backend (%s) has "
+                "no set_lora_stack surface, so no stack was ever loaded "
+                "through this seam.",
+                _engine_kind(cfg),
+                type(backend).__name__,
+            )
+            return
         # This WARNING is the only protection this case gets, and it has
         # to earn its place in a multi-minute boot log.
         #
@@ -226,6 +258,14 @@ def ensure_lora_stack(
         return
 
     if pod_id is None:
+        if explicit_clear:
+            # Same reasoning as the branch above, different cause: the
+            # surface exists but there is no pod holding anything to clear.
+            _log.info(
+                "lora-apply: nothing to clear — this session has no instance "
+                "to address, so no pod holds a stack from a previous run."
+            )
+            return
         # A LoRA-capable backend with no pod behind it. Distinct from the
         # branch above — the surface exists, there is just nothing to
         # address — so the fix hint is different too.
@@ -240,7 +280,12 @@ def ensure_lora_stack(
         )
         return
 
-    _log.info("lora-apply: applying %d LoRA entries to pod %s", len(stack), pod_id)
+    if explicit_clear:
+        _log.info("lora-apply: clearing pod %s's LoRA stack (--loras is empty)", pod_id)
+    else:
+        _log.info("lora-apply: applying %d LoRA entries to pod %s", len(stack), pod_id)
+    # A clear resolves nothing: `stack` is empty, so this returns `{}`
+    # without touching a vendor API or a credential.
     specs = resolve_download_specs(
         [lo.ref for lo in stack], creds or EnvCredentialProvider()
     )
@@ -250,7 +295,13 @@ def ensure_lora_stack(
     resp = backend.set_lora_stack(
         pod_id=pod_id, active_stack=stack, download_specs=specs
     )
-    _log.info("lora-apply: pod %s accepted the %d-entry stack", pod_id, len(stack))
+    if explicit_clear:
+        _log.info("lora-apply: pod %s cleared its LoRA stack", pod_id)
+    else:
+        _log.info("lora-apply: pod %s accepted the %d-entry stack", pod_id, len(stack))
+    # The emptied inventory is written back for the same reason a full one
+    # is: a row saying the pod still holds adapters it just dropped is the
+    # lie `kinoforge list` and the warm-reuse matcher both read.
     _record_inventory(ledger, pod_id, resp)
 
 
