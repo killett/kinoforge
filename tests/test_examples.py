@@ -9,6 +9,7 @@ Verifies that:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -710,3 +711,36 @@ def test_upscale_flashvsr_x4_marks_upscale_only_and_a100_first() -> None:
     assert raw["compute"]["placement"]["min_vram_gb"] == 80
     # Load through full validator to catch schema regressions.
     load_config(EXAMPLES_DIR / "runpod-diffusers-flashvsr-x4-upscale.yaml")
+
+
+def test_diffusers_lora_configs_pip_install_peft() -> None:
+    """Any diffusers example carrying a `loras:` block must pip-install peft.
+
+    Bug caught (live, 2026-09-23): the MiniMax-H3 turbo-LoRA config shipped
+    without `peft` in `engine.diffusers.pip`. The pod booted clean and
+    `/health` advertised `lora.supported: true`, but the first
+    `/lora/set_stack` died with HTTP 500 `PEFT backend is required for this
+    method.` — diffusers' `load_lora_weights` needs the PEFT backend at
+    runtime, and nothing in the config schema or the server's capability
+    probe notices its absence. Cost: a full H200 boot (~$0.42) to learn it.
+
+    Every LoRA-capable Wan config already carries `peft>=0.13`; this test
+    makes that a property of the example set rather than a habit.
+    """
+    offenders: list[str] = []
+    for path in sorted(EXAMPLES_DIR.rglob("*.yaml")):
+        with path.open() as f:
+            raw = yaml.safe_load(f)
+        if not isinstance(raw, dict) or not raw.get("loras"):
+            continue
+        diffusers = (raw.get("engine") or {}).get("diffusers")
+        if not isinstance(diffusers, dict):
+            continue
+        pip = diffusers.get("pip") or []
+        names = {re.split(r"[\[<>=!~; ]", str(p).strip(), maxsplit=1)[0] for p in pip}
+        if "peft" not in names:
+            offenders.append(path.name)
+    assert offenders == [], (
+        "diffusers configs declare a LoRA stack but omit peft from "
+        f"engine.diffusers.pip — /lora/set_stack will 500 at runtime: {offenders}"
+    )
