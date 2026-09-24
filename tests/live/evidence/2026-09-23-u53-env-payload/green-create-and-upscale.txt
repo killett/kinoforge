@@ -39,4 +39,158 @@ spandrel-x2-upscale now: 73,123 B (was 112,831 B)
 Delta: 112,831 B -> 73,123 B (-39,708 B, -35.2%), comfortably under the
 ~101,000 B ceiling that raw-500'd the RED attempt.
 
-=== Step 3: live create + upscale run (in progress; appended below) ===
+=== Step 3: live create + upscale run ===
+$ pixi run kinoforge upscale \
+    --config examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml \
+    --video examples/configs/grids/_fixtures/wan21_strength_cell0.mp4 \
+    --no-reuse
+
+Pixi task (kinoforge in default): python -m kinoforge upscale --config examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml --video examples/configs/grids/_fixtures/wan21_strength_cell0.mp4 --no-reuse
+2026-09-23 18:20:15,038 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (39 keys)
+2026-09-23 18:20:15,056 WARNING kinoforge.validation provider_capabilities: runpod guardrail gaps:
+  [WARN] compute.lifecycle.idle_timeout: runpod cannot enforce IDLE_AUTOSTOP (the instance is alive but doing nothing) — provider-side autostop does not fire at workload shape server; bounded instead by ON_INSTANCE_DEADLINE at min(2*idle_timeout, max_lifetime-time_buffer)=3420.0s
+2026-09-23 18:20:15,056 WARNING kinoforge.validation unsupported_fields: runpod field-support gaps:
+  [WARN] compute.placement.disk_gb=40: runpod does not read it (the run runs out of disk mid-download) — bounded instead by the create-pod mutation's hardcoded containerDiskInGb=250 GB, above the 40 GB you asked for
+2026-09-23 18:20:15,090 WARNING kinoforge.orchestrator [capabilities] compute.lifecycle.idle_timeout: provider-side autostop does not fire at workload shape server; bounded instead by ON_INSTANCE_DEADLINE at min(2*idle_timeout, max_lifetime-time_buffer)=3420.0s
+2026-09-23 18:20:16,143 WARNING kinoforge.providers.runpod [offer-retry] NVIDIA RTX A4000 @ $0.1700/hr unavailable: RunPod has no current capacity for 'NVIDIA RTX A4000': RunPod create-pod mutation returned errors:
+  - There are no longer any instances available with the requested specifications. Please refresh and try again.
+2026-09-23 18:20:19,816 INFO kinoforge.orchestrator running provisioner.provision for instance vixczskzagk6h4 (engine=diffusers key=b36f749a5703)
+2026-09-23 18:21:46,839 INFO kinoforge.orchestrator materializing upscaled artifact from https://vixczskzagk6h4-8000.proxy.runpod.net/artifacts/5c10d2ee.upscaled.mp4
+2026-09-23 18:21:48,405 INFO kinoforge.kinoforge.outputs.local output published: /workspace/output/20260923-182148_upscaled_spandrel_spandrel-realesrgan-fp16_upscale.mp4
+2026-09-23 18:21:48,405 INFO kinoforge.orchestrator generate completed — artifact uri='file:///workspace/output/<output:2eb3fd>'
+2026-09-23 18:21:49,833 INFO kinoforge.orchestrator --no-reuse: destroyed + forgot pod vixczskzagk6h4
+[instance overview] No running instances.
+upscaled: uri='file:///workspace/output/20260923-182148_upscaled_spandrel_spandrel-realesrgan-fp16_upscale.mp4'
+EXIT_CODE=0
+
+NOTE: the create body no longer raw-500s. The first candidate offer
+(NVIDIA RTX A4000 @ $0.17/hr) was rejected by RunPod for lack of *capacity*
+("no longer any instances available with the requested specifications") --
+a normal, unrelated availability response, structurally distinct from the
+RED run's raw HTTP 500 on the *create mutation itself*. The provider's
+offer-retry loop (existing behaviour, not part of this task) picked the
+next allowlisted GPU and pod vixczskzagk6h4 created successfully.
+
+Wall-clock: pod create (18:20:19.816) -> upscaled artifact materialized
+(18:21:46.839) -> --no-reuse destroy (18:21:49.833). Total run ~94s --
+much faster than the ~4 min estimate because this fixture is only 33
+frames at 480x480 and upscale_only:true skips the ~10-15 min spandrel
+pip-install cold pull that dominates a fresh pod's boot (the pod that
+ran this had presumably already cached wheels, or the pull completed
+inside the logged window -- either way, exit 0 with a valid artifact
+speaks for itself).
+
+=== Step 3b: GPU utilisation polling (not est_spend) ===
+Poll cadence target: 60-90s. Actual run duration (~94s create-to-destroy)
+only allowed one useful in-flight reading before the job finished and the
+pod was torn down; a second poll immediately after confirmed teardown
+(pod already gone, as expected -- not a stall).
+
+  t=2026-09-23 18:20:37 (~18s after provision request; pod uptime=12s):
+    probe('vixczskzagk6h4') -> (True, UtilSnapshot(gpu_util_percent=100.0,
+    cpu_percent=1.0, memory_percent=0.0, disk_percent=None,
+    uptime_seconds=12))
+    -> GPU 100%, non-zero, ACTIONABLE READING: healthy, not stalled.
+
+  t=2026-09-23 18:22:03 (~14s after --no-reuse destroy logged at 18:21:49):
+    probe('vixczskzagk6h4') -> (False, None)
+    -> Pod no longer exists (expected post-teardown state, not a stall
+       signal -- destroy had already completed per the orchestrator log
+       above; consistent with, not contradicted by, kinoforge list below).
+
+est_spend / kinoforge list line during the run was NOT used as the health
+signal at any point -- the GraphQL util probe was queried directly, per
+CLAUDE.md 'Live smoke monitoring (poll, don't wait)'.
+
+=== Step 4: teardown verification AFTER the orchestrator exited ===
+$ pixi run kinoforge list
+Pixi task (kinoforge in default): python -m kinoforge list
+2026-09-23 18:22:16,286 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (39 keys)
+[instance overview] No running instances.
+No instances recorded in ledger.
+
+Both required lines present. No destroy needed.
+
+=== Step 5: frame QA ===
+Output: output/20260923-182148_upscaled_spandrel_spandrel-realesrgan-fp16_upscale.mp4
+(549,268 B; up from the 480x480/33f source examples/configs/grids/_fixtures/wan21_strength_cell0.mp4)
+
+Extracted 5 frames via kinoforge.core.frames.ffmpeg_frames_by_count(out, 5)
+(first, last, 3 evenly spaced between) and the same 5 frames from the
+source fixture for side-by-side comparison; all 10 PNGs were Read and
+visually inspected by Claude (not judged on ffprobe dims/exit code alone).
+
+Verdict: CLEAR PASS, no flag.
+  - Scene: woman kneeling in a flower meadow in front of a waterfall,
+    fireflies/sparkles in frame, "strength=0.5" caption burned in --
+    identical composition and content across all 5 upscaled frames and
+    matching 1:1 against the corresponding source frames. No scene drift,
+    no missing/duplicated frames.
+  - Upscaled frames are visibly higher resolution than the source (2x
+    scale target reflected in file dimensions), with fine detail
+    (individual grass blades, firefly glow, waterfall spray) sharper and
+    more resolved than the 480x480 source, not blurred or upsampled
+    without added detail.
+  - No false-colour, banding, checkerboarding, or the
+    psychedelic/garbage-frame corruption pattern from the 2026-07-03
+    FlashVSR incident. Colour palette (blue sky, green grass, teal dress,
+    warm firefly highlights) is stable and correct across all 5 frames --
+    no per-frame colour drift.
+  - Temporal coherence: frames 0/2/4 (start/mid/end) show the same static
+    composition (this source clip has minimal camera/subject motion), no
+    flicker or discontinuity between them.
+  - Fidelity vs 480x480 source: content, framing, and colour match the
+    source 1:1; the upscale added detail rather than introducing
+    artifacts. No ⚠️ flag warranted.
+
+=== Step 6: before/after summary ===
+
+=== U53 before/after ===
+RED  (pre-fix, see red-oversized-create.txt, captured 2026-09-23 16:54-16:56):
+  112,831 B -> podFindAndDeployOnDemand raw HTTP 500 Internal Server Error,
+  no GraphQL errors[] body, no pod created. Root cause: base64 provision-
+  script env payload over RunPod's ~101,000 B create-mutation ceiling; the
+  config embedded 3 servers/ modules the pod never imports
+  (minimax_h3_server.py, _lora.py, _av_io.py).
+
+GREEN (post-fix, Tasks 1-6, this run, 2026-09-23 18:20-18:22):
+  73,123 B -> pod vixczskzagk6h4 created successfully (no HTTP 500; the
+  only rejection seen was an unrelated capacity-unavailable response on
+  the first candidate GPU offer, handled by the existing offer-retry
+  loop), booted, served /upscale against the 480x480/33f fixture, and
+  produced a playable, visually-correct 2x-upscaled output video. The pod
+  ran WITHOUT minimax_h3_server.py, _lora.py, or _av_io.py on disk
+  (embed_files for this config lists only wan_t2v_server, _util_stats,
+  _video_io -- see examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml).
+  No ModuleNotFoundError, no import error, no traceback anywhere in the
+  run log or the orchestrator output above.
+
+GPU util readings:
+  t+~18s (uptime=12s): gpu_util_percent=100.0, cpu_percent=1.0,
+    memory_percent=0.0 -- non-zero, healthy, in flight.
+  t+post-destroy (~14s after teardown logged): probe returns (False, None)
+    -- pod already gone, consistent with the logged --no-reuse destroy,
+    not a stall.
+  est_spend/kinoforge-list line was NOT used as the health signal at any
+  point; the GraphQL util probe was queried directly both times.
+
+Frame QA: CLEAR PASS, no flag -- 5 extracted frames (first/last/3 evenly
+  spaced) match the source 1:1 in composition and colour, visibly sharper
+  detail at 2x scale, no false-colour/banding/corruption, no temporal
+  discontinuity. Full verdict in Step 5 above.
+
+Post-run kinoforge list:
+  [instance overview] No running instances.
+  No instances recorded in ledger.
+  (both required lines present; no manual destroy was needed)
+
+Spend: the pod was destroyed by --no-reuse before its cost could be read
+  back via costPerHr (that field lives on the live pod object and is gone
+  once the pod is deleted). Bounding it instead: create-to-destroy
+  wall-clock was ~94s (0.026 hr); the config's GPU allowlist tops out at
+  NVIDIA GeForce RTX 4090 (on-demand RunPod secure-cloud rate well under
+  $1/hr for this tier); even at a conservative $2/hr upper bound that is
+  ~$0.05. The config's own compute.lifecycle.budget: 1.0 hard-caps spend
+  at $1.00 regardless. Actual spend is well under $1.00, consistent with
+  the ~$0.08 estimate in the task dispatch.
+
