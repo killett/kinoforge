@@ -150,3 +150,50 @@ Local ledger note  : the orchestrator wrote a provisional ledger row
                      stale ledger entry with no live pod behind it.
 Final teardown check: `kinoforge list` shows BOTH "[instance overview] No running instances."
                       AND "No instances recorded in ledger." (see final block above)
+
+=== Fix round 1, finding 1: raw current-state RunPod REST capture ===
+NOTE: this is a CURRENT-STATE check, run during fix-round review (after the live
+attempt above), not a re-run of the original moment. It corroborates the primary
+evidence for 'no pod was ever created' -- the HTTPError 500 traceback in Step 3,
+which is what actually establishes the claim -- it is not itself proof of the
+historical state at create-attempt time.
+
+Command:
+  pixi run python -c '<script below>'  # GET https://rest.runpod.io/v1/pods, Bearer <redacted>
+Script:
+  from kinoforge.core.dotenv_loader import load_env_file; load_env_file()
+  import os, urllib.request
+  key = os.environ["RUNPOD_API_KEY"]
+  req = urllib.request.Request(
+      "https://rest.runpod.io/v1/pods",
+      headers={"Authorization": "Bearer <redacted>", "Accept": "application/json", "User-Agent": "kinoforge-evidence-recheck/1.0"},
+  )
+  with urllib.request.urlopen(req, timeout=30) as resp:
+      status = resp.status
+      body = resp.read().decode()
+  print("HTTP status:", status)
+  print("Raw response body:")
+  print(body)
+
+Raw output:
+HTTP status: 200
+Raw response body:
+[]
+
+
+=== Fix round 1, finding 2: pre-spend preflight evidence gap (recorded honestly) ===
+The brief's Step 2 (git status --porcelain && pixi run preflight) has no 'tee' in
+its literal command, so its output was never redirected into this file. The claim
+'preflight passed before the live spend' is real -- it was run and observed to PASS
+(env vars set, 0 active pods, clean tree, 0 sky clusters) immediately before Step 3
+in this task -- but that specific run's output is recorded only in task-2-report.md,
+not here. This criterion therefore rests on the report rather than on captured
+output in this file, and that gap is being stated plainly rather than papered over.
+A fresh 'preflight' run at fix-review time would say nothing about state before the
+original spend, so one was deliberately NOT run and substituted here as if it were
+the original evidence.
+
+Controller corroboration (not a substitute for the missing capture): the controller
+independently ran 'pixi run preflight' before dispatching this task and reported
+credentials present, 0 active pods, 0 sky clusters, with the only dirty-tree entry
+being the controller's own task-state file (not part of this evidence tree).
