@@ -634,10 +634,17 @@ def test_diffusers_wan_t2v_14b_cfg_pins_server_module() -> None:
     assert cfg.engine.diffusers.server_cmd[-1] == (
         "kinoforge.engines.diffusers.servers.wan_t2v_server"
     )
-    # embed_modules MUST list the server package so the bootstrap can
-    # ship the source to the pod; the stock pytorch image has no
-    # kinoforge install.
-    assert cfg.engine.diffusers.embed_modules == ["kinoforge.engines.diffusers.servers"]
+    # Needs-only embed (U53): embed_files MUST list the three
+    # servers/ modules wan_t2v_server's import closure actually reaches,
+    # so the bootstrap ships only what the pod imports (the stock
+    # pytorch image has no kinoforge install). embed_modules no longer
+    # carries the whole-package servers entry.
+    assert cfg.engine.diffusers.embed_modules == []
+    assert cfg.engine.diffusers.embed_files == [
+        "kinoforge.engines.diffusers.servers.wan_t2v_server",
+        "kinoforge.engines.diffusers.servers._util_stats",
+        "kinoforge.engines.diffusers.servers._video_io",
+    ]
     base_refs = [m.ref for m in cfg.models if m.kind == "base"]
     # The diffusers cfg must point at the `-Diffusers` variant — the
     # bare Wan-AI/Wan2.2-T2V-A14B repo is native checkpoint layout and

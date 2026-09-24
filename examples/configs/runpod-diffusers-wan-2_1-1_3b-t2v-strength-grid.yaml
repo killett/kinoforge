@@ -38,7 +38,17 @@ engine:
       - "imageio[ffmpeg]>=2.34"
     base_url: "http://localhost:8000"
     prompt_body_key: "prompt"
-    embed_modules: ["kinoforge.engines.diffusers.servers"]
+    # Needs-only embed (U53). A whole-package embed of
+    # kinoforge.engines.diffusers.servers also shipped minimax_h3_server.py,
+    # _lora.py and _av_io.py — ~39.4 KB of env payload for modules only the
+    # Modal-only H3 server imports, which pushed 8 of 13 RunPod diffusers
+    # configs past the ~101 KB create-mutation ceiling. Enforced by
+    # tests/providers/test_pod_embed_closure.py; see
+    # docs/superpowers/specs/2026-09-23-u53-needs-only-embed-design.md.
+    embed_files:
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+      - "kinoforge.engines.diffusers.servers._util_stats"
+      - "kinoforge.engines.diffusers.servers._video_io"
 
 models:
   - ref: "hf:Wan-AI/Wan2.1-T2V-1.3B-Diffusers"

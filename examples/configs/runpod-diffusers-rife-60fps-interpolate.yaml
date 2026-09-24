@@ -30,12 +30,16 @@ engine:
       - "uvicorn>=0.30"
       - "imageio[ffmpeg]>=2.34"
     embed_modules:
-      - "kinoforge.engines.diffusers.servers"
       - "kinoforge.interpolators.rife"
     embed_files:
       - "kinoforge.core.errors"
       - "kinoforge.core.frames"
       - "kinoforge.core.fps_resolver"
+      # Needs-only embed (U53) — see
+      # docs/superpowers/specs/2026-09-23-u53-needs-only-embed-design.md.
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+      - "kinoforge.engines.diffusers.servers._util_stats"
+      - "kinoforge.engines.diffusers.servers._video_io"
     # Skip the eager WanPipeline load — this pod runs only the on-demand RIFE
     # runtime, loaded on the first /interpolate. Cuts cold boot to ~4min.
     upscale_only: true
