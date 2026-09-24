@@ -390,12 +390,23 @@ alone was 98,848 B → total env 101,971 B → every create 500'd.
 - **The lever is what gets embedded, not the encoding.** U53's cause was
   `embed_modules: ["kinoforge.engines.diffusers.servers"]` walking a package
   DIRECTORY, so every pod carried `minimax_h3_server.py`, `_lora.py` and
-  `_av_io.py` — ~39.4 KB for modules only the Modal-only H3 server imports.
+  `_av_io.py` — ~39.7 KB for modules only the Modal-only H3 server imports.
   Configs now name the server modules they import via `embed_files`;
   `tests/providers/test_pod_embed_closure.py` asserts the embedded set equals
   the imported set in both directions, and
   `tests/providers/test_env_payload_ceiling.py` asserts every config stays
-  under the ceiling.
+  under the ceiling. **"Every config" needed a second pass to actually be
+  true.** `_runpod_diffusers_pod_configs()` was originally built on
+  `tools/snapshot_launch_payloads.py`'s `compute_configs()`, whose
+  `CONFIG_DIR.glob("*.yaml")` is non-recursive — so three RunPod diffusers
+  pod configs living under `examples/configs/grids/` got neither the fix
+  nor the guard and sat at 89,393/89,393/89,397 B, tighter to the ceiling
+  than any guarded config. Fixed 2026-09-23 (same session): that helper now
+  recurses into subdirectories and the guard covers sixteen configs, with
+  two under `examples/configs/extras/` (`runpod-diffusers-seedvr2-3b-
+  upscale.yaml`, `runpod-diffusers-wan-2_2-14b-t2v-seedvr2-upscale.yaml`)
+  excluded by name because they raise `ExtrasNotInstalled` when their
+  payload is rendered and cannot be measured in this environment.
 - If a create 500s again: it is almost never an outage. Probe with a
   MINIMAL create body (single small env) — if that succeeds, the payload
   is the culprit. Binary-search fields; the env total is the usual suspect.

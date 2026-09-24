@@ -10,7 +10,13 @@ Invoked in the pod bootstrap:
 Pod-safe: does NOT import ``kinoforge.core.registry`` / interfaces / adapters
 — runs with only ``kinoforge.upscalers.flashvsr`` + ``kinoforge.core.errors``
 embedded (mirrors the P2 spandrel _fetch_weights lesson that busted the
-64 KB RunPod env-var ceiling).
+~101 KB RunPod total-env create-mutation ceiling — an earlier note here said
+64 KB, which was wrong: the limit is on the total env payload, not any
+single variable, and U53's own goldens run well over 64 KB — mid-80s KB —
+on ``KINOFORGE_PROVISION_SCRIPT`` alone (see
+``tests/providers/test_env_payload_ceiling.py`` for exact, current
+measurements; a byte count pinned here would drift the moment this file's
+own length changes) and boot fine).
 """
 
 from __future__ import annotations
@@ -26,7 +32,9 @@ from pathlib import Path
 # kinoforge.core.errors is lazy-imported inside _verify() — a top-level
 # import triggers kinoforge/core/__init__.py which pulls the registry
 # (via splitter self-registration), which is the exact bloat the pod-safe
-# embed shape MUST NOT drag along (see P2 64 KB env-var ceiling incident).
+# embed shape MUST NOT drag along (see P2 ~101 KB total-env create-mutation
+# ceiling incident — not the 64 KB per-variable figure an earlier note here
+# claimed; that was wrong, see the module docstring above).
 
 # LQ_proj_in.ckpt is a BASE file: upstream init_pipeline loads it for EVERY
 # FlashVSRFullPipeline mode. It was originally gated behind long_video_mode

@@ -512,7 +512,9 @@ class DiffusersEngineConfig(BaseModel):
     # ``"kinoforge.core.errors"`` → embeds errors.py without dragging in
     # the rest of kinoforge/core/. Use when the on-pod runtime needs a
     # specific module but embedding its whole package would bust the
-    # 64KB env-var ceiling.
+    # ~101KB total-env create-mutation ceiling (an earlier note here said
+    # 64KB; that was wrong — the limit is on the total env payload, not
+    # any single variable, U53).
     upscale_only: bool = False  # When True, render_provision emits
     # KINOFORGE_SKIP_WAN_LOAD=1 so the in-pod wan_t2v_server starts in
     # upscale-only mode (no eager WanPipeline.from_pretrained call).

@@ -9,9 +9,13 @@ DIRECTORY, so ``embed_modules: ["kinoforge.engines.diffusers.servers"]`` shipped
 all seven files in that package to every pod. Three of them —
 ``minimax_h3_server.py``, ``_lora.py``, ``_av_io.py`` — exist for the MiniMax-H3
 server, which runs on Modal only, and are imported by no RunPod config. They cost
-~39.4 KB of rendered env per config and pushed 8 of 13 shipped configs past the
+~39.7 KB of rendered env per config and pushed 8 of 13 shipped configs past the
 ~101 KB point where ``podFindAndDeployOnDemand`` returns a raw HTTP 500 with no
-GraphQL error body (CLAUDE.md "Known infra gotchas"; U53).
+GraphQL error body (CLAUDE.md "Known infra gotchas"; U53). Fix-wave-2 found three
+more RunPod diffusers configs, under ``grids/``, that carried the same
+whole-package embed and had never been discovered by this guard at all — see
+``tests.providers.test_env_payload_ceiling._runpod_diffusers_pod_configs`` for
+the discovery rules this module now inherits.
 
 Fixing the configs without a guard invites the fat straight back: the next module
 added under ``servers/`` would ride onto every pod again, and the only symptom is
@@ -27,7 +31,7 @@ An earlier draft used module-level imports only. That is wrong.
 ``servers._video_io``; ``servers._util_stats`` is imported lazily inside a
 function — yet every pod needs it, because it backs the ``/util`` route that
 CLAUDE.md's live-smoke polling rule depends on. Module-level-only would declare
-``_util_stats`` unimported and delete it from all thirteen configs.
+``_util_stats`` unimported and delete it from every guarded config.
 
 The restriction to ``servers/`` does the narrowing the module-level rule was
 reaching for: ``wan_t2v_server`` also lazily imports the flashvsr / rife /
@@ -246,6 +250,36 @@ def test_every_imported_servers_module_is_embedded(cfg_path: Path) -> None:
         f"{missing} from {_SERVERS_PKG}, but the provision script does not "
         f"embed them — the pod will boot and then fail at first use. Add them "
         f"to the config's embed_files."
+    )
+
+
+def test_servers_package_init_stays_docstring_only() -> None:
+    """``servers/__init__.py`` must never carry real code — pods never see it.
+
+    Both embed renderers (:func:`_render_embed_single_file` and the whole-
+    package renderer it replaced) ``touch`` an EMPTY ``__init__.py`` for
+    every ancestor package directory on the pod — they never write this
+    file's actual bytes. That is correct today because the real file is
+    docstring-only, so an empty stand-in changes nothing observable. But if
+    anyone later adds an import, a constant, or a re-export to this
+    ``__init__.py`` for real code to depend on, every pod would silently
+    receive an EMPTY file instead — no error at render time, no error at
+    embed-closure time (this package itself is excluded from
+    :func:`_servers_closure`, see ``m != _SERVERS_PKG`` above), just a
+    ``NameError``/``ImportError`` at first use on a pod that already booted
+    and is already billing. This test is the guard against that: it fails
+    the moment the source file stops being docstring-only, before anyone
+    ships a config that depends on it.
+    """
+    path = _module_path(_SERVERS_PKG)
+    assert path is not None, f"{_SERVERS_PKG} did not resolve to a source file"
+    body = ast.parse(path.read_text(encoding="utf-8")).body
+    assert len(body) <= 1 and (not body or isinstance(body[0], ast.Expr)), (
+        f"{path} has non-docstring top-level statements: {body!r}. Pods never "
+        f"receive this file's real content — they get an empty `touch`ed "
+        f"stand-in (see _render_embed_single_file) — so any code added here "
+        f"would silently never reach a pod. Move it into a module that is "
+        f"actually embedded, or add it to every config's embed_files."
     )
 
 

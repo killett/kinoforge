@@ -20,12 +20,25 @@ for the assertion to actually guard.
 That breach is CLOSED as of 2026-09-23 (U53). The cause was not the encoding
 but what got embedded: ``embed_modules: ["kinoforge.engines.diffusers.servers"]``
 walks a package DIRECTORY, so every RunPod diffusers pod carried
-``minimax_h3_server.py``, ``_lora.py`` and ``_av_io.py`` — ~39.4 KB per config,
+``minimax_h3_server.py``, ``_lora.py`` and ``_av_io.py`` — ~39.7 KB per config,
 for modules only the Modal-only H3 server imports. The configs now name the
 three server modules they actually import via ``embed_files``, which took the
 worst config from 127,917 B to 88,301 B and every config under the ceiling.
 ``tests/providers/test_pod_embed_closure.py`` is what keeps them there; this
 module guards the byte budget, that one guards the embed set.
+
+Fix-wave-2 (also 2026-09-23) found three more RunPod diffusers configs that
+had neither the fix nor any guard: ``grids/runpod-diffusers-wan-2_1-1_3b-
+base.yaml``, ``grids/runpod-diffusers-wan-2_1-1_3b-base-no-loras.yaml`` and
+``grids/runpod-diffusers-wan-2_2-14b-base.yaml`` measured 89,393 / 89,393 /
+89,397 B — only 11,603 B under the ceiling — because
+:func:`_runpod_diffusers_pod_configs` was built on
+``tools.snapshot_launch_payloads.compute_configs()``, whose glob is
+non-recursive and never walked ``grids/``. They now carry the same
+``embed_files`` swap and this module discovers them directly (see that
+function's docstring for the discovery rules, including the two
+``extras/`` configs that are excluded because they cannot be measured in
+this environment). The guard now covers sixteen configs, not thirteen.
 
 What the three tests below actually assert:
 
@@ -42,14 +55,16 @@ What the three tests below actually assert:
    act, not a reflex to unblock a failing test.
 3. ``test_no_runpod_diffusers_config_crosses_the_ceiling`` — a guard that
    CANNOT be satisfied merely by editing ``_BASELINE_BYTES``. Parametrised
-   over every entry in ``_BASELINE_BYTES`` (i.e. every RunPod diffusers
-   config, unconditionally — the dated frozen five-name exemption list this
+   over ``_configs_by_stem()`` (every RunPod diffusers config actually on
+   disk, unconditionally — the dated frozen five-name exemption list this
    replaces existed only because eight configs were over the ceiling
-   and could not be asserted about; U53 closed that breach). However high a
-   later commit bumps a config's entry in ``_BASELINE_BYTES``, this test
-   independently re-measures the config and fails the instant it lands
-   at/over the ceiling — a baseline bump alone can raise the ratchet's
-   tolerance but can never raise this test's tolerance.
+   and could not be asserted about; U53 closed that breach), not over
+   ``_BASELINE_BYTES`` itself — deleting a baseline entry must not be able
+   to delete a config's coverage here too. However high a later commit
+   bumps a config's entry in ``_BASELINE_BYTES``, this test independently
+   re-measures the config and fails the instant it lands at/over the
+   ceiling — a baseline bump alone can raise the ratchet's tolerance but
+   can never raise this test's tolerance.
 
 Measurement method (matches how ``tools/snapshot_launch_payloads.py`` freezes
 the launch-payload goldens, so the numbers here are directly comparable to
@@ -83,7 +98,8 @@ from pathlib import Path
 import pytest
 
 from kinoforge.core.config import load_config
-from tools.snapshot_launch_payloads import capture_payload, compute_configs
+from kinoforge.core.errors import ExtrasNotInstalled
+from tools.snapshot_launch_payloads import CONFIG_DIR, capture_payload
 
 #: RunPod's ``podFindAndDeployOnDemand`` returns a raw HTTP 500 (no GraphQL
 #: ``errors[]`` body) once the total env payload crosses roughly this many
@@ -93,46 +109,102 @@ _RUNPOD_CEILING_BYTES = 101_000
 
 #: Committed snapshot of each shipped RunPod diffusers pod config's measured
 #: rendered-env size, in bytes, re-measured 2026-09-23 after the U53 needs-only
-#: embed fix (was ~39.4 KB higher per config; 8 entries were over the ceiling).
+#: embed fix (was ~39.7 KB higher per config; 8 entries were over the ceiling).
 #: The ratchet test below asserts current measurements never exceed these.
+#: The three ``*-base``/``*-base-no-loras`` entries are the ``grids/`` configs
+#: U53 fix-wave-2 found un-guarded (Finding 1) — discovery used to be
+#: non-recursive and never saw them; they measured 89,393 / 89,393 / 89,397 B
+#: before the same ``embed_files`` swap applied here.
+#:
+#: The six FlashVSR/spandrel entries carry a second, smaller bump from the
+#: SAME fix-wave-2 session: correcting a stale "64KB env-var ceiling"
+#: comment in ``upscalers/flashvsr/_fetch_weights.py`` and
+#: ``upscalers/spandrel/_engine.py`` grew those files' own source bytes —
+#: and both are whole-package ``embed_modules`` entries on these configs, so
+#: the comment text itself rides onto the pod. Deliberate, reviewed, and
+#: nowhere near the ceiling (worst case 88,701 B, 12,299 B of headroom); the
+#: alternative (reverting a factual correction to avoid a baseline bump) was
+#: rejected as worse. (Also why those two files' own corrected comments cite
+#: an approximate byte range rather than a pinned figure — a pinned number
+#: goes stale the instant the comment reporting it changes length.)
 _BASELINE_BYTES: dict[str, int] = {
-    "runpod-diffusers-flashvsr-1080p-upscale": 88_243,
-    "runpod-diffusers-flashvsr-x4-torch26-upscale": 88_275,
-    "runpod-diffusers-flashvsr-x4-upscale": 88_243,
+    "runpod-diffusers-flashvsr-1080p-upscale": 88_647,
+    "runpod-diffusers-flashvsr-x4-torch26-upscale": 88_679,
+    "runpod-diffusers-flashvsr-x4-upscale": 88_647,
     "runpod-diffusers-rife-60fps-interpolate": 76_215,
-    "runpod-diffusers-spandrel-x2-upscale": 73_123,
+    "runpod-diffusers-spandrel-x2-upscale": 73_479,
+    "runpod-diffusers-wan-2_1-1_3b-base": 49_673,
+    "runpod-diffusers-wan-2_1-1_3b-base-no-loras": 49_673,
     "runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke": 49_673,
     "runpod-diffusers-wan-2_1-1_3b-t2v-strength-grid": 49_673,
+    "runpod-diffusers-wan-2_2-14b-base": 49_673,
     "runpod-diffusers-wan-2_2-14b-t2v": 49_665,
-    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-1080p-upscale": 88_301,
-    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale": 88_301,
+    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-1080p-upscale": 88_701,
+    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale": 88_701,
     "runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release": 49_673,
-    "runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale": 73_173,
+    "runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale": 73_537,
     "runpod-diffusers-wan-2_2-14b-t2v-strength-grid": 49_673,
 }
 
 
 def _runpod_diffusers_pod_configs() -> list[Path]:
-    """Return the shipped example configs RunPod boots as diffusers pods.
+    """Return every RunPod diffusers pod config, including ones under subdirs.
 
-    Filters ``compute_configs()`` (every example config with a ``compute:``
-    block) down to ``provider == "runpod"``, ``engine.kind == "diffusers"``,
+    Unlike ``tools.snapshot_launch_payloads.compute_configs()`` — whose
+    ``CONFIG_DIR.glob("*.yaml")`` is non-recursive — this walks
+    ``examples/configs`` with ``rglob`` so configs living under a
+    subdirectory are discovered too. That non-recursion is exactly why three
+    RunPod diffusers pod configs under ``grids/`` (U53 fix-wave-2 Finding 1:
+    ``grids/runpod-diffusers-wan-2_1-1_3b-base.yaml``,
+    ``grids/runpod-diffusers-wan-2_1-1_3b-base-no-loras.yaml``,
+    ``grids/runpod-diffusers-wan-2_2-14b-base.yaml``) still carried the
+    whole-package ``embed_modules`` and sat un-guarded — measured at 89,393 /
+    89,393 / 89,397 B, tighter to the ceiling than any of the thirteen
+    top-level configs this module used to cover alone.
+
+    Filters down to ``provider == "runpod"``, ``engine.kind == "diffusers"``,
     and pod mode — excluding the one serverless RunPod diffusers config
     (``runpod-diffusers-serverless.yaml``), which routes through a different
     GraphQL mutation (``saveTemplate``, U35) that carries no ``env`` at all,
     so there is nothing here for this guard to measure.
 
+    Two kinds of YAML under ``examples/configs`` are not ``Config`` objects
+    at all and are excluded by shape rather than by catching their
+    ``ConfigError``: grid *definitions* (``grids/*.grid.yaml`` — a distinct
+    schema that references the Config files above by path, not a config
+    itself) and batch manifests (everything under ``manifests/`` — a list of
+    per-run overrides). Excluding these by name/location, rather than
+    swallowing the ``ConfigError`` they'd raise, keeps a genuinely malformed
+    Config file loud instead of silently vanishing from the guard.
+
+    Two more configs load fine as valid Configs but cannot be *measured* in
+    this environment: ``extras/runpod-diffusers-seedvr2-3b-upscale.yaml`` and
+    ``extras/runpod-diffusers-wan-2_2-14b-t2v-seedvr2-upscale.yaml`` both
+    select ``upscale.engine: seedvr2``, and rendering their payload raises
+    ``ExtrasNotInstalled`` (``kinoforge[seedvr]`` is a stub pending Phase 2
+    vendoring — see ``src/kinoforge/upscalers/seedvr2/__init__.py``). Caught
+    narrowly — ``ExtrasNotInstalled`` only, nothing broader — so a config
+    that fails to render for any other reason still fails loudly here rather
+    than silently dropping out of the guard, which is this whole finding in
+    miniature.
+
     Returns:
         Sorted config paths.
     """
     out: list[Path] = []
-    for p in compute_configs():
+    for p in sorted(CONFIG_DIR.rglob("*.yaml")):
+        if p.name.endswith(".grid.yaml") or "manifests" in p.parts:
+            continue
         cfg = load_config(str(p))
         if cfg.compute is None or cfg.compute.provider != "runpod":
             continue
         if cfg.engine.kind != "diffusers":
             continue
         if cfg.compute.mode == "serverless":
+            continue
+        try:
+            capture_payload(p)
+        except ExtrasNotInstalled:
             continue
         out.append(p)
     return out
@@ -224,7 +296,7 @@ def test_rendered_env_does_not_exceed_its_baseline(stem: str) -> None:
     )
 
 
-@pytest.mark.parametrize("stem", sorted(_BASELINE_BYTES))
+@pytest.mark.parametrize("stem", sorted(_configs_by_stem()))
 def test_no_runpod_diffusers_config_crosses_the_ceiling(stem: str) -> None:
     """EVERY RunPod diffusers config measures under the create-mutation ceiling.
 
@@ -234,7 +306,15 @@ def test_no_runpod_diffusers_config_crosses_the_ceiling(stem: str) -> None:
     five-name exemption list, which existed only because eight
     configs were over the ceiling and could not be asserted about; U53 closed
     that breach on 2026-09-23, so the exemption is gone and the guard applies
-    to all thirteen.
+    to every discovered config.
+
+    Parametrised over :func:`_configs_by_stem` (what's actually on disk), not
+    over ``sorted(_BASELINE_BYTES)`` — a baseline entry can only ever be
+    bumped upward by a reviewer, never used to widen this test's tolerance,
+    but *deleting* an entry from ``_BASELINE_BYTES`` would silently drop a
+    still-shipped config from a parametrisation keyed on that dict. Keying on
+    the discovered configs instead means the only way to stop this test
+    covering a config is to delete the config itself.
 
     Bug caught: a new embed (a module under ``servers/``, a widened pip list, a
     longer boot script) pushes a config back over the edge. The ratchet test
@@ -243,7 +323,7 @@ def test_no_runpod_diffusers_config_crosses_the_ceiling(stem: str) -> None:
     create with no GraphQL error body to explain it.
 
     Args:
-        stem: Config filename stem, one entry of ``_BASELINE_BYTES``.
+        stem: Config filename stem, one entry of :func:`_configs_by_stem`.
     """
     cfg_path = _configs_by_stem()[stem]
     measured = _rendered_env_bytes(cfg_path)

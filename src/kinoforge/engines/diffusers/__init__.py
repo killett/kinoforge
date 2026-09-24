@@ -184,11 +184,13 @@ def _render_embed_lines(modules: list[str]) -> list[str]:
             rel = mod_name.replace(".", "/") + "/" + resource.name
             target = f"{kfsrv}/{rel}"
             content = resource.read_bytes()
-            # gzip+base64 keeps the bootstrap script under RunPod's 64KB
-            # env-var ceiling for big embedded modules like wan_t2v_server.py
-            # (~67KB raw → ~16KB gz → ~22KB b64). Pre-gzip embeds blew the
-            # KINOFORGE_PROVISION_SCRIPT env var past the limit and the
-            # create-pod mutation 500ed.
+            # gzip+base64 keeps the bootstrap script under RunPod's ~101KB
+            # total-env create-mutation ceiling for big embedded modules like
+            # wan_t2v_server.py (~67KB raw → ~16KB gz → ~22KB b64). Pre-gzip
+            # embeds blew the total env payload past that limit and the
+            # create-pod mutation 500ed. An earlier note here said 64KB; that
+            # was wrong — the limit is on the total env payload, not any
+            # single variable (U53).
             #
             # Decode via python3 (always present in runpod/pytorch images)
             # rather than `gunzip` — saves us hunting for a gzip binary on

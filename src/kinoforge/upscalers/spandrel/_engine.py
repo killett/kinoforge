@@ -79,7 +79,15 @@ class SpandrelEngine(PodHTTPClientMixin, UpscalerEngine):
         the on-pod bootstrap doesn't need the kinoforge package
         importable (which would require embedding the full
         kinoforge.core dependency tree, busting the bootstrap script
-        past RunPod's 64KB env-var ceiling). Supports the same two
+        past RunPod's ~101 KB total-env create-mutation ceiling — an
+        earlier note here said 64KB, which was wrong: the limit is on the
+        total env payload, not any single variable, and this config's own
+        golden runs well over 64 KB — low 70s KB — on
+        ``KINOFORGE_PROVISION_SCRIPT`` alone (see
+        ``tests/providers/test_env_payload_ceiling.py`` for the exact,
+        current measurement; a byte count pinned here would drift the
+        moment this file's own length changes) and is live-proven to
+        boot). Supports the same two
         ref shapes the live SR-weights cfgs use: ``hf:<org>/<repo>/<path>``
         (with ``HF_TOKEN`` Authorization) and plain ``http(s)://``.
         """
