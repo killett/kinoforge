@@ -65,9 +65,9 @@ engine:
     # runpod/pytorch image has no kinoforge package — the bootstrap's
     # `python -m kinoforge.engines.diffusers.servers.wan_t2v_server`
     # ModuleNotFoundError'd instantly and the server never bound 8000.
-    # With embed_modules, render_provision base64-encodes the package's
-    # .py files into the script; the pod decodes them into /tmp/kfsrv/
-    # and PYTHONPATH-prepends that path before `exec`.
+    # With embed_files, render_provision base64-encodes each listed
+    # module's .py file into the script; the pod decodes them into
+    # /tmp/kfsrv/ and PYTHONPATH-prepends that path before `exec`.
     # Needs-only embed (U53). A whole-package embed of
     # kinoforge.engines.diffusers.servers also shipped minimax_h3_server.py,
     # _lora.py and _av_io.py — ~39.4 KB of env payload for modules only the
