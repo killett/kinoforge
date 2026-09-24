@@ -17,25 +17,15 @@ reality is vacuous: every RunPod diffusers config using the
 FlashVSR/RIFE/spandrel bootstraps would need to be exempted, leaving nothing
 for the assertion to actually guard.
 
-As of 2026-09-22 these configs are ALREADY OVER the ~101 KB ceiling — this is
-a recorded, PRE-EXISTING breach (present before this branch existed — see
-task-5-report.md's HEAD measurement), not something this test papers over or
-claims to fix:
-
-  * runpod-diffusers-wan-2_2-14b-t2v-flashvsr-1080p-upscale
-  * runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale
-  * runpod-diffusers-flashvsr-x4-torch26-upscale
-  * runpod-diffusers-flashvsr-1080p-upscale
-  * runpod-diffusers-flashvsr-x4-upscale
-  * runpod-diffusers-rife-60fps-interpolate
-  * runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale
-  * runpod-diffusers-spandrel-x2-upscale
-
-Shrinking what gets embedded into every pod's boot script is its own project
-needing its own live proof on RunPod (the task-9 brief explicitly says not to
-attempt it here). This guard's job is narrower and mechanical: stop the
-breach from getting silently WORSE, and stop any config that is still safe
-today from being pushed over the edge without someone noticing.
+That breach is CLOSED as of 2026-09-23 (U53). The cause was not the encoding
+but what got embedded: ``embed_modules: ["kinoforge.engines.diffusers.servers"]``
+walks a package DIRECTORY, so every RunPod diffusers pod carried
+``minimax_h3_server.py``, ``_lora.py`` and ``_av_io.py`` — ~39.4 KB per config,
+for modules only the Modal-only H3 server imports. The configs now name the
+three server modules they actually import via ``embed_files``, which took the
+worst config from 127,917 B to 88,575 B and every config under the ceiling.
+``tests/providers/test_pod_embed_closure.py`` is what keeps them there; this
+module guards the byte budget, that one guards the embed set.
 
 What the three tests below actually assert:
 
@@ -48,15 +38,16 @@ What the three tests below actually assert:
    This does not forbid the breach above (already true for 8 configs); it
    forbids the breach growing without a deliberate, reviewed bump of
    ``_BASELINE_BYTES``.
-3. ``test_configs_safe_as_of_2026_09_22_never_cross_the_ceiling`` — a
-   guard that CANNOT be satisfied merely by editing ``_BASELINE_BYTES``.
-   ``_SAFE_AS_OF_2026_09_22`` is a separate, frozen name list (not a byte
-   count) recording which configs were under the ~101 KB ceiling on the day
-   this guard was written. However high a later commit bumps that config's
-   entry in ``_BASELINE_BYTES``, this test independently re-measures the
-   config and fails the instant it lands at/over the ceiling — a baseline
-   bump alone can raise the ratchet's tolerance but can never raise this
-   test's tolerance.
+3. ``test_no_runpod_diffusers_config_crosses_the_ceiling`` — a guard that
+   CANNOT be satisfied merely by editing ``_BASELINE_BYTES``. Parametrised
+   over every entry in ``_BASELINE_BYTES`` (i.e. every RunPod diffusers
+   config, unconditionally — the dated frozen five-name exemption list this
+   replaces existed only because eight configs were over the ceiling
+   and could not be asserted about; U53 closed that breach). However high a
+   later commit bumps a config's entry in ``_BASELINE_BYTES``, this test
+   independently re-measures the config and fails the instant it lands
+   at/over the ceiling — a baseline bump alone can raise the ratchet's
+   tolerance but can never raise this test's tolerance.
 
 Measurement method (matches how ``tools/snapshot_launch_payloads.py`` freezes
 the launch-payload goldens, so the numbers here are directly comparable to
@@ -99,40 +90,24 @@ from tools.snapshot_launch_payloads import capture_payload, compute_configs
 _RUNPOD_CEILING_BYTES = 101_000
 
 #: Committed snapshot of each shipped RunPod diffusers pod config's measured
-#: rendered-env size, in bytes, measured 2026-09-22 (Task 9,
-#: H3-lora-shared-seam) via :func:`_rendered_env_bytes`. The ratchet test
-#: below asserts current measurements never exceed these. Eight of these are
-#: already over :data:`_RUNPOD_CEILING_BYTES` — see the module docstring;
-#: that is a recorded pre-existing breach, not a bug in this baseline.
+#: rendered-env size, in bytes, re-measured 2026-09-23 after the U53 needs-only
+#: embed fix (was ~39.4 KB higher per config; 8 entries were over the ceiling).
+#: The ratchet test below asserts current measurements never exceed these.
 _BASELINE_BYTES: dict[str, int] = {
-    "runpod-diffusers-flashvsr-1080p-upscale": 127_871,
-    "runpod-diffusers-flashvsr-x4-torch26-upscale": 127_899,
-    "runpod-diffusers-flashvsr-x4-upscale": 127_871,
-    "runpod-diffusers-rife-60fps-interpolate": 115_935,
-    "runpod-diffusers-spandrel-x2-upscale": 112_831,
-    "runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke": 89_393,
-    "runpod-diffusers-wan-2_1-1_3b-t2v-strength-grid": 89_393,
-    "runpod-diffusers-wan-2_2-14b-t2v": 89_389,
-    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-1080p-upscale": 127_917,
-    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale": 127_917,
-    "runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release": 89_397,
-    "runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale": 112_893,
-    "runpod-diffusers-wan-2_2-14b-t2v-strength-grid": 89_397,
+    "runpod-diffusers-flashvsr-1080p-upscale": 88_243,
+    "runpod-diffusers-flashvsr-x4-torch26-upscale": 88_275,
+    "runpod-diffusers-flashvsr-x4-upscale": 88_243,
+    "runpod-diffusers-rife-60fps-interpolate": 76_215,
+    "runpod-diffusers-spandrel-x2-upscale": 73_123,
+    "runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke": 49_673,
+    "runpod-diffusers-wan-2_1-1_3b-t2v-strength-grid": 49_673,
+    "runpod-diffusers-wan-2_2-14b-t2v": 49_665,
+    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-1080p-upscale": 88_301,
+    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale": 88_301,
+    "runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release": 49_673,
+    "runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale": 73_173,
+    "runpod-diffusers-wan-2_2-14b-t2v-strength-grid": 49_673,
 }
-
-#: Configs whose 2026-09-22 measurement landed under :data:`_RUNPOD_CEILING_BYTES`.
-#: A frozen NAME list, deliberately independent of the mutable byte counts in
-#: :data:`_BASELINE_BYTES` — see point 3 in the module docstring for why that
-#: independence is the point.
-_SAFE_AS_OF_2026_09_22 = frozenset(
-    {
-        "runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke",
-        "runpod-diffusers-wan-2_1-1_3b-t2v-strength-grid",
-        "runpod-diffusers-wan-2_2-14b-t2v",
-        "runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release",
-        "runpod-diffusers-wan-2_2-14b-t2v-strength-grid",
-    }
-)
 
 
 def _runpod_diffusers_pod_configs() -> list[Path]:
@@ -244,32 +219,32 @@ def test_rendered_env_does_not_exceed_its_baseline(stem: str) -> None:
     )
 
 
-@pytest.mark.parametrize("stem", sorted(_SAFE_AS_OF_2026_09_22))
-def test_configs_safe_as_of_2026_09_22_never_cross_the_ceiling(stem: str) -> None:
-    """A config safe under the ceiling on 2026-09-22 must stay under it.
+@pytest.mark.parametrize("stem", sorted(_BASELINE_BYTES))
+def test_no_runpod_diffusers_config_crosses_the_ceiling(stem: str) -> None:
+    """EVERY RunPod diffusers config measures under the create-mutation ceiling.
 
-    Unlike the ratchet above, this is NOT satisfiable by editing
-    ``_BASELINE_BYTES`` — ``_SAFE_AS_OF_2026_09_22`` is a separate, frozen
-    name list, so raising a config's baseline (even far past the ceiling)
-    cannot silently widen what this test tolerates. It always re-measures
-    the config fresh and compares against the hard-coded
-    :data:`_RUNPOD_CEILING_BYTES`.
+    Unconditional, and deliberately not satisfiable by editing
+    ``_BASELINE_BYTES`` — it re-measures the config and compares against the
+    hard-coded :data:`_RUNPOD_CEILING_BYTES`. This replaces the dated frozen
+    five-name exemption list, which existed only because eight
+    configs were over the ceiling and could not be asserted about; U53 closed
+    that breach on 2026-09-23, so the exemption is gone and the guard applies
+    to all thirteen.
 
-    Bug caught: someone deliberately bumps ``_BASELINE_BYTES`` for one of
-    the currently-safe configs (say, to accommodate a genuinely-needed new
-    LoRA or engine module) without noticing that the new size crosses
-    RunPod's create-mutation ceiling — the ratchet test above would pass
-    (measured <= the newly-raised baseline) while the pod create silently
-    starts 500ing.
+    Bug caught: a new embed (a module under ``servers/``, a widened pip list, a
+    longer boot script) pushes a config back over the edge. The ratchet test
+    above would pass if someone bumped that config's baseline; this one cannot
+    be widened at all, and the failure it prevents is a raw HTTP 500 at pod
+    create with no GraphQL error body to explain it.
 
     Args:
-        stem: Config filename stem, one entry of ``_SAFE_AS_OF_2026_09_22``.
+        stem: Config filename stem, one entry of ``_BASELINE_BYTES``.
     """
     cfg_path = _configs_by_stem()[stem]
     measured = _rendered_env_bytes(cfg_path)
     assert measured < _RUNPOD_CEILING_BYTES, (
         f"{stem}: rendered env {measured} B crossed the ~{_RUNPOD_CEILING_BYTES} "
         f"B RunPod create-mutation ceiling (CLAUDE.md 'Known infra gotchas') "
-        f"— this config was safe as of 2026-09-22 and this WILL raw-500 the "
-        f"pod create with no GraphQL error body to explain why."
+        f"— this WILL raw-500 the pod create with no GraphQL error body to "
+        f"explain why. Shrink what the config embeds; do not raise the ceiling."
     )
