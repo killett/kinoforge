@@ -1,0 +1,42 @@
+Task 7 — U53 live GREEN proof
+config       : runpod-diffusers-spandrel-x2-upscale
+date         : 2026-09-23 (local)
+
+=== Before/after context ===
+RED (pre-fix, see red-oversized-create.txt, captured earlier today 2026-09-23 16:54-16:56):
+  rendered env : 112,831 B
+  ceiling      : ~101,000 B (CLAUDE.md 'Known infra gotchas')
+  result       : podFindAndDeployOnDemand -> raw HTTP 500 Internal Server Error, no pod created.
+  root cause   : base64 provision-script payload too large; config also embedded
+                 3 servers/ modules the pod never imports (minimax_h3_server.py,
+                 _lora.py, _av_io.py).
+
+GREEN (post-fix, Tasks 1-6): config now embeds only the 3 servers/ modules the
+pod actually imports.
+
+=== Step 1: preflight ===
+$ git status --porcelain
+(no output -- tree clean)
+
+$ pixi run preflight
+Pixi task (preflight in default): python tools/preflight.py
+preflight: pre-live-spend gate
+  OK   env: ['RUNPOD_API_KEY', 'RUNPOD_TERMINATE_KEY', 'HF_TOKEN'] all set
+  OK   pods: 0 active
+  OK   git: working tree clean
+  OK   sky: 0 active clusters (or skypilot not installed)
+preflight: PASS -- safe to spend
+
+=== Step 2: re-measure rendered env bytes (delta from RED) ===
+$ pixi run python -c "
+from pathlib import Path
+from tests.providers.test_env_payload_ceiling import _rendered_env_bytes
+p = Path('examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml')
+print(f'spandrel-x2-upscale now: {_rendered_env_bytes(p):,} B (was 112,831 B)')
+"
+spandrel-x2-upscale now: 73,123 B (was 112,831 B)
+
+Delta: 112,831 B -> 73,123 B (-39,708 B, -35.2%), comfortably under the
+~101,000 B ceiling that raw-500'd the RED attempt.
+
+=== Step 3: live create + upscale run (in progress; appended below) ===
