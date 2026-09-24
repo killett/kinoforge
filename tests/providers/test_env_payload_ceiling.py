@@ -1,6 +1,6 @@
 """Behavior: no RunPod diffusers config's rendered env payload silently grows
-past a committed baseline, and no config currently safe under RunPod's
-undocumented create-mutation limit is ever allowed to cross it.
+past a committed baseline, and no RunPod diffusers config is ever allowed to
+cross RunPod's undocumented create-mutation limit.
 
 --- Why this guard is a RATCHET, not a flat budget (read before touching it) --
 
@@ -23,7 +23,7 @@ walks a package DIRECTORY, so every RunPod diffusers pod carried
 ``minimax_h3_server.py``, ``_lora.py`` and ``_av_io.py`` — ~39.4 KB per config,
 for modules only the Modal-only H3 server imports. The configs now name the
 three server modules they actually import via ``embed_files``, which took the
-worst config from 127,917 B to 88,575 B and every config under the ceiling.
+worst config from 127,917 B to 88,301 B and every config under the ceiling.
 ``tests/providers/test_pod_embed_closure.py`` is what keeps them there; this
 module guards the byte budget, that one guards the embed set.
 
@@ -34,10 +34,12 @@ What the three tests below actually assert:
    and no stale entry survives a deleted/renamed config. A config with no
    baseline is a config nothing is measuring.
 2. ``test_rendered_env_does_not_exceed_its_baseline`` — the RATCHET. A
-   config's current measured size may not exceed its committed baseline.
-   This does not forbid the breach above (already true for 8 configs); it
-   forbids the breach growing without a deliberate, reviewed bump of
-   ``_BASELINE_BYTES``.
+   config's current measured size may not exceed its committed baseline;
+   growth beyond that recorded state is what fails. Before U53 this ratchet
+   held even while 8 configs sat over the ceiling — its job was never to
+   enforce the ceiling itself, only to stop things from getting silently
+   worse. Any bump of ``_BASELINE_BYTES`` must be a deliberate, reviewed
+   act, not a reflex to unblock a failing test.
 3. ``test_no_runpod_diffusers_config_crosses_the_ceiling`` — a guard that
    CANNOT be satisfied merely by editing ``_BASELINE_BYTES``. Parametrised
    over every entry in ``_BASELINE_BYTES`` (i.e. every RunPod diffusers
@@ -198,11 +200,14 @@ def test_rendered_env_does_not_exceed_its_baseline(stem: str) -> None:
     create with no GraphQL error body — the failure mode that cost a full
     session to root-cause on 2026-07-05.
 
-    Does NOT forbid the pre-existing breach documented in the module
-    docstring; a config already over budget stays over budget here and this
-    assertion still passes, because ``measured <= baseline`` where baseline
-    already reflects that config's own over-ceiling state. Growth beyond
-    that recorded state is what fails.
+    Before U53 this did NOT forbid the breach documented in the module
+    docstring; a config already over budget stayed over budget here and the
+    assertion still passed, because ``measured <= baseline`` where baseline
+    already reflected that config's own over-ceiling state. That breach is
+    now closed, but the same logic still applies to whatever grows next:
+    only growth beyond the recorded baseline fails here, regardless of
+    where that baseline sits relative to the ceiling — enforcing the
+    ceiling itself is the other test's job.
 
     Args:
         stem: Config filename stem, one entry of ``_BASELINE_BYTES``.
