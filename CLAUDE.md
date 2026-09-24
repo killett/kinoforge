@@ -379,9 +379,23 @@ so it looks like an outage but is not — it is the *create mutation* choking
 on the request body. Root-caused 2026-07-05: the base64 provision script
 alone was 98,848 B → total env 101,971 B → every create 500'd.
 
-- The provider now **gzips the provision script before base64**
+- The provider **gzips the provision script before base64**
   (`_create_pod`, commit `5418c35`): `dockerArgs` decodes with
-  `base64 -d | gzip -d`. ~74 KB script → ~72 KB base64, ~4× headroom.
+  `base64 -d | gzip -d`. **Measured 2026-09-23: that outer gzip saves 26.2%**
+  (168,920 B plain base64 → 124,588 B gzipped, on the then-worst config).
+  **Do NOT drop it** — base64 packs 64 symbols into 8-bit bytes, so gzip
+  recovers the expected ~25%. An earlier note here claimed "~74 KB script →
+  ~72 KB base64, ~4× headroom"; that was wrong, and headroom was in fact
+  NEGATIVE for 8 of 13 shipped RunPod diffusers configs until U53 was fixed.
+- **The lever is what gets embedded, not the encoding.** U53's cause was
+  `embed_modules: ["kinoforge.engines.diffusers.servers"]` walking a package
+  DIRECTORY, so every pod carried `minimax_h3_server.py`, `_lora.py` and
+  `_av_io.py` — ~39.4 KB for modules only the Modal-only H3 server imports.
+  Configs now name the server modules they import via `embed_files`;
+  `tests/providers/test_pod_embed_closure.py` asserts the embedded set equals
+  the imported set in both directions, and
+  `tests/providers/test_env_payload_ceiling.py` asserts every config stays
+  under the ceiling.
 - If a create 500s again: it is almost never an outage. Probe with a
   MINIMAL create body (single small env) — if that succeeds, the payload
   is the culprit. Binary-search fields; the env total is the usual suspect.

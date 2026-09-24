@@ -1316,10 +1316,17 @@ class RunPodProvider(ComputeProvider):
         if provision_script is not None:
             # Gzip BEFORE base64: RunPod's podFindAndDeployOnDemand mutation
             # returns a raw HTTP 500 (not a GraphQL error) once the total env
-            # payload exceeds ~101 KB. The wan+flashvsr bootstrap is ~74 KB raw
-            # → 98.8 KB plain base64, which alone pushed total env to 101,971
-            # bytes and 500'd every create (root-caused live 2026-07-05). Gzip
-            # cuts it to ~72 KB base64 (~4× headroom for future script growth).
+            # payload exceeds ~101 KB (root-caused live 2026-07-05).
+            #
+            # Measured 2026-09-23 (U53): this outer gzip saves 26.2% — 168,920 B
+            # of plain base64 becomes 124,588 B — because base64 packs 64
+            # symbols into 8-bit bytes and gzip recovers the expected ~25%.
+            # An earlier version of this comment claimed "~4x headroom for
+            # future script growth"; that was wrong, and 8 of 13 shipped RunPod
+            # diffusers configs were over the ceiling until the embed set was
+            # trimmed. Do NOT drop this gzip. What actually controls the budget
+            # is which modules each config embeds — see
+            # tests/providers/test_pod_embed_closure.py.
             compressed = gzip.compress(provision_script.encode("utf-8"))
             encoded = base64.b64encode(compressed).decode("ascii")
             env["KINOFORGE_PROVISION_SCRIPT"] = encoded
