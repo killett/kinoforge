@@ -46,6 +46,11 @@ class Verdict(StrEnum):
     SKIP_NO_PROBE = "SKIP_NO_PROBE"  # Provider lacks probe_runtime substrate
     PROBE_FAILED = "PROBE_FAILED"  # Probe raised transient TransportError
     POD_GONE = "POD_GONE"  # 2026-07-06 — provider confirmed pod absent mid-run
+    # U64. A pre-launch provisional row still inside its grace window. Appended,
+    # not inserted: the docstring above makes insertion order a public contract.
+    # Deliberately absent from DEFAULT_APPLY_POLICY — `act_on_verdict` has no
+    # branch for it and falls through to `no_op`, which is the entire point.
+    LAUNCHING = "LAUNCHING"
 
 
 @dataclass(frozen=True)

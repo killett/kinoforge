@@ -412,6 +412,19 @@ _PROTECTED_LEDGER_KEYS: frozenset[str] = frozenset(
 LAUNCH_PHASE_TAG = "kf_launch_phase"
 LAUNCH_PHASE_LAUNCHING = "launching"
 
+#: How long a provisional row with no matching provider resource is presumed to
+#: be a launch still in flight rather than debris (U64). Canonical home: every
+#: consumer that decides whether such a row is actionable must honour the SAME
+#: window, or the shorter one deletes rows the longer one still considers
+#: in-flight. Deliberately generous — twice the 900 s ``Lifecycle.boot_timeout_s``
+#: default — because the cost of being wrong is asymmetric: too early deletes the
+#: only durable handle on a pod that is booting and billing; too late merely
+#: prolongs a $0.00 ghost row. NOT a boot timeout, and not named like one.
+#:
+#: ``cli/_reconcile`` keeps its own copy (it deliberately avoids importing core
+#: on every CLI command); ``test_reaper_launching_rows`` asserts the two agree.
+LAUNCHING_GRACE_S: float = 1800.0
+
 
 def _is_provisional(entry: dict) -> bool:  # type: ignore[type-arg]
     """Return True when *entry* is a pre-launch provisional row.
