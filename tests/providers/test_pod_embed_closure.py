@@ -488,3 +488,138 @@ def test_a_docstring_or_an_empty_file_is_docstring_only(source: str) -> None:
     healthy file, nor an empty one (which is what a pod actually receives).
     """
     assert _is_docstring_only(ast.parse(source).body)
+
+
+# ---------------------------------------------------------------------------
+# A module the pod IMPORTS AT BOOT must be in its embed set.
+#
+# Found the expensive way on 2026-09-25. U52 added
+# `from kinoforge.core.pod_paths import MODELS_DIR_VAR, SCRATCH_MODELS_DIR` at
+# module scope in `wan_t2v_server.py`. The whole offline suite stayed green —
+# the controller env imports `kinoforge.core` fine — and every RunPod diffusers
+# pod then died at boot:
+#
+#     File "/tmp/kfsrv/kinoforge/engines/diffusers/servers/wan_t2v_server.py",
+#       line 37, in <module>
+#         from kinoforge.core.pod_paths import MODELS_DIR_VAR, SCRATCH_MODELS_DIR
+#     ModuleNotFoundError: No module named 'kinoforge.core'
+#     [bootstrap-trap] rc=1
+#
+# The closure guard above could not see it: it restricts its universe to
+# modules under `servers/`, so a `kinoforge.core.*` import lies outside it by
+# construction. That restriction is right for what it does; this is the gap
+# beside it, and only a live pod could witness the gap.
+#
+# REACHABILITY, not presence. A config with a whole-package `embed_modules`
+# ships controller-side siblings too — `upscalers/spandrel/_engine.py` renders
+# provision scripts and lands on the pod next to the `_runtime.py` the server
+# actually imports — and those siblings' module-level imports never run there.
+# Scanning every embedded file flags them as violations; walking the import
+# graph from the server entry point does not.
+#
+# MODULE-LEVEL only. A lazy import inside a function is path-conditional, and
+# the per-config embed set is precisely how the design serves it: an upscale
+# config embeds `kinoforge/core/{errors,scale_target}.py` because
+# `_run_upscale_job` needs them, while a t2v config embeds neither and never
+# runs that path. Flagging lazy imports would condemn that working arrangement.
+# A module-level import has no such defence — it runs on every boot.
+# ---------------------------------------------------------------------------
+
+
+def _embedded_py_paths(script: str) -> set[str]:
+    """Return every ``kinoforge/**.py`` path the rendered provision writes."""
+    return set(re.findall(r"kinoforge/[A-Za-z0-9_/]+\.py", script))
+
+
+def _module_level_imports(source: str) -> set[str]:
+    """Return dotted ``kinoforge.*`` names imported at MODULE level in *source*."""
+    tree = ast.parse(source)
+    top = {id(node) for node in tree.body}
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if id(node) not in top:
+            continue
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
+            "kinoforge"
+        ):
+            found.add(node.module or "")
+        elif isinstance(node, ast.Import):
+            found.update(a.name for a in node.names if a.name.startswith("kinoforge"))
+    return found
+
+
+def _boot_import_closure(entry: str) -> dict[str, set[str]]:
+    """Modules Python loads when the pod runs ``python -m <entry>``.
+
+    Args:
+        entry: Dotted module the config's ``server_cmd`` launches.
+
+    Returns:
+        Mapping of dotted module name to the importers that pulled it in, so a
+        failure can name the file to fix rather than just the missing module.
+    """
+    seen: dict[str, set[str]] = {}
+    queue = [entry]
+    visited = {entry}
+    while queue:
+        dotted = queue.pop()
+        path = _module_path(dotted)
+        if path is None:
+            continue
+        for dep in sorted(_module_level_imports(path.read_text())):
+            seen.setdefault(dep, set()).add(dotted)
+            if dep not in visited:
+                visited.add(dep)
+                queue.append(dep)
+    return seen
+
+
+@pytest.mark.parametrize("cfg_path", _CONFIGS, ids=_IDS)
+def test_no_module_the_pod_imports_at_boot_is_missing_from_the_embed(
+    cfg_path: Path,
+) -> None:
+    """The pod must be able to import everything it loads at start-up.
+
+    Bug caught: the 2026-09-25 boot failure described above — fatal,
+    unconditional, invisible to every offline test, and diagnosable only from
+    `bootstrap.log` on a pod that had already been paid for.
+    """
+    from kinoforge.core.config import load_config
+    from kinoforge.core.lora_profiles import server_module_from_cfg
+    from kinoforge.engines.diffusers import DiffusersEngine
+
+    cfg = load_config(str(cfg_path))
+    entry = server_module_from_cfg(cfg)
+    assert entry, f"{cfg_path.name} names no server module"
+
+    embedded = _embedded_py_paths(
+        DiffusersEngine().render_provision(cfg.model_dump()).script
+    )
+    assert embedded, f"{cfg_path.name} embeds no kinoforge sources at all"
+
+    closure = _boot_import_closure(entry)
+    # Guard the guard. The first cut of this test resolved its paths wrongly,
+    # inspected zero files, and passed against the very bug it was written
+    # for — the same vacuous-sweep failure that hid U53's `grids/` configs.
+    assert closure, (
+        f"{cfg_path.name}: boot-import closure from {entry!r} is EMPTY — the "
+        f"walk is broken and this test is checking nothing"
+    )
+
+    absent = []
+    for dotted, importers in sorted(closure.items()):
+        if _module_path(dotted) is None:
+            continue  # a symbol (`from x import Y`), not a module
+        as_module = dotted.replace(".", "/") + ".py"
+        as_package = dotted.replace(".", "/") + "/__init__.py"
+        if as_module in embedded or as_package in embedded:
+            continue
+        absent.append(
+            f"{dotted}  (module-level import by {', '.join(sorted(importers))})"
+        )
+
+    assert not absent, (
+        f"{cfg_path.name}: the pod imports these at boot but the embed does not "
+        f"ship them. Each is a ModuleNotFoundError before the server starts:\n  "
+        + "\n  ".join(absent)
+    )

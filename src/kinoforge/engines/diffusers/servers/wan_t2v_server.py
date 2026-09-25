@@ -34,8 +34,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
-from kinoforge.core.pod_paths import MODELS_DIR_VAR, SCRATCH_MODELS_DIR
-
 # Force-disable huggingface_hub's xet transport before any HF import.
 # Task 8 attempt #8 surfaced a hard xet failure:
 #   RuntimeError: Task error: File reconstruction error:
@@ -173,7 +171,19 @@ _HEADROOM_MARGIN_BYTES = (
 # scripts that POPULATE these directories read the same var (see
 # upscalers/{spandrel,flashvsr}/_engine.py and interpolators/rife), so
 # reader and writer cannot drift apart.
-_MODELS_DIR_DEFAULT = os.environ.get(MODELS_DIR_VAR, SCRATCH_MODELS_DIR).rstrip("/")
+# Literals, NOT an import from `kinoforge.core.pod_paths`. The pod receives
+# ONLY the modules a config names in `embed_files` (U53's needs-only embed);
+# `kinoforge.core` is not among them, so a module-level import of it makes
+# every RunPod diffusers pod die at boot with ModuleNotFoundError. That is
+# exactly what shipped on 2026-09-25 and cost a live run to find. The sibling
+# vars above carry their names and scratch defaults as literals for the same
+# reason — match them, and let
+# `tests/providers/test_pod_embed_closure.py::test_no_embedded_server_module
+# _imports_outside_its_pod_closure` keep it that way.
+_MODELS_DIR_DEFAULT = os.environ.get(
+    "KINOFORGE_MODELS_DIR",
+    "/tmp/kf-models",  # noqa: S108 — pod-local writable scratch
+).rstrip("/")
 _SPANDREL_WEIGHTS_DIR_DEFAULT = f"{_MODELS_DIR_DEFAULT}/spandrel"
 _FLASHVSR_WEIGHTS_DIR_DEFAULT = f"{_MODELS_DIR_DEFAULT}/flashvsr"
 
