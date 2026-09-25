@@ -25,7 +25,10 @@ from types import FrameType
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import kinoforge._adapters  # noqa: F401 — triggers self-registrations
-from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
+from kinoforge.cli._reconcile import (
+    _is_launching,
+    _reconcile_dead_ledger_entries,
+)
 from kinoforge.cli.context import SessionContext
 from kinoforge.cli.loras_arg import LorasParseError, parse_loras_heredoc
 from kinoforge.core.clock import Clock, RealClock
@@ -1529,6 +1532,23 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
     return 0 if n_fail == 0 else 1
 
 
+# U61. Printed once under `kinoforge list` whenever a `launching` row is shown.
+# The row is a pre-launch placeholder the orchestrator writes BEFORE
+# `create_instance`; it survives a raise on purpose (compute-seam S5 ruling C1,
+# and `RunPodProvider.nothing_booked_errors()` returns `()` naming the raw
+# HTTP-500 create shape — a transport failure reading the response cannot be
+# told from one sending it, so a pod may exist behind it). Deleting it on every
+# raise is the F12 orphan hole in reverse. What the operator needs is not the
+# row's removal but the ability to tell it apart from a real leak.
+_LAUNCHING_ROW_NOTE: str = (
+    "note: a 'launching' row is a pre-launch placeholder, written before the\n"
+    "      provider confirmed anything. It is kept on purpose — a create that\n"
+    "      raised is not proof nothing was booked. It ages out on its own; to\n"
+    "      clear one you have confirmed against the provider, run\n"
+    "      kinoforge forget --id <id>"
+)
+
+
 def _cmd_list(args: argparse.Namespace, ctx: SessionContext) -> int:  # noqa: ARG001
     """Handle ``list`` subcommand — prints ledger entries.
 
@@ -1552,13 +1572,24 @@ def _cmd_list(args: argparse.Namespace, ctx: SessionContext) -> int:  # noqa: AR
     if not entries:
         print("No instances recorded in ledger.")
     else:
+        launching = False
         for entry in entries:
             cap_key = str(entry.get("tags", {}).get("kinoforge_key", "<unknown>"))
+            # U61 — see the block comment in `_main._print_instance_overview`.
+            # This is the printer CLAUDE.md's teardown rule actually names, and
+            # the one the 2026-09-23 live reproduction captured showing a
+            # never-created pod as an ordinary row.
+            marker = ""
+            if _is_launching(entry):
+                launching = True
+                marker = "  ⚠ launching — pod not confirmed"
             print(
                 f"  {entry.get('id', '?')}  "
                 f"provider={entry.get('provider', '?')}  "
-                f"capability_key={cap_key}"
+                f"capability_key={cap_key}{marker}"
             )
+        if launching:
+            print(_LAUNCHING_ROW_NOTE)
     return 0
 
 

@@ -45,7 +45,10 @@ from kinoforge.cli._commands import (
     _cmd_sweeper_stop,
     _cmd_upscale,
 )
-from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
+from kinoforge.cli._reconcile import (
+    _is_launching,
+    _reconcile_dead_ledger_entries,
+)
 from kinoforge.cli.context import SessionContext
 from kinoforge.cli.sidecar import SIDECAR_NAME
 from kinoforge.core.cancel import CancelToken
@@ -1098,7 +1101,19 @@ def _print_instance_overview(
         # could not confirm it gone (unreachable/uncertain), so its est_spend
         # may be entirely fictional. Flag it rather than present it as fact.
         row_suspect = age_s > max_age_s
-        marker = "  ⚠ unverified — run 'kinoforge list'" if row_suspect else ""
+        # U61. A pre-launch provisional row is NOT a confirmed pod, and it
+        # survives a raising create on purpose (compute-seam S5 ruling C1 — a
+        # raise is not proof the provider booked nothing). Printed unlabelled
+        # it is indistinguishable from a live instance, which breaks the one
+        # signal CLAUDE.md's live-smoke teardown rule treats as authoritative.
+        # Takes precedence over the suspect marker: "which pod is this?" has to
+        # be answered before "is its est_spend real?".
+        if _is_launching(entry):
+            marker = "  ⚠ launching — pod not confirmed"
+        elif row_suspect:
+            marker = "  ⚠ unverified — run 'kinoforge list'"
+        else:
+            marker = ""
         print(
             f"  {iid}  age={age_h:.1f}h  "
             f"est≤${spend:.4f} (age×rate; $0 if pod already dead)"

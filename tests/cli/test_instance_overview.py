@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import io
 import time
 from typing import Any
@@ -217,3 +218,164 @@ def test_young_row_not_marked_unverified(
     out = _run(_Ctx(ledger), monkeypatch, resolver)
     assert "young1" in out
     assert "unverified" not in out
+
+
+# ---------------------------------------------------------------------------
+# U61 — a `launching` row must not read as a confirmed pod.
+#
+# Filed 2026-09-24 off a live reproduction: an over-ceiling create was refused
+# with a raw HTTP 500 and booked NO hardware, yet `kinoforge list` afterwards
+# showed row `upscale-20260923-165600` indistinguishable from a real pod
+# (`tests/live/evidence/2026-09-23-u53-env-payload/red-oversized-create.txt`).
+#
+# The row is KEPT on purpose — compute-seam S5 ruling C1, and
+# `RunPodProvider.nothing_booked_errors()` returns `()` naming this exact
+# HTTP-500 shape: a transport failure reading the create response cannot be
+# told from one sending it, so a pod may exist behind it. Deleting the row on
+# every raise is the F12 orphan hole in reverse ("$210 phantom pod").
+#
+# What is actually broken is the DISPLAY. CLAUDE.md's live-smoke teardown rule
+# makes `kinoforge list` the authoritative proof a run left nothing billing;
+# an unlabelled provisional row means an operator cannot tell a phantom from a
+# real leak, and either wastes time chasing it or learns to discount the check.
+# ---------------------------------------------------------------------------
+
+_LAUNCHING_TAGS = {"kf_launch_phase": "launching"}
+
+
+def test_overview_labels_a_launching_row_as_not_yet_confirmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-launch provisional row is marked, not printed as a live pod.
+
+    Bug caught: reading the phase at the entry's top level instead of under
+    ``tags`` (where the orchestrator writes it, and where
+    ``_reconcile._is_launching`` reads it) leaves the marker off every real
+    provisional row — reproducing the live symptom exactly.
+    """
+    now = time.time()
+    ledger = _FakeLedger(
+        [
+            {
+                "id": "upscale-20260923-165600",
+                "provider": "runpod",
+                "created_at": now - 9,
+                "max_age_s": 3600,
+                "cost_rate_usd_per_hr": 0.0,
+                "tags": dict(_LAUNCHING_TAGS),
+            }
+        ]
+    )
+
+    out = _run(_Ctx(ledger), monkeypatch, _no_probe_resolver())
+
+    assert "upscale-20260923-165600" in out
+    assert "not confirmed" in out
+
+
+def test_overview_does_not_label_a_confirmed_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real instance row carries no provisional marker.
+
+    Bug caught: an always-true predicate (e.g. testing ``entry.get("tags")``
+    for truthiness) would stamp every live pod as unconfirmed, training the
+    operator to ignore the one marker that matters.
+    """
+    now = time.time()
+    ledger = _FakeLedger(
+        [
+            {
+                "id": "realpod1",
+                "provider": "runpod",
+                "created_at": now - 60,
+                "max_age_s": 3600,
+                "cost_rate_usd_per_hr": 1.0,
+                "tags": {"kinoforge_key": "wan-t2v", "kf_launch_phase": "running"},
+            }
+        ]
+    )
+
+    out = _run(_Ctx(ledger), monkeypatch, _no_probe_resolver())
+
+    assert "realpod1" in out
+    assert "not confirmed" not in out
+
+
+def _no_probe_resolver() -> Any:
+    """Resolver that fails loudly — these rows are young and must not be probed."""
+
+    def resolver(name: str) -> Any:
+        raise AssertionError(f"young row must not be probed (provider {name})")
+
+    return resolver
+
+
+def test_cmd_list_labels_a_launching_row_as_not_yet_confirmed(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """U61. ``kinoforge list`` is the command CLAUDE.md's teardown rule names.
+
+    Bug caught: labelling only the top-of-command overview and leaving
+    ``_cmd_list`` alone. The teardown rule sends the operator to
+    ``kinoforge list`` specifically, and that is the printer the live
+    reproduction captured — so an unlabelled row there is the whole defect,
+    fixed nowhere.
+    """
+    from kinoforge.cli import _commands
+
+    ledger = _FakeLedger(
+        [
+            {
+                "id": "upscale-20260923-165600",
+                "provider": "runpod",
+                "tags": dict(_LAUNCHING_TAGS),
+            }
+        ]
+    )
+
+    class _ListCtx:
+        def ledger(self) -> _FakeLedger:
+            return ledger
+
+    monkeypatch.setattr(_commands, "_reconcile_dead_ledger_entries", lambda *a, **k: [])
+    rc = _commands._cmd_list(argparse.Namespace(), _ListCtx())  # type: ignore[arg-type]
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "upscale-20260923-165600" in out
+    assert "not confirmed" in out
+
+
+def test_cmd_list_does_not_label_a_confirmed_row(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """U61 negative control for the ``list`` printer.
+
+    Bug caught: a marker stamped on every row, which makes the signal
+    worthless in exactly the check it was added to serve.
+    """
+    from kinoforge.cli import _commands
+
+    ledger = _FakeLedger(
+        [
+            {
+                "id": "realpod1",
+                "provider": "runpod",
+                "tags": {"kinoforge_key": "wan-t2v"},
+            }
+        ]
+    )
+
+    class _ListCtx:
+        def ledger(self) -> _FakeLedger:
+            return ledger
+
+    monkeypatch.setattr(_commands, "_reconcile_dead_ledger_entries", lambda *a, **k: [])
+    _commands._cmd_list(argparse.Namespace(), _ListCtx())  # type: ignore[arg-type]
+
+    out = capsys.readouterr().out
+    assert "realpod1" in out
+    assert "not confirmed" not in out
