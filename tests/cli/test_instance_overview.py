@@ -364,7 +364,10 @@ def test_cmd_list_does_not_label_a_confirmed_row(
             {
                 "id": "realpod1",
                 "provider": "runpod",
-                "tags": {"kinoforge_key": "wan-t2v"},
+                # Carries the phase tag with a NON-launching value on purpose:
+                # a predicate testing `"kf_launch_phase" in tags` rather than
+                # its value passes a control that merely omits the tag.
+                "tags": {"kinoforge_key": "wan-t2v", "kf_launch_phase": "running"},
             }
         ]
     )
@@ -379,3 +382,130 @@ def test_cmd_list_does_not_label_a_confirmed_row(
     out = capsys.readouterr().out
     assert "realpod1" in out
     assert "not confirmed" not in out
+
+
+def test_overview_launching_marker_wins_over_the_unverified_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U61. An AGED launching row reads as launching, not merely unverified.
+
+    Bug caught: ordering the two branches the other way. A launching row old
+    enough to be suspect would then print ``⚠ unverified — run 'kinoforge
+    list'`` and send the operator to a printer that (before this fix) told
+    them nothing new — while suppressing the one fact that explains the row.
+    "Which pod is this?" has to be answered before "is its est_spend real?".
+    """
+    now = time.time()
+    ledger = _FakeLedger(
+        [
+            {
+                "id": "aged-launching",
+                "provider": "runpod",
+                "created_at": now - 7200,
+                "max_age_s": 3600,
+                "cost_rate_usd_per_hr": 1.0,
+                "tags": dict(_LAUNCHING_TAGS),
+            }
+        ]
+    )
+
+    # Suspect, so it IS reconciled — an uncertain probe keeps the row.
+    def resolver(name: str) -> Any:  # noqa: ARG001
+        raise RuntimeError("transport uncertain")
+
+    out = _run(_Ctx(ledger), monkeypatch, resolver)
+
+    assert "launching" in out
+    assert "unverified" not in out
+
+
+def test_cmd_list_prints_the_launching_note_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """U61. Two launching rows get one explanation, not two.
+
+    Bug caught: printing the note inside the row loop. The note is nine lines
+    of prose about a destructive command; repeated per row it buries the very
+    row listing an operator ran ``kinoforge list`` to read.
+    """
+    from kinoforge.cli import _commands
+
+    ledger = _FakeLedger(
+        [
+            {"id": "launch-a", "provider": "runpod", "tags": dict(_LAUNCHING_TAGS)},
+            {"id": "launch-b", "provider": "runpod", "tags": dict(_LAUNCHING_TAGS)},
+        ]
+    )
+
+    class _ListCtx:
+        def ledger(self) -> _FakeLedger:
+            return ledger
+
+    monkeypatch.setattr(_commands, "_reconcile_dead_ledger_entries", lambda *a, **k: [])
+    _commands._cmd_list(argparse.Namespace(), _ListCtx())  # type: ignore[arg-type]
+
+    out = capsys.readouterr().out
+    assert out.count("pre-launch placeholder") == 1
+
+
+def test_cmd_list_omits_the_launching_note_when_no_row_is_launching(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """U61. The note is absent from an ordinary listing.
+
+    Bug caught: printing it unconditionally. Then every routine ``kinoforge
+    list`` carries a warning about deleting live resources, which is how a
+    real warning stops being read.
+    """
+    from kinoforge.cli import _commands
+
+    ledger = _FakeLedger(
+        [{"id": "realpod1", "provider": "runpod", "tags": {"kinoforge_key": "k"}}]
+    )
+
+    class _ListCtx:
+        def ledger(self) -> _FakeLedger:
+            return ledger
+
+    monkeypatch.setattr(_commands, "_reconcile_dead_ledger_entries", lambda *a, **k: [])
+    _commands._cmd_list(argparse.Namespace(), _ListCtx())  # type: ignore[arg-type]
+
+    out = capsys.readouterr().out
+    assert "pre-launch placeholder" not in out
+
+
+def test_the_launching_note_does_not_recommend_an_unscoped_delete(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """U61 review finding #1. ``kinoforge forget`` matches on id ALONE.
+
+    ``_cmd_forget`` calls ``Ledger.forget(id)``, not the phase-scoped
+    ``forget_provisional``. On the same-key shape (SkyPilot: the cluster name
+    IS the run_id) a real row can sit under the same id as the launching one
+    — ``_collapse_provisional_row`` logs that outcome as reachable — so an
+    unqualified "run kinoforge forget" deletes a live cluster's only handle.
+
+    Bug caught: a note that names ``forget`` without the id-scoping warning,
+    i.e. re-introducing as prose the hazard ``forget_provisional`` exists to
+    prevent.
+    """
+    from kinoforge.cli import _commands
+
+    ledger = _FakeLedger(
+        [{"id": "launch-a", "provider": "runpod", "tags": dict(_LAUNCHING_TAGS)}]
+    )
+
+    class _ListCtx:
+        def ledger(self) -> _FakeLedger:
+            return ledger
+
+    monkeypatch.setattr(_commands, "_reconcile_dead_ledger_entries", lambda *a, **k: [])
+    _commands._cmd_list(argparse.Namespace(), _ListCtx())  # type: ignore[arg-type]
+
+    out = capsys.readouterr().out
+    assert "kinoforge forget" in out
+    assert "id ALONE" in out
+    assert "ages out" in out.lower()

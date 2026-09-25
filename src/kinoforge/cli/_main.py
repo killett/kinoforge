@@ -46,6 +46,7 @@ from kinoforge.cli._commands import (
     _cmd_upscale,
 )
 from kinoforge.cli._reconcile import (
+    LAUNCHING_ROW_MARKER,
     _is_launching,
     _reconcile_dead_ledger_entries,
 )
@@ -1109,7 +1110,7 @@ def _print_instance_overview(
         # Takes precedence over the suspect marker: "which pod is this?" has to
         # be answered before "is its est_spend real?".
         if _is_launching(entry):
-            marker = "  ⚠ launching — pod not confirmed"
+            marker = LAUNCHING_ROW_MARKER
         elif row_suspect:
             marker = "  ⚠ unverified — run 'kinoforge list'"
         else:

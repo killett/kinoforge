@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import kinoforge._adapters  # noqa: F401 — triggers self-registrations
 from kinoforge.cli._reconcile import (
+    LAUNCHING_ROW_MARKER,
     _is_launching,
     _reconcile_dead_ledger_entries,
 )
@@ -1543,9 +1544,13 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
 _LAUNCHING_ROW_NOTE: str = (
     "note: a 'launching' row is a pre-launch placeholder, written before the\n"
     "      provider confirmed anything. It is kept on purpose — a create that\n"
-    "      raised is not proof nothing was booked. It ages out on its own; to\n"
-    "      clear one you have confirmed against the provider, run\n"
-    "      kinoforge forget --id <id>"
+    "      raised is not proof nothing was booked. It AGES OUT on its own, and\n"
+    "      waiting is the intended door.\n"
+    "      'kinoforge forget --id <id>' matches on id ALONE. Where the row id is\n"
+    "      also the live resource's id (SkyPilot: the cluster name IS the run\n"
+    "      id) that deletes a LIVE resource's only handle. Reach for it only\n"
+    "      after confirming with the provider that nothing is running, and only\n"
+    "      when no other row shares the id."
 )
 
 
@@ -1582,7 +1587,7 @@ def _cmd_list(args: argparse.Namespace, ctx: SessionContext) -> int:  # noqa: AR
             marker = ""
             if _is_launching(entry):
                 launching = True
-                marker = "  ⚠ launching — pod not confirmed"
+                marker = LAUNCHING_ROW_MARKER
             print(
                 f"  {entry.get('id', '?')}  "
                 f"provider={entry.get('provider', '?')}  "

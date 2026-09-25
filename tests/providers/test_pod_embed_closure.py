@@ -46,6 +46,16 @@ at runtime, and dropping them would under-count the closure, which
 delete a genuinely-needed module from every config (U62). The guard is matched
 on the bare name, not by substring, for exactly that reason.
 
+That precision cuts BOTH ways, and the other direction is the one that costs
+money. A COMPOUND guard — ``if TYPE_CHECKING or X:``, ``if typing.TYPE_CHECKING
+is True:`` — is no longer recognised, so its type-only imports now enter the
+closure and every guarded config would be told to embed modules no pod loads,
+pushing rendered env back toward the ~101 KB create ceiling U53 just cleared.
+There are ZERO such sites today (checked 2026-09-24: all 30 ``TYPE_CHECKING``
+``If`` nodes under ``src/kinoforge`` are a bare ``ast.Name``, none with an
+``orelse``), which is why the precise match is safe to make. Write a compound
+guard under ``servers/`` and this is what will surprise you.
+
 Soundness assumption — RE-CHECK THIS IF IT EVER FAILS ODDLY
 -----------------------------------------------------------
 A static AST closure cannot see ``importlib.import_module`` with a computed name.

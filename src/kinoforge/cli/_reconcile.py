@@ -191,6 +191,14 @@ def _reconcile_dead_ledger_entries(
     return forgotten
 
 
+# The one-line marker both operator-facing printers append to a `launching`
+# row (U61). Owned here, beside the predicate that selects it, so the label and
+# the test it satisfies cannot drift apart per printer — the tests assert on
+# this string's content, and two verbatim copies would both stay green while
+# diverging.
+LAUNCHING_ROW_MARKER: str = "  ⚠ launching — pod not confirmed"
+
+
 def _is_launching(entry: dict[str, Any]) -> bool:
     """Return whether *entry* is the orchestrator's pre-launch provisional row.
 
