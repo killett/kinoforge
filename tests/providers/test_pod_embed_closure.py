@@ -39,7 +39,12 @@ spandrel / seedvr2 runtimes, but those live in ``upscalers.*`` and
 ``interpolators.*``, outside the restriction, and stay declared per config via
 whole-package ``embed_modules`` entries this guard does not touch.
 
-``if TYPE_CHECKING:`` blocks are skipped — those imports never execute.
+``if TYPE_CHECKING:`` BODIES are skipped — those imports never execute. Their
+``else:`` branches are NOT, and neither is ``if not TYPE_CHECKING:``: both run
+at runtime, and dropping them would under-count the closure, which
+``test_no_unimported_servers_module_is_embedded`` would then read as licence to
+delete a genuinely-needed module from every config (U62). The guard is matched
+on the bare name, not by substring, for exactly that reason.
 
 Soundness assumption — RE-CHECK THIS IF IT EVER FAILS ODDLY
 -----------------------------------------------------------
@@ -108,11 +113,39 @@ def _kinoforge_imports(path: Path) -> set[str]:
         Dotted names — a mix of real modules and symbols imported from them;
         :func:`_module_path` filters the non-modules out downstream.
     """
+    return _imports_in_source(
+        path.read_text(encoding="utf-8"),
+        pkg=".".join(path.relative_to(_SRC).parts[:-1]),
+    )
+
+
+def _imports_in_source(source: str, *, pkg: str) -> set[str]:
+    """Return every ``kinoforge.*`` name imported by *source*.
+
+    Split out of :func:`_kinoforge_imports` so the walk can be driven by
+    fixture source rather than by a file under ``src/``. U62 and U63 were both
+    verified LATENT against the shipped tree, so a test driving real files
+    would pass on a broken walk — fixture source is the only way to watch
+    either defect fail.
+
+    Args:
+        source: Python source to parse.
+        pkg: Dotted package the source lives in, for resolving relative
+            imports.
+
+    Returns:
+        Dotted names — a mix of real modules and symbols imported from them.
+    """
     found: set[str] = set()
-    pkg = ".".join(path.relative_to(_SRC).parts[:-1])
 
     def visit(node: ast.AST) -> None:
-        if isinstance(node, ast.If) and "TYPE_CHECKING" in ast.unparse(node.test):
+        if isinstance(node, ast.If) and _is_type_checking_guard(node.test):
+            # The BODY never executes, but the ``else:`` does — U62. Returning
+            # without recursing here dropped both that branch's runtime
+            # imports and (via the old substring test) every import under
+            # ``if not TYPE_CHECKING:``.
+            for runtime_stmt in node.orelse:
+                visit(runtime_stmt)
             return
         if isinstance(node, ast.Import):
             found.update(a.name for a in node.names if a.name.startswith("kinoforge"))
@@ -128,8 +161,54 @@ def _kinoforge_imports(path: Path) -> set[str]:
         for child in ast.iter_child_nodes(node):
             visit(child)
 
-    visit(ast.parse(path.read_text(encoding="utf-8")))
+    visit(ast.parse(source))
     return found
+
+
+def _is_type_checking_guard(test: ast.expr) -> bool:
+    """Return whether *test* is the bare ``TYPE_CHECKING`` guard.
+
+    Matched precisely rather than by substring (U62). ``"TYPE_CHECKING" in
+    ast.unparse(node.test)`` also matched ``if not TYPE_CHECKING:``, whose
+    body DOES execute at runtime, and dropped its imports outright.
+
+    Args:
+        test: The ``If`` node's test expression.
+
+    Returns:
+        True for ``TYPE_CHECKING`` and ``typing.TYPE_CHECKING``; False for any
+        compound or negated expression mentioning the name.
+    """
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    return isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+
+
+def _is_docstring_only(body: list[ast.stmt]) -> bool:
+    """Return whether *body* is at most a single docstring.
+
+    Extracted from :func:`test_servers_package_init_stays_docstring_only` so
+    the predicate can be driven by fixture source; see U63.
+
+    Args:
+        body: Top-level statements of a parsed module.
+
+    Returns:
+        True when the module holds nothing but (optionally) a docstring.
+    """
+    if not body:
+        return True
+    if len(body) > 1:
+        return False
+    stmt = body[0]
+    # U63: ``isinstance(stmt, ast.Expr)`` alone accepts a bare expression or a
+    # discarded call — and a discarded call is exactly the shape of code that
+    # would matter on a pod, which receives an empty stand-in for this file.
+    return (
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Constant)
+        and isinstance(stmt.value.value, str)
+    )
 
 
 def _closure(roots: list[str]) -> set[str]:
@@ -274,7 +353,7 @@ def test_servers_package_init_stays_docstring_only() -> None:
     path = _module_path(_SERVERS_PKG)
     assert path is not None, f"{_SERVERS_PKG} did not resolve to a source file"
     body = ast.parse(path.read_text(encoding="utf-8")).body
-    assert len(body) <= 1 and (not body or isinstance(body[0], ast.Expr)), (
+    assert _is_docstring_only(body), (
         f"{path} has non-docstring top-level statements: {body!r}. Pods never "
         f"receive this file's real content — they get an empty `touch`ed "
         f"stand-in (see _render_embed_single_file) — so any code added here "
@@ -305,3 +384,97 @@ def test_no_unimported_servers_module_is_embedded(cfg_path: Path) -> None:
         f"create-mutation ceiling (U53). Embed only what is imported — see "
         f"docs/superpowers/specs/2026-09-23-u53-needs-only-embed-design.md."
     )
+
+
+# ---------------------------------------------------------------------------
+# U62 / U63 — guard-strength tests. These test THIS MODULE's own helpers, not
+# the shipped tree: both defects were verified LATENT against the tree at
+# filing time, so a test driving real source files would pass on a broken
+# helper. Driving the helper with fixture source is the only way to watch
+# either one fail.
+# ---------------------------------------------------------------------------
+
+
+def test_a_runtime_import_in_the_else_of_a_type_checking_guard_is_kept() -> None:
+    """U62. ``if TYPE_CHECKING: ... else: <import>`` executes the else at runtime.
+
+    The skip must not swallow the ``orelse`` branch. A lost runtime import
+    makes the closure too small, and
+    :func:`test_no_unimported_servers_module_is_embedded` would then demand
+    that module's REMOVAL from every config — producing a pod that boots
+    clean and dies at first request.
+    """
+    source = (
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    from kinoforge.engines.diffusers.servers import _typing_only\n"
+        "else:\n"
+        "    from kinoforge.engines.diffusers.servers import _runtime_fallback\n"
+    )
+
+    found = _imports_in_source(source, pkg="kinoforge.engines.diffusers.servers")
+
+    assert "kinoforge.engines.diffusers.servers._runtime_fallback" in found
+
+
+def test_an_import_under_a_negated_type_checking_guard_is_kept() -> None:
+    """U62. ``if not TYPE_CHECKING:`` runs at runtime — its imports must count.
+
+    The filed defect: the skip is ``"TYPE_CHECKING" in ast.unparse(node.test)``,
+    a substring test that matches the NEGATED guard too and drops an import
+    that always executes.
+    """
+    source = (
+        "from typing import TYPE_CHECKING\n"
+        "if not TYPE_CHECKING:\n"
+        "    from kinoforge.engines.diffusers.servers import _runtime_only\n"
+    )
+
+    found = _imports_in_source(source, pkg="kinoforge.engines.diffusers.servers")
+
+    assert "kinoforge.engines.diffusers.servers._runtime_only" in found
+
+
+def test_an_import_inside_a_real_type_checking_body_is_still_dropped() -> None:
+    """U62 negative control — the skip must keep working.
+
+    Over-correcting into "recurse everything" would pull type-only imports
+    into the closure and demand modules be embedded that no pod ever loads,
+    re-inflating the very payload U53 shrank.
+    """
+    source = (
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    from kinoforge.engines.diffusers.servers import _typing_only\n"
+    )
+
+    found = _imports_in_source(source, pkg="kinoforge.engines.diffusers.servers")
+
+    assert "kinoforge.engines.diffusers.servers._typing_only" not in found
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["1 + 1\n", "print('side effect')\n"],
+    ids=["bare-expression", "discarded-call"],
+)
+def test_a_lone_non_string_expression_is_not_docstring_only(source: str) -> None:
+    """U63. ``isinstance(body[0], ast.Expr)`` accepts what it must reject.
+
+    A discarded call is exactly the shape of code that would matter on a pod
+    — and pods receive an empty ``touch``ed stand-in for this file, so it
+    would silently never run there.
+    """
+    assert not _is_docstring_only(ast.parse(source).body)
+
+
+@pytest.mark.parametrize(
+    "source",
+    ['"""A docstring."""\n', ""],
+    ids=["real-docstring", "empty-file"],
+)
+def test_a_docstring_or_an_empty_file_is_docstring_only(source: str) -> None:
+    """U63 negative control — the tightened predicate must not reject the
+    healthy file, nor an empty one (which is what a pod actually receives).
+    """
+    assert _is_docstring_only(ast.parse(source).body)
