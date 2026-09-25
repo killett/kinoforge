@@ -365,14 +365,28 @@ def test_the_applied_inventory_reaches_the_real_ledger_row(tmp_path: Path) -> No
     assert [e["filename"] for e in inventory] == ["0.safetensors", "1.safetensors"]
     assert entry["loras_dir_free_bytes"] == 12345
     assert isinstance(entry["loras_dir_free_bytes_observed_at_local"], str)
-    # Every ref the pod reported back is a redaction PLACEHOLDER on disk,
-    # not the raw ref. That is the canonical ledger shape
-    # (``Ledger._persist`` runs ``redact_json`` over the whole payload) and
-    # it only happens if ``_register_observed_lora_refs`` ran BEFORE the
-    # touch. Asserting it here pins that ordering end to end: reverse the
-    # two and these rows persist unredacted vault refs to disk.
-    assert all(e["ref"].startswith("<lora:ref:") for e in inventory), (
-        f"pod-reported refs must be registered before the write; got {inventory}"
+    # U54: every ref persists RAW. This assertion used to require the
+    # ``<lora:ref:…>`` placeholder, which is how the defect survived — the
+    # test asserted the corruption as the contract. ``warm_reuse/matcher.py``
+    # plans swaps off this field in a LATER process and compares it against
+    # raw cfg refs; redaction is one-way, so a placeholder makes every ref
+    # mismatch and every eviction name something no pod can act on.
+    # ``_LEDGER_REDACTION_EXEMPT_PATHS`` now exempts exactly this path.
+    assert all(not e["ref"].startswith("<lora:ref:") for e in inventory), (
+        f"refs must persist raw so a later process can match on them; got {inventory}"
+    )
+
+    # The ORDERING this test exists to pin — ``_register_observed_lora_refs``
+    # before the ``touch`` — is still pinned, now against its actual purpose:
+    # the refs are live redaction tokens, so any LOG line naming one is
+    # scrubbed. Reverse the two calls and this fails, without requiring the
+    # ledger to store a value it cannot read back.
+    from kinoforge.core.redaction import RedactionRegistry
+
+    registry = RedactionRegistry.instance()
+    assert all(registry.redact(e["ref"]).startswith("<lora:ref:") for e in inventory), (
+        f"pod-reported refs must be registered before the write so log lines "
+        f"naming them are redacted at source; got {inventory}"
     )
 
 

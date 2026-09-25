@@ -20,7 +20,7 @@ from enum import StrEnum
 from typing import Any
 
 from kinoforge.core.heartbeat_endpoints import provider_heartbeat_supported
-from kinoforge.core.lifecycle import LAUNCHING_GRACE_S, _is_provisional
+from kinoforge.core.launch_phase import LAUNCHING_GRACE_S, is_launching
 from kinoforge.core.util_endpoints import provider_util_supported
 
 
@@ -703,7 +703,7 @@ def classify(
         # normal classification must resume, or a same-key SkyPilot cluster
         # (name IS the run_id) that has come up would be exempt from idle and
         # overage reaping for the whole window.
-        if _is_provisional(dict(entry)) and pod_age <= LAUNCHING_GRACE_S:
+        if is_launching(entry) and pod_age <= LAUNCHING_GRACE_S:
             return Verdict.LAUNCHING
         # Past the window an unadoptable launching row IS debris, and must
         # stay reapable: Modal's listing exposes no name matchable against a

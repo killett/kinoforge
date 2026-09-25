@@ -42,13 +42,13 @@ from kinoforge.core.interfaces import (
     Instance,
     WarmAttachKey,
 )
-from kinoforge.core.lifecycle import (
+from kinoforge.core.launch_phase import (
     LAUNCH_PHASE_LAUNCHING,
     LAUNCH_PHASE_TAG,
     LAUNCHING_GRACE_S,
-    _is_provisional,
-    destroy_confirmed,
+    is_launching,
 )
+from kinoforge.core.lifecycle import destroy_confirmed
 from kinoforge.core.lora import LoraEntry, resolve_active_lora_stack
 from kinoforge.core.orchestrator import generate
 from kinoforge.core.reaper import Verdict
@@ -3271,7 +3271,7 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
         # resolve even while the pod is alive and billing. Reading it as
         # staleness fired on every normal RunPod cold boot and advised
         # deleting the launch's only durable handle — what ruling C1 forbids.
-        if _is_provisional(entry):
+        if is_launching(entry):
             aged_out = (now - float(entry.get("created_at", now))) > LAUNCHING_GRACE_S
             provider_block = {
                 "provider_status": (

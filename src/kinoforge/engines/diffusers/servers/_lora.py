@@ -563,7 +563,15 @@ def _inventory_rows() -> list[LoraInventoryEntryModel]:
             size_bytes=row.size_bytes,
             adapter_name=row.adapter_name,
             last_strength=row.strength,
-            branch=row.target,
+            # U55. NOT `row.target`. `branch` holds Wan's MoE vocabulary
+            # (`high_noise` / `low_noise` / `auto`), which cannot name an H3
+            # workflow partition — stamping `"transformer"` here put a token
+            # in a field whose documented vocabulary excludes it, and the
+            # warm-reuse matcher compared it against a cfg-side `.branch` that
+            # stays `"auto"` for any cfg using `target:`. `"auto"` is the
+            # honest Wan-vocabulary value for a non-MoE pipeline; the real
+            # routing token rides in `target`, which is what the matcher reads.
+            branch="auto",
             target=row.target,
         )
         for row in inventory_snapshot()

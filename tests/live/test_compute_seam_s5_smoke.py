@@ -189,7 +189,8 @@ if _REASONS:
 from kinoforge._adapters import build_provider_for  # noqa: E402
 from kinoforge.core.config import load_config  # noqa: E402
 from kinoforge.core.interfaces import Instance, Launch  # noqa: E402
-from kinoforge.core.lifecycle import LAUNCH_PHASE_TAG, Ledger  # noqa: E402
+from kinoforge.core.launch_phase import LAUNCH_PHASE_TAG  # noqa: E402
+from kinoforge.core.lifecycle import Ledger  # noqa: E402
 from kinoforge.core.orchestrator import (  # noqa: E402
     _collapse_provisional_row,
     _record_provisional_row,

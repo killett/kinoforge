@@ -69,9 +69,11 @@ from kinoforge.core.interfaces import (
     PipelineState,
     Stage,
 )
-from kinoforge.core.lifecycle import (
+from kinoforge.core.launch_phase import (
     LAUNCH_PHASE_LAUNCHING,
     LAUNCH_PHASE_TAG,
+)
+from kinoforge.core.lifecycle import (
     Ledger,
     destroy_confirmed,
 )

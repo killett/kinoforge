@@ -134,19 +134,31 @@ def test_overlap_evicts_b_downloads_c_and_updates_ledger(tmp_path: Path) -> None
 
     persisted = ledger.read("pod-overlap-1")
     assert persisted is not None
-    # Persisted refs are redaction-tokenised by Ledger._write_entries — the
-    # backend call (above) is the canonical proof of which refs went to
-    # the pod. Here we just verify count + free_bytes survive the update,
-    # and that every persisted ref decodes back to one of the targets
-    # via the live RedactionRegistry.
+    # U54: persisted refs are RAW. This assertion used to expect the
+    # redaction-tokenised form, which is how the defect survived review for a
+    # release — a test asserted the corruption as the contract. The matcher
+    # reads this exact field back in a LATER process and compares it against
+    # raw cfg refs, and redaction is one-way, so a placeholder here means
+    # every ref mismatches: re-download everything already on the pod, and an
+    # eviction naming a placeholder no pod can act on.
     from kinoforge.core.redaction import RedactionRegistry
 
     persisted_refs = [e["ref"] for e in persisted["lora_inventory"]]
     assert len(persisted_refs) == 2
     assert persisted["loras_dir_free_bytes"] == 9_999_000
+    for ref in key.lora_stack().refs:
+        assert ref in persisted_refs, (
+            f"target ref {ref!r} must persist RAW so a later process's matcher "
+            f"can compare it; got {persisted_refs}"
+        )
+
+    # The registration ORDERING this test has always pinned is still pinned,
+    # now against what it actually exists for: the ref is a live redaction
+    # token, so any LOG line naming it is scrubbed. That is independent of
+    # what the ledger stores, which is the separation U54 was missing.
     redact_registry = RedactionRegistry.instance()
     for ref in key.lora_stack().refs:
-        assert redact_registry.redact(ref) in persisted_refs, (
-            f"target ref {ref!r} not present in persisted inventory "
-            f"(redacted form expected since the registry tokenised it)"
+        assert redact_registry.redact(ref).startswith("<lora:ref:"), (
+            f"ref {ref!r} must be registered before the ledger write so log "
+            f"lines naming it are redacted at source"
         )

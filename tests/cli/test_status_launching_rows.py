@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from kinoforge.core.lifecycle import (
+from kinoforge.core.launch_phase import (
     LAUNCH_PHASE_LAUNCHING,
     LAUNCH_PHASE_TAG,
     LAUNCHING_GRACE_S,

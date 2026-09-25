@@ -33,6 +33,28 @@ def _short_id(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()[:6]
 
 
+def _path_is_exempt(path: tuple[str, ...], exempt_paths: frozenset[str]) -> bool:
+    """Return whether *path* ends with any dotted pattern in *exempt_paths*.
+
+    Suffix matching so a caller names the field relative to the structure it
+    owns (``"lora_inventory.*.ref"``) rather than the whole payload shape.
+
+    Args:
+        path: Key segments walked so far; list indices appear as ``*``.
+        exempt_paths: Dotted patterns.
+
+    Returns:
+        True when the walk has reached an exempt node.
+    """
+    if not path:
+        return False
+    for pattern in exempt_paths:
+        segments = tuple(pattern.split("."))
+        if len(segments) <= len(path) and path[-len(segments) :] == segments:
+            return True
+    return False
+
+
 class RedactionRegistry:
     """Singleton holding the active vault's sensitive tokens.
 
@@ -116,7 +138,9 @@ class RedactionRegistry:
                 result = result.replace(token, self._tokens[token])
         return result
 
-    def redact_json(self, obj: object) -> object:
+    def redact_json(
+        self, obj: object, *, exempt_paths: frozenset[str] = frozenset()
+    ) -> object:
         """Deep-walk ``obj`` and redact every string leaf.
 
         Recursively handles ``dict``, ``list``, and ``tuple``; passes through
@@ -125,18 +149,54 @@ class RedactionRegistry:
 
         Args:
             obj: Any JSON-shaped Python value.
+            exempt_paths: Dotted key paths whose values are copied VERBATIM
+                rather than walked (U54). A list index contributes the literal
+                segment ``*``, and a pattern matches as a SUFFIX of the walked
+                path — so ``"lora_inventory.*.ref"`` matches
+                ``entries.*.lora_inventory.*.ref`` without the caller having to
+                know the payload's outer shape. Matching the full path rather
+                than the leaf key name is deliberate: a bare ``ref`` rule would
+                silently extend the carve-out to any future structure that
+                happens to carry that key.
+
+                Use this ONLY for a field the system must read back. One-way
+                redaction of a round-trip field is a bug regardless of
+                confidentiality policy — the field becomes useless, and a
+                corrupted value is not a privacy win over an absent one. Where
+                a value genuinely must not reach disk, do not write it.
 
         Returns:
-            A copy of ``obj`` with all string leaves redacted.
+            A copy of ``obj`` with all string leaves redacted except those at
+            an exempt path.
         """
+        return self._redact_json(obj, (), exempt_paths)
+
+    def _redact_json(
+        self, obj: object, path: tuple[str, ...], exempt_paths: frozenset[str]
+    ) -> object:
+        """Recursive half of :meth:`redact_json`, tracking the key path.
+
+        Args:
+            obj: The current node.
+            path: Key segments walked so far; list indices contribute ``*``.
+            exempt_paths: See :meth:`redact_json`.
+
+        Returns:
+            The redacted node, or *obj* verbatim when *path* is exempt.
+        """
+        if exempt_paths and _path_is_exempt(path, exempt_paths):
+            return obj
         if isinstance(obj, str):
             return self.redact(obj)
         if isinstance(obj, dict):
-            return {k: self.redact_json(v) for k, v in obj.items()}
+            return {
+                k: self._redact_json(v, (*path, str(k)), exempt_paths)
+                for k, v in obj.items()
+            }
         if isinstance(obj, list):
-            return [self.redact_json(v) for v in obj]
+            return [self._redact_json(v, (*path, "*"), exempt_paths) for v in obj]
         if isinstance(obj, tuple):
-            return tuple(self.redact_json(v) for v in obj)
+            return tuple(self._redact_json(v, (*path, "*"), exempt_paths) for v in obj)
         return obj
 
     def clear_session(self) -> None:

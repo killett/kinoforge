@@ -40,6 +40,65 @@ class WarmAttachMatch:
     swap_plan: SwapPlan
 
 
+def _routing_token(entry: Any) -> str:  # noqa: ANN401 — duck-typed inventory row
+    """Return the partition an inventory row's adapter is loaded on (U55).
+
+    ``target`` supersedes ``branch``, but Wan's ``LoraInventoryEntry`` has no
+    ``target`` field at all — so reading ``target`` alone would collapse every
+    Wan row to ``None`` and make two different MoE branches compare equal.
+    Falling back to ``branch`` is what keeps Wan's discrimination working.
+
+    Args:
+        entry: A pod inventory row. May expose ``target``, ``branch``, or
+            neither (pre-P2 rows predate both).
+
+    Returns:
+        The routing token, or ``"auto"`` when the row names no partition.
+    """
+    return getattr(entry, "target", None) or getattr(entry, "branch", None) or "auto"
+
+
+def _requested_routing_token(entry: Any) -> str:  # noqa: ANN401 — duck-typed cfg entry
+    """Return the partition a resolved cfg entry ASKED for (U55).
+
+    ``LoraEntry._resolve_branch_to_target`` maps the deprecated ``branch:``
+    onto ``target``, so a cfg spelling either way arrives here with ``target``
+    set; a cfg spelling neither leaves ``target`` at ``None`` and ``branch`` at
+    its ``"auto"`` default.
+
+    Args:
+        entry: A resolved cfg-side stack entry.
+
+    Returns:
+        The requested routing token, or ``"auto"`` for "the profile's default".
+    """
+    return getattr(entry, "target", None) or getattr(entry, "branch", None) or "auto"
+
+
+def _routing_matches(loaded: str, requested: str) -> bool:
+    """Return whether an adapter loaded on *loaded* satisfies *requested* (U55).
+
+    ``"auto"`` on the REQUEST side means "the profile's default partition",
+    which the matcher cannot resolve without knowing the server profile — so it
+    is treated as a wildcard. That cannot weaken Wan: a MoE pipe refuses
+    ``branch="auto"`` outright (``BranchAutoNotAllowedOnMoE``), so the only Wan
+    shape reaching this branch is the single-transformer pipe, whose inventory
+    reads ``"auto"`` too and would have matched exactly anyway.
+
+    The wildcard is deliberately one-directional. ``"auto"`` on the LOADED side
+    means the pod named no partition, which is not evidence that it holds the
+    one being asked for.
+
+    Args:
+        loaded: Routing token the pod reports for this adapter.
+        requested: Routing token the run resolved for it.
+
+    Returns:
+        True when the loaded adapter satisfies the request.
+    """
+    return requested == "auto" or loaded == requested
+
+
 def is_stack_match(
     active: list[Any],
     target: list[Any],
@@ -81,7 +140,10 @@ def is_stack_match(
         return False
     if [a.ref for a in active] != [t.ref for t in target]:
         return False
-    if [getattr(a, "branch", "auto") for a in active] != [t.branch for t in target]:
+    if not all(
+        _routing_matches(_routing_token(a), _requested_routing_token(t))
+        for a, t in zip(active, target, strict=True)
+    ):
         return False
     return all(
         math.isclose(
