@@ -942,9 +942,10 @@ class LoraTarget(BaseModel):
 
         Parity is load-bearing — ``tests/test_lora_schema_parity.py``
         asserts both classes resolve `branch`/`target` identically. DO
-        NOT diverge. **Additive only:** Wan still routes on `branch` via
-        ``_check_branch_legal`` / ``_detect_moe_arity`` /
-        ``_resolve_transformer`` — this validator does not touch those.
+        NOT diverge. Wan routes on `branch` via ``_check_branch_legal`` /
+        ``_detect_moe_arity`` / ``_resolve_transformer``, which this validator
+        does not touch — it populates `branch` so those keep working when the
+        operator spelled the routing as `target:` (U60).
         """
         implied = None if self.branch == "auto" else self.branch
         if implied is not None and self.target is not None and implied != self.target:
@@ -959,6 +960,20 @@ class LoraTarget(BaseModel):
                 "deprecated-lora-branch: 1 entry used `branch`; it is mapped to "
                 "`target`. Use `target:` — see docs/breaking-changes.md"
             )
+        if implied is None and self.target in LORA_TARGET_UNIVERSE:
+            # U60, the reverse map. Without it a `target:`-only Wan entry keeps
+            # `branch="auto"`, which `wan_t2v_server` refuses on a MoE pipeline
+            # (`BranchAutoNotAllowedOnMoE`) — an HTTP 400 that arrives 25-30
+            # minutes and one ~70 GB weight fetch after the operator started.
+            # The config-load check that accepts `target: high_noise` on Wan is
+            # what made the acceptance/routing gap reachable at all.
+            #
+            # Narrow on purpose: only when `branch` is still at its "auto"
+            # default AND `target` names a Wan MoE branch. Mapping
+            # unconditionally would put H3's `transformer` into a field whose
+            # vocabulary is Wan's MoE tokens — U55 in the other direction, and
+            # that defect was just fixed by making H3 stop doing exactly this.
+            object.__setattr__(self, "branch", self.target)
         return self
 
 

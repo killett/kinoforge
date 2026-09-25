@@ -218,32 +218,30 @@ def test_single_transformer_pipe_with_explicit_branch_rejected_at_boot(
         wan_t2v_server._load_pipeline(initial_lora_stack=stack)
 
 
-def test_a_wan_moe_cfg_spelling_its_routing_as_target_is_refused_by_the_pod(
+def test_a_wan_moe_cfg_spelling_its_routing_as_target_reaches_the_pipeline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """U60 tripwire: `target:` loads on a Wan cfg, then 400s on the pod.
+    """U60, CLOSED: `target:` on a Wan MoE cfg now routes instead of 400ing.
 
-    ``core/lora_profiles.py`` registers ``wan_t2v_server`` with the target
-    universe ``("high_noise", "low_noise")``, so ``target: high_noise``
-    passes config validation. It does not route. ``LoraEntry`` maps
-    ``branch`` -> ``target`` ONE WAY, so a ``target``-only entry still
-    carries ``branch="auto"``, the client ships that verbatim, and this
-    endpoint gates on ``branch`` — which on a MoE pipe is illegal. The
-    operator pays a 25-30 minute Wan 2.2 boot to find out.
+    This test was a TRIPWIRE asserting the known defect — that the entry
+    config load accepted was the entry the pod refused — and its docstring
+    said it must go red when the symmetric map landed. The map landed
+    (2026-09-25, live-proven on Wan 2.2 A14B), so it now pins the FIX across
+    the same two-module span no single test covered before.
 
-    This test asserts a KNOWN DEFECT, deliberately, because the claim spans
-    two modules that no single test covered: the entry that config load
-    accepted is the entry the pod refuses. It is a tripwire, not a
-    specification — **when U60's symmetric ``target`` -> ``branch`` map
-    lands, this test MUST go red**, and whoever makes it green has to
-    update it together with the caveat in ``core/lora_profiles.py`` and the
-    "MiniMax-H3 LoRA shared seam" section of ``docs/breaking-changes.md``,
-    which both currently tell operators to keep using ``branch:`` on Wan.
+    The end-to-end claim, unchanged in shape: ``core/lora_profiles`` accepts
+    ``target: high_noise`` on Wan because its universe lists it; whatever
+    ``LoraEntry`` produces is shipped verbatim by
+    ``DiffusersBackend._wire_entry``; and the pod's ``/lora/set_stack`` gates
+    on ``branch``. Previously that chain ended in
+    ``branch_auto_disallowed_on_moe``. Now it reaches the routing layer.
 
-    Bug caught meanwhile: silently "fixing" one half — e.g. dropping the
-    Wan row from the client registry so the cfg is refused at load, or
-    teaching ``LoraEntry`` the reverse map without touching the pod — while
-    leaving the docs claiming the other behaviour.
+    Bug caught: reverting or narrowing either half of the map. A client-only
+    map leaves the pod refusing ``auto``; a server-only map leaves
+    ``LoraEntry.branch == "auto"`` client-side, where
+    ``warm_reuse/matcher.py`` compares it against the pod's inventory row —
+    U55's mechanism, in which every warm Wan attach re-swaps its whole stack
+    on every run.
     """
     from kinoforge.core.lora import LoraEntry
     from kinoforge.core.lora_profiles import client_profile_for_server_module
@@ -258,9 +256,9 @@ def test_a_wan_moe_cfg_spelling_its_routing_as_target_is_refused_by_the_pod(
     )
 
     entry = LoraEntry(ref="civitai:F@1", strength=1.0, target="high_noise")
-    assert entry.branch == "auto", (
-        "the branch<->target map is one-directional; setting `target` alone "
-        f"must leave branch at 'auto', got {entry.branch!r}"
+    assert entry.branch == "high_noise", (
+        "the branch<->target map is symmetric since U60; setting `target` "
+        f"alone must populate branch, got {entry.branch!r}"
     )
 
     # Exactly what DiffusersBackend._wire_entry ships for this entry —
@@ -281,13 +279,21 @@ def test_a_wan_moe_cfg_spelling_its_routing_as_target_is_refused_by_the_pod(
     )
     monkeypatch.setattr(wan_t2v_server, "_pipe_arity", 2)
 
-    with pytest.raises(HTTPException) as ei:
+    # It must NOT be refused for branch routing any more. The call still
+    # fails — there is no pipeline in this process and no download spec for
+    # the ref — but on a downstream cause, which is the whole point: the
+    # routing gate is behind us. Asserting "no raise" would need a real pipe;
+    # asserting "not THIS raise" is the honest offline bound, and the live
+    # Wan 2.2 proof (successful-generations.md) covers the rest.
+    with pytest.raises(Exception) as ei:  # noqa: PT011 — the class is the assertion
         asyncio.run(wan_t2v_server.set_stack(req))
 
-    assert ei.value.status_code == 400
-    detail: Any = ei.value.detail
-    assert detail == {
-        "error": "branch_routing",
-        "reason": "branch_auto_disallowed_on_moe",
-        "arity": 2,
-    }
+    if isinstance(ei.value, HTTPException):
+        detail: Any = ei.value.detail
+        assert not (
+            isinstance(detail, dict)
+            and detail.get("reason") == "branch_auto_disallowed_on_moe"
+        ), (
+            "the pod still refuses a `target:`-spelled MoE entry on branch "
+            f"routing; U60's map did not take effect ({detail!r})"
+        )

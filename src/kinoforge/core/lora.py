@@ -102,6 +102,14 @@ def _normalize_hf(parsed: ParseResult, *, original: str) -> str:
     return f"hf:{org}/{repo}:{file_path}"
 
 
+#: Wan 2.2's mixture-of-experts branch vocabulary — the ONLY targets that may
+#: be written back into `branch` (U60). Duplicated from
+#: `wan_t2v_server.LORA_TARGET_UNIVERSE` rather than imported: `core` must not
+#: import `engines`, and the server module carries a pod-only dependency set.
+#: `tests/test_lora_target_to_branch_map.py` asserts the two agree.
+_WAN_MOE_BRANCHES: frozenset[str] = frozenset({"high_noise", "low_noise"})
+
+
 class LoraEntry(BaseModel):
     """One LoRA entry: ref + strength + optional sha256 + branch.
 
@@ -197,6 +205,20 @@ class LoraEntry(BaseModel):
                 "deprecated-lora-branch: 1 entry used `branch`; it is mapped to "
                 "`target`. Use `target:` — see docs/breaking-changes.md"
             )
+        if implied is None and self.target in _WAN_MOE_BRANCHES:
+            # U60, the reverse map. Without it a `target:`-only Wan entry keeps
+            # `branch="auto"`, which `wan_t2v_server` refuses on a MoE pipeline
+            # (`BranchAutoNotAllowedOnMoE`) — an HTTP 400 that arrives 25-30
+            # minutes and one ~70 GB weight fetch after the operator started.
+            # The config-load check that accepts `target: high_noise` on Wan is
+            # what made the acceptance/routing gap reachable at all.
+            #
+            # Narrow on purpose: only when `branch` is still at its "auto"
+            # default AND `target` names a Wan MoE branch. Mapping
+            # unconditionally would put H3's `transformer` into a field whose
+            # vocabulary is Wan's MoE tokens — U55 in the other direction, and
+            # that defect was just fixed by making H3 stop doing exactly this.
+            object.__setattr__(self, "branch", self.target)
         return self
 
 

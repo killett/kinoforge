@@ -1,0 +1,112 @@
+# Wan 2.2 T2V-A14B + cfg-driven Arcane LoRA pair, spelling its MoE routing
+# as `target:` rather than `branch:` — the U60 live re-proof config.
+#
+# Byte-for-byte the strength-grid sibling
+# (runpod-diffusers-wan-2_2-14b-t2v-strength-grid.yaml) EXCEPT the two
+# `branch:` keys become `target:`. That is deliberate and is the whole
+# experiment: holding everything else identical means any difference in the
+# pod's `/lora/inventory` readback or in the rendered frames is attributable
+# to the spelling alone.
+#
+# Before U60's symmetric map this config was ACCEPTED at load and then
+# refused by the pod with HTTP 400 (`branch_auto_disallowed_on_moe`) — after
+# the 25-30 minute Wan 2.2 boot and its ~70 GB weight fetch — because
+# `branch` -> `target` mapped one way only and `wan_t2v_server` routes on
+# `branch`. Keep this config: it is the regression guard for that path, and
+# the only one that exercises `target:` routing on a real MoE pipeline.
+#
+# `prompt:` carries the standard video-gen smoke prompt per memory
+# `feedback_standard_test_prompt.md` (verbatim from
+# examples/configs/prompts/field-realistic.txt).
+
+mode: t2v
+prompt: "Photorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace — luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking."
+
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "diffusers>=0.32"
+      - "transformers>=4.45"
+      - "accelerate>=1.0"
+      - "peft>=0.13"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+    base_url: "http://localhost:8000"
+    prompt_body_key: "prompt"
+    # Needs-only embed (U53). A whole-package embed of
+    # kinoforge.engines.diffusers.servers also shipped minimax_h3_server.py,
+    # _lora.py and _av_io.py — ~39.7 KB of env payload for modules only the
+    # Modal-only H3 server imports, which pushed 8 of 13 RunPod diffusers
+    # configs past the ~101 KB create-mutation ceiling. Enforced by
+    # tests/providers/test_pod_embed_closure.py; see
+    # docs/superpowers/specs/2026-09-23-u53-needs-only-embed-design.md.
+    embed_files:
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+      - "kinoforge.engines.diffusers.servers._util_stats"
+      - "kinoforge.engines.diffusers.servers._video_io"
+
+models:
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+    kind: base
+    target: checkpoints
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+  mode: pod
+  warm_reuse_auto_attach: true
+  tags:
+    smoke_tier: "kinoforge-u60-target-spelled-moe-routing"
+  placement:
+    min_vram_gb: 80
+    min_cuda: "12.4"
+    max_usd_per_hr: 3.00
+    accelerators:
+      - "NVIDIA A100-SXM4-80GB"
+      - "NVIDIA A100 80GB PCIe"
+      - "NVIDIA H100 80GB HBM3"
+      - "NVIDIA H100 PCIe"
+    disk_gb: 150
+  lifecycle:
+    idle_timeout: 90m
+    job_timeout: 15m
+    time_buffer: 3m
+    max_lifetime: 180m
+    boot_timeout: 60m
+    budget: 5.0
+    heartbeat_interval_s: 30
+    lora_swap_re_probe_after_s: 300
+
+spec:
+  model: "Wan2.2-T2V-A14B-Diffusers"
+  pipeline: "WanPipeline"
+  scheduler: "UniPCMultistepScheduler"
+  width: 480
+  height: 480
+  num_frames: 81
+  fps: 16
+
+# Cfg-driven Arcane Style LoRA pair (Shape A), routed by `target:`.
+# U60: the symmetric map populates `branch` from `target` when `target`
+# names a Wan MoE branch, so these reach `pipe.transformer` and
+# `pipe.transformer_2` exactly as the `branch:`-spelled sibling does. The
+# P2 per-arity gate still rejects `auto` on a MoE pipeline — this config
+# is the proof that a `target:`-only entry no longer arrives as `auto`.
+loras:
+  - ref: "civitai:2197303@2474081"     # Arcane Style — high-noise tensor
+    strength: 1.0
+    target: high_noise
+  - ref: "civitai:2197303@2474073"     # Arcane Style — low-noise tensor
+    strength: 1.0
+    target: low_noise
