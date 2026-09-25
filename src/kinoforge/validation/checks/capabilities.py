@@ -198,6 +198,17 @@ def _runpod_deadline_phrase(lifecycle: Any) -> str:  # noqa: ANN401 — Lifecycl
         2.0 * lifecycle.idle_timeout, lifecycle.max_lifetime - lifecycle.time_buffer
     )
     phrase = f"at min(2*idle_timeout, max_lifetime-time_buffer)={effective}s"
+    if getattr(lifecycle, "budget", 0) and float(lifecycle.budget) > 0:
+        # U51. `budget` is no longer inert on RunPod: `_budget_bounded_lifetime`
+        # folds budget/rate into the self-terminator's max_lifetime at create,
+        # where RATE_DETERMINISTIC makes the booked offer's rate the billed
+        # rate. No number here — no offer is chosen at load, so the rate is
+        # genuinely unknown — but the ARM must be named, or this message keeps
+        # describing the pre-U51 behaviour in which the field did nothing.
+        phrase += (
+            f", further shortened at create by budget={lifecycle.budget} USD "
+            f"divided by the booked offer's rate (not knowable at load)"
+        )
     if effective <= 0:
         # Not a rounding curiosity: max_lifetime <= time_buffer means the pod's
         # own deadline is already past the moment it boots. Say so rather than

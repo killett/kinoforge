@@ -52,6 +52,7 @@ from kinoforge.core.interfaces import (
     FieldSupport,
     Instance,
     InstanceSpec,
+    Lifecycle,
     Offer,
     Placement,
     combine_steps,
@@ -335,6 +336,46 @@ def boot_grace_seconds(boot_timeout_s: float | None) -> float:
         return _BOOT_GRACE_MIN_S
     scaled = boot_timeout_s * _BOOT_GRACE_FRACTION
     return max(_BOOT_GRACE_MIN_S, min(_BOOT_GRACE_MAX_S, scaled))
+
+
+def _budget_bounded_lifetime(lifecycle: Lifecycle, offer: Offer | None) -> float:
+    """Return ``max_lifetime`` shortened to fit ``lifecycle.budget_usd`` (U51).
+
+    ``budget`` used to be inert on RunPod — only SkyPilot's watchdog consumed
+    it — so a cfg carrying ``budget: 0.50`` was bounded by TIME alone while
+    reading like a spend guard.
+
+    RunPod can enforce it where SkyPilot cannot, and the reason is a declared
+    capability rather than an accident: RunPod is ``RATE_DETERMINISTIC``, so
+    the booked offer's ``cost_rate_usd_per_hr`` IS the billed rate and is known
+    here, at create. SkyPilot is ``RATE_READBACK`` — its rate is knowable only
+    after launch, which is why its watchdog does this arithmetic on the
+    instance instead.
+
+    Folded in with ``min``, never assigned: the budget is a ceiling, and a
+    generous one must not silently raise the cfg's own time ceiling.
+
+    Args:
+        lifecycle: The spec's effective lifecycle guardrails.
+        offer: The catalog offer this pod is booked on, when the caller has
+            one. ``None`` leaves the lifetime untouched.
+
+    Returns:
+        Seconds for the self-terminator's ``max_lifetime``.
+    """
+    budget = float(getattr(lifecycle, "budget_usd", 0.0) or 0.0)
+    # 0.0 is the DEFAULT and means "no budget declared", not "a zero-dollar
+    # budget". Reading it as the latter would self-terminate every pod in the
+    # project the instant it booted.
+    if budget <= 0.0 or offer is None:
+        return lifecycle.max_lifetime_s
+    rate = float(getattr(offer, "cost_rate_usd_per_hr", 0.0) or 0.0)
+    if rate <= 0.0:
+        # An unpriced or nonsensical row is not a licence to guess: U49's
+        # `unknown` GPU type carried null prices, and dividing here would turn
+        # a catalog gap into a ZeroDivisionError at create.
+        return lifecycle.max_lifetime_s
+    return float(min(lifecycle.max_lifetime_s, (budget / rate) * 3600.0))
 
 
 class RunPodProvider(ComputeProvider):
@@ -1209,7 +1250,7 @@ class RunPodProvider(ComputeProvider):
         Returns:
             Instance with ``status="starting"``.
         """
-        env = self._assemble_create_env(spec)
+        env = self._assemble_create_env(spec, offer=offer)
         # compute-seam S3: the engine emits steps + a launch; the trailing
         # `exec` is RunPod's OWN PID-1 convention, composed here rather than
         # baked into the engine's script. `render_launch` raises when a spec
@@ -1252,7 +1293,9 @@ class RunPodProvider(ComputeProvider):
         self._classify_capacity_error(resp, gpu_type_id=gpu_type_id)
         return self._instance_from_create_response(spec, offer, resp, _eph)
 
-    def _assemble_create_env(self, spec: InstanceSpec) -> dict[str, str]:
+    def _assemble_create_env(
+        self, spec: InstanceSpec, *, offer: Offer | None = None
+    ) -> dict[str, str]:
         """Assemble the pod env payload for the create-pod mutation.
 
         Combines user-supplied vars (which already carry the C28 diagnostic
@@ -1262,6 +1305,11 @@ class RunPodProvider(ComputeProvider):
 
         Args:
             spec: Instance specification.
+            offer: The catalog offer this pod is booked on, when the caller
+                has one. Read only for its rate, to bound the self-terminator
+                by ``lifecycle.budget_usd`` (U51). Optional so the callers and
+                tests that assemble an env without choosing an offer keep
+                working; ``None`` leaves the deadline time-bounded only.
 
         Returns:
             The env dict to serialize into the mutation's ``env`` field
@@ -1290,7 +1338,7 @@ class RunPodProvider(ComputeProvider):
         # Embed self-terminator script
         env["KINOFORGE_SELFTERM_SCRIPT"] = selfterm.RENDER(
             idle_timeout=spec.lifecycle.idle_timeout_s,
-            max_lifetime=spec.lifecycle.max_lifetime_s,
+            max_lifetime=_budget_bounded_lifetime(spec.lifecycle, offer),
             time_buffer=spec.lifecycle.time_buffer_s,
         )
 
