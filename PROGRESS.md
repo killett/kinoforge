@@ -3242,10 +3242,18 @@ shape: a class defect that a one-off fix had left behind.**
 confirmed` is an accepted terminal state, `kinoforge destroy` is the WRONG door for it, waiting for
 the 1800 s age-out is the intended one, and `kinoforge forget` matches on id ALONE.
 
-**SINGLE NEXT ACTION: merge `fix/u60-wan-target-symmetric-map` to `main`, then the operator picks
-new work — the defect queue is empty.** Note that `main` currently carries U66 (every RunPod
-diffusers pod dies at boot); this branch is what unbreaks it, so the merge is not optional
-housekeeping.
+**THE MERGE IS DONE — `fix/u60-wan-target-symmetric-map` is on `main` at `ac93bd50`** (verified
+2026-09-25 by a resumed session: `main` == `origin/main` == that commit, the branch exists neither
+locally nor on `origin`, working tree clean). So U66 is OFF `main` and RunPod diffusers pods boot
+again; the line below, which read "SINGLE NEXT ACTION: merge …", is kept only as provenance for why
+the merge was not optional housekeeping. Re-verified on that tip: full suite **6365 passed /
+0 failed**, and `kinoforge list` reports BOTH `No running instances.` and `No instances recorded in
+ledger.` — the ~$1.13 live session tore down clean, nothing is billing.
+
+**SINGLE NEXT ACTION: the operator picks new work — the defect queue is empty.** Nothing is
+blocked, nothing is half-shipped, and no item in the URGENT ACTION ITEMS table is actionable. The
+two rows still spelled `OPEN` (U45, U46) are RunPod serverless, CONTAINED behind a validation
+refusal — a feature to build if it is ever wanted, not a reachable defect.
 
 
 ### SESSION 2026-09-24/25 — the URGENT ACTION ITEMS queue is DOWN TO ONE
