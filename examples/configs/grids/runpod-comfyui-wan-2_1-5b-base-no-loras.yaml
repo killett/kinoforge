@@ -39,6 +39,14 @@ compute:
   image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
   mode: pod
   warm_reuse_auto_attach: true
+  # RunPod's community pool reclaims pods minutes after create, which a
+  # multi-minute weight fetch cannot survive — the pod is deleted mid-boot and
+  # the util probe reads 0%/0%/0% until the stall detector fires. Confirmed
+  # again 2026-09-25 on pod 178qwug7mlvifd (~$0.39 for a boot that could never
+  # have completed). Guarded by tests/test_runpod_long_boot_needs_secure_pool.py.
+  backend_options:
+    runpod:
+      cloud_type: secure
   placement:
     min_vram_gb: 16
     min_cuda: "12.4"
