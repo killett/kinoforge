@@ -327,6 +327,29 @@ pod, destroy it explicitly:
 pixi run kinoforge destroy --id <pod-id>
 ```
 
+**One row is an accepted terminal state, and `destroy` is the WRONG door
+for it.** A row tagged `⚠ launching — pod not confirmed` is the pre-launch
+placeholder the orchestrator writes BEFORE `create_instance` returns. It
+survives a failed create on purpose (compute-seam S5 ruling C1: a raise is
+not proof the provider booked nothing — a transport failure reading the
+create response cannot be told from one sending it, which is exactly the
+raw-HTTP-500 shape). Treat it as clean, not as a leak, once you have
+confirmed against the provider that nothing is running.
+
+* `kinoforge destroy --id <id>` on such a row exits 1 and leaves the row —
+  its id is the CLIENT-side run id (on RunPod the pod NAME, on Modal the
+  app run id), which `get_instance` cannot resolve.
+* It **ages out on its own** after 1800 s (`_LAUNCHING_GRACE_S`). Waiting
+  is the intended door and costs nothing — the row bills nothing.
+* `kinoforge forget --id <id>` matches on **id alone**, not on launch
+  phase. Where the row id is also the live resource's id (SkyPilot: the
+  cluster name IS the run id) that deletes a live resource's only handle.
+  Reach for it only after confirming with the provider, and only when no
+  other row shares the id.
+* To confirm against the provider directly, list what is actually running
+  rather than trusting the ledger — for RunPod, the GraphQL `myself { pods
+  { id } }` probe named in the "Known infra gotchas" section above.
+
 The failure mode this rule exists to prevent: 2026-06-22 Phase-P1
 live validation ran without `--no-reuse`; the operator read a
 mid-orchestration "No running instances" line as "pod destroyed" and
