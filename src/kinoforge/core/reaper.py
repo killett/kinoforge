@@ -20,6 +20,7 @@ from enum import StrEnum
 from typing import Any
 
 from kinoforge.core.heartbeat_endpoints import provider_heartbeat_supported
+from kinoforge.core.lifecycle import LAUNCHING_GRACE_S, _is_provisional
 from kinoforge.core.util_endpoints import provider_util_supported
 
 
@@ -692,6 +693,22 @@ def classify(
 
     # Row 1
     if not pod_up:
+        # U64. A pre-launch provisional row's id is the CLIENT-side run_id —
+        # the pod NAME on RunPod, the app run id on Modal — so it can never
+        # appear in `live_pod_ids` while the launch is in flight. Falling
+        # through to STALE_LEDGER here handed `act_on_verdict` a verdict it
+        # answers with `ledger.forget`, deleting the ONLY durable handle on a
+        # pod that may already be billing. Placed INSIDE the `not pod_up`
+        # branch on purpose: once the resource does appear in the listing,
+        # normal classification must resume, or a same-key SkyPilot cluster
+        # (name IS the run_id) that has come up would be exempt from idle and
+        # overage reaping for the whole window.
+        if _is_provisional(dict(entry)) and pod_age <= LAUNCHING_GRACE_S:
+            return Verdict.LAUNCHING
+        # Past the window an unadoptable launching row IS debris, and must
+        # stay reapable: Modal's listing exposes no name matchable against a
+        # run_id, so `cli/_reconcile` can never adopt it and a blanket
+        # exemption would make the row permanent.
         return Verdict.STALE_LEDGER
 
     # Layer LoRA: a pod self-marked status="degraded" (e.g. via the

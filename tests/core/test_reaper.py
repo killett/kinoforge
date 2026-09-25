@@ -85,6 +85,7 @@ def test_verdict_values_are_stable_strings() -> None:
         "SKIP_NO_PROBE",  # sweeper-ephemeral-reap (2026-06-28)
         "PROBE_FAILED",  # sweeper-ephemeral-reap (2026-06-28)
         "POD_GONE",  # heartbeat pod-gone (2026-07-06)
+        "LAUNCHING",  # U64 — provisional row inside its grace window
     ]
 
 

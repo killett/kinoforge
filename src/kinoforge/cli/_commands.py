@@ -45,10 +45,13 @@ from kinoforge.core.interfaces import (
 from kinoforge.core.lifecycle import (
     LAUNCH_PHASE_LAUNCHING,
     LAUNCH_PHASE_TAG,
+    LAUNCHING_GRACE_S,
+    _is_provisional,
     destroy_confirmed,
 )
 from kinoforge.core.lora import LoraEntry, resolve_active_lora_stack
 from kinoforge.core.orchestrator import generate
+from kinoforge.core.reaper import Verdict
 from kinoforge.core.reaper_actor import sweep
 from kinoforge.outputs.base import OutputSink
 from kinoforge.outputs.local import LocalOutputSink
@@ -3262,6 +3265,35 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
     try:
         instance = provider.get_instance(args.id)
     except KeyError:
+        # U64. For a pre-launch provisional row this KeyError is GUARANTEED,
+        # not diagnostic: the row's id is the client-side run_id (the pod NAME
+        # on RunPod, the app run id on Modal), which `get_instance` cannot
+        # resolve even while the pod is alive and billing. Reading it as
+        # staleness fired on every normal RunPod cold boot and advised
+        # deleting the launch's only durable handle — what ruling C1 forbids.
+        if _is_provisional(entry):
+            aged_out = (now - float(entry.get("created_at", now))) > LAUNCHING_GRACE_S
+            provider_block = {
+                "provider_status": (
+                    "launching (pod not confirmed — the ledger id is the "
+                    "client-side run id, which the provider cannot resolve)"
+                ),
+                "verdict": str(Verdict.LAUNCHING),
+            }
+            # Never name `kinoforge forget` here, in either branch: it matches
+            # on id ALONE, so on the same-key shape (SkyPilot: the cluster name
+            # IS the run_id) it can delete a live cluster's row. Inside the
+            # window there is nothing to do; past it, `kinoforge list` already
+            # clears the row through the phase-scoped delete.
+            advisory = (
+                "advisory: this launch never confirmed — run 'kinoforge list' "
+                "to clear the row safely"
+                if aged_out
+                else "advisory: launch in flight — this row is not a confirmed "
+                "pod, and is not evidence of one. It clears itself."
+            )
+            _print_status_block(ledger_block, provider_block, advisory=advisory)
+            return 0
         provider_block = {
             "provider_status": "unknown (stale ledger — provider has no record)",
             "verdict": "STALE_LEDGER",
@@ -4243,7 +4275,7 @@ def _cmd_cost(args: argparse.Namespace, ctx: SessionContext) -> int:
     from kinoforge.core.cost import aggregate
     from kinoforge.core.credentials import EnvCredentialProvider
     from kinoforge.core.heartbeat_endpoints import provider_heartbeat_supported
-    from kinoforge.core.reaper import Verdict, classify
+    from kinoforge.core.reaper import classify
 
     cfg = ctx.cfg
     ledger = ctx.ledger()
