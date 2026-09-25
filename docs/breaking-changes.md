@@ -32,21 +32,32 @@ loras:
     target: transformer
 ```
 
-**Caveat — `target:` is accepted at load but NOT yet honoured for routing by
-the Wan pod.** `core/lora_profiles.py` registers `wan_t2v_server` with the
-target universe `("high_noise", "low_noise")`, so `validation/checks/loras.py`
-**accepts** `target: high_noise` on a Wan config. The pod does not act on it.
-`LoraEntry._resolve_branch_to_target` maps `branch` → `target` one way only, so
-an entry that sets `target` alone still carries `branch="auto"`; the client
-ships `{"branch": "auto", "target": "high_noise"}`, and `wan_t2v_server`'s
-`/lora/set_stack` gates and routes on `branch`, never on `target`. On a MoE
-pipeline `branch="auto"` is illegal, so the swap is refused with
-`BranchAutoNotAllowedOnMoE` (HTTP 400) — **after** the 25-30 minute Wan 2.2
-boot and its ~70 GB weight fetch. Until the Wan migration lands, a Wan 2.2 MoE
-config must spell its routing `branch:`. The symmetric `target` → `branch` map
-that would close this is filed as **U60** in `PROGRESS.md`; it needs a live Wan
-re-proof, which is why it was not taken at the end of this branch. H3 configs
-are unaffected — H3 routes on `target` natively.
+**`target:` now routes on Wan too, as of 2026-09-25 (U60, live-proven).** It
+used to be accepted at config load and then inert on the pod: the
+`branch` → `target` map ran one way only, so an entry setting `target` alone
+still carried `branch="auto"`, and `wan_t2v_server`'s `/lora/set_stack` gates
+and routes on `branch`. On a MoE pipeline `branch="auto"` is illegal, so the
+swap was refused with `BranchAutoNotAllowedOnMoE` (HTTP 400) — **after** the
+25-30 minute Wan 2.2 boot and its ~70 GB weight fetch.
+
+The map is now symmetric: when `branch` is still at its `"auto"` default and
+`target` names a Wan MoE branch, `branch` is populated from it. Both spellings
+therefore resolve to identical entries, which is verifiable offline — the two
+configs below produce the same `capability_key`, so warm-reuse treats them as
+the same run.
+
+Proven live on pod `4gizxff8enqfeg` with
+`examples/configs/runpod-diffusers-wan-2_2-14b-t2v-lora-target-spelled.yaml`
+(`target:`-spelled, no `branch:` anywhere). The pod accepted the 2-entry stack
+and `/lora/inventory` reported each adapter on the transformer it was aimed at:
+
+    [0] civitai:2197303@2474081  branch='high_noise'  adapter_name='lora_0_h'
+    [1] civitai:2197303@2474073  branch='low_noise'   adapter_name='lora_1_l'
+
+Evidence: `tests/live/evidence/2026-09-25-u60-target-routing/`. The narrowness
+matters and is deliberate: the reverse map fires ONLY for Wan's MoE vocabulary,
+so H3's `transformer` never lands in a field whose vocabulary excludes it.
+H3 configs are unaffected either way — H3 routes on `target` natively.
 
 `branch` still loads. Setting only `branch` maps it onto `target` and logs one
 `deprecated-lora-branch` warning per entry that did so, pointing back at this

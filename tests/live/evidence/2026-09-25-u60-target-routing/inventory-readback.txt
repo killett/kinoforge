@@ -1,0 +1,57 @@
+U60 live re-proof — target:-spelled Wan 2.2 MoE routing
+pod 4gizxff8enqfeg (secure pool), cfg runpod-diffusers-wan-2_2-14b-t2v-lora-target-spelled.yaml
+HEAD de7f4ee3
+
+=== cfg LoRA block (target:-spelled, NOT branch:) ===
+loras:
+  - ref: "civitai:2197303@2474081"     # Arcane Style — high-noise tensor
+    strength: 1.0
+    target: high_noise
+
+=== controller-side resolution ===
+target: high_noise -> branch=high_noise  (symmetric map, U60)
+target: low_noise  -> branch=low_noise
+
+=== apply outcome (was HTTP 400 branch_auto_disallowed_on_moe before the map) ===
+lora-apply: applying 2 LoRA entries to pod 4gizxff8enqfeg
+lora-apply: pod 4gizxff8enqfeg accepted the 2-entry stack
+
+=== POD /lora/inventory READBACK — the decisive evidence ===
+HEALTH lora  : null
+HEALTH ready : True | arity: None
+
+INVENTORY: 2 adapter(s)
+  [0] ref=civitai:2197303@2474081
+      branch='high_noise'  target=None  strength=1.0
+      adapter_name='lora_0_h' size=153453632
+  [1] ref=civitai:2197303@2474073
+      branch='low_noise'  target=None  strength=1.0
+      adapter_name='lora_1_l' size=153453632
+
+=== EQUIVALENCE: target: vs branch: spelling ===
+Both configs resolve to the SAME (ref, strength, branch, target) tuples:
+  ('civitai:2197303@2474081', 1.0, 'high_noise', 'high_noise')
+  ('civitai:2197303@2474073', 1.0, 'low_noise',  'low_noise')
+
+And both produced the SAME capability_key on live pods:
+  4gizxff8enqfeg (target:-spelled) capability_key=03a20caf5c2d
+  5sk1n32pp5uzfp (branch:-spelled) capability_key=03a20caf5c2d
+
+That key encodes the resolved LoRA stack, so identical keys prove the two
+spellings are the same run — a stronger claim than a frame comparison could
+make, since neither cfg pins a seed and the renders use different noise.
+
+=== GENERATION ===
+output/20260925-122315_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4
+  480x480 / 81 frames / 16 fps / 979,972 B
+  GPU util 100% through denoise (probed, not inferred from est_spend)
+  Frame QA PASS: strong prompt adherence (meadow, waterfall, golden-hour
+  backlight, over-shoulder glance, butterflies, light ribbons, god rays),
+  clean temporal coherence on the push-in, no false-colour corruption.
+  The render is visibly STYLIZED despite the prompt asking for photorealism
+  — the Arcane Style pair binding, i.e. the adapters did not merely load.
+
+=== TEARDOWN ===
+both pods destroyed; kinoforge list reports BOTH required lines:
+  [instance overview] No running instances.
+  No instances recorded in ledger.
