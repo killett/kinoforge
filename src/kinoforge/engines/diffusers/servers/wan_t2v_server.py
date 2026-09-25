@@ -108,6 +108,20 @@ jobs: dict[str, JobState] = {}
 _q: queue.Queue[str] = queue.Queue()
 _worker_thread: threading.Thread | None = None
 
+# U50. Pushed onto the job queue to retire the worker at shutdown. A SENTINEL
+# rather than a flag the loop polls, because the loop blocks in `_q.get()` —
+# a flag would only be seen after the next real job arrived, which on a pod
+# winding down is never. It goes BEHIND whatever is already queued, so an
+# accepted job still runs: abandoning work the server already acknowledged
+# would trade a teardown race for lost renders.
+_WORKER_STOP = "__kinoforge_worker_stop__"
+
+# How long shutdown waits for the worker to drain. Bounded on purpose: a real
+# render runs for minutes and a wedged one runs forever, so an unbounded join
+# turns "shut down" into "hang" on a pod that is still billing. The thread is
+# a daemon, so giving up here is safe — the process still exits.
+_WORKER_JOIN_TIMEOUT_S = 10.0
+
 
 # --- T11: in-process LRU model registry -----------------------------------
 #
@@ -1405,6 +1419,12 @@ def _worker_loop() -> None:
 
     while True:
         job_id = _q.get()
+        if job_id == _WORKER_STOP:
+            # U50. Retire cleanly so the thread cannot outlive the server and
+            # write an artifact through a module attribute the caller has
+            # already restored — the mechanism behind 281 stub mp4s.
+            _log.info("worker: stop sentinel received; retiring")
+            return
         state = jobs.get(job_id)
         if state is None:
             _log.warning("worker: job %s vanished from registry", job_id)
@@ -1540,6 +1560,42 @@ def _startup() -> None:
     _worker_thread.start()
     ready.set()
     _log.info("startup: pipeline loaded + worker spawned, server ready")
+
+
+@app.on_event("shutdown")
+def _shutdown() -> None:
+    """Retire the job worker so it cannot outlive the server (U50).
+
+    The worker is a daemon thread blocked in ``_q.get()``. Without this it
+    survived the app's lifespan, and any job it picked up afterwards wrote
+    through ``ARTIFACT_DIR`` as it stood at write time — which, under a test
+    harness that has already reverted the attribute, is the baseline. That is
+    the mechanism that put 281 stub mp4s in ``/workspace/artifacts`` between
+    June and September 2026.
+
+    Best-effort by construction: the join is bounded, and a worker still busy
+    when the window closes is left to the daemon-thread semantics that always
+    governed it. Never raises — a shutdown handler that throws would mask
+    whatever is actually bringing the server down.
+    """
+    global _worker_thread
+    worker = _worker_thread
+    if worker is None or not worker.is_alive():
+        return
+    try:
+        _q.put(_WORKER_STOP)
+        worker.join(timeout=_WORKER_JOIN_TIMEOUT_S)
+    except Exception:  # noqa: BLE001 — must not mask the real shutdown cause
+        _log.warning("shutdown: worker retirement failed", exc_info=True)
+        return
+    if worker.is_alive():
+        _log.warning(
+            "shutdown: worker still running after %.0fs; leaving it to daemon "
+            "semantics. A job in flight may still write an artifact.",
+            _WORKER_JOIN_TIMEOUT_S,
+        )
+    else:
+        _worker_thread = None
 
 
 def _capability_for_model(name: str) -> str | None:

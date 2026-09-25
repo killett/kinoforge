@@ -128,22 +128,22 @@ _RUNPOD_CEILING_BYTES = 101_000
 #: an approximate byte range rather than a pinned figure — a pinned number
 #: goes stale the instant the comment reporting it changes length.)
 _BASELINE_BYTES: dict[str, int] = {
-    "runpod-diffusers-flashvsr-1080p-upscale": 89_156,
-    "runpod-diffusers-flashvsr-x4-torch26-upscale": 89_186,
-    "runpod-diffusers-flashvsr-x4-upscale": 89_156,
-    "runpod-diffusers-rife-60fps-interpolate": 76_716,
-    "runpod-diffusers-spandrel-x2-upscale": 73_976,
-    "runpod-diffusers-wan-2_1-1_3b-base": 50_106,
-    "runpod-diffusers-wan-2_1-1_3b-base-no-loras": 50_106,
-    "runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke": 50_106,
-    "runpod-diffusers-wan-2_1-1_3b-t2v-strength-grid": 50_106,
-    "runpod-diffusers-wan-2_2-14b-base": 50_130,
-    "runpod-diffusers-wan-2_2-14b-t2v": 50_102,
-    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-1080p-upscale": 89_194,
-    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale": 89_194,
-    "runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release": 50_130,
-    "runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale": 74_034,
-    "runpod-diffusers-wan-2_2-14b-t2v-strength-grid": 50_130,
+    "runpod-diffusers-flashvsr-1080p-upscale": 90_492,
+    "runpod-diffusers-flashvsr-x4-torch26-upscale": 90_522,
+    "runpod-diffusers-flashvsr-x4-upscale": 90_492,
+    "runpod-diffusers-rife-60fps-interpolate": 78_180,
+    "runpod-diffusers-spandrel-x2-upscale": 75_448,
+    "runpod-diffusers-wan-2_1-1_3b-base": 51_562,
+    "runpod-diffusers-wan-2_1-1_3b-base-no-loras": 51_562,
+    "runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke": 51_562,
+    "runpod-diffusers-wan-2_1-1_3b-t2v-strength-grid": 51_562,
+    "runpod-diffusers-wan-2_2-14b-base": 51_586,
+    "runpod-diffusers-wan-2_2-14b-t2v": 51_554,
+    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-1080p-upscale": 90_526,
+    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale": 90_526,
+    "runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release": 51_586,
+    "runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale": 75_510,
+    "runpod-diffusers-wan-2_2-14b-t2v-strength-grid": 51_586,
 }
 
 
