@@ -642,6 +642,23 @@ def _lora_health() -> dict[str, Any]:
             "default_target": None,
             "profile": None,
         }
+    # U59. The profile can be perfect and the apply still 500 — diffusers'
+    # load_lora_weights / set_adapters need PEFT at runtime, and an image that
+    # omitted it boots clean and advertises support. Found live at the cost of
+    # a full H200 boot. `reason` is not decoration: an unexplained false on a
+    # pod whose profile plainly has a target sends the operator looking at the
+    # profile, the cfg and the model before the missing pip package.
+    if not _lora.peft_available():
+        return {
+            "supported": False,
+            "targets": [],
+            "default_target": None,
+            "profile": profile.name,
+            "reason": (
+                "peft is not importable in this image, so diffusers cannot "
+                "apply a LoRA stack; add `peft` to engine.diffusers.pip"
+            ),
+        }
     return {
         "supported": True,
         "targets": list(profile.targets),

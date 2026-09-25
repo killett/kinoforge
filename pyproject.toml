@@ -66,7 +66,10 @@ module = ["replicate.*", "runwayml.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]  # Wan 2.2 server: torch + diffusers loaded on-pod only, no local stubs.
-module = ["torch", "torch.*", "diffusers", "diffusers.*"]
+# `peft` joins them for U59: the server probes `import peft` to avoid claiming
+# LoRA support an image cannot honour, and it is pod-only for the same reason
+# torch and diffusers are.
+module = ["torch", "torch.*", "diffusers", "diffusers.*", "peft", "peft.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]  # imageio + imageio.v3 have no py.typed markers; lazy-imported in _input_prep.

@@ -39,6 +39,7 @@ import urllib.request
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -499,6 +500,35 @@ class SetStackRequest(BaseModel):
 
     target: list[LoraTarget]
     download_specs: dict[str, ArtifactDownloadSpec]
+
+
+@lru_cache(maxsize=1)
+def peft_available() -> bool:
+    """Return whether the PEFT backend can actually be imported (U59).
+
+    Diffusers' ``load_lora_weights`` / ``set_adapters`` /
+    ``unload_lora_weights`` all require PEFT at RUNTIME, and nothing upstream
+    of the pod checks for it — not the config schema, not the provisioner. A
+    pod whose image omitted it booted clean, advertised ``lora.supported:
+    true``, and 500'd on the first apply with "PEFT backend is required for
+    this method." Cost: one full H200 boot.
+
+    Imports rather than inspecting metadata on purpose. A package can be
+    present on disk and still fail to import — a broken wheel, a torch/peft
+    ABI mismatch — and the error that cost the boot was raised at CALL time by
+    diffusers, not at install time. ``find_spec`` would have said yes.
+
+    Cached: ``/health`` is polled throughout a run and the answer cannot
+    change within a process.
+
+    Returns:
+        True when ``import peft`` succeeds.
+    """
+    try:
+        import peft  # noqa: F401 — probe only
+    except Exception:  # noqa: BLE001 — ANY import failure means unusable
+        return False
+    return True
 
 
 class LoraInventoryEntryModel(BaseModel):

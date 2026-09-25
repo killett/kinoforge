@@ -41,6 +41,26 @@ _STUB = "tests.engines.diffusers.servers.h3_stub_pipe.stub_loader"
 _STUB_DUAL = "tests.engines.diffusers.servers.h3_stub_pipe.stub_loader_dual"
 
 
+@pytest.fixture(autouse=True)
+def _peft_present(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Stub the pod-only ``peft`` package for this module's health assertions.
+
+    U59 made ``/health`` withdraw ``lora.supported`` when ``import peft``
+    fails, because a pod that cannot apply a stack must not claim it can. This
+    module runs in the CONTROLLER env, which carries no pod dependencies —
+    ``torch`` is absent too, as the memory warnings in these tests show — so
+    without a stub every LoRA-support assertion here would be measuring the
+    test environment rather than the server's partition logic, which is what
+    they are about.
+    """
+    from kinoforge.engines.diffusers.servers import _lora
+
+    monkeypatch.setitem(sys.modules, "peft", types.ModuleType("peft"))
+    _lora.peft_available.cache_clear()
+    yield
+    _lora.peft_available.cache_clear()
+
+
 def _reload_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stub: str) -> Any:
     """Reload the H3 server module wired to *stub*, with pod dirs under tmp_path.
 
