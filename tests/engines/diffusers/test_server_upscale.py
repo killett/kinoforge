@@ -275,7 +275,21 @@ class TestPostUpscale:
         monkeypatch.setenv("KINOFORGE_FLASHVSR_WEIGHTS_DIR", str(tmp_path / "flash"))
         assert srv._flashvsr_weights_dir() == tmp_path / "flash"
         monkeypatch.delenv("KINOFORGE_FLASHVSR_WEIGHTS_DIR")
-        assert srv._flashvsr_weights_dir() == Path("/workspace/models/flashvsr")
+        # U52: with no override, the leaf hangs off the module's models ROOT,
+        # which is itself `KINOFORGE_MODELS_DIR` resolved at import with a
+        # pod-local scratch fallback. This used to assert
+        # `/workspace/models/flashvsr` — RunPod's mount, baked in — which is
+        # the defect U52 fixed: on Modal that path is ephemeral container
+        # disk, so the bundle was re-fetched every boot and lost with the
+        # container. Asserting against the module constant rather than a
+        # literal keeps this a test of the OVERRIDE contract, which is what
+        # its name promises, instead of a second copy of the default.
+        assert srv._flashvsr_weights_dir() == Path(
+            f"{srv._MODELS_DIR_DEFAULT}/flashvsr"
+        )
+        assert not str(srv._MODELS_DIR_DEFAULT).startswith("/workspace"), (
+            "the models root must not fall back to another provider's mount"
+        )
 
 
 class TestFlashVSRDebugParams:

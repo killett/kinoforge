@@ -175,7 +175,7 @@ class FlashVSREngine(PodHTTPClientMixin, UpscalerEngine):
                 # alike — this provision is shared by all three.
                 '"imageio[ffmpeg,pyav]>=2.34" "av<18"\n',
                 "python -m kinoforge.upscalers.flashvsr._fetch_weights "
-                f"--bundle {bundle} --dest /workspace/models/flashvsr "
+                f"--bundle {bundle} --dest ${{KINOFORGE_MODELS_DIR:-/tmp/kf-models}}/flashvsr "
                 f"--include-long-video {long_video}\n",
                 # posi_prompt.pth is a precomputed CLIP-encoded prompt
                 # tensor that FlashVSRFullPipeline.init_cross_kv() loads
@@ -186,7 +186,7 @@ class FlashVSREngine(PodHTTPClientMixin, UpscalerEngine):
                 # directly, so we just need to stage the file where
                 # _runtime.py can find it. Fetch straight from the pinned
                 # commit — small (< 1 MB), no HF Hub needed.
-                'curl -L -f -o "/workspace/models/flashvsr/posi_prompt.pth" '
+                'curl -L -f -o "${KINOFORGE_MODELS_DIR:-/tmp/kf-models}/flashvsr/posi_prompt.pth" '
                 '"https://raw.githubusercontent.com/OpenImagingLab/FlashVSR'
                 "/b527c6f285fb30df530f5febc8b45764a789c961"
                 '/examples/WanVSR/prompt_tensor/posi_prompt.pth"\n',
@@ -197,7 +197,7 @@ class FlashVSREngine(PodHTTPClientMixin, UpscalerEngine):
                 # — pip install --no-deps skips the examples/ folder, so
                 # fetch utils.py to a stable path the runtime can load
                 # via importlib.
-                'curl -L -f -o "/workspace/models/flashvsr/utils_upstream.py" '
+                'curl -L -f -o "${KINOFORGE_MODELS_DIR:-/tmp/kf-models}/flashvsr/utils_upstream.py" '
                 '"https://raw.githubusercontent.com/OpenImagingLab/FlashVSR'
                 "/b527c6f285fb30df530f5febc8b45764a789c961"
                 '/examples/WanVSR/utils/utils.py"\n',

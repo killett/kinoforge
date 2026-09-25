@@ -98,12 +98,12 @@ class RifeEngine(PodHTTPClientMixin, InterpolatorEngine):
                 # empty until unzipped. Fetch the bundle + drop its contents into
                 # train_log/ so `from train_log.RIFE_HDv3 import Model` (arch) and
                 # `load_model(train_log, -1)` (flownet.pkl) both resolve.
-                f"mkdir -p {_RIFE_REPO_DIR}/train_log /workspace/models/rife\n",
+                f"mkdir -p {_RIFE_REPO_DIR}/train_log ${{KINOFORGE_MODELS_DIR:-/tmp/kf-models}}/rife\n",
                 f'curl -sL "{zip_url}" -o /tmp/rife_model.zip\n',
                 "unzip -oq /tmp/rife_model.zip -d /tmp/rife_model\n",
                 "cp -f /tmp/rife_model/*/*.py /tmp/rife_model/*/flownet.pkl "
                 f"{_RIFE_REPO_DIR}/train_log/\n",
-                f"cp -f {_RIFE_REPO_DIR}/train_log/flownet.pkl /workspace/models/rife/\n",
+                f"cp -f {_RIFE_REPO_DIR}/train_log/flownet.pkl ${{KINOFORGE_MODELS_DIR:-/tmp/kf-models}}/rife/\n",
             ]
         )
         return RenderedProvision(

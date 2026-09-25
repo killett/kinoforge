@@ -17,6 +17,10 @@
         "value": "/workspace/loras"
       },
       {
+        "key": "KINOFORGE_MODELS_DIR",
+        "value": "/workspace/models"
+      },
+      {
         "key": "HF_HOME",
         "value": "/workspace/.hf_cache"
       },

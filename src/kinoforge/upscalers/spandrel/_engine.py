@@ -93,7 +93,7 @@ class SpandrelEngine(PodHTTPClientMixin, UpscalerEngine):
         """
         block = cast(dict[str, Any], cast(dict[str, Any], cfg["upscale"])["spandrel"])
         model_url = str(block["model_url"])
-        dest_dir = "/workspace/models/spandrel"
+        dest_dir = "${KINOFORGE_MODELS_DIR:-/tmp/kf-models}/spandrel"
         script_lines = [
             'pip install "spandrel>=0.4.2" "imageio[ffmpeg]>=2.34"',
             f"mkdir -p {dest_dir}",

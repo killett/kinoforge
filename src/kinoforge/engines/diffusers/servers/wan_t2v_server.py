@@ -34,6 +34,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
+from kinoforge.core.pod_paths import MODELS_DIR_VAR, SCRATCH_MODELS_DIR
+
 # Force-disable huggingface_hub's xet transport before any HF import.
 # Task 8 attempt #8 surfaced a hard xet failure:
 #   RuntimeError: Task error: File reconstruction error:
@@ -150,15 +152,25 @@ _HEADROOM_MARGIN_BYTES = (
 )
 
 
-_SPANDREL_WEIGHTS_DIR_DEFAULT = "/workspace/models/spandrel"
-_FLASHVSR_WEIGHTS_DIR_DEFAULT = "/workspace/models/flashvsr"
+# U52. The weights root is the PROVIDER's answer, not RunPod's mount
+# baked in: `/workspace` is RunPod's, Modal mounts its Volume elsewhere,
+# and SkyPilot/Local attach none. Hardcoding it sent multi-GB bundles to
+# ephemeral container disk on Modal, re-fetched every boot. The provision
+# scripts that POPULATE these directories read the same var (see
+# upscalers/{spandrel,flashvsr}/_engine.py and interpolators/rife), so
+# reader and writer cannot drift apart.
+_MODELS_DIR_DEFAULT = os.environ.get(MODELS_DIR_VAR, SCRATCH_MODELS_DIR).rstrip("/")
+_SPANDREL_WEIGHTS_DIR_DEFAULT = f"{_MODELS_DIR_DEFAULT}/spandrel"
+_FLASHVSR_WEIGHTS_DIR_DEFAULT = f"{_MODELS_DIR_DEFAULT}/flashvsr"
 
 
 def _spandrel_weights_dir() -> Path:
     """Return the on-pod spandrel weights directory.
 
-    Override via ``KINOFORGE_SPANDREL_WEIGHTS_DIR`` for unit tests that
-    can't write under ``/workspace/models``.
+    Rooted at ``KINOFORGE_MODELS_DIR`` (the provider's volume-derived
+    models dir). Override the leaf directly via
+    ``KINOFORGE_SPANDREL_WEIGHTS_DIR`` for unit tests that cannot write
+    under the pod's models root.
     """
     return Path(
         os.environ.get("KINOFORGE_SPANDREL_WEIGHTS_DIR", _SPANDREL_WEIGHTS_DIR_DEFAULT)
@@ -168,8 +180,10 @@ def _spandrel_weights_dir() -> Path:
 def _flashvsr_weights_dir() -> Path:
     """Return the on-pod FlashVSR weights directory.
 
-    Override via ``KINOFORGE_FLASHVSR_WEIGHTS_DIR`` for unit tests that
-    can't write under ``/workspace/models``.
+    Rooted at ``KINOFORGE_MODELS_DIR`` (the provider's volume-derived
+    models dir). Override the leaf directly via
+    ``KINOFORGE_FLASHVSR_WEIGHTS_DIR`` for unit tests that cannot write
+    under the pod's models root.
     """
     return Path(
         os.environ.get("KINOFORGE_FLASHVSR_WEIGHTS_DIR", _FLASHVSR_WEIGHTS_DIR_DEFAULT)
@@ -192,7 +206,7 @@ def _load_model_to_gpu(name: str) -> Any:  # noqa: ANN401 — diffusers/SeedVR2/
         parts = name.split("-")
         variant, precision = parts[-2], parts[-1]
         return SeedVR2Runtime(
-            weights_dir=Path("/workspace/models/seedvr2"),
+            weights_dir=Path(f"{_MODELS_DIR_DEFAULT}/seedvr2"),
             variant=variant.upper(),  # type: ignore[arg-type]
             precision=precision,  # type: ignore[arg-type]
         )
@@ -239,7 +253,7 @@ def _load_model_to_gpu(name: str) -> Any:  # noqa: ANN401 — diffusers/SeedVR2/
         parts = name.split("-", 1)
         model = parts[-1]
         return RifeRuntime(
-            weights_dir=Path("/workspace/models/rife"),
+            weights_dir=Path(f"{_MODELS_DIR_DEFAULT}/rife"),
             model=model,
         )
     raise ValueError(f"unknown model name {name!r}; no loader registered")

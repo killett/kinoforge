@@ -21,9 +21,12 @@ same file and tests the resolved value. This closes the exact gap that let
 ``wan_t2v_server.py``'s ``_SPANDREL_WEIGHTS_DIR_DEFAULT`` and
 ``_FLASHVSR_WEIGHTS_DIR_DEFAULT`` escape earlier scans.
 
-Two known violations are allowlisted **by name** (``_ALLOWLISTED_CONSTANTS``
-below), not fixed here: ``_SPANDREL_WEIGHTS_DIR_DEFAULT`` and
-``_FLASHVSR_WEIGHTS_DIR_DEFAULT`` in ``wan_t2v_server.py``. Both are tracked as
+The allowlist (``_ALLOWLISTED_CONSTANTS`` below) is EMPTY as of 2026-09-24.
+It used to carry ``_SPANDREL_WEIGHTS_DIR_DEFAULT`` and
+``_FLASHVSR_WEIGHTS_DIR_DEFAULT`` in ``wan_t2v_server.py``; U52 fixed both,
+along with the SeedVR2 and RIFE dirs that carried no override at all and so
+never reached this scan. The historical note, still worth keeping: they were
+tracked as
 defect **U52** (PROGRESS.md STATUS INDEX) — the real fix spans seven files,
 because provisioner-side writers in three engine modules stage weights at the
 same paths the server reads, and moving only the read side desyncs the pair.
@@ -76,11 +79,18 @@ _FALLBACK_CONST = re.compile(
 # why a server-only change would desync from the provisioner-side writers
 # that stage weights at the same paths. Keyed by (file, constant name) so an
 # allowlisted FILE does not blanket-suppress a DIFFERENT constant in it.
-_ALLOWLISTED_CONSTANTS: dict[str, frozenset[str]] = {
-    "engines/diffusers/servers/wan_t2v_server.py": frozenset(
-        {"_SPANDREL_WEIGHTS_DIR_DEFAULT", "_FLASHVSR_WEIGHTS_DIR_DEFAULT"}
-    ),
-}
+# EMPTY since U52 was fixed (2026-09-24). The two entries that lived here —
+# `_SPANDREL_WEIGHTS_DIR_DEFAULT` and `_FLASHVSR_WEIGHTS_DIR_DEFAULT` — now
+# resolve from `KINOFORGE_MODELS_DIR` with a pod-local scratch fallback, so
+# they are no longer violations to suppress.
+#
+# The mechanism is KEPT rather than deleted: it is the documented way to land
+# a known violation without either weakening the scan or blocking a branch on
+# an unrelated fix, and `test_allowlist_does_not_swallow_a_different_violation
+# _in_the_same_file` still exercises it against a synthetic tree. An empty
+# allowlist is the strongest state this file has ever been in — do not add to
+# it without a U-item to point at.
+_ALLOWLISTED_CONSTANTS: dict[str, frozenset[str]] = {}
 
 
 def _resolve_constant(source: str, name: str) -> str | None:
@@ -105,17 +115,26 @@ def _resolve_constant(source: str, name: str) -> str | None:
     return match.group("path") if match else None
 
 
-def _scan(root: Path) -> list[tuple[str, int, str]]:
+def _scan(
+    root: Path,
+    allowlist: dict[str, frozenset[str]] | None = None,
+) -> list[tuple[str, int, str]]:
     """Report provider volume paths used as env fallbacks under *root*.
 
     Args:
         root: Package directory to walk for ``*.py`` files.
+        allowlist: Constants to suppress, keyed by relative path. Defaults to
+            the module's real :data:`_ALLOWLISTED_CONSTANTS`. Injectable so the
+            test that exercises the allowlist MECHANISM does not depend on the
+            real allowlist's contents — which are now empty, and should stay
+            that way (U52).
 
     Returns:
         ``(relative_path, line_number, offending_path)`` per violation,
-        excluding files inside the owning provider's own package and the two
-        constants named in ``_ALLOWLISTED_CONSTANTS`` (U52).
+        excluding files inside the owning provider's own package and any
+        constant the allowlist names.
     """
+    allowlist = _ALLOWLISTED_CONSTANTS if allowlist is None else allowlist
     findings: list[tuple[str, int, str]] = []
     for path in sorted(root.rglob("*.py")):
         rel = path.relative_to(root).as_posix()
@@ -143,7 +162,7 @@ def _scan(root: Path) -> list[tuple[str, int, str]]:
             resolved = _resolve_constant(source, const_name)
             if resolved is None:
                 continue  # not a string-literal module constant; not our business
-            allowlisted = _ALLOWLISTED_CONSTANTS.get(rel, frozenset())
+            allowlisted = allowlist.get(rel, frozenset())
             if const_name in allowlisted:
                 continue  # U52 — tracked, deliberately out of scope here
             lineno = source.count("\n", 0, const_match.start()) + 1
@@ -337,7 +356,18 @@ def test_allowlist_does_not_swallow_a_different_violation_in_the_same_file(
         "    )\n"
     )
 
-    findings = _scan(tmp_path / "kinoforge")
+    # Inject the allowlist rather than reading the real one, which U52
+    # emptied. The behaviour under test is the MECHANISM — keyed by constant
+    # NAME, not by file — and that must stay covered whether or not anything
+    # is currently suppressed.
+    findings = _scan(
+        tmp_path / "kinoforge",
+        allowlist={
+            "engines/diffusers/servers/wan_t2v_server.py": frozenset(
+                {"_SPANDREL_WEIGHTS_DIR_DEFAULT"}
+            )
+        },
+    )
 
     assert len(findings) == 1, findings
     rel, _lineno, found = findings[0]
@@ -345,22 +375,31 @@ def test_allowlist_does_not_swallow_a_different_violation_in_the_same_file(
     assert found == "/workspace/models/not-allowlisted"
 
 
-def test_allowlisted_constants_are_real_wan_t2v_server_violations() -> None:
-    """The allowlist names two constants that actually exist and resolve.
+def test_the_allowlist_is_empty_and_every_entry_would_be_a_real_violation() -> None:
+    """Nothing is suppressed today, and a stale entry could not hide in here.
 
-    Catches a stale or typo'd allowlist entry — one naming a constant that no
-    longer exists (renamed, deleted) in the file it claims to cover, which
-    would silently allowlist nothing while looking like it allowlists
-    something.
+    Replaces the staleness check that guarded the two U52 entries. Its job was
+    to catch an entry naming a constant that no longer exists — which would
+    silently allowlist nothing while looking like it allowlists something. With
+    the allowlist empty that check is vacuous, so it is inverted: the empty
+    state itself is now the assertion, and any future entry must still resolve
+    to a real provider-mount default rather than a typo.
     """
-    server_path = _SRC_ROOT / "engines" / "diffusers" / "servers" / "wan_t2v_server.py"
-    source = server_path.read_text()
-    rel = "engines/diffusers/servers/wan_t2v_server.py"
+    for rel, names in _ALLOWLISTED_CONSTANTS.items():
+        source = (_SRC_ROOT / rel).read_text()
+        for const_name in names:
+            resolved = _resolve_constant(source, const_name)
+            assert resolved is not None, (
+                f"{const_name} is allowlisted in {rel} but no longer resolves — "
+                f"a stale entry suppresses nothing while looking like it does"
+            )
+            assert resolved.startswith("/workspace"), (
+                f"{const_name} resolved to {resolved!r}, not a provider-mount "
+                f"path; it does not need allowlisting"
+            )
 
-    for const_name in _ALLOWLISTED_CONSTANTS[rel]:
-        resolved = _resolve_constant(source, const_name)
-        assert resolved is not None, f"{const_name} no longer resolves"
-        assert resolved.startswith("/workspace"), (
-            f"{const_name} resolved to {resolved!r}, not a /workspace path — "
-            "allowlist entry may be stale"
-        )
+    assert _ALLOWLISTED_CONSTANTS == {}, (
+        "the allowlist gained an entry. That is allowed, but it must be paired "
+        "with a U-item in PROGRESS.md recording why the violation is being "
+        "carried rather than fixed."
+    )

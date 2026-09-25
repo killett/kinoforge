@@ -17,6 +17,7 @@ from __future__ import annotations
 
 ARTIFACT_DIR_VAR = "KINOFORGE_ARTIFACT_DIR"
 LORAS_DIR_VAR = "KINOFORGE_LORAS_DIR"
+MODELS_DIR_VAR = "KINOFORGE_MODELS_DIR"
 HF_HOME_VAR = "HF_HOME"
 
 # Pod-local writable scratch for hosts with no attached volume. Mirrors the
@@ -25,6 +26,7 @@ HF_HOME_VAR = "HF_HOME"
 # not a shared multi-user /tmp.
 SCRATCH_ARTIFACT_DIR = "/tmp/kf-artifacts"  # noqa: S108
 SCRATCH_LORAS_DIR = "/tmp/kf-loras"  # noqa: S108
+SCRATCH_MODELS_DIR = "/tmp/kf-models"  # noqa: S108
 
 
 def pod_path_env(
@@ -50,11 +52,16 @@ def pod_path_env(
         env = {
             ARTIFACT_DIR_VAR: f"{root}/artifacts",
             LORAS_DIR_VAR: f"{root}/loras",
+            # U52. Upscaler/interpolator weight bundles (spandrel, FlashVSR,
+            # SeedVR2, RIFE) — multi-GB fetches that belong on the volume,
+            # not on container disk where Modal loses them every boot.
+            MODELS_DIR_VAR: f"{root}/models",
         }
     else:
         env = {
             ARTIFACT_DIR_VAR: SCRATCH_ARTIFACT_DIR,
             LORAS_DIR_VAR: SCRATCH_LORAS_DIR,
+            MODELS_DIR_VAR: SCRATCH_MODELS_DIR,
         }
     if hf_home is not None:
         env[HF_HOME_VAR] = hf_home
