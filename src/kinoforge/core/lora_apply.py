@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from kinoforge.core import registry
 from kinoforge.core.errors import ValidationError
 from kinoforge.core.logging import get_logger
+from kinoforge.core.lora_capability import LoraSupport
 from kinoforge.core.warm_reuse.integration import _entry_to_dict
 from kinoforge.core.warm_reuse.redaction import _register_observed_lora_refs
 
@@ -135,6 +136,27 @@ def resolve_download_specs(
             "size_hint": pick.size,
         }
     return specs
+
+
+def _engine_lora_support(cfg: Any) -> LoraSupport:  # noqa: ANN401 — a Config
+    """Return how this cfg's engine applies a LoRA stack (U56).
+
+    Degrades to ``SERVER_HTTP`` — the noisy answer — when the engine cannot be
+    resolved or consulted, matching the ABC's own default. That direction is
+    deliberate: not knowing the stack was handled elsewhere is not evidence
+    that it was, and staying quiet about an unapplied stack is the exact
+    failure U56 is about.
+
+    Args:
+        cfg: The loaded configuration.
+
+    Returns:
+        The engine's declared :class:`LoraSupport`.
+    """
+    try:
+        return registry.get_engine(_engine_kind(cfg))().lora_support()
+    except Exception:  # noqa: BLE001 — a bookkeeping read must not fail a run
+        return LoraSupport.SERVER_HTTP
 
 
 def ensure_lora_stack(
@@ -243,14 +265,35 @@ def ensure_lora_stack(
         #
         # So: say what is NOT happening, name the engine so the reader
         # can tell the two cases apart, and give the fix.
+        #
+        # U56 supplied the discriminator the two paragraphs above were
+        # reaching for: the engine now DECLARES how it applies a stack, so
+        # this seam can tell "should have applied, did not" from "was never
+        # this seam's job". Both cases still say something; only the first
+        # is an alarm.
+        if _engine_lora_support(cfg) is LoraSupport.WORKFLOW:
+            # Nothing is wrong. The engine applies adapters through its own
+            # graph and this seam correctly did nothing. Warning here fires
+            # on every healthy ComfyUI LoRA run, and a warning that fires on
+            # a correct configuration is how a load-bearing alarm gets
+            # trained out of its reader — the same reasoning that gave
+            # `--loras ""` an INFO rather than the discard WARNING.
+            _log.info(
+                "lora-apply: %d LoRA entries left to engine %r, which applies "
+                "them through its workflow graph rather than this seam.",
+                len(stack),
+                _engine_kind(cfg),
+            )
+            return
+        # Now the WARNING means what it says: the engine declares it CAN
+        # apply a stack, and the backend handed to us cannot.
         _log.warning(
-            "lora-apply: NOT APPLYING %d LoRA entries — engine %r's backend "
-            "(%s) has no set_lora_stack surface, so this run generates "
-            "WITHOUT them. Expected for ComfyUI configs, which apply LoRAs "
-            "through workflow nodes and carry `loras:` only to key the warm "
-            "pool. Otherwise: drop the `loras:` block / `--loras` stack, or "
-            "use a diffusers config whose engine.diffusers.server_cmd serves "
-            "LoRAs (see kinoforge.core.lora_profiles).",
+            "lora-apply: NOT APPLYING %d LoRA entries — engine %r declares "
+            "LoRA support but its backend (%s) has no set_lora_stack "
+            "surface, so this run generates WITHOUT them. Drop the `loras:` "
+            "block / `--loras` stack, or use a config whose "
+            "engine.diffusers.server_cmd serves LoRAs (see "
+            "kinoforge.core.lora_profiles).",
             len(stack),
             _engine_kind(cfg),
             type(backend).__name__,

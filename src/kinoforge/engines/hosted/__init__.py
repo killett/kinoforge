@@ -33,6 +33,8 @@ import urllib.request
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from kinoforge.core.lora_capability import LoraSupport
+
 if TYPE_CHECKING:
     from kinoforge.core.auth import AuthStrategy
     from kinoforge.core.cancel import CancelToken
@@ -397,6 +399,19 @@ class HostedAPIEngine(GenerationEngine):
     name: str = "hosted"
     requires_compute: bool = False
     requires_local_weights: bool = False
+
+    @classmethod
+    def lora_support(cls) -> LoraSupport:
+        """Declare LoRA support (U56): none.
+
+        The remote service owns the pipeline and exposes no adapter surface
+        this project drives. This is the engine U56 was found on — a cfg
+        carrying ``loras:`` here generated LoRA-less video.
+
+        Returns:
+            ``LoraSupport.NONE``.
+        """
+        return LoraSupport.NONE
 
     def __init__(
         self,

@@ -32,6 +32,8 @@ from collections.abc import Callable
 from os.path import basename
 from typing import TYPE_CHECKING, Any
 
+from kinoforge.core.lora_capability import LoraSupport
+
 if TYPE_CHECKING:
     from kinoforge.core.cancel import CancelToken
 from urllib.parse import urlparse
@@ -460,6 +462,15 @@ class FalEngine(GenerationEngine):
     name: str = "fal"
     requires_compute: bool = False
     requires_local_weights: bool = False
+
+    @classmethod
+    def lora_support(cls) -> LoraSupport:
+        """Declare LoRA support (U56). Hosted Bearer surface; no adapter route.
+
+        Returns:
+            ``LoraSupport.NONE``.
+        """
+        return LoraSupport.NONE
 
     def __init__(
         self,

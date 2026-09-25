@@ -26,6 +26,7 @@
     "declared_flags": "(self, key: 'CapabilityKey') -> 'dict[str, bool]'",
     "extract_last_frame": "(self, artifact: 'Artifact') -> 'bytes'",
     "key_base": "(self, cfg: 'dict[str, object]') -> 'str'",
+    "lora_support": "() -> 'LoraSupport'",
     "model_identity": "(self, cfg: 'dict[str, object]') -> 'str'",
     "profile_for": "(self, key: 'CapabilityKey') -> 'ModelProfile'",
     "provision": "(self, instance: 'Instance | None', cfg: 'dict[str, object]', *, cancel_token: 'object | None' = None) -> 'None'",

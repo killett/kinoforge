@@ -25,6 +25,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from kinoforge.core import frames, registry
+from kinoforge.core.lora_capability import LoraSupport
 
 if TYPE_CHECKING:
     from kinoforge.core.cancel import CancelToken
@@ -983,6 +984,19 @@ class ComfyUIEngine(GenerationEngine):
     name: str = "comfyui"
     requires_compute: bool = True
     requires_local_weights: bool = False
+
+    @classmethod
+    def lora_support(cls) -> LoraSupport:
+        """Declare LoRA support (U56): adapters go through workflow nodes.
+
+        They are applied by graph NODES, not by the ``set_lora_stack`` seam.
+        A ``loras:`` block is legitimate here — it feeds ``capability_key()``
+        — so this must not be NONE, which would refuse correct configs.
+
+        Returns:
+            ``LoraSupport.WORKFLOW``.
+        """
+        return LoraSupport.WORKFLOW
 
     def __init__(
         self,

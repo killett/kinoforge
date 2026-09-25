@@ -337,3 +337,118 @@ class LoraRefsResolvableCheck:
 
 register(LoraStackConflictCheck())
 register(LoraRefsResolvableCheck())
+
+
+def _declared_stack_size(cfg: Config) -> int:
+    """Return how many LoRAs this run asks for, from cfg OR the CLI.
+
+    ``--loras`` never enters ``cfg.loras`` — it lives on the ambient
+    ``EphemeralSession`` — so a count read off the cfg alone misses the CLI
+    path entirely, which is the specific reason U56 could not be closed by a
+    plain cfg-load check.
+
+    An explicitly EMPTY CLI stack (``--loras ""``) is a request to hold
+    nothing, not a request this engine must satisfy, so it counts as zero.
+    ``kinoforge grid`` emits exactly that for a swap grid's control cell.
+
+    Args:
+        cfg: The loaded configuration.
+
+    Returns:
+        Number of LoRAs the run would try to apply.
+    """
+    session = _active_session()
+    cli_loras = getattr(session, "cli_loras", None) if session is not None else None
+    if cli_loras is not None:
+        return len(cli_loras)
+    vault = getattr(session, "vault", None) if session is not None else None
+    vault_loras = getattr(vault, "loras", None) if vault is not None else None
+    return len(vault_loras or getattr(cfg, "loras", []) or [])
+
+
+class LoraEngineSupportCheck:
+    """STATIC ERROR — refuse a LoRA stack on an engine that cannot apply one.
+
+    U56. A hosted-engine cfg carrying ``loras:`` generated LoRA-less video.
+    ``ensure_lora_stack`` WARNs about it, but a warning in a multi-minute boot
+    log is not a gate: the run completes, bills, and returns a plausible video
+    with no LoRA in it.
+
+    Reads the engine's own :meth:`GenerationEngine.lora_support` declaration
+    rather than pattern-matching on ``engine.kind``, because the two shapes
+    that matter are indistinguishable from the cfg: a ComfyUI ``loras:`` block
+    is LEGITIMATE (applied by workflow nodes, and load-bearing for
+    ``capability_key()``), while a hosted one can never be applied at all.
+
+    STATIC, so it fires at ``load_config`` — the earliest possible point — and
+    again inside ``validate_for_generate``, by which time the ambient session
+    exists and the ``--loras`` path is visible too. Reading that session is not
+    I/O, so the category's contract holds.
+    """
+
+    name: str = "lora_engine_support"
+    category: CheckCategory = CheckCategory.STATIC
+    severity: Severity = Severity.ERROR
+
+    def applies_to(self, cfg: Config) -> bool:
+        """Apply iff this run asks for at least one LoRA, from any source."""
+        return _declared_stack_size(cfg) > 0
+
+    def run(self, cfg: Config) -> CheckResult:
+        """Refuse the stack when the engine declares it cannot apply one."""
+        from kinoforge.core import registry
+        from kinoforge.core.errors import UnknownAdapter
+
+        count = _declared_stack_size(cfg)
+        if count == 0:
+            return CheckResult(
+                name=self.name,
+                passed=True,
+                severity=Severity.ERROR,
+                message="no LoRA stack requested",
+            )
+        kind = cfg.engine.kind
+        try:
+            support = registry.get_engine(kind)().lora_support()
+        except (UnknownAdapter, Exception):  # noqa: BLE001 — unknown => not our call
+            # An engine that will not resolve or construct is somebody else's
+            # error to report; refusing here would turn an unrelated failure
+            # into a confusing LoRA message.
+            return CheckResult(
+                name=self.name,
+                passed=True,
+                severity=Severity.ERROR,
+                message=f"engine {kind!r} could not be consulted for LoRA support",
+            )
+        if support.can_apply:
+            return CheckResult(
+                name=self.name,
+                passed=True,
+                severity=Severity.ERROR,
+                message=f"engine {kind!r} applies LoRAs via {support.value}",
+            )
+        # Privacy: count and engine kind, never refs — the stack may be a
+        # vault's, and this message reaches stderr.
+        return CheckResult(
+            name=self.name,
+            passed=False,
+            severity=Severity.ERROR,
+            message=(
+                f"this run requests {count} LoRA(s) but engine {kind!r} cannot "
+                f"apply any — the stack would be dropped and the output would "
+                f"look plausible with no LoRA in it"
+            ),
+            fix_suggestion=(
+                "remove the LoRA stack, or switch to an engine that applies "
+                "them (diffusers over /lora/set_stack, comfyui via workflow "
+                "nodes)"
+            ),
+        )
+
+    def auto_fix(self, cfg: Config) -> Config | None:
+        """No auto-fix — dropping the operator's LoRAs is the defect, not the fix."""
+        del cfg
+        return None
+
+
+register(LoraEngineSupportCheck())

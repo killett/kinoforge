@@ -24,6 +24,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from kinoforge.core import registry
+from kinoforge.core.lora_capability import LoraSupport
 
 if TYPE_CHECKING:
     from kinoforge.core.cancel import CancelToken
@@ -269,6 +270,15 @@ class BedrockVideoEngine(GenerationEngine):
     name: str = "bedrock_video"
     requires_compute: bool = False
     requires_local_weights: bool = False
+
+    @classmethod
+    def lora_support(cls) -> LoraSupport:
+        """Declare LoRA support (U56). Hosted Bearer surface; no adapter route.
+
+        Returns:
+            ``LoraSupport.NONE``.
+        """
+        return LoraSupport.NONE
 
     def __init__(
         self,

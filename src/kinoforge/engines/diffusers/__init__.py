@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from kinoforge.core import frames, registry
+from kinoforge.core.lora_capability import LoraSupport
 
 if TYPE_CHECKING:
     from kinoforge.core.cancel import CancelToken
@@ -994,6 +995,18 @@ class DiffusersEngine(GenerationEngine):
     name: str = "diffusers"
     requires_compute: bool = True
     requires_local_weights: bool = True
+
+    @classmethod
+    def lora_support(cls) -> LoraSupport:
+        """Declare LoRA support (U56): applied over the pod's HTTP seam.
+
+        ``core/lora_apply.ensure_lora_stack`` POSTs the stack to the pod's
+        ``/lora/set_stack`` route once it reports ready.
+
+        Returns:
+            ``LoraSupport.SERVER_HTTP``.
+        """
+        return LoraSupport.SERVER_HTTP
 
     def __init__(
         self,

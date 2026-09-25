@@ -42,6 +42,7 @@ from kinoforge.core.interfaces import (
     ModelProfile,
     RenderedProvision,
 )
+from kinoforge.core.lora_capability import LoraSupport
 
 if TYPE_CHECKING:
     from kinoforge.core.auth import AuthStrategy
@@ -354,6 +355,20 @@ class RemoteSubmitPollEngine(GenerationEngine):
 
     requires_compute: bool = False
     requires_local_weights: bool = False
+
+    @classmethod
+    def lora_support(cls) -> LoraSupport:
+        """Declare LoRA support (U56). Hosted submit/poll surface: none.
+
+        Every engine on this base talks to a remote service that owns its own
+        pipeline and exposes no adapter route this project drives. Declared
+        here rather than on each subclass so a new hosted engine inherits the
+        correct answer instead of the permissive one.
+
+        Returns:
+            ``LoraSupport.NONE``.
+        """
+        return LoraSupport.NONE
 
     def __init__(
         self,

@@ -113,6 +113,16 @@ def register_engine(name: str, factory: Callable[[], GenerationEngine]) -> None:
     _engines[name] = factory
 
 
+def engine_names() -> list[str]:
+    """Return the names of every currently-registered generation engine.
+
+    Mirrors :func:`provider_names`. Used by surfaces that must reason about
+    every engine rather than the one a cfg names — e.g. asserting each
+    declares its LoRA support (U56).
+    """
+    return list(_engines.keys())
+
+
 def get_engine(name: str) -> Callable[[], GenerationEngine]:
     """Return the engine factory for ``name`` or raise ``UnknownAdapter``.
 

@@ -22,6 +22,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from kinoforge.core import registry
+from kinoforge.core.lora_capability import LoraSupport
 
 if TYPE_CHECKING:
     from kinoforge.core.cancel import CancelToken
@@ -165,6 +166,21 @@ class FakeEngine(GenerationEngine):
     name: str = "fake"
     requires_compute: bool = True
     requires_local_weights: bool = False
+
+    @classmethod
+    def lora_support(cls) -> LoraSupport:
+        """Declare LoRA support (U56). Stands in for an HTTP-seam engine.
+
+        ``SERVER_HTTP``, not ``NONE``. The fake exists to let tests drive the
+        real ``ensure_lora_stack`` path, and they pair it with spy backends
+        that DO expose ``set_lora_stack`` — so ``NONE`` would be a false
+        statement about what this engine stands in for, and would make
+        ``LoraEngineSupportCheck`` refuse every LoRA fixture in the suite.
+
+        Returns:
+            ``LoraSupport.SERVER_HTTP``.
+        """
+        return LoraSupport.SERVER_HTTP
 
     def __init__(
         self,

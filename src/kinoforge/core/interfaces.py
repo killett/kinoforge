@@ -25,6 +25,7 @@ from typing import (
 
 from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.fps_resolver import InterpCapability
+from kinoforge.core.lora_capability import LoraSupport
 from kinoforge.core.scale_target import ScaleTarget
 
 if TYPE_CHECKING:
@@ -1164,6 +1165,30 @@ class GenerationEngine(ABC):
     name: str
     requires_compute: bool
     requires_local_weights: bool
+
+    @classmethod
+    def lora_support(cls) -> LoraSupport:
+        """Declare whether this engine can apply a LoRA stack, and how (U56).
+
+        Concrete, but the default is the NOISY answer, not the quiet one. An
+        engine that does not override claims it applies stacks over the HTTP
+        seam, so ``LoraEngineSupportCheck`` lets the cfg through and
+        ``ensure_lora_stack`` WARNs loudly if the backend then turns out to
+        have no ``set_lora_stack``. The failure mode U56 is about — a stack
+        silently dropped with no signal anywhere — is what an inherited
+        ``NONE`` or ``WORKFLOW`` would reintroduce, so neither is the default.
+
+        This was briefly ``@abstractmethod``, which is a stronger guarantee
+        and the wrong trade: it also breaks every test-local
+        ``GenerationEngine`` subclass, none of which has an opinion about
+        LoRAs. The guarantee is kept where it matters instead —
+        ``tests/validation/test_lora_engine_support.py`` asserts every
+        REGISTERED engine overrides this rather than inheriting.
+
+        Returns:
+            The engine's :class:`~kinoforge.core.lora_capability.LoraSupport`.
+        """
+        return LoraSupport.SERVER_HTTP
 
     @abstractmethod
     def provision(  # noqa: D102
