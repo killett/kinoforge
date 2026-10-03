@@ -258,6 +258,30 @@ def _preflight_error_block(engine: str, provider: str | None) -> str:
     )
 
 
+def _preflight_image_error_block(engine: str) -> str:
+    """Build the refusal block for an ephemeral run on an image config.
+
+    Args:
+        engine: The image-engine registry name (``cfg.image.engine``).
+
+    Returns:
+        A multi-line error message naming the image engine and explaining
+        why no image engine can honour ``--ephemeral`` today.
+    """
+    return (
+        "ERROR: --ephemeral is not supported for this image configuration.\n"
+        f"  image engine:  {engine}\n"
+        f"  reason:        {engine} has no provider-side record-delete hook in "
+        "kinoforge.\n"
+        "\n"
+        "  No image engine implements record deletion today, and two of the\n"
+        "  three hosted ones cannot: Luma's agents API has no DELETE endpoint\n"
+        "  (records purge via the dashboard) and fal exposes no delete path.\n"
+        "\n"
+        "  Drop --ephemeral to allow provider-side record retention."
+    )
+
+
 def _preflight_ephemeral(ctx: SessionContext) -> str | None:
     """Look up ``(engine, provider)`` in ``EPHEMERAL_CAPABILITIES``.
 
@@ -267,6 +291,17 @@ def _preflight_ephemeral(ctx: SessionContext) -> str | None:
     cfg = ctx.cfg
     if cfg is None:
         return None
+    # Image configs carry no video engine at all, so the (engine, provider)
+    # table below cannot answer for them — today they are refused only because
+    # `cfg.engine.kind if cfg.engine else ""` misses on ("", None), which is an
+    # accident rather than a decision. Answer deliberately instead.
+    if cfg.image is not None:
+        from kinoforge.core.ephemeral import IMAGE_EPHEMERAL_CAPABILITIES
+
+        if IMAGE_EPHEMERAL_CAPABILITIES.get(cfg.image.engine, False):
+            return None
+        return _preflight_image_error_block(cfg.image.engine)
+
     engine_kind = cfg.engine.kind if cfg.engine else ""
     provider = cfg.compute.provider if cfg.compute else None
     # Provider-less hosted engines (replicate, runway) carry None in the
