@@ -1393,7 +1393,7 @@ def _cmd_image(args: argparse.Namespace, ctx: SessionContext) -> int:
         success or on ``--dry-run``.
     """
     from kinoforge.core.errors import Cancelled, KinoforgeError, ValidationError
-    from kinoforge.core.image_run import generate_image
+    from kinoforge.core.image_run import _resolve_prompt, generate_image
 
     if ctx.cfg is None:
         print("error: --config required for image", file=sys.stderr)
@@ -1411,22 +1411,23 @@ def _cmd_image(args: argparse.Namespace, ctx: SessionContext) -> int:
     run_id = _resolve_run_id(args, "image")
 
     if getattr(args, "dry_run", False):
-        # Resolve the prompt only — no registry construction, no profile
-        # resolution, no provider call. A dry run must cost nothing.
-        prompt = getattr(args, "prompt", None) or cfg.image.prompt or cfg.prompt or ""
-        if not prompt.strip():
-            print(
-                "error: no prompt to generate from: pass --prompt, or set "
-                "`image.prompt` (or top-level `prompt:`) in the config",
-                file=sys.stderr,
-            )
+        # Resolve the prompt through the SAME helper generate_image uses — no
+        # registry construction, no profile resolution, no provider call, so
+        # a dry run costs nothing — but also no second copy of the
+        # precedence chain (CLI > image.prompt > top-level prompt) or its
+        # whitespace-only handling to drift from the real path's.
+        try:
+            prompt = _resolve_prompt(cfg, cfg.image, getattr(args, "prompt", None))
+        except ValidationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
             return 2
-        print(f"[dry-run] engine={cfg.image.engine}")
-        print(f"[dry-run] model={cfg.image.spec.get('model', '(unset)')}")
-        print(f"[dry-run] params={cfg.image.params or '{}'}")
-        print(f"[dry-run] prompt={prompt[:80]!r}")
-        print(f"[dry-run] run_id={run_id}")
-        print(f"[dry-run] sink={'disabled' if sink is None else 'enabled'}")
+        print("image plan:")
+        print(f"  engine: {cfg.image.engine}")
+        print(f"  model: {cfg.image.spec.get('model', '(unset)')}")
+        print(f"  params: {cfg.image.params or '{}'}")
+        print(f"  prompt: {prompt[:80]!r}")
+        print(f"  run_id: {run_id}")
+        print(f"  sink: {'disabled' if sink is None else 'enabled'}")
         return 0
 
     store = ctx.store()

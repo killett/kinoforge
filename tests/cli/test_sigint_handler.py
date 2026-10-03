@@ -92,7 +92,9 @@ upscale:
 """
 
 
-@pytest.mark.parametrize("cmd", ["generate", "batch", "upscale", "interpolate"])
+@pytest.mark.parametrize(
+    "cmd", ["generate", "batch", "upscale", "interpolate", "image"]
+)
 def test_handler_installed_for_every_cancel_token_command(
     cmd: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -129,6 +131,7 @@ def test_handler_installed_for_every_cancel_token_command(
         "batch": [cmd, "--config", str(cfg), "--manifest", str(manifest)],
         "upscale": [cmd, "--config", str(cfg), "--video", str(video)],
         "interpolate": [cmd, "--config", str(cfg), "--video", str(video)],
+        "image": [cmd, "--config", str(cfg), "--prompt", "p"],
     }[cmd]
 
     assert _main.main(argv) == 0
