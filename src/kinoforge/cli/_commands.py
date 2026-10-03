@@ -143,6 +143,32 @@ def _build_sink(cfg: Config, args: argparse.Namespace) -> OutputSink | None:
     return LocalOutputSink(dir=cfg.output.dir, clock=clock)
 
 
+def _resolve_run_id(args: argparse.Namespace, prefix: str) -> str:
+    """Return the explicit ``--run-id`` or derive ``<prefix>-<local timestamp>``.
+
+    Extracted from the three identical derivations in ``_cmd_generate``,
+    ``_cmd_upscale`` and ``_cmd_interpolate``; ``_cmd_image`` would have been a
+    fourth copy. Reads the clock through the ``kinoforge.cli`` namespace (the
+    same seam ``_build_sink`` uses) so ``_cmd_generate``'s existing
+    ``monkeypatch.setattr("kinoforge.cli._cli_clock", fake_clock)`` test keeps
+    producing a deterministic id — a plain ``datetime.now()`` here would have
+    silently detached that derivation from the seam it already honoured.
+
+    Args:
+        args: Parsed CLI arguments; ``run_id`` may be absent or ``None``.
+        prefix: Run-kind prefix, e.g. ``"run"``, ``"upscale"``, ``"image"``.
+
+    Returns:
+        The run identifier.
+    """
+    explicit = getattr(args, "run_id", None)
+    if explicit is not None:
+        return str(explicit)
+    clock = getattr(sys.modules.get("kinoforge.cli"), "_cli_clock", _cli_clock)
+    ts = datetime.fromtimestamp(clock.now()).strftime("%Y%m%d-%H%M%S")
+    return f"{prefix}-{ts}"
+
+
 @runtime_checkable
 class _LedgerProto(Protocol):
     """Structural protocol for the subset of Ledger used by _SingleIdLedgerView."""
@@ -956,14 +982,9 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     # test monkeypatches on ``kinoforge.cli._cli_clock`` /
     # ``kinoforge.cli.generate`` are honoured.
     _cli_mod = sys.modules.get("kinoforge.cli")
-    _clock = getattr(_cli_mod, "_cli_clock", _cli_clock)
     _generate = getattr(_cli_mod, "generate", generate)
 
-    if args.run_id is not None:
-        run_id: str = args.run_id
-    else:
-        ts = datetime.fromtimestamp(_clock.now()).strftime("%Y%m%d-%H%M%S")
-        run_id = f"run-{ts}"
+    run_id: str = _resolve_run_id(args, "run")
 
     # B3 / B4 — warm-attach precedence chain.
     attach_pod_id: str | None = getattr(args, "attach_pod", None)
@@ -1125,11 +1146,7 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
     input_artifact = _resolve_input_video_as_artifact(args.video)
     store = ctx.store()
     sink_local = _build_sink(cfg, args)
-    run_id = (
-        args.run_id
-        if getattr(args, "run_id", None) is not None
-        else f"upscale-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-    )
+    run_id = _resolve_run_id(args, "upscale")
 
     instance: Instance | None = None
     attach_pod_id = getattr(args, "attach_pod", None)
@@ -1242,11 +1259,7 @@ def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
     input_artifact = _resolve_input_video_as_artifact(args.video)
     store = ctx.store()
     sink_local = _build_sink(cfg, args)
-    run_id = (
-        args.run_id
-        if getattr(args, "run_id", None) is not None
-        else f"interpolate-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-    )
+    run_id = _resolve_run_id(args, "interpolate")
 
     instance: Instance | None = None
     attach_pod_id = getattr(args, "attach_pod", None)
@@ -1355,6 +1368,88 @@ def _upscaler_precision_tag(cfg: Config) -> str:
     if cfg.upscale.seedvr2 is not None:
         return f"{cfg.upscale.seedvr2.variant.lower()}-{cfg.upscale.seedvr2.precision}"
     return ""
+
+
+def _cmd_image(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Handle ``image`` subcommand — terminal image generation, no compute.
+
+    Every image engine declares ``requires_compute = False``, so there is no
+    provider, no ledger row and no lifecycle here: the handler resolves the
+    sink and run id, then hands off to
+    :func:`kinoforge.core.image_run.generate_image`.
+
+    ``--dry-run`` returns before the store, the registry engine, or a
+    profile are ever constructed — only the sink (local filesystem only,
+    never network) and the run id are built first, so a dry run makes no
+    provider or HTTP call.
+
+    Args:
+        args: Parsed CLI arguments for the ``image`` subcommand.
+        ctx: Per-invocation session context.
+
+    Returns:
+        Exit code: 2 for a missing ``image:`` block or an unresolvable
+        prompt, 1 for a cancelled or otherwise failed generation, 0 on
+        success or on ``--dry-run``.
+    """
+    from kinoforge.core.errors import Cancelled, KinoforgeError, ValidationError
+    from kinoforge.core.image_run import generate_image
+
+    if ctx.cfg is None:
+        print("error: --config required for image", file=sys.stderr)
+        return 2
+    cfg = ctx.cfg
+    if cfg.image is None:
+        print(
+            "error: --config must contain an `image:` block; "
+            "see examples/configs/luma-uni1-t2i.yaml",
+            file=sys.stderr,
+        )
+        return 2
+
+    sink = _build_sink(cfg, args)
+    run_id = _resolve_run_id(args, "image")
+
+    if getattr(args, "dry_run", False):
+        # Resolve the prompt only — no registry construction, no profile
+        # resolution, no provider call. A dry run must cost nothing.
+        prompt = getattr(args, "prompt", None) or cfg.image.prompt or cfg.prompt or ""
+        if not prompt.strip():
+            print(
+                "error: no prompt to generate from: pass --prompt, or set "
+                "`image.prompt` (or top-level `prompt:`) in the config",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"[dry-run] engine={cfg.image.engine}")
+        print(f"[dry-run] model={cfg.image.spec.get('model', '(unset)')}")
+        print(f"[dry-run] params={cfg.image.params or '{}'}")
+        print(f"[dry-run] prompt={prompt[:80]!r}")
+        print(f"[dry-run] run_id={run_id}")
+        print(f"[dry-run] sink={'disabled' if sink is None else 'enabled'}")
+        return 0
+
+    store = ctx.store()
+    try:
+        artifact = generate_image(
+            cfg,
+            store=store,
+            run_id=run_id,
+            sink=sink,
+            prompt_override=getattr(args, "prompt", None),
+            cancel_token=ctx.cancel_token,
+        )
+    except ValidationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except Cancelled:
+        print("image: cancelled", file=sys.stderr)
+        return 1
+    except KinoforgeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"image: uri={artifact.uri!r}")
+    return 0
 
 
 def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:

@@ -31,6 +31,7 @@ from kinoforge.cli._commands import (
     _cmd_gc,
     _cmd_generate,
     _cmd_grid,
+    _cmd_image,
     _cmd_interpolate,
     _cmd_list,
     _cmd_logs,
@@ -93,7 +94,7 @@ class _LorasOnceAction(argparse.Action):
 # were missing from the set, so Ctrl-C bypassed the Phase-50 cooperative
 # drain on exactly the ``--no-reuse`` one-shot paths (audit B6).
 _INTERRUPTIBLE_CMDS: frozenset[str] = frozenset(
-    {"generate", "batch", "upscale", "interpolate"}
+    {"generate", "batch", "upscale", "interpolate", "image"}
 )
 
 # Subcommands that never trigger orchestration. ``--ephemeral`` is a no-op
@@ -150,6 +151,7 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
     "generate": _cmd_generate,
     "upscale": _cmd_upscale,
     "interpolate": _cmd_interpolate,
+    "image": _cmd_image,
     "batch": _cmd_batch,
     "list": _cmd_list,
     "status": _cmd_status,
@@ -770,6 +772,42 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         action="store_true",
         dest="dry_run",
         help="emit the resolved plan to stdout and exit 0; no pod work",
+    )
+
+    # image — terminal image generation. No compute flags: every image engine
+    # declares requires_compute=False, so there is no pod to reuse or attach.
+    p_image = sub.add_parser(
+        "image", help="generate a single image from a prompt (no compute)"
+    )
+    p_image.add_argument("-c", "--config", required=True, metavar="PATH")
+    p_image.add_argument(
+        "--prompt",
+        default=None,
+        metavar="TEXT",
+        help=(
+            "prompt text; overrides cfg.image.prompt, which overrides the "
+            "top-level cfg.prompt. Optional — a config carrying a prompt runs "
+            "without it."
+        ),
+    )
+    p_image_output = p_image.add_mutually_exclusive_group()
+    p_image_output.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="PATH",
+        help="user-facing output directory (overrides cfg.output.dir)",
+    )
+    p_image_output.add_argument(
+        "--no-output-dir",
+        action="store_true",
+        help="disable user-facing publish; the image remains only in the store",
+    )
+    p_image.add_argument("--run-id", default=None, metavar="ID")
+    p_image.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="emit the resolved plan to stdout and exit 0; no provider call",
     )
 
     # list
