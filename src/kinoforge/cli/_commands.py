@@ -363,14 +363,25 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
         ctx: Per-invocation session context.
 
     Returns:
-        Exit code: 0 on success, 1 for an unknown adapter, an already-recorded
-        instance, or an id-less create. Exceptions from ``create_instance``
-        propagate; the pre-launch row they leave behind is deliberate
-        (ruling C1).
+        Exit code: 0 on success, 1 for an image cfg (no ``engine:`` to
+        provision), an unknown adapter, an already-recorded instance, or an
+        id-less create. Exceptions from ``create_instance`` propagate; the
+        pre-launch row they leave behind is deliberate (ruling C1).
     """
     if ctx.cfg is None:
         raise RuntimeError("_cmd_provision requires --config")
     cfg = ctx.cfg
+    if cfg.engine is None:
+        # An `image:` cfg has no compute to provision — `kinoforge image`
+        # never books an instance. An operator who points `provision` at one
+        # (easy to do: both are `--config <yaml>`) gets a named refusal
+        # instead of an AttributeError three lines down.
+        print(
+            "error: provision requires a video cfg (`engine:` block) — "
+            "image configs have no compute to provision",
+            file=sys.stderr,
+        )
+        return 1
 
     # Resolve provider and engine, then call provisioner.
     # build_provider_for threads compute.backend_options.skypilot into
@@ -380,10 +391,6 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
         from kinoforge._adapters import build_provider_for
         from kinoforge.core import registry
 
-        # `provision` is a compute-provisioning command; `kinoforge image`
-        # (the only command that produces an `image:`-only cfg) never
-        # reaches here, so cfg.engine is always set.
-        assert cfg.engine is not None  # noqa: S101 — video-only command path
         engine = registry.get_engine(cfg.engine.kind)()
         provider = build_provider_for(cfg)
     except UnknownAdapter as exc:

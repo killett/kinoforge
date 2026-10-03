@@ -140,8 +140,47 @@ def test_forbidden_key_alongside_image_is_refused_by_name(
     from kinoforge.core.config import Config
 
     data = {**IMAGE_CFG_MINIMAL, key: value}
-    with pytest.raises(PydanticValidationError, match=key):
+    # Anchored on the enumeration, not `match=key` alone: the validator's
+    # fixed boilerplate text ("no compute, no video engine and no model
+    # fetch") contains the literal substrings "compute" and "engine", so
+    # `match=key` for those two cases would pass even if the validator never
+    # named the triggering key in its `must not also carry:` list.
+    with pytest.raises(PydanticValidationError, match=rf"carry: [^.]*\b{key}\b"):
         Config.model_validate(data)
+
+
+def test_real_config_field_outside_the_allowlist_is_still_refused() -> None:
+    """A denylist-of-11 would admit this; the allowlist refuses it too.
+
+    Bug this catches: a validator that is secretly `forbidden = set(data) &
+    FORBIDDEN_WITH_IMAGE_KEYS` (a denylist of exactly the 11 keys this test
+    file's own parametrization exercises) rather than the real allowlist
+    (`forbidden = set(data) - _IMAGE_CFG_ALLOWED_KEYS`). `sweeper` is a real,
+    pre-existing `Config` field that is neither in the 11-item
+    `FORBIDDEN_WITH_IMAGE` list nor in the allowlist — a denylist keyed on
+    that list would silently admit it, which is exactly the "a denylist
+    would silently admit every block added to Config after today" regression
+    this design claims to prevent.
+    """
+    from kinoforge.core.config import Config
+
+    with pytest.raises(PydanticValidationError, match=r"carry: [^.]*\bsweeper\b"):
+        Config.model_validate({**IMAGE_CFG_MINIMAL, "sweeper": {"interval_s": 5.0}})
+
+
+def test_entirely_unknown_key_alongside_image_is_refused() -> None:
+    """A typo'd/unknown key is refused too — not just known Config fields.
+
+    Bug this catches: the same denylist-of-11 shape as the test above, but
+    also pins the one place `Config`'s default `extra="ignore"` (no
+    `model_config` override on `Config` itself) is effectively overridden —
+    without the `image:` allowlist, an unknown top-level key like a typo'd
+    `imagee:` would be silently dropped rather than refused.
+    """
+    from kinoforge.core.config import Config
+
+    with pytest.raises(PydanticValidationError, match=r"carry: [^.]*\bimagee\b"):
+        Config.model_validate({**IMAGE_CFG_MINIMAL, "imagee": {"engine": "fake"}})
 
 
 def test_mode_t2i_is_accepted_and_other_modes_are_not() -> None:

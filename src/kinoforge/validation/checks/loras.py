@@ -407,10 +407,27 @@ class LoraEngineSupportCheck:
                 severity=Severity.ERROR,
                 message="no LoRA stack requested",
             )
-        # image cfgs forbid `loras:` (Config's allowlist) and have no cfg.engine;
-        # count > 0 above means either cfg.loras or the CLI --loras path fired,
-        # both of which require a video cfg with an engine block.
-        assert cfg.engine is not None  # noqa: S101 — guarded above
+        if cfg.engine is None:
+            # image cfgs forbid `loras:` (Config's allowlist), but the CLI
+            # `--loras` path reads off the ambient EphemeralSession,
+            # independent of cfg — an operator CAN reach `kinoforge image
+            # --config <image.yaml> --loras ...` with count > 0 and no
+            # engine. Same U56 shape this check exists for: the stack would
+            # be silently inert, just with no engine at all to blame it on.
+            return CheckResult(
+                name=self.name,
+                passed=False,
+                severity=Severity.ERROR,
+                message=(
+                    f"this run requests {count} LoRA(s) but carries no "
+                    f"`engine:` block (an `image:` config) — there is "
+                    f"nothing to apply the stack to"
+                ),
+                fix_suggestion=(
+                    "remove the LoRA stack (cfg.loras / --loras) from an "
+                    "image run; image configs do not support LoRAs"
+                ),
+            )
         kind = cfg.engine.kind
         try:
             support = registry.get_engine(kind)().lora_support()

@@ -1592,6 +1592,18 @@ class Config(BaseModel):
 
         ``mode`` is validated here rather than left documentary — a typo'd
         ``mode: t2v`` on an image config is caught at load.
+
+        MUST stay defined below ``_promote_legacy_kind_lora_to_loras_block``:
+        pydantic runs same-mode ``"before"`` validators in LAST-DEFINED-FIRST
+        order, so this one currently sees the promotion validator's output
+        (an `image:` cfg carrying legacy ``models: [{kind: lora}]`` gets
+        refused naming the `models` key it actually wrote). Moving this
+        validator above that one would flip the order: the promotion
+        validator would run first, rewrite the typo'd `models:` into a
+        top-level `loras:` key the operator never wrote, emit a spurious
+        ``DeprecationWarning``, and THEN this validator would refuse naming
+        `loras` instead — a confusing message pointing at a key that does
+        not exist in the operator's YAML.
         """
         if not isinstance(data, dict) or data.get("image") is None:
             return data
