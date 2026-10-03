@@ -26,6 +26,28 @@ first unchecked task without redoing committed work.
 > `examples/configs/modal-diffusers-minimax-h3-t2va-long.yaml`.
 
 ## Pointers
+- **NEXT UP — standalone image generation (`kinoforge image`):** design doc
+  `docs/superpowers/specs/2026-10-03-standalone-image-generation-design.md`, approved
+  2026-10-03. Implementation plan NOT YET WRITTEN — that is the single next action
+  (invoke `writing-plans` against the design). Closes the gap that kinoforge has four
+  registered image engines, an image-profile cache and an image sink schema but no way to
+  produce an image: the only route into an `ImageEngine` is `cfg.keyframe` ->
+  `KeyframeStage`, which fills conditioning roles for a video mode and never terminates at
+  a PNG. Decisions locked in the design: a new `image` subcommand (NOT `generate --mode
+  t2i` — `Config.engine`/`models` are required and `core/validation.py:48` checks the mode
+  against the VIDEO profile); a new `image:` block with `ImageConfig` as the base
+  `KeyframeConfig` extends (deletes the duplicate `capability_key()`); an ALLOWLIST of
+  permitted keys, not a denylist, because silently-inert config is the U51/U56 defect class;
+  one image per invocation (no pod to amortise, so a shell loop costs the same as a batch);
+  `--ephemeral` refused DELIBERATELY via a separate `IMAGE_EPHEMERAL_CAPABILITIES` table
+  keyed on image-engine name (today it is refused only by an accidental `("", None)` key
+  miss at `cli/_main.py:270`). Two findings the design surfaced and fixes: `ImageBackend`
+  cannot be cancelled (`core/interfaces.py:852`/`:855` take no token, so a ~125 s Luma poll
+  ignores SIGINT) and `ImageProfile` has NO consumer anywhere
+  (`pipeline/keyframe.py:48` says "reserved for future spec validation" and nothing reads
+  it). Open question the plan MUST resolve rather than assume: whether `kinoforge doctor`
+  survives `engine: null` + `compute: null` — 7 of the 22 `cfg.engine` dereference sites are
+  in `validation/checks/*`.
 - **Spec (the *what*):** `SPEC.md`
 - **Design (validated):** `DESIGN.md`
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
