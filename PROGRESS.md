@@ -28,8 +28,11 @@ first unchecked task without redoing committed work.
 ## Pointers
 - **NEXT UP — standalone image generation (`kinoforge image`):** design doc
   `docs/superpowers/specs/2026-10-03-standalone-image-generation-design.md`, approved
-  2026-10-03. Implementation plan NOT YET WRITTEN — that is the single next action
-  (invoke `writing-plans` against the design). Closes the gap that kinoforge has four
+  2026-10-03. **Implementation plan:**
+  `docs/superpowers/plans/2026-10-03-standalone-image-generation.md` (+ `.tasks.json`,
+  10 tasks, dependencies set). **Single next action: execute Task 1** (`ImageConfig`
+  base, `KeyframeConfig` extends it). Task 10 is the only live-spend task (~$0.01-0.05
+  on Luma) and is tagged a user gate. Closes the gap that kinoforge has four
   registered image engines, an image-profile cache and an image sink schema but no way to
   produce an image: the only route into an `ImageEngine` is `cfg.keyframe` ->
   `KeyframeStage`, which fills conditioning roles for a video mode and never terminates at
