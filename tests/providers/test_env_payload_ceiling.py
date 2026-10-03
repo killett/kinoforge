@@ -199,6 +199,9 @@ def _runpod_diffusers_pod_configs() -> list[Path]:
         cfg = load_config(str(p))
         if cfg.compute is None or cfg.compute.provider != "runpod":
             continue
+        # image cfgs forbid `compute:` (Config's allowlist), so cfg.engine is
+        # always set once cfg.compute is not None.
+        assert cfg.engine is not None  # noqa: S101 — guarded above
         if cfg.engine.kind != "diffusers":
             continue
         if cfg.compute.mode == "serverless":

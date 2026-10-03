@@ -1463,6 +1463,17 @@ class InterpolateConfig(BaseModel):
         return self
 
 
+# An image config (`image:` present) is a terminal-image run: no pod, no video
+# engine, no model fetch. Every other top-level key would be INERT on it, and an
+# accepted-but-ignored key is the defect class behind U51 (`lifecycle.budget`
+# reading like a dollar guard that is not one) and U56 (a hosted cfg carrying
+# `loras:` generating LoRA-less). So this is an ALLOWLIST, not a denylist: a
+# denylist would silently admit every block added to Config after today.
+_IMAGE_CFG_ALLOWED_KEYS: frozenset[str] = frozenset(
+    {"mode", "prompt", "image", "store", "output"}
+)
+
+
 class Config(BaseModel):
     """Top-level kinoforge configuration.
 
@@ -1475,8 +1486,15 @@ class Config(BaseModel):
             in a batch manifest override this. Included as a convenience field
             so operator-facing example configs can carry a representative prompt
             without requiring a manifest file for single-shot runs.
-        engine: Engine configuration block.
-        models: List of model entries.
+        engine: Engine configuration block. Required unless an ``image:``
+            block is present.
+        models: List of model entries. Required (at least one ``kind: base``
+            entry) unless an ``image:`` block is present.
+        image: Optional terminal-image config block. Its presence opts the
+            whole config into the terminal-image path (``kinoforge image``)
+            instead of the video pipeline; in that mode ``engine:`` and
+            ``models:`` (and every other video/compute-only key) must be
+            absent.
         compute: Optional compute block (omitted for hosted engines).
         lifecycle_cfg: Top-level lifecycle config (used for hosted engines).
             Loaded from the YAML ``lifecycle:`` key via an alias.
@@ -1492,8 +1510,8 @@ class Config(BaseModel):
 
     mode: str | None = None
     prompt: str | None = None
-    engine: EngineConfig
-    models: list[ModelEntry]
+    engine: EngineConfig | None = None
+    models: list[ModelEntry] = []
     loras: list[LoraEntry] = []
     compute: ComputeConfig | None = None
     lifecycle_cfg: LifecycleConfig | None = Field(default=None, alias="lifecycle")
@@ -1503,6 +1521,7 @@ class Config(BaseModel):
     spec: dict[str, Any] = Field(default_factory=dict)
     params: dict[str, Any] = Field(default_factory=dict)
     keyframe: KeyframeConfig | None = None
+    image: ImageConfig | None = None
     upscale: UpscaleConfig | None = None
     interpolate: InterpolateConfig | None = None
     sweeper: SweeperConfig = Field(default_factory=SweeperConfig)
@@ -1561,9 +1580,56 @@ class Config(BaseModel):
         )
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def _image_cfg_allowlist(cls, data: Any) -> Any:  # noqa: ANN401
+        """Refuse keys that would be inert on an image config.
+
+        MUST be ``mode="before"``: ``store`` and ``output`` carry
+        ``default_factory``, so on a validated model an operator-written key is
+        indistinguishable from an applied default. Only the raw input dict can
+        tell them apart.
+
+        ``mode`` is validated here rather than left documentary — a typo'd
+        ``mode: t2v`` on an image config is caught at load.
+        """
+        if not isinstance(data, dict) or data.get("image") is None:
+            return data
+        forbidden = sorted(set(data) - _IMAGE_CFG_ALLOWED_KEYS)
+        if forbidden:
+            raise ValueError(
+                f"config with an `image:` block must not also carry: "
+                f"{', '.join(forbidden)}. An image run has no compute, no video "
+                f"engine and no model fetch, so those keys would be silently "
+                f"inert. Permitted alongside `image:`: "
+                f"{', '.join(sorted(_IMAGE_CFG_ALLOWED_KEYS))}."
+            )
+        mode = data.get("mode")
+        if mode is not None and mode != "t2i":
+            raise ValueError(
+                f"config with an `image:` block must have mode: t2i "
+                f"(or omit mode entirely); got {mode!r}"
+            )
+        return data
+
     @model_validator(mode="after")
     def _validate_cross_fields(self) -> Self:
         """Validate cross-field constraints after all fields are populated."""
+        # An image config carries no engine, no models, no compute and no
+        # lifecycle (the allowlist refuses all four), so there is nothing here
+        # to cross-validate. Returning early also keeps every dereference below
+        # free of `engine is None` guards.
+        if self.image is not None:
+            return self
+        # Neither block present: a real validation error with a message, NOT an
+        # assert. `Config.model_validate({"models": []})` must tell the operator
+        # what is missing, and this also narrows `engine` for mypy below.
+        if self.engine is None:
+            raise ValueError(
+                "config must contain either an `engine:` block (video "
+                "generation) or an `image:` block (terminal image generation)"
+            )
+
         # Validate engine kind is known
         if self.engine.kind not in KNOWN_ENGINES:
             raise ValueError(
@@ -1652,13 +1718,23 @@ class Config(BaseModel):
             A CapabilityKey with base_model, loras, engine, and precision.
 
         Raises:
-            ConfigError: If no base model is found in the models list.
+            ConfigError: If no base model is found in the models list, or if
+                this config carries an ``image:`` block (no video identity).
         """
         # P1 (2026-06-21): LoRA refs source from self.loras (new top-level
         # block). Strength is deliberately excluded — mutable per-run
         # parameter applied via /lora/set_stack on warm-attach, not part
         # of the identity hash. Same-refs / different-strength runs
         # reuse the warm pod. See spec §7.
+        if self.image is not None:
+            raise ConfigError(
+                "capability_key() is a video-identity derivation and has no "
+                "meaning for an `image:` config (no compute, no warm-reuse "
+                "matcher). Use cfg.image.capability_key() for the image-profile "
+                "cache key."
+            )
+        assert self.engine is not None  # noqa: S101 — image branch raised above
+
         base_refs: list[str] = []
         loras: list[str] = [lo.ref for lo in self.loras]
         for entry in self.models:

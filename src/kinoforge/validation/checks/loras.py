@@ -55,7 +55,7 @@ class LoraServerSupportCheck:
         path entirely. Firing here on a non-diffusers engine would reject
         cfgs whose LoRA support this check cannot see.
         """
-        if cfg.engine.kind != "diffusers":
+        if cfg.engine is None or cfg.engine.kind != "diffusers":
             return False
         return bool(getattr(cfg, "loras", []))
 
@@ -407,6 +407,10 @@ class LoraEngineSupportCheck:
                 severity=Severity.ERROR,
                 message="no LoRA stack requested",
             )
+        # image cfgs forbid `loras:` (Config's allowlist) and have no cfg.engine;
+        # count > 0 above means either cfg.loras or the CLI --loras path fired,
+        # both of which require a video cfg with an engine block.
+        assert cfg.engine is not None  # noqa: S101 — guarded above
         kind = cfg.engine.kind
         try:
             support = registry.get_engine(kind)().lora_support()

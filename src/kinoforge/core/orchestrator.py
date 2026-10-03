@@ -172,6 +172,10 @@ def _resolve_engine(cfg: Config, engine: GenerationEngine | None) -> GenerationE
     """
     if engine is not None:
         return engine
+    # The orchestrator only runs the video pipeline; `kinoforge image` is a
+    # separate terminal-image path that never reaches here, so cfg.engine is
+    # always set for any cfg this function sees.
+    assert cfg.engine is not None  # noqa: S101 — video-only orchestration path
     return registry.get_engine(cfg.engine.kind)()
 
 

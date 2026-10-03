@@ -134,6 +134,7 @@ def test_kijai_sha_pin_cross_reference() -> None:
     )
 
     cfg = load_config(YAML_PATH)
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.comfyui is not None, "engine.comfyui block missing from YAML"
     custom_nodes = cfg.engine.comfyui.custom_nodes
     kijai_entries = [cn for cn in custom_nodes if KIJAI_REPO_HINT in cn.get("git", "")]

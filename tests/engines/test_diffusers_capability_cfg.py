@@ -140,6 +140,7 @@ def test_capability_block_survives_load_config() -> None:
     from kinoforge.core.config import load_config
 
     cfg = load_config("examples/configs/modal-diffusers-minimax-h3-t2va.yaml")
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.diffusers is not None
     capability = cfg.engine.diffusers.capability
     assert capability is not None

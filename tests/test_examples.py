@@ -132,6 +132,7 @@ def test_hosted_yaml_loads_under_new_validators() -> None:
     from kinoforge.core.config import load_config
 
     cfg = load_config("examples/configs/hosted.yaml")
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.kind == "hosted"
     assert cfg.engine.hosted is not None
     assert cfg.engine.hosted.endpoint.startswith("https://")
@@ -145,6 +146,7 @@ def test_fal_yaml_loads_under_new_validators() -> None:
     from kinoforge.core.config import load_config
 
     cfg = load_config("examples/configs/fal-t2v.yaml")
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.kind == "fal"
     assert cfg.engine.fal is not None
     assert cfg.engine.fal.endpoint == "fal-ai/wan-t2v"
@@ -158,6 +160,7 @@ def test_luma_ray_example_config_parses() -> None:
     from kinoforge.core.config import load_config
 
     cfg = load_config("examples/configs/bedrock-luma-ray-t2v.yaml")
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.kind == "bedrock_video"
     assert cfg.engine.bedrock_video is not None
     assert cfg.engine.bedrock_video.region_name == "us-west-2"
@@ -182,6 +185,7 @@ def test_comparison_yaml_loads(yaml_path: Path) -> None:
     from kinoforge.core.config import load_config
 
     cfg = load_config(yaml_path)
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.kind in {"replicate", "runway"}
     assert isinstance(cfg.spec, dict)
     assert cfg.spec.get("model"), f"{yaml_path.name} missing spec.model"
@@ -370,6 +374,7 @@ def test_layer_m_hosted_yaml_no_engine_hosted_model() -> None:
     documented migration silently regresses.
     """
     cfg = load_config(EXAMPLES_DIR / "hosted.yaml")
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     hosted_dump = cfg.engine.hosted.model_dump() if cfg.engine.hosted else {}
     assert "model" not in hosted_dump
 
@@ -442,6 +447,7 @@ def test_runpod_comfyui_wan_yaml_loads() -> None:
     from kinoforge.core.config import load_config
 
     cfg = load_config(Path("examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml"))
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.kind == "comfyui"
     assert cfg.compute is not None, (
         "runpod-comfyui-wan-2_1-14b-i2v.yaml must populate the compute block; "
@@ -489,6 +495,7 @@ def test_runpod_comfyui_wan_yaml_loads_with_graph_file_resolution() -> None:
 
     cfg = load_config(Path("examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml"))
 
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.kind == "comfyui"
     assert cfg.compute is not None
     assert cfg.compute.provider == "runpod"
@@ -628,6 +635,7 @@ def test_diffusers_wan_t2v_14b_cfg_pins_server_module() -> None:
     from kinoforge.core.config import load_config
 
     cfg = load_config(Path("examples/configs/runpod-diffusers-wan-2_2-14b-t2v.yaml"))
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.kind == "diffusers"
     assert cfg.engine.precision == "bf16"
     assert cfg.engine.diffusers is not None

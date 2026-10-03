@@ -293,7 +293,9 @@ def render_provision_for(cfg: Config) -> RenderedProvision:
 
     if cfg.compute is None:
         raise ValueError("render_provision_for requires a config with a compute block")
-
+    # image cfgs forbid both `compute:` and `engine:` (Config's allowlist), so
+    # a cfg that reached here with a compute block always has an engine too.
+    assert cfg.engine is not None  # noqa: S101 — guarded above
     engine = registry.get_engine(cfg.engine.kind)()
     cfg_dict: dict[str, Any] = cfg.model_dump()
     # The orchestrator lifts the resolved Lifecycle onto cfg_dict so engines
@@ -340,7 +342,9 @@ def build_spec(cfg: Config) -> InstanceSpec:
 
     if cfg.compute is None:
         raise ValueError("build_spec requires a config with a compute block")
-
+    # image cfgs forbid both `compute:` and `engine:` (Config's allowlist), so
+    # a cfg that reached here with a compute block always has an engine too.
+    assert cfg.engine is not None  # noqa: S101 — guarded above
     engine = registry.get_engine(cfg.engine.kind)()
     lifecycle = cfg.lifecycle()
     rendered = render_provision_for(cfg)

@@ -240,7 +240,7 @@ def main() -> int:
     from tools._pack_stack import pack_stack_hash
 
     cfg = load_config(args.workflow_yaml)
-    if cfg.engine.comfyui is None:
+    if cfg.engine is None or cfg.engine.comfyui is None:
         safe_print("capture_object_info: workflow YAML has no engine.comfyui block")
         return 1
     if cfg.compute is None:

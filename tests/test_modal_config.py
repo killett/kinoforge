@@ -76,6 +76,7 @@ def test_flashvsr_config_is_upscale_only_80gb_cp313():
     assert cfg.compute.placement.min_vram_gb == 80
     # Upscale-only: no eager base model, server runs only the FlashVSR runtime.
     assert cfg.models == []
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.diffusers is not None
     assert cfg.engine.diffusers.upscale_only is True
     # Full native 4x (480 -> 1920) — the milestone's point, not a downscale.
@@ -121,6 +122,7 @@ def test_flashvsr_1080p_config_is_modal_flashvsr_upscale_only():
     assert cfg.compute.provider == "modal"
     assert cfg.upscale is not None
     assert cfg.upscale.engine == "flashvsr"
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.diffusers is not None
     assert cfg.engine.diffusers.upscale_only is True
     assert cfg.upscale.flashvsr is not None

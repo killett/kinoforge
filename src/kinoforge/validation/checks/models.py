@@ -80,7 +80,7 @@ class ModelRefReachableCheck:
         engine sub-block. Skip them to avoid flagging informational
         placeholders.
         """
-        if cfg.engine.kind in self._NON_FETCHING_ENGINES:
+        if cfg.engine is None or cfg.engine.kind in self._NON_FETCHING_ENGINES:
             return False
         if not cfg.models:
             return False

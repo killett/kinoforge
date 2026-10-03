@@ -189,6 +189,7 @@ def test_s4_the_inverted_path_still_books_c6i_large() -> None:
 
     assert _CONFIG_PATH.exists(), f"missing config: {_CONFIG_PATH}"
     cfg = load_config(str(_CONFIG_PATH))
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     cap = cfg.placement().max_usd_per_hr
 
     evidence: dict[str, Any] = {

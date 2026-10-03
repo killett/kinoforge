@@ -47,6 +47,9 @@ def test_example_config_produces_non_empty_model_identity(config_path: Path) -> 
         config_path: Path to the example YAML under ``examples/configs/``.
     """
     cfg = load_config(str(config_path))
+    # No shipped example config carries `image:` yet, so every cfg collected
+    # here has a real engine block.
+    assert cfg.engine is not None  # noqa: S101 — see comment above
 
     if cfg.engine.kind == "fake":
         pytest.skip("fake engine — identity intentionally absent")

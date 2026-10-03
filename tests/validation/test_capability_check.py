@@ -140,6 +140,7 @@ def test_upscale_only_cfg_is_server_shaped_and_still_warns_on_idle_timeout() -> 
     cfg = load_config(
         Path("examples/configs/skypilot-lambda-diffusers-flashvsr-upscale.yaml")
     )
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.diffusers is not None
     assert cfg.engine.diffusers.upscale_only is True
     assert infer_shape(cfg) is WorkloadShape.SERVER

@@ -521,6 +521,7 @@ compute:
     import yaml
 
     cfg = Config.model_validate(yaml.safe_load(yaml_text))
+    assert cfg.engine is not None  # noqa: S101 — constructed with an engine above
     assert cfg.engine.diffusers is not None
     assert cfg.engine.diffusers.pip == ["diffusers==0.30.0"]
     assert cfg.engine.diffusers.server_cmd == ["python", "-m", "diffusers_server"]
@@ -951,6 +952,7 @@ spec:
     cfg_path = tmp_path / "clean.yaml"
     cfg_path.write_text(yaml_text, encoding="utf-8")
     cfg = load_config(cfg_path)
+    assert cfg.engine is not None  # noqa: S101 — constructed with an engine above
     assert cfg.engine.kind == "hosted"
     assert cfg.spec["model"] == "wan-ai/Wan2.2-T2V-A14B"
 
@@ -1970,6 +1972,7 @@ def test_skypilot_vast_flashvsr_cfg_loads() -> None:
     assert cfg.compute is not None
     assert cfg.compute.provider == "skypilot"
     assert cfg.backend_options_for("skypilot").clouds == ["vast"]
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.diffusers is not None
     assert cfg.engine.diffusers.upscale_only is True
     assert cfg.upscale is not None
@@ -2001,6 +2004,7 @@ def test_skypilot_lambda_flashvsr_cfg_loads() -> None:
     assert cfg.compute is not None
     assert cfg.compute.provider == "skypilot"
     assert cfg.backend_options_for("skypilot").clouds == ["lambda"]
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.diffusers is not None
     assert cfg.engine.diffusers.upscale_only is True
     assert cfg.upscale is not None

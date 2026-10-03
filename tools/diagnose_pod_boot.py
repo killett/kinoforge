@@ -206,7 +206,7 @@ def main() -> int:
     from kinoforge.providers.runpod import RunPodProvider
 
     cfg = load_config(args.workflow_yaml)
-    if cfg.engine.comfyui is None or cfg.compute is None:
+    if cfg.engine is None or cfg.engine.comfyui is None or cfg.compute is None:
         safe_print("diagnose_pod_boot: workflow YAML lacks comfyui / compute block")
         return 1
 

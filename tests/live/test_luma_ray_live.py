@@ -67,6 +67,7 @@ def test_luma_ray_live_e2e_smoke(tmp_path: Path) -> None:
     # Load config
     cfg = load_config("examples/configs/bedrock-luma-ray-t2v.yaml")
     # Verify shape
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
     assert cfg.engine.kind == "bedrock_video"
     assert cfg.engine.bedrock_video is not None
     cfg.engine.bedrock_video.output_s3_uri = f"s3://{bucket}/kinoforge-output/"

@@ -380,6 +380,10 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
         from kinoforge._adapters import build_provider_for
         from kinoforge.core import registry
 
+        # `provision` is a compute-provisioning command; `kinoforge image`
+        # (the only command that produces an `image:`-only cfg) never
+        # reaches here, so cfg.engine is always set.
+        assert cfg.engine is not None  # noqa: S101 — video-only command path
         engine = registry.get_engine(cfg.engine.kind)()
         provider = build_provider_for(cfg)
     except UnknownAdapter as exc:
