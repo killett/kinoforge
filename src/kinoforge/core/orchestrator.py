@@ -49,6 +49,7 @@ from kinoforge.core.errors import (
     ValidationError,
 )
 from kinoforge.core.heartbeat_loop import HeartbeatLoop, HeartbeatLoopProtocol
+from kinoforge.core.image_stack import resolve_image_stack
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
@@ -80,7 +81,7 @@ from kinoforge.core.lifecycle import (
 from kinoforge.core.logging import get_logger
 from kinoforge.core.lora_apply import ensure_lora_stack
 from kinoforge.core.pool import ConcurrentPool
-from kinoforge.core.profiles import JsonImageProfileCache, JsonProfileCache
+from kinoforge.core.profiles import JsonProfileCache
 from kinoforge.core.provision_state import (
     is_marker_current,
     marker_key_for,
@@ -2729,31 +2730,24 @@ def generate(
 
     # ------------------------------------------------------------------
     # Pre-resolve image engine + backend + profile if keyframe block present.
-    # Image engine resolved BEFORE deploy_session so unknown names fail fast
-    # without incurring any compute spend.
+    # Resolved BEFORE deploy_session so unknown names fail fast without
+    # incurring any compute spend. Shared with batch + image_run.
     # ------------------------------------------------------------------
     image_backend: ImageBackend | None = None
     image_prof = None
     resolved_image_engine: ImageEngine | None = None
+    # kf_cfg_dict is also consumed below (model_identity for the keyframe
+    # sink filename slug), so it is computed here rather than left buried
+    # inside resolve_image_stack.
+    kf_cfg_dict: dict[str, object] | None = None
     if cfg.keyframe is not None:
-        resolved_image_engine = (
-            image_engine
-            if image_engine is not None
-            else registry.get_image_engine(cfg.keyframe.engine)()
-        )
         kf_cfg_dict = cfg.keyframe.model_dump()
-        resolved_image_engine.provision(None, kf_cfg_dict)
-        image_backend = resolved_image_engine.backend(None, kf_cfg_dict)
-        image_key = cfg.keyframe.capability_key()
-        ipp: ImageProfileProvider = (
-            image_profile_provider
-            if image_profile_provider is not None
-            else JsonImageProfileCache(store)  # type: ignore[assignment]
+        resolved_image_engine, image_backend, image_prof = resolve_image_stack(
+            cfg.keyframe,
+            store=store,
+            image_engine=image_engine,
+            image_profile_provider=image_profile_provider,
         )
-        try:
-            image_prof = ipp.resolve(image_key)
-        except ProfileNotCached:
-            image_prof = ipp.discover(image_key, resolved_image_engine, image_backend)
 
     with deploy_session(
         cfg,
@@ -2808,12 +2802,14 @@ def generate(
             # Layer 8 — keyframe stage mirrors clip stage: image_engine.model_identity
             # owns the slug so non-spec-model image engines (e.g. fal image, future
             # LumaAgentsImageEngine) get a real slug instead of "unknown".
-            # resolved_image_engine is guaranteed non-None here: it was assigned
-            # in the matching `if cfg.keyframe is not None:` block above (line ~1008).
-            # Narrow to ImageEngine so mypy can resolve attribute access below.
+            # resolved_image_engine and kf_cfg_dict are guaranteed non-None here:
+            # both were assigned in the matching `if cfg.keyframe is not None:`
+            # block above (line ~1008). Narrow so mypy can resolve attribute
+            # access / the dict-typed arg below.
             _kf_eng: ImageEngine = resolved_image_engine  # type: ignore[assignment]
+            _kf_cfg_dict: dict[str, object] = kf_cfg_dict  # type: ignore[assignment]
             _kf_provider = getattr(_kf_eng, "name", None) or None
-            _raw_kf_model = _kf_eng.model_identity(kf_cfg_dict)
+            _raw_kf_model = _kf_eng.model_identity(_kf_cfg_dict)
             if not _raw_kf_model:
                 _log.warning(
                     "image engine %s returned empty model identity; "

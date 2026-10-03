@@ -48,9 +48,9 @@ from kinoforge.core.errors import (
     BudgetExceeded,
     CapabilityMismatch,
     ConfigError,
-    ProfileNotCached,
     TeardownError,
 )
+from kinoforge.core.image_stack import resolve_image_stack
 from kinoforge.core.interfaces import (
     Artifact,
     ConditioningAsset,
@@ -65,7 +65,6 @@ from kinoforge.core.interfaces import (
 )
 from kinoforge.core.logging import get_logger
 from kinoforge.core.orchestrator import deploy_session
-from kinoforge.core.profiles import JsonImageProfileCache
 from kinoforge.core.validation import validate_request
 from kinoforge.outputs.base import OutputSink
 from kinoforge.pipeline.generate_clip import GenerateClipStage
@@ -643,33 +642,23 @@ def batch_generate(
 
     # ------------------------------------------------------------------
     # Pre-resolve image engine + backend + profile ONCE per batch if
-    # cfg.keyframe is set.  Amortises construction cost; unknown engine
+    # cfg.keyframe is set. Amortises construction cost; unknown engine
     # names fail fast here before any compute spend.
     # ------------------------------------------------------------------
     _image_backend: ImageBackend | None = None
     _image_profile: ImageProfile | None = None
     _resolved_image_engine: ImageEngine | None = None
     if cfg.keyframe is not None:
-        _resolved_image_engine = (
-            image_engine
-            if image_engine is not None
-            else registry.get_image_engine(cfg.keyframe.engine)()
+        (
+            _resolved_image_engine,
+            _image_backend,
+            _image_profile,
+        ) = resolve_image_stack(
+            cfg.keyframe,
+            store=store,
+            image_engine=image_engine,
+            image_profile_provider=image_profile_provider,
         )
-        kf_cfg_dict = cfg.keyframe.model_dump()
-        _resolved_image_engine.provision(None, kf_cfg_dict)
-        _image_backend = _resolved_image_engine.backend(None, kf_cfg_dict)
-        image_key = cfg.keyframe.capability_key()
-        ipp: ImageProfileProvider = (
-            image_profile_provider
-            if image_profile_provider is not None
-            else JsonImageProfileCache(store)  # type: ignore[assignment]
-        )
-        try:
-            _image_profile = ipp.resolve(image_key)
-        except ProfileNotCached:
-            _image_profile = ipp.discover(
-                image_key, _resolved_image_engine, _image_backend
-            )
 
     try:
         with deploy_session(
