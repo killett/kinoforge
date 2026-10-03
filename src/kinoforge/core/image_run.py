@@ -1,19 +1,17 @@
 """Terminal image generation: one prompt in, one artifact out.
 
-Deliberately carries none of the video pipeline's cross-stage plumbing — no
-chained-stage state object, no compute-session attach call, no synthesized
-placeholder request, no ledger row and no heartbeat — every image engine
-declares ``requires_compute = False``, so all of that machinery is dead
-weight here. The video side's chained-stage state exists to thread one
-stage's output into the next stage's input; a terminal image has nothing
-to chain, so it needs no state object to thread through. Image-then-upscale
-would be file hand-off between two commands, the way the existing video
-chains work.
+No ``PipelineState``, no ``GenerationRequest``, no ``deploy_session``, no ledger
+row and no heartbeat — every image engine declares ``requires_compute = False``,
+so all of that is dead weight. ``PipelineState`` exists to CHAIN video stages;
+a terminal image has nothing to chain, so it needs no state object to chain
+through. Image-then-upscale would be file hand-off between two commands, the way
+the existing video chains work.
 
-A structural test (``tests/core/test_image_run.py::
-test_module_has_no_pipeline_machinery``) greps this file's raw source for
-the literal names of that plumbing, so this docstring must avoid spelling
-them out even in prose explaining their absence.
+``tests/core/test_image_run.py::test_module_has_no_pipeline_machinery`` asserts
+this by walking the module's AST for imports of ``kinoforge.core.orchestrator``
+(home of ``deploy_session``) and of ``PipelineState`` / ``GenerationRequest``
+from ``kinoforge.core.interfaces`` — not by grepping this docstring's prose, so
+naming the forbidden things here to explain their absence is safe.
 """
 
 from __future__ import annotations
@@ -132,7 +130,12 @@ def generate_image(
             prompt=prompt,
             extension=".png",
             namespace=namespace,
-            provider=engine.name,
+            # The image-engine REGISTRY key (what the operator wrote as
+            # `image.engine`), not the engine's self-declared `.name` — the
+            # two agree for all four shipped engines today, but `.name` is a
+            # self-declaration that can drift from the config key, which
+            # cannot.
+            provider=block.engine,
             model=model,
             kind="image",
         )

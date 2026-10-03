@@ -48,6 +48,8 @@ class _SpyBackend(ImageBackend):
     """
 
     submits: list[ImageJob] = field(default_factory=list)
+    received_cancel_tokens: list[object] = field(default_factory=list)
+    result_url: str = "https://fake-engine.example/out.png"
 
     def capabilities(self) -> ImageProfile:
         return T2I_PROFILE
@@ -64,14 +66,17 @@ class _SpyBackend(ImageBackend):
         # nor `url`, so `artifact_bytes()` (uri -> file, url -> http,
         # otherwise synthetic) always fell through to its synthetic-bytes
         # branch — `published["bytes"] == PNG` could never pass against the
-        # literal fixture. An `url` makes the http(s) branch fire, which is
+        # literal fixture. A `url` makes the http(s) branch fire, which is
         # what actually exercises the injected `http_get_bytes` seam the
-        # tests pass in.
-        return Artifact(
-            filename="out.png",
-            url="https://fake-engine.example/out.png",
-            meta={"_synthetic": True},
-        )
+        # tests pass in. The dead `meta={"_synthetic": True}` from the brief
+        # is dropped — the synthetic branch is unreachable by construction
+        # now that `url` is always set.
+        #
+        # Also records the `cancel_token` it was called with, so forwarding
+        # from `generate_image` (the entire point of the preceding task) is
+        # actually asserted rather than merely plumbed.
+        self.received_cancel_tokens.append(cancel_token)
+        return Artifact(filename="out.png", url=self.result_url)
 
     def endpoints(self) -> dict[str, str]:
         return {}
@@ -170,48 +175,104 @@ def test_happy_path_stores_and_publishes(tmp_path: Any) -> None:
 
     Bug this catches: publishing without storing (so `kinoforge gc` can never
     see the artifact) or storing without publishing (so the operator never
-    gets a file).
+    gets a file) — proven here by reading the stored name/path and bytes
+    back, not merely by `artifact is not None` (which `put_bytes` always
+    satisfies and so proves nothing; see the removed tautology below).
+
+    Also proves, in one happy-path run: the published `provider` comes from
+    the config's registry key (`cfg.image.engine`), not the engine's
+    self-declared `.name` (they are deliberately made to differ here); the
+    URL `artifact_bytes()` actually fetched; and that `namespace` /
+    `cancel_token` are forwarded end to end.
     """
+    from pathlib import Path
+
     from kinoforge.core.image_run import generate_image
 
-    engine, sink = _SpyEngine(), _SpySink()
+    # Deliberately different from cfg.image.engine ("fake") so the provider
+    # assertion below can tell "registry key" from "engine self-declaration"
+    # apart — with the brief's un-corrected code (`provider=engine.name`)
+    # this would assert "engine-declared-name" instead of "fake" and fail.
+    engine = _SpyEngine(name="engine-declared-name")
+    sink = _SpySink()
+    fetched_urls: list[str] = []
+
+    def _get_bytes(url: str, headers: dict[str, str]) -> bytes:
+        fetched_urls.append(url)
+        return PNG
+
+    run_id = "image-20261003-120000"
+    cancel_sentinel = object()
     artifact = generate_image(
         _cfg(prompt="a cat"),
         store=_store(tmp_path),
-        run_id="image-20261003-120000",
+        run_id=run_id,
         sink=sink,
+        namespace="batch-1",
         image_engine=engine,
         image_profile_provider=_StubProvider(),
-        http_get_bytes=lambda url, headers: PNG,
+        cancel_token=cancel_sentinel,  # type: ignore[arg-type]
+        http_get_bytes=_get_bytes,
     )
-    assert artifact is not None
+
+    expected_path = (tmp_path / run_id / "image.png").resolve()
+    assert Path(artifact.uri) == expected_path, (
+        "stored artifact uri is not <run_id>/image.png — the fixed, "
+        "non-prompt-derived name the `# kinoforge:public-name` pragma exists "
+        "to enforce"
+    )
+    assert expected_path.read_bytes() == PNG, (
+        "bytes on disk at the stored path are not the fetched PNG"
+    )
+
     assert len(sink.published) == 1
     published = sink.published[0]
     assert published["kind"] == "image"
     assert published["extension"] == ".png"
-    assert published["provider"] == "fake"
+    assert published["provider"] == "fake", (
+        "provider must be the image.engine registry key, not engine.name"
+    )
     assert published["model"] == "fake-model"
     assert published["bytes"] == PNG
+    assert published["namespace"] == "batch-1"
+
+    assert fetched_urls == [engine.backend_obj.result_url], (
+        "http_get_bytes was not called with the artifact's own url"
+    )
+    assert engine.backend_obj.received_cancel_tokens == [cancel_sentinel], (
+        "cancel_token was not forwarded to backend.result()"
+    )
 
 
 def test_sink_none_stores_only(tmp_path: Any) -> None:
     """--no-output-dir must still produce a stored artifact.
 
     Bug this catches: an unguarded self.sink.publish, which would make
-    --no-output-dir crash with AttributeError on None.
+    --no-output-dir crash with AttributeError on None (that part is caught
+    for free — the exception would propagate through this test and fail
+    it). The byte read-back is the half that `artifact is not None` alone
+    cannot prove: `put_bytes` is contractually `-> Artifact`
+    (`stores/base.py`) and always returns one, so that assertion is a
+    tautology satisfied even by an implementation that never calls
+    `put_bytes` at all.
     """
+    from pathlib import Path
+
     from kinoforge.core.image_run import generate_image
 
+    run_id = "image-1"
     artifact = generate_image(
         _cfg(prompt="a cat"),
         store=_store(tmp_path),
-        run_id="image-1",
+        run_id=run_id,
         sink=None,
         image_engine=_SpyEngine(),
         image_profile_provider=_StubProvider(),
         http_get_bytes=lambda url, headers: PNG,
     )
-    assert artifact is not None
+    expected_path = (tmp_path / run_id / "image.png").resolve()
+    assert Path(artifact.uri) == expected_path
+    assert expected_path.read_bytes() == PNG
 
 
 @pytest.mark.parametrize(
@@ -326,14 +387,19 @@ def test_missing_image_block_is_refused(tmp_path: Any) -> None:
         )
 
 
-def test_empty_model_identity_warns_and_slugs_to_unknown(
+def test_empty_model_identity_warns_and_passes_empty_through(
     tmp_path: Any, caplog: Any
 ) -> None:
     """The successful-generations 17 trap: an empty identity became `_fal_unknown_`.
 
     Bug this catches: silently publishing `..._unknown_...` filenames, which is
     exactly what shipped for two keyframes in entry 17 and was invisible until
-    a live run produced the files.
+    a live run produced the files. Renamed from
+    `..._slugs_to_unknown`: `LocalOutputSink` (outputs/local.py), not this
+    function, owns the `"unknown"` substitution — `generate_image` only
+    forwards the empty string and logs a warning, which is exactly what this
+    test asserts, so its name should not claim substitution coverage it does
+    not exercise.
     """
     import logging
 
@@ -366,14 +432,58 @@ def test_module_has_no_pipeline_machinery() -> None:
     Bug this catches: reaching for PipelineState / deploy_session out of habit,
     which drags the dummy GenerationRequest(prompt="", mode="upscale") wart at
     orchestrator.py:2792 into a path that has nothing to chain.
+
+    Implemented as an AST import-node walk, not a raw-text grep over the
+    whole file. A grep also matches prose in comments/docstrings — this
+    file's own module docstring once had to avoid spelling out
+    "PipelineState" purely to dodge its own guard, which is backwards: the
+    guard should police the actual dependency, not the words used to explain
+    its absence. A grep is also blind to indirection
+    (`import kinoforge.core.orchestrator as x; x.deploy_session(...)` has no
+    bare "deploy_session" substring issue but still drags in the forbidden
+    module) and trivially dodged by string-building
+    (`getattr(mod, "Pipeline" + "State")`). This version asserts the real
+    contract: no import of `kinoforge.core.orchestrator` (home of
+    `deploy_session`, and the module `PipelineState`/`GenerationRequest` are
+    threaded through on the video side) and no import of the
+    `PipelineState` / `GenerationRequest` names specifically from
+    `kinoforge.core.interfaces` — which this file legitimately imports
+    *other* names from (`Artifact`, `ImageJob`, ...), so a blanket
+    module-level ban on `kinoforge.core.interfaces` would be wrong.
     """
+    import ast
     from pathlib import Path
 
     import kinoforge.core.image_run as mod
 
     source = Path(mod.__file__).read_text(encoding="utf-8")
-    for forbidden in ("PipelineState", "deploy_session", "GenerationRequest"):
-        assert forbidden not in source, (
-            f"core/image_run.py references {forbidden}; the terminal image path "
-            f"has nothing to chain and must not carry pipeline machinery"
+    tree = ast.parse(source, filename=mod.__file__)
+
+    forbidden_modules = ("kinoforge.core.orchestrator",)
+    forbidden_names_from_interfaces = {"PipelineState", "GenerationRequest"}
+
+    def _is_forbidden_module(name: str) -> bool:
+        return any(
+            name == forbidden or name.startswith(forbidden + ".")
+            for forbidden in forbidden_modules
         )
+
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if _is_forbidden_module(alias.name):
+                    violations.append(f"import {alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if _is_forbidden_module(module):
+                violations.append(f"from {module} import ...")
+            if module == "kinoforge.core.interfaces":
+                for alias in node.names:
+                    if alias.name in forbidden_names_from_interfaces:
+                        violations.append(f"from {module} import {alias.name}")
+
+    assert violations == [], (
+        f"core/image_run.py imports pipeline machinery: {violations}; the "
+        f"terminal image path has nothing to chain and must not carry it"
+    )
