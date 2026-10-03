@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from kinoforge.core import registry
+from kinoforge.core.cancel import CancelToken
 from kinoforge.core.credentials import EnvCredentialProvider
 from kinoforge.core.errors import AuthError, KinoforgeError, ValidationError
 from kinoforge.core.interfaces import (
@@ -136,11 +137,19 @@ class FalImageBackend(ImageBackend):
         self._jobs[request_id] = resp
         return request_id
 
-    def result(self, job_id: str) -> Artifact:
+    def result(
+        self, job_id: str, *, cancel_token: CancelToken | None = None
+    ) -> Artifact:
         """Poll fal status URL then fetch response URL; return image Artifact.
+
+        Honors *cancel_token* at the top of every iteration and across the
+        inter-poll wait. With no token the injected ``self.sleep`` is used
+        unchanged, preserving the existing iteration-cap contract.
 
         Args:
             job_id: The fal request_id returned by :meth:`submit`.
+            cancel_token: Optional :class:`CancelToken`. When set mid-poll the
+                loop raises ``Cancelled`` on its next iteration.
 
         Returns:
             Artifact with ``url`` pointing at the first image, ``filename``
@@ -149,7 +158,18 @@ class FalImageBackend(ImageBackend):
 
         Raises:
             KinoforgeError: Job failed, timed out, or returned no images.
+            Cancelled: ``cancel_token`` was set.
         """
+        from kinoforge.core.cancel import _NULL_TOKEN
+
+        token = cancel_token if cancel_token is not None else _NULL_TOKEN
+
+        def _interpoll_wait(seconds: float) -> None:
+            if cancel_token is None:
+                self.sleep(seconds)
+                return
+            token.wait(seconds)
+
         endpoint = self.cfg.get("model", "")
         api_key = self.creds.get("FAL_KEY") or ""
         headers = {"Authorization": f"Key {api_key}"}
@@ -169,13 +189,14 @@ class FalImageBackend(ImageBackend):
         )
 
         for _ in range(self.max_polls):
+            token.raise_if_set()
             status_data = self.http_get(status_url, headers)
             s = wire.interpret_status(str(status_data.get("status", "")))
             if s == wire.FalStatus.COMPLETED:
                 break
             if s in (wire.FalStatus.FAILED, wire.FalStatus.UNKNOWN):
                 raise KinoforgeError(f"fal image job {job_id} failed: {status_data}")
-            self.sleep(self.poll_interval_s)
+            _interpoll_wait(self.poll_interval_s)
         else:
             raise KinoforgeError(
                 f"fal image job {job_id} timed out after {self.max_polls} polls"

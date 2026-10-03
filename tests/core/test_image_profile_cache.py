@@ -45,7 +45,7 @@ class _FakeImageBackend(ImageBackend):
     def submit(self, job: ImageJob) -> str:
         return "id"
 
-    def result(self, job_id: str) -> Artifact:
+    def result(self, job_id: str, *, cancel_token: object | None = None) -> Artifact:
         return Artifact(filename="x.png")
 
     def endpoints(self) -> dict[str, str]:

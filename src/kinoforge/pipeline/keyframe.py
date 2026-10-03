@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
+from kinoforge.core.cancel import CancelToken
 from kinoforge.core.config import KeyframeConfig
 from kinoforge.core.errors import ValidationError
 from kinoforge.core.interfaces import (
@@ -49,6 +50,7 @@ class KeyframeStage:
     store: ArtifactStore
     run_id: str
     http_get_bytes: Callable[[str, dict[str, str]], bytes] | None = None
+    cancel_token: CancelToken | None = None
     # Layer 4 — user-facing keyframe publishing.
     # When `sink` is non-None each generated keyframe lands at
     # ``<sink.dir>/<namespace?>/<ts>_keyframe-<role-short>_<provider>_<model>_<slug>.png``.
@@ -86,7 +88,7 @@ class KeyframeStage:
             job = ImageJob(spec=spec, prompt=prompt, params=params)
             self.image_engine.validate_spec(job)
             job_id = self.image_backend.submit(job)
-            artifact = self.image_backend.result(job_id)
+            artifact = self.image_backend.result(job_id, cancel_token=self.cancel_token)
             png_bytes = artifact_bytes(artifact, self.http_get_bytes)
             filename = f"keyframe-{role}.png"
             stored = self.store.put_bytes(  # kinoforge:public-name — role is a short fixed identifier, not prompt-derived

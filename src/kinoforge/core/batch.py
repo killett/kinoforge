@@ -740,6 +740,7 @@ def batch_generate(
                                 namespace=batch_id,
                                 provider=_kf_provider,
                                 model=_kf_model,
+                                cancel_token=cancel_token,
                             ).run(PipelineState(request=raw_request, artifacts={}))
 
                         stage, initial_state = _build_stage_for_entry(

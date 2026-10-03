@@ -2828,6 +2828,7 @@ def generate(
                     sink=sink,
                     provider=_kf_provider,
                     model=_kf_model,
+                    cancel_token=cancel_token,
                 ).run(state)
             except ValidationError:
                 _log.warning(
