@@ -1219,23 +1219,53 @@ class KeyframeRoleOverride(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class KeyframeConfig(BaseModel):
-    """Keyframe-generation block for image-engine pipeline head.
+class ImageConfig(BaseModel):
+    """Image-generation block: an image engine plus the spec it submits.
 
-    Presence opts the orchestrator into constructing a KeyframeStage at the
-    head of the pipeline.
+    Base of :class:`KeyframeConfig` — a keyframe spec IS an image spec plus
+    per-role overrides. Carried standalone by `kinoforge image` (``cfg.image``)
+    and as the head of a video pipeline by ``cfg.keyframe``.
+
+    ``prompt`` is optional here, deliberately: `kinoforge image --prompt` may
+    supply it at runtime, and load time cannot see argv. Prompt-presence is a
+    preflight check in :func:`kinoforge.core.image_run.generate_image`.
 
     Required: ``engine`` (image-engine registry name).
-    Required by validator: either ``prompt`` (top-level default) OR
-    ``roles.<name>.prompt`` for at least one role.
     """
 
     engine: str
     prompt: str | None = None
     spec: dict[str, Any] = Field(default_factory=dict)
     params: dict[str, Any] = Field(default_factory=dict)
-    roles: dict[str, KeyframeRoleOverride] = Field(default_factory=dict)
     model_config = ConfigDict(extra="forbid")
+
+    def capability_key(self) -> CapabilityKey:
+        """Derive a CapabilityKey for image-engine cache lookup.
+
+        Returns:
+            A CapabilityKey with base_model and precision from ``spec``,
+            loras empty, and engine from ``self.engine``.
+        """
+        return CapabilityKey(
+            base_model=str(self.spec.get("model", "")),
+            loras=(),
+            engine=self.engine,
+            precision=str(self.spec.get("precision", "")),
+        )
+
+
+class KeyframeConfig(ImageConfig):
+    """Keyframe-generation block for image-engine pipeline head.
+
+    Presence opts the orchestrator into constructing a KeyframeStage at the
+    head of the pipeline. Extends :class:`ImageConfig` with per-role overrides.
+
+    Required: ``engine`` (image-engine registry name), inherited.
+    Required by validator: either ``prompt`` (top-level default) OR
+    ``roles.<name>.prompt`` for at least one role.
+    """
+
+    roles: dict[str, KeyframeRoleOverride] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _at_least_one_prompt(self) -> KeyframeConfig:
@@ -1262,20 +1292,6 @@ class KeyframeConfig(BaseModel):
                 f"known: {sorted(known)}"
             )
         return self
-
-    def capability_key(self) -> CapabilityKey:
-        """Derive a CapabilityKey for image-engine cache lookup.
-
-        Returns:
-            A CapabilityKey with base_model and precision from ``spec``,
-            loras empty, and engine from ``self.engine``.
-        """
-        return CapabilityKey(
-            base_model=str(self.spec.get("model", "")),
-            loras=(),
-            engine=self.engine,
-            precision=str(self.spec.get("precision", "")),
-        )
 
 
 # ---------------------------------------------------------------------------
