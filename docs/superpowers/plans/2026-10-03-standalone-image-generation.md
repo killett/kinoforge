@@ -531,13 +531,20 @@ _IMAGE_CFG_ALLOWED_KEYS: frozenset[str] = frozenset(
         # free of `engine is None` guards.
         if self.image is not None:
             return self
-        assert self.engine is not None  # noqa: S101 — image branch returned above
+        # Neither block present: a real validation error with a message, NOT an
+        # assert. `Config.model_validate({"models": []})` must tell the operator
+        # what is missing, and this also narrows `engine` for mypy below.
+        if self.engine is None:
+            raise ValueError(
+                "config must contain either an `engine:` block (video "
+                "generation) or an `image:` block (terminal image generation)"
+            )
 
         # Validate engine kind is known
         if self.engine.kind not in KNOWN_ENGINES:
 ```
 
-The `assert` is the mypy narrowing for the ~12 `self.engine.*` reads in the rest of the method; without it mypy reports `Item "None" of "EngineConfig | None" has no attribute "kind"`.
+The `raise` doubles as the mypy narrowing for the ~12 `self.engine.*` reads below it; without it mypy reports `Item "None" of "EngineConfig | None" has no attribute "kind"`. Do NOT use a bare `assert` here — a config with neither block is operator error, not an internal invariant, and deserves a message.
 
 3e. Guard `Config.capability_key()` — add at the top of its body, before the `base_refs` work:
 
@@ -597,8 +604,8 @@ as documentary would be the same mistake."
 This is spec §12.2, resolved by audit: exactly two unguarded sites, both in `applies_to` (which `CheckRegistry.applicable` calls for **every** config), and `validation/checks/custom_nodes.py:52` already carries the correct guard pattern.
 
 **Files:**
-- Modify: `src/kinoforge/validation/checks/models.py:83`
-- Modify: `src/kinoforge/validation/checks/loras.py:58`
+- Modify: `src/kinoforge/validation/checks/models.py:83` (inside `ModelRefReachableCheck.applies_to`)
+- Modify: `src/kinoforge/validation/checks/loras.py:58` (inside `LoraServerSupportCheck.applies_to`)
 - Test: `tests/validation/test_checks_survive_engineless_cfg.py` (create)
 
 **Acceptance Criteria:**
@@ -651,8 +658,8 @@ VIDEO_CFG = {
 
 # (module, class) pairs confirmed in Step 1.
 FIXED_CHECKS = [
-    ("kinoforge.validation.checks.models", "ModelRefsResolveCheck"),
-    ("kinoforge.validation.checks.loras", "LoraRefsResolveCheck"),
+    ("kinoforge.validation.checks.models", "ModelRefReachableCheck"),
+    ("kinoforge.validation.checks.loras", "LoraServerSupportCheck"),
 ]
 
 
@@ -818,7 +825,7 @@ import pytest
 from kinoforge.core.config import ImageConfig
 from kinoforge.core.errors import UnknownAdapter
 from kinoforge.core.interfaces import CapabilityKey, ImageProfile
-from kinoforge.core.profiles import ProfileNotCached
+from kinoforge.core.errors import ProfileNotCached
 
 BLOCK = ImageConfig(engine="fake", prompt="a cat", spec={"model": "m"})
 
@@ -1047,7 +1054,8 @@ def resolve_image_stack(
         UnknownAdapter: ``block.engine`` is not a registered image engine.
     """
     from kinoforge.core import registry
-    from kinoforge.core.profiles import JsonImageProfileCache, ProfileNotCached
+    from kinoforge.core.errors import ProfileNotCached
+    from kinoforge.core.profiles import JsonImageProfileCache
 
     engine = (
         image_engine
@@ -1164,6 +1172,7 @@ Spec §7: `luma_agents` and `replicate` already extend `RemoteSubmitPollBackend`
 - Modify: `src/kinoforge/image_engines/fal/__init__.py:139-182` (hand-rolled loop)
 - Modify: `src/kinoforge/image_engines/fake/__init__.py:60`
 - Modify: `src/kinoforge/pipeline/keyframe.py` (add a `cancel_token` field; pass it to `result`)
+- Modify: `src/kinoforge/core/orchestrator.py`, `src/kinoforge/core/batch.py` (pass the token at each `KeyframeStage(...)` construction) — NOTE: Task 4 also rewrites these two files, so Tasks 4 and 5 must not run concurrently
 - Test: `tests/image_engines/test_cancellation.py` (create)
 
 **Acceptance Criteria:**
@@ -1197,7 +1206,8 @@ from typing import Any
 
 import pytest
 
-from kinoforge.core.cancel import CancelToken, Cancelled
+from kinoforge.core.cancel import CancelToken
+from kinoforge.core.errors import Cancelled
 from kinoforge.core.interfaces import Artifact, ImageBackend, ImageJob
 
 
@@ -2588,8 +2598,7 @@ def _cmd_image(args: argparse.Namespace, ctx: SessionContext) -> int:
     sink and run id, then hands off to
     :func:`kinoforge.core.image_run.generate_image`.
     """
-    from kinoforge.core.cancel import Cancelled
-    from kinoforge.core.errors import KinoforgeError, ValidationError
+    from kinoforge.core.errors import Cancelled, KinoforgeError, ValidationError
     from kinoforge.core.image_run import generate_image
 
     if ctx.cfg is None:
