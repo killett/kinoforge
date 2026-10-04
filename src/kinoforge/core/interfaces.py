@@ -26,6 +26,7 @@ from typing import (
 from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.fps_resolver import InterpCapability
 from kinoforge.core.lora_capability import LoraSupport
+from kinoforge.core.media import Media
 from kinoforge.core.scale_target import ScaleTarget
 
 if TYPE_CHECKING:
@@ -989,20 +990,25 @@ class GenerationJob:
 class UpscaleJob:
     """One unit of upscale work — engine-agnostic.
 
-    No prompt, no segments, no LoRA stack — upscaling is video-in / video-out.
+    No prompt, no segments, no LoRA stack. The input is a video by default;
+    ``media="image"`` marks a still (PNG/JPEG) for engines that declare
+    ``supports_image_input``.
 
     Attributes:
-        source: Input video Artifact (uri set by ArtifactStore or pointing at a
+        source: Input Artifact (uri set by ArtifactStore or pointing at a
             local path readable by the engine).
         scale: ScaleTarget. v1 engines MUST raise NotYetImplementedError on
             ``kind="height"``.
         params: Engine-specific overrides (e.g. tile_size, steps, denoise);
             engines validate via ``validate_spec``.
+        media: ``"video"`` (default) or ``"image"``. Mirrors the
+            ``Artifact.meta["media"]`` convention in :mod:`kinoforge.core.media`.
     """
 
     source: Artifact
     scale: ScaleTarget
     params: dict = field(default_factory=dict)  # type: ignore[type-arg]
+    media: Media = "video"
 
 
 @dataclass(frozen=True)
@@ -1364,9 +1370,10 @@ class GenerationEngine(ABC):
 
 
 class UpscalerEngine(ABC):
-    """A swappable video upscaler; owns env setup; declares supported scales.
+    """A swappable upscaler; owns env setup; declares supported scales.
 
-    No prompt, no segments, no LoRA stack — upscaling is video-in/video-out.
+    No prompt, no segments, no LoRA stack. Video-in/video-out by default; an
+    engine that can also take a still image sets ``supports_image_input``.
     Separate from GenerationEngine because the surfaces don't overlap.
 
     Attributes:
@@ -1377,12 +1384,16 @@ class UpscalerEngine(ABC):
         supported_scales: Declared support; matcher pre-flight + ``validate_spec``
             consult this. Empty tuple means "engine claims to accept any
             ScaleTarget" (use sparingly).
+        supports_image_input: True when ``UpscaleJob.media == "image"`` is
+            honoured end to end (upload, pod request, runtime). Defaults to
+            False so a new engine refuses stills until it is proven on them.
     """
 
     name: str
     requires_compute: bool
     requires_local_weights: bool
     supported_scales: tuple[ScaleTarget, ...]
+    supports_image_input: bool = False
 
     @abstractmethod
     def provision(  # noqa: D102

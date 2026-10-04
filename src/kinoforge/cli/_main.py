@@ -703,14 +703,23 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         ),
     )
 
-    # upscale (T15) — standalone video upscale subcommand
-    p_upscale = sub.add_parser("upscale", help="upscale a video clip")
+    # upscale (T15) — standalone upscale subcommand: a video clip, or a
+    # still image for engines declaring supports_image_input (spandrel).
+    p_upscale = sub.add_parser("upscale", help="upscale a video clip or a still image")
     p_upscale.add_argument("-c", "--config", required=True, metavar="PATH")
-    p_upscale.add_argument(
+    p_upscale_src = p_upscale.add_mutually_exclusive_group(required=True)
+    p_upscale_src.add_argument(
         "--video",
-        required=True,
         metavar="PATH_OR_URL",
         help="source mp4 (file path or http(s)://... URL)",
+    )
+    p_upscale_src.add_argument(
+        "--image",
+        metavar="PATH",
+        help=(
+            "source still image (.png/.jpg/.jpeg, local file only). Engine must "
+            "support image input (spandrel); output is always PNG."
+        ),
     )
     p_upscale.add_argument(
         "--scale",

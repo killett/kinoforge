@@ -5,7 +5,7 @@ Runs on the GPU pod. Exposes the DiffusersBackend HTTP contract:
   GET  /health                  -> {"ready": bool, "model": str}
   POST /generate                -> {"job_id": str}
   GET  /status/{job_id}         -> {"status": ..., ...}
-  GET  /artifacts/{filename}    -> MP4 bytes (added in Task 6)
+  GET  /artifacts/{filename}    -> artifact bytes (added in Task 6)
 
 Model loaded once at startup, persists across requests.
 """
@@ -1746,7 +1746,9 @@ def status(job_id: str) -> dict[str, Any]:
 
 @app.get("/artifacts/{filename}")
 def artifact(filename: str) -> Any:  # noqa: ANN401 — returns FileResponse, opaque here.
-    """Serve a generated MP4 by filename with path-traversal guard."""
+    """Serve a generated artifact by filename with path-traversal guard."""
+    import mimetypes
+
     from fastapi.responses import FileResponse
 
     if "/" in filename or "\\" in filename or ".." in filename:
@@ -1759,7 +1761,9 @@ def artifact(filename: str) -> Any:  # noqa: ANN401 — returns FileResponse, op
         raise HTTPException(status_code=400, detail="path escapes artifact dir") from e
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="artifact not found")
-    return FileResponse(str(target), media_type="video/mp4", filename=filename)
+    # Stills ship through this route too; mp4 stays the fallback.
+    media_type = mimetypes.guess_type(filename)[0] or "video/mp4"
+    return FileResponse(str(target), media_type=media_type, filename=filename)
 
 
 class InventoryResponse(BaseModel):
@@ -2372,6 +2376,9 @@ class UpscaleRequest(BaseModel):
     source_filename: str
     scale: str
     engine: str
+    # "video" (default) or "image" — a still is dispatched to the runtime's
+    # upscale_image(); only engines in _IMAGE_CAPABLE_ENGINES accept it.
+    media: Literal["video", "image"] = "video"
     seedvr2: SeedVR2Params | None = None
     spandrel: SpandrelParams | None = None
     flashvsr: FlashVSRParams | None = None
@@ -2445,6 +2452,9 @@ def _probe_resolution(p: Path) -> tuple[int, int]:
         return (0, 0)
 
 
+_IMAGE_CAPABLE_ENGINES: frozenset[str] = frozenset({"spandrel"})
+
+
 @app.post("/upscale")
 async def upscale_handler(req: UpscaleRequest) -> dict[str, str]:
     """Enqueue an upscale job; return ``{"job_id": ...}``.
@@ -2456,6 +2466,16 @@ async def upscale_handler(req: UpscaleRequest) -> dict[str, str]:
     """
     if req.engine not in {"seedvr2", "spandrel", "flashvsr"}:
         raise HTTPException(status_code=400, detail=f"unsupported engine: {req.engine}")
+    if req.media == "image" and req.engine not in _IMAGE_CAPABLE_ENGINES:
+        # Refuse at SUBMIT so the client sees it on its first poll instead of
+        # after a multi-minute model load inside _run_upscale_job.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"engine {req.engine!r} does not support image input; "
+                f"image-capable engines: {sorted(_IMAGE_CAPABLE_ENGINES)}"
+            ),
+        )
     job_id = req.job_id or f"u-{uuid.uuid4().hex}"
     _upscale_jobs[job_id] = {
         "state": "queued",
@@ -2531,9 +2551,14 @@ async def _run_upscale_job(job_id: str, req: UpscaleRequest) -> None:
             )
             scale = ScaleTarget.parse(req.scale)
 
-            out_path = await asyncio.to_thread(
-                entry["pipe"].upscale, local, scale, params
+            # A still goes to upscale_image (tiled, writes <stem>.upscaled.png);
+            # a clip keeps the proven frame-loop path.
+            method = (
+                entry["pipe"].upscale_image
+                if req.media == "image"
+                else entry["pipe"].upscale
             )
+            out_path = await asyncio.to_thread(method, local, scale, params)
             out_path = Path(out_path)
             sha = await asyncio.to_thread(_sha256_file, out_path)
             in_res = await asyncio.to_thread(_probe_resolution, local)
@@ -2689,22 +2714,31 @@ def _sanitize_upload_filename(raw: str | None) -> str:
     return cleaned
 
 
+_UPLOAD_CONTENT_TYPES: frozenset[str] = frozenset(
+    {"video/mp4", "image/png", "image/jpeg"}
+)
+
+
 @app.put("/upload")
 async def upload_handler(request: Request) -> dict[str, Any]:
-    """Stream-write a mp4 body into ``_UPLOAD_DIR``; return path + size + sha256.
+    """Stream-write an mp4 / PNG / JPEG body into ``_UPLOAD_DIR``; return path + size + sha256.
 
-    Content-Type must be ``video/mp4``. ``X-Filename`` is sanitized to a basename
-    in ``[A-Za-z0-9._-]``; empty or dirty filenames fall back to a random
-    ``<hex8>.mp4``. Bodies larger than ``KINOFORGE_MAX_UPLOAD_MB`` (default
-    2048 MiB) are rejected with HTTP 413 and the partial tempfile is removed.
-    The published path is atomically swapped via ``os.replace`` so a mid-stream
-    abort never leaves a file at the advertised name.
+    Content-Type must be in ``_UPLOAD_CONTENT_TYPES``. ``X-Filename`` is
+    sanitized to a basename in ``[A-Za-z0-9._-]``; empty or dirty filenames
+    fall back to a random ``<hex8>.mp4``. Bodies larger than
+    ``KINOFORGE_MAX_UPLOAD_MB`` (default 2048 MiB) are rejected with HTTP 413
+    and the partial tempfile is removed. The published path is atomically
+    swapped via ``os.replace`` so a mid-stream abort never leaves a file at
+    the advertised name.
     """
-    ct = request.headers.get("content-type", "")
-    if not ct.startswith("video/mp4"):
+    ct = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if ct not in _UPLOAD_CONTENT_TYPES:
         raise HTTPException(
             status_code=415,
-            detail=f"Content-Type must be video/mp4, got {ct!r}",
+            detail=(
+                f"Content-Type must be one of {sorted(_UPLOAD_CONTENT_TYPES)}, "
+                f"got {ct!r}"
+            ),
         )
     _UPLOAD_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     safe_name = _sanitize_upload_filename(request.headers.get("x-filename"))

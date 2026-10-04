@@ -1,0 +1,2 @@
+[instance overview] No running instances.
+upscaled: uri='file:///tmp/pytest-of-claudeuser/pytest-1118/test_spandrel_upscales_a_still0/20261003-215104_upscaled_spandrel_spandrel-realesrgan-fp16_upscale.png'

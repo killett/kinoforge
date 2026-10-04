@@ -50,6 +50,7 @@ from kinoforge.core.launch_phase import (
 )
 from kinoforge.core.lifecycle import destroy_confirmed
 from kinoforge.core.lora import LoraEntry, resolve_active_lora_stack
+from kinoforge.core.media import IMAGE_SUFFIXES, MEDIA_KEY
 from kinoforge.core.orchestrator import generate
 from kinoforge.core.reaper import Verdict
 from kinoforge.core.reaper_actor import sweep
@@ -64,7 +65,9 @@ if TYPE_CHECKING:
     from kinoforge.core.cost import CostSnapshot
     from kinoforge.core.grid.executor import GridResult
     from kinoforge.core.interfaces import Lifecycle
+    from kinoforge.core.media import Media
     from kinoforge.core.reaper_actor import SweepReport
+    from kinoforge.core.scale_target import ScaleTarget
 
 logger = logging.getLogger(__name__)
 
@@ -1149,9 +1152,27 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
             print(f"error: invalid cfg.upscale.scale: {exc}", file=sys.stderr)
             return 2
 
+    # --video | --image is a required argparse mutex group, so exactly one
+    # is set. The kind travels as DATA from here on (core/media.py).
+    media: Media = "image" if getattr(args, "image", None) is not None else "video"
+    source: str = args.image if media == "image" else args.video
+
+    # Config-fact refusals fire BEFORE --dry-run prints so a dry run surfaces
+    # them too, and long before any pod work.
+    if media == "image" and (pre_err := _image_preflight_error(cfg, scale)) is not None:
+        print(pre_err, file=sys.stderr)
+        return 2
+
+    # An empty ``--image ""`` is a path fault, not an absent flag. Refuse it
+    # before the dry-run block so a dry run cannot exit 0 on an empty path.
+    if media == "image" and not source:
+        print(_image_arg_error(source), file=sys.stderr)
+        return 2
+
     if getattr(args, "dry_run", False):
         print("upscale plan:")
-        print(f"  source: {args.video}")
+        print(f"  source: {source}")
+        print(f"  media: {media}")
         print(f"  scale: {raw_scale or cfg.upscale.scale}")
         print(f"  engine: {cfg.upscale.engine}")
         if cfg.upscale.seedvr2 is not None:
@@ -1163,7 +1184,11 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
         print(f"  attach_pod: {getattr(args, 'attach_pod', None)}")
         return 0
 
-    if (video_err := _video_arg_error(args.video)) is not None:
+    if media == "image":
+        if (img_err := _image_arg_error(source)) is not None:
+            print(img_err, file=sys.stderr)
+            return 2
+    elif (video_err := _video_arg_error(source)) is not None:
         print(video_err, file=sys.stderr)
         return 2
 
@@ -1174,7 +1199,7 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     del scale  # ScaleTarget recomputed inside UpscaleStage via cfg.upscale.scale
 
-    input_artifact = _resolve_input_video_as_artifact(args.video)
+    input_artifact = _resolve_input_as_artifact(source, media)
     store = ctx.store()
     sink_local = _build_sink(cfg, args)
     run_id = _resolve_run_id(args, "upscale")
@@ -1287,7 +1312,7 @@ def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
             update={"interpolate": cfg.interpolate.model_copy(update={"fps": fps})}
         )
 
-    input_artifact = _resolve_input_video_as_artifact(args.video)
+    input_artifact = _resolve_input_as_artifact(args.video, "video")
     store = ctx.store()
     sink_local = _build_sink(cfg, args)
     run_id = _resolve_run_id(args, "interpolate")
@@ -1364,24 +1389,120 @@ def _video_arg_error(video: str) -> str | None:
     return None
 
 
-def _resolve_input_video_as_artifact(video_path_or_url: str) -> Artifact:
-    """Materialise the ``--video`` arg as a kinoforge Artifact.
+def _image_arg_error(image: str) -> str | None:
+    """Return a CLI error message for a bad ``--image`` arg, else ``None``.
+
+    Mirrors :func:`_video_arg_error` with two differences: a URL is refused
+    (the pod would have to infer the kind from a path it has not fetched)
+    and the suffix must be one of :data:`kinoforge.core.media.IMAGE_SUFFIXES`.
+
+    Args:
+        image: The raw ``--image`` value.
+
+    Returns:
+        An ``error: ...`` line, or ``None`` when the path is usable.
+    """
+    if not image:
+        return "error: --image is empty (no input path)"
+    if image.startswith(("http://", "https://")):
+        return (
+            "error: --image must be a local file; http(s):// sources are not "
+            "supported for still images"
+        )
+    p = Path(image)
+    if not p.exists():
+        return f"error: --image path does not exist: {image}"
+    if not p.is_file():
+        return f"error: --image is not a file: {image}"
+    if p.suffix.lower() not in IMAGE_SUFFIXES:
+        return (
+            f"error: --image suffix {p.suffix!r} is not accepted; "
+            f"use one of {sorted(IMAGE_SUFFIXES)}"
+        )
+    return None
+
+
+def _image_preflight_error(cfg: Config, scale: ScaleTarget) -> str | None:
+    """Return the exit-2 message for an ``--image`` run this config cannot serve.
+
+    Spec §2.1 items 2-4, in order: a height-target scale, an engine without
+    ``supports_image_input``, then ``chunk_frames`` / ``tile_grid``. All are
+    config facts, so they fire before ``--dry-run`` prints and before any
+    pod work.
+
+    Args:
+        cfg: Loaded config; ``cfg.upscale`` must be present (caller checked).
+        scale: The effective scale (CLI override or ``cfg.upscale.scale``).
+
+    Returns:
+        An ``error: ...`` line, or ``None`` when the config can serve a still.
+    """
+    from kinoforge.core import registry
+
+    block = cfg.upscale
+    assert block is not None  # noqa: S101 — _cmd_upscale checked before calling
+    if scale.kind == "height":
+        return (
+            f"error: --image cannot use a height-target scale "
+            f"({int(scale.value)}p); use --scale Nx (height targets for stills "
+            "are deferred)"
+        )
+    try:
+        factory = registry.get_upscaler(block.engine)
+    except UnknownAdapter as exc:
+        return f"error: {exc}"
+    # Every registered upscaler declares the flag on the class, so the
+    # preflight never constructs an engine.
+    supports = getattr(factory, "supports_image_input", False)
+    if not supports:
+        return (
+            f"error: upscale engine {block.engine!r} does not support --image "
+            "(still-image input); use an engine that does, e.g. spandrel"
+        )
+    if block.chunk_frames is not None:
+        return (
+            "error: --image cannot be combined with upscale.chunk_frames "
+            "(temporal chunking is video-only; a still is tiled on the pod via "
+            "spandrel.tile_size)"
+        )
+    if block.tile_grid is not None:
+        return (
+            "error: --image cannot be combined with upscale.tile_grid "
+            "(controller-side video tiling; a still is tiled on the pod via "
+            "spandrel.tile_size)"
+        )
+    return None
+
+
+def _resolve_input_as_artifact(path_or_url: str, media: Media) -> Artifact:
+    """Materialise a ``--video`` / ``--image`` arg as a kinoforge Artifact.
 
     Local file path → ``file://`` URL + sha256 from disk + size from stat.
-    ``http(s)://`` URL → passthrough; sha256/size deferred to server-side
-    fetch (the upscaler engine's ``source_url`` consumer handles the
-    integrity check after download).
+    ``http(s)://`` URL → passthrough; sha256/size deferred to the pod-side
+    fetch. Either way ``meta["media"]`` carries *media* so every later layer
+    (stage, engine, orchestrator publish) reads the kind rather than guessing
+    it from the filename.
+
+    Args:
+        path_or_url: The raw CLI source value.
+        media: ``"video"`` or ``"image"``.
+
+    Returns:
+        The input artifact seeded into ``state.artifacts["clip"]``.
     """
     import hashlib as _hashlib
 
-    if video_path_or_url.startswith(("http://", "https://")):
-        return Artifact(uri=video_path_or_url, sha256="", size=0)
-    p = Path(video_path_or_url).resolve()
+    meta = {MEDIA_KEY: media}
+    if path_or_url.startswith(("http://", "https://")):
+        return Artifact(uri=path_or_url, sha256="", size=0, meta=meta)
+    p = Path(path_or_url).resolve()
     h = _hashlib.sha256()
     with p.open("rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
-    return Artifact(uri=f"file://{p}", sha256=h.hexdigest(), size=p.stat().st_size)
+    return Artifact(
+        uri=f"file://{p}", sha256=h.hexdigest(), size=p.stat().st_size, meta=meta
+    )
 
 
 def _upscaler_precision_tag(cfg: Config) -> str:

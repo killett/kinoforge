@@ -26,6 +26,15 @@ first unchecked task without redoing committed work.
 > `examples/configs/modal-diffusers-minimax-h3-t2va-long.yaml`.
 
 ## Pointers
+- **SHIPPED — standalone image upscaling (`kinoforge upscale --image`):** design
+  `docs/superpowers/specs/2026-10-03-standalone-image-upscaling-design.md`, plan
+  `docs/superpowers/plans/2026-10-03-standalone-image-upscaling.md` (+ `.tasks.json`),
+  all 9 tasks complete, live-proven 2026-10-03 — `successful-generations.md` §36 (pod
+  `9xluga4yhv8pfb`, 2672x1504→5344x3008, ~$0.03-0.05 across four runs, frame-QA PASS).
+  Closes the §13.1 deferral of the image design. Media kind travels as data
+  (`core/media.py`); `tile_size` is honoured for the first time, on the still-image path
+  only. The spandrel configs' launch goldens and `_BASELINE_BYTES` were deliberately
+  re-baselined in Task 8, because the spandrel package and the server now embed more.
 - **SHIPPED — standalone image generation (`kinoforge image`):** design
   `docs/superpowers/specs/2026-10-03-standalone-image-generation-design.md`, plan
   `docs/superpowers/plans/2026-10-03-standalone-image-generation.md` (+ `.tasks.json`).
@@ -50,8 +59,7 @@ first unchecked task without redoing committed work.
   a "reserved for future spec validation" comment) — it now gates `t2i` before submit.
   Also fixed: two `applies_to` predicates that crashed `kinoforge doctor` on `engine: None`,
   and two example-config sweeps that assumed every shipped config is a video config.
-  **Deferred, NOT done:** still-image UPSCALING (spandrel already holds the model; only its
-  I/O is video-shaped), user-supplied INPUT images (there is no `--init-image` and no
+  **Deferred, NOT done:** user-supplied INPUT images (there is no `--init-image` and no
   asset-supply seam — `cli/_commands.py` builds `GenerationRequest` with no assets), and
   live-firing the Replicate image engine (coded, offline-tested, never run).
   **Known gap:** the AST structural guard in `tests/core/test_image_run.py` inspects import

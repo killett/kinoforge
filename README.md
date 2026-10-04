@@ -113,7 +113,7 @@ pixi run test
 | `provision` | Provision an existing instance | `pixi run kinoforge provision --config cfg.yaml` |
 | `doctor` | Validate config and credentials | `pixi run kinoforge doctor --config cfg.yaml` |
 | `generate` | Run a generation job | `pixi run kinoforge generate --config cfg.yaml --prompt "…" --mode t2v` |
-| `upscale` | Upscale a video clip (FlashVSR default; spandrel 2x) | `pixi run kinoforge upscale --config cfg.yaml --video clip.mp4 --no-reuse` |
+| `upscale` | Upscale a video clip (FlashVSR default; spandrel 2x) or a still image (`--image`, spandrel) | `pixi run kinoforge upscale --config cfg.yaml --video clip.mp4 --no-reuse` |
 | `interpolate` | Raise a video's frame rate (RIFE) | `pixi run kinoforge interpolate --config cfg.yaml --video clip.mp4 --fps 60 --no-reuse` |
 | `list` | List running instances from ledger | `pixi run kinoforge list` |
 | `status` | Show status of one instance | `pixi run kinoforge status --id <id>` |

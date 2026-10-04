@@ -29,6 +29,7 @@ from kinoforge.core.interfaces import (
     UpscalerEngine,
     UpscaleResult,
 )
+from kinoforge.core.media import media_of
 from kinoforge.core.scale_resolver import resolve_height_target
 from kinoforge.core.scale_target import ScaleTarget
 from kinoforge.pipeline.chunk import (
@@ -230,7 +231,9 @@ class UpscaleStage:
         return self._run_chunked(local, specs, scale)
 
     def _engine_call(self, clip: Artifact, scale: ScaleTarget) -> UpscaleResult:
-        job = UpscaleJob(source=clip, scale=scale)
+        # The media kind rides Artifact.meta from the CLI; the engine needs it
+        # on the job to pick the upload content type and the pod method.
+        job = UpscaleJob(source=clip, scale=scale, media=media_of(clip))
         return self.engine.upscale(
             self.instance, job, self.cfg, cancel_token=self.cancel_token
         )

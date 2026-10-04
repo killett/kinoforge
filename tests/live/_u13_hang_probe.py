@@ -98,7 +98,7 @@ def _truncated_input(dest: Path) -> Path:
     An mp4's ``moov`` atom lives at the tail, so a truncated copy is
     structurally unreadable: the server fails to open it and errors the job,
     which is the ``UpscaleFailed`` this probe needs. The controller never
-    decodes it (``_resolve_input_video_as_artifact`` only stats and hashes),
+    decodes it (``_resolve_input_as_artifact`` only stats and hashes),
     and ``_video_arg_error`` only checks existence, so it reaches the pod.
 
     Args:

@@ -679,8 +679,10 @@ class SpandrelEngineConfig(BaseModel):
             value is only the user-facing identifier surfaced in the sink
             filename schema.
         precision: ``"fp16"`` (default) or ``"fp32"``.
-        tile_size: Frame-tile dimension in pixels for VRAM headroom.
-        batch_size: Frames per CUDA batch.
+        tile_size: Tile edge in pixels for STILL-IMAGE upscale
+            (``kinoforge upscale --image``); ``0`` = whole image. The video
+            path is untiled and ignores it.
+        batch_size: Frames per CUDA batch on the video path.
     """
 
     model_url: str

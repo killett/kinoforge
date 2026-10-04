@@ -137,11 +137,17 @@ See `../examples/configs/hosted.yaml`, `../examples/configs/runpod-diffusers-ser
 for working `spec:` + `params:` shapes per engine.
 
 
-## `upscale:` (optional, video upscaling)
+## `upscale:` (optional, video or still-image upscaling)
 
 Activates the in-pipeline `UpscaleStage` after `GenerateClipStage` for
 `kinoforge generate`, or stands alone for `kinoforge upscale`. The CLI
 flag `--scale` overrides `upscale.scale` for one-off runs.
+
+`kinoforge upscale` takes exactly one of `--video PATH_OR_URL` or
+`--image PATH` (local `.png` / `.jpg` / `.jpeg` only). With `--image` the
+engine must declare image support (today: `spandrel`), `scale` must be a
+factor (`2x`, `4x`), and `chunk_frames` / `tile_grid` must be unset — each
+violation exits 2 before any pod is booted. Output is always PNG.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -170,7 +176,7 @@ flag `--scale` overrides `upscale.scale` for one-off runs.
 | `spandrel.model_url` | string | — (required) |
 | `spandrel.arch` | string | `"realesrgan"` |
 | `spandrel.precision` | `"fp16"` \| `"fp32"` | `"fp16"` |
-| `spandrel.tile_size` | int | `512` |
+| `spandrel.tile_size` | int | `512` — still-image tile edge; `0` = whole image; video path ignores it |
 | `spandrel.batch_size` | int | `4` |
 
 **`seedvr2`** — extras-gated stub. It self-registers and its config parses, so cfg-time validation

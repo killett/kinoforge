@@ -607,7 +607,19 @@ live under `cfg.upscale.spandrel`:
 - `arch` — architecture token surfaced in the model-identity slug
   (informational; the runtime auto-detects from the weights file).
 - `precision` — `"fp16"` (default) or `"fp32"`.
-- `tile_size` / `batch_size` — VRAM-vs-throughput knobs.
+- `tile_size` — tile edge in pixels for **still-image** upscale; `0` = whole
+  image. The video path is untiled (frames are small) and ignores it.
+- `batch_size` — frames per CUDA batch on the video path.
+
+**Image input.** `spandrel` is the one upscaler that also takes a still:
+`kinoforge upscale --image photo.png -c examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml --no-reuse`
+uploads the PNG/JPEG to the same pod, runs the same weights through
+`SpandrelRuntime.upscale_image` (tiled by `tile_size` with a 32 px overlap)
+and publishes `{ts}_upscaled_spandrel_{model}_upscale.png` — always PNG,
+lossless. Factor scales only; `chunk_frames`, `tile_grid` and height targets
+are refused at preflight for `--image`. FlashVSR and SeedVR2 refuse `--image`
+(`UpscalerEngine.supports_image_input` is false), because a temporal model has
+no meaning for one frame.
 
 ### `seedvr2` (extras-gated, Phase 2)
 
