@@ -2,6 +2,7 @@
 
 RED scaffold committed BEFORE the live spend per CLAUDE.md. Input is the §35
 `kinoforge image` PNG, so this run is also the first image -> upscale chain.
+Output is published to tmp_path to keep the repo output/ guard clean.
 Evidence lands under ``tests/live/evidence/2026-10-03-spandrel-image-upscale/``.
 """
 
@@ -38,7 +39,7 @@ def _dims(path: Path) -> tuple[int, int]:
 
 
 @pytest.mark.live
-def test_spandrel_upscales_a_still_image_2x() -> None:
+def test_spandrel_upscales_a_still_image_2x(tmp_path: Path) -> None:
     assert _INPUT.exists(), f"input PNG missing: {_INPUT}"
     assert _CFG.exists(), f"cfg missing: {_CFG}"
     _EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
@@ -53,6 +54,8 @@ def test_spandrel_upscales_a_still_image_2x() -> None:
             str(_INPUT),
             "--config",
             str(_CFG),
+            "--output-dir",
+            str(tmp_path),
             "--no-reuse",
         ],
         capture_output=True,
