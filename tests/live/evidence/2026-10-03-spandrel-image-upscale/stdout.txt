@@ -1,0 +1,2 @@
+[instance overview] No running instances.
+upscaled: uri='file:///workspace/output/20261003-213849_upscaled_spandrel_spandrel-realesrgan-fp16_upscale.png'
