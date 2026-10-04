@@ -26,18 +26,24 @@ first unchecked task without redoing committed work.
 > `examples/configs/modal-diffusers-minimax-h3-t2va-long.yaml`.
 
 ## Pointers
-- **NEXT UP — standalone image generation (`kinoforge image`):** design doc
+- **IN FLIGHT — standalone image generation (`kinoforge image`):** design doc
   `docs/superpowers/specs/2026-10-03-standalone-image-generation-design.md`, approved
   2026-10-03. **Implementation plan:**
   `docs/superpowers/plans/2026-10-03-standalone-image-generation.md` (+ `.tasks.json`,
-  10 tasks, dependencies set). **Single next action: execute Task 1** (`ImageConfig`
-  base, `KeyframeConfig` extends it). Task 10 is the only live-spend task (~$0.01-0.05
-  on Luma) and is tagged a user gate. Closes the gap that kinoforge has four
-  registered image engines, an image-profile cache and an image sink schema but no way to
-  produce an image: the only route into an `ImageEngine` is `cfg.keyframe` ->
-  `KeyframeStage`, which fills conditioning roles for a video mode and never terminates at
-  a PNG. Decisions locked in the design: a new `image` subcommand (NOT `generate --mode
-  t2i` — `Config.engine`/`models` are required and `core/validation.py:48` checks the mode
+  10 tasks, dependencies set). **Tasks 1-9 DONE** — `ImageConfig`/`KeyframeConfig`,
+  the `image:` allowlist validator, the `kinoforge image` subcommand (dry-run +
+  live path), `--ephemeral` refusal for every image engine except `fake`, the two
+  example configs (`examples/configs/luma-uni1-t2i.yaml` pinned to `uni-1`,
+  `examples/configs/fal-flux-schnell-t2i.yaml`) and operator docs (`docs/configuration.md`
+  §`image:`, `docs/engines.md` §Keyframe stage intro, README §Generate a single image).
+  **Single next action: execute Task 10** — the live-spend smoke (~$0.01-0.05 on Luma,
+  tagged a user gate; `--dry-run` only has been run so far, never a live generation).
+  Closes the gap that kinoforge has four registered image engines, an image-profile
+  cache and an image sink schema but no way to produce an image: the only route into
+  an `ImageEngine` used to be `cfg.keyframe` -> `KeyframeStage`, which fills
+  conditioning roles for a video mode and never terminates at a PNG. Decisions locked
+  in the design: a new `image` subcommand (NOT `generate --mode t2i` —
+  `Config.engine`/`models` are required and `core/validation.py:48` checks the mode
   against the VIDEO profile); a new `image:` block with `ImageConfig` as the base
   `KeyframeConfig` extends (deletes the duplicate `capability_key()`); an ALLOWLIST of
   permitted keys, not a denylist, because silently-inert config is the U51/U56 defect class;
@@ -46,11 +52,14 @@ first unchecked task without redoing committed work.
   keyed on image-engine name (today it is refused only by an accidental `("", None)` key
   miss at `cli/_main.py:270`). Two findings the design surfaced and fixes: `ImageBackend`
   cannot be cancelled (`core/interfaces.py:852`/`:855` take no token, so a ~125 s Luma poll
-  ignores SIGINT) and `ImageProfile` has NO consumer anywhere
-  (`pipeline/keyframe.py:48` says "reserved for future spec validation" and nothing reads
-  it). Open question the plan MUST resolve rather than assume: whether `kinoforge doctor`
-  survives `engine: null` + `compute: null` — 7 of the 22 `cfg.engine` dereference sites are
-  in `validation/checks/*`.
+  ignores SIGINT) and `ImageProfile` has NO consumer anywhere besides the
+  pre-submit `supported_modes` gate in `core/image_run.py` — `max_resolution` is read
+  nowhere; documented plainly in `docs/engines.md` so no reader assumes dimension
+  validation exists. The doctor-survives-`engine: null` open question from Task 1 was
+  resolved by Task 3 (two `applies_to` guards fixed in `validation/checks/models.py` +
+  `loras.py`) and re-exercised live in Task 9 against the two real shipped image configs
+  (`kinoforge doctor -c examples/configs/{luma-uni1-t2i,fal-flux-schnell-t2i}.yaml` both
+  exit 0, no `AttributeError`) — no third unguarded `cfg.engine` dereference found.
 - **Spec (the *what*):** `SPEC.md`
 - **Design (validated):** `DESIGN.md`
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`

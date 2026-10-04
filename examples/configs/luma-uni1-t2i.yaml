@@ -1,0 +1,32 @@
+# Standalone image generation via Luma's agents API (UNI-1).
+#
+# `kinoforge image` is a terminal command: one prompt in, one PNG out. There is
+# no compute block because every image engine is hosted (requires_compute =
+# False) — no pod, no warm reuse, no lifecycle budget.
+#
+# Targets agents.lumalabs.ai/v1 (verified 2026-07-03 against
+# docs.agents.lumalabs.ai). The retired dream-machine surface 403s for platform
+# keys. Set the Luma platform API key in the environment before running.
+#
+# MODEL CHOICE: pinned to uni-1. The 2026-07-04 keyframe matrix
+# (successful-generations.md 18) found uni-1-max the better default on quality
+# — fewer destructive artifacts, clearer subjects, +15% latency — but left the
+# pin on uni-1 because max-tier per-image pricing is not visible on the wire.
+# Flip `model` to uni-1-max once the dashboard confirms the delta.
+#
+# Run:
+#   pixi run -e live-hosted kinoforge image \
+#     --config examples/configs/luma-uni1-t2i.yaml \
+#     --prompt "$(cat examples/configs/prompts/field-realistic.txt)"
+
+mode: t2i
+
+image:
+  engine: luma_agents
+  spec:
+    model: "uni-1"
+  params:
+    aspect_ratio: "16:9"
+
+output:
+  dir: output

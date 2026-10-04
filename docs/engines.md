@@ -11,7 +11,7 @@ Five registries an operator selects from by config key, all resolved through
 |---|---|---|---|
 | Compute providers | `compute.provider` | `get_provider` | `runpod`, `modal`, `skypilot`, `local` |
 | Generation engines | `engine.type` | `get_engine` | `comfyui`, `diffusers`, `fal`, `hosted`, `replicate`, `runway`, `bedrock_video`, `fake` |
-| Image engines (keyframes) | `keyframe.engine` | `get_image_engine` | `fal`, `replicate`, `luma_agents`, `fake` |
+| Image engines | `keyframe.engine` / `image.engine` | `get_image_engine` | `fal`, `replicate`, `luma_agents`, `fake` |
 | Upscalers | `upscale.engine` | `get_upscaler` | `flashvsr`, `spandrel`, `seedvr2` (extras-gated) |
 | Interpolators | `interpolate.engine` | `get_interpolator` | `rife` |
 
@@ -155,6 +155,27 @@ a body-format `ValidationException` if access is granted, or `"Operation not
 allowed"` if the account-level authorization gate is still active.
 
 ## Keyframe stage
+
+Image engines are reachable two ways now: as the **head of a video pipeline** via
+`keyframe:` (below), and **terminally** via a standalone `image:` block run with
+`kinoforge image` — one prompt in, one PNG out, no video pipeline attached. The two
+paths share the same engine registry, the same `ImageConfig` shape (`engine` /
+`spec` / `params`), and the same `ImageProfile` gating described below; they differ
+only in what consumes the resulting image. See [configuration.md](configuration.md#image-optional-standalone-image-generation)
+for the `image:` block's schema and allowlist, and
+[`../examples/configs/luma-uni1-t2i.yaml`](../examples/configs/luma-uni1-t2i.yaml) /
+[`../examples/configs/fal-flux-schnell-t2i.yaml`](../examples/configs/fal-flux-schnell-t2i.yaml)
+for runnable terminal-image examples.
+
+**What `ImageProfile` actually gates.** `supported_modes` **is** checked before submit
+— `generate_image` / the keyframe stage both raise `ValidationError` if `"t2i"` isn't
+in the resolved profile's `supported_modes`. `max_resolution` is carried on the
+dataclass but **is not enforced anywhere** in the codebase today: fal's wire shape
+takes `image_size`, Luma's takes `aspect_ratio`, and `image.params` is an opaque
+pass-through merged straight into the provider's request body with no
+normalisation layer that could translate either into a width/height pair to check
+against `max_resolution`. Do not assume a generated image is bounded by
+`max_resolution` — it is not checked, only recorded.
 
 The keyframe stage runs an image-generation model **before** the video-generation
 step and injects the result as a conditioning asset. Add a `keyframe:` block to
