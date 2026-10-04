@@ -4050,7 +4050,7 @@ fabric definition at the left shoulder. Neither is a defect at this model tier.
 |---|---|
 | **Stack triple** | `runpod / SpandrelEngine / RealESRGAN_x2.pth (ai-forever/Real-ESRGAN)` |
 | **Mode** | image-upscale |
-| **kinoforge version** | `v0.1.0` |
+| **kinoforge version** | `v0.5.0` |
 | **First-success SHA** | `c3258a2f` (branch `feat/standalone-image-upscaling`) |
 | **Date (local TZ)** | 2026-10-03 21:51:04 -0700 (PDT) |
 | **Layer / phase** | Standalone image upscaling, design `docs/superpowers/specs/2026-10-03-standalone-image-upscaling-design.md`, plan `docs/superpowers/plans/2026-10-03-standalone-image-upscaling.md` (9 tasks) |
