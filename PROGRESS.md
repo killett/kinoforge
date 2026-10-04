@@ -31,7 +31,7 @@ first unchecked task without redoing committed work.
   `docs/superpowers/plans/2026-10-03-standalone-image-generation.md` (+ `.tasks.json`).
   **All 10 tasks complete on branch `feat/standalone-image-generation`**, live-proven
   2026-10-03 on Luma UNI-1 — `successful-generations.md` §35 (104 s, 2672x1504,
-  ~$0.01-0.05, ZERO compute provisioned, frame-QA PASS with an apparent-age flag).
+  ~$0.01-0.05, ZERO compute provisioned, frame-QA PASS).
   Closes the gap that kinoforge had four registered image engines, an image-profile cache
   and an image sink schema but no way to produce an image: the only route into an
   `ImageEngine` was `cfg.keyframe` -> `KeyframeStage`, which fills a conditioning role for

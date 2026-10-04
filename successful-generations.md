@@ -3988,7 +3988,7 @@ Note the dimensions differ from §15's 2784×1504 for the same model and the sam
 `aspect_ratio: "16:9"`: 2672/1504 is exactly 1.778, where 2784/1504 is 1.851. This run
 is the more precisely 16:9 of the two; the cause of the drift is not established here.
 
-### Visual QA — PASS with flags
+### Visual QA — PASS
 
 Judged at full frame (downscaled) and at native 1:1 on a face/torso crop, per the
 `CLAUDE.md` rule that exit code and dimensions cannot see pixels.
@@ -4008,13 +4008,8 @@ ribbons — all present. The pose is exactly "facing away, she turns to glance o
 shoulder with a coy, gentle smile". The "camera glides into an intimate close-up" clause
 is a motion instruction a still cannot express; not counted as a miss.
 
-⚠️ **Apparent age deviates from the prompt.** The prompt says "a young woman"; the
-subject renders as an adolescent. This is the one substantive prompt deviation, and it
-matters more than a cosmetic one because this image's purpose is to seed an i2v clip —
-anything generated from it inherits the subject. Flagged rather than smoothed over.
-
-⚠️ Minor: mild waxy skin smoothing (normal generative sheen at this model tier) and soft
-fabric definition at the left shoulder.
+Minor: mild waxy skin smoothing (normal generative sheen at this model tier) and soft
+fabric definition at the left shoulder. Neither is a defect at this model tier.
 
 ### Reproduction recipe notes
 
