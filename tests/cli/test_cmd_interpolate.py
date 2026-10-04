@@ -102,7 +102,7 @@ class TestVideoArgValidation:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         # Bug caught (2026-07-06): a chained `--video "$(ls ...)"` that expands
-        # empty resolves to cwd, and _resolve_input_video_as_artifact opened the
+        # empty resolves to cwd, and _resolve_input_as_artifact opened the
         # DIRECTORY -> opaque `IsADirectoryError` deep in provisioning. A local
         # --video that is not a regular file must fail fast with exit 2.
         cfg = _stub_cfg(tmp_path)
