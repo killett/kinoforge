@@ -40,6 +40,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
      | 2 (warm2) | `forest.txt`          | +3 m 26 s | `output/20260620-122124_diffusers_Wan2.2-T2V-A14B-Diffuser_A-dense-old-growth-f.mp4`   | 798,293 B (0.76 MiB)   | `7b2836285ebd0b64c8a6662fea13ae21e5bac2349b81c3de5c705b309b5b6a94` |
      | 3 (warm3) | `dawn-flight.md`      | +3 m 25 s | `output/20260620-122449_diffusers_Wan2.2-T2V-A14B-Diffuser_Aerial-drone-shot-at.mp4`   | 403,909 B (0.39 MiB)   | `d11c1c194d47a70399838b095f63ea4a3d4dc2e24a99ef2279df8146af46f4f5` |
 12. `2026-06-30 21:19:07` — [SpandrelEngine RealESRGAN-x2 upscale on RunPod (wan_t2v_server multi-engine) — upscale](#12-2026-06-30-211907--spandrelengine-realesrgan-x2-upscale-on-runpod-wan_t2v_server-multi-engine--upscale)
+   - See also: same engine tuple (`runpod`, `SpandrelEngine`, `RealESRGAN_x2`) now also upscales stills via `kinoforge upscale --image` — §36.
     - See also: `2026-06-30 22:19:07` — T16 multi-stage warm-reuse on pod `4ju5e4ae9jnx6e`: Wan 2.2 T2V-A14B stage-1 (480×480×81) → SpandrelEngine stage-2 (960×960×81) on the same pod, spend $0.25, 908.82 s wall. Same tuple `(runpod, spandrel, RealESRGAN, upscale)` chained after `(runpod, DiffusersEngine, Wan-AI/Wan2.2-T2V-A14B-Diffusers, t2v)`.
     - See also: `2026-09-11 18:24:22` — U34 verification run on pod `h0921u4lt7bmln` (RTX 4090, $0.74/hr, ~$0.015, 70 s wall): same tuple `(runpod, spandrel, RealESRGAN, upscale)`, same cfg `examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml`, 480×480×81 → 960×960. No new capability axis — it is logged only because it is the FIRST run after U33 (`af36000b`) made the engine render a real `--extra-index-url https://download.pytorch.org/whl/cu124` instead of the literal `None`, so it is the reproduction point for that change. Pod ran `torch 2.6.0+cu124` / `torchvision 0.21.0+cu124`; pip reported both as already satisfied, so whether the index or the base image supplied them is NOT settled by this run (see U34 in `PROGRESS.md`). Frame-QA PASS: scene, colour and composition faithful to source, genuine detail gain in the flower field, waterfall texture and hair strands, mild RealESRGAN face plasticity that is normal for this model, and none of the entry-#13/#14 false-colour corruption. Output `output/20260911-182422_upscaled_spandrel_spandrel-realesrgan-fp16_upscale.mp4` (1295567 bytes).
     - See also: `2026-09-23 18:20:19` — Task 7 U53 live GREEN proof on pod `vixczskzagk6h4` (offer-retry landed past an unavailable RTX A4000, ~94 s create-to-destroy wall, spend well under $1.00): same tuple `(runpod, spandrel, RealESRGAN, upscale)`, same cfg `examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml`, 480×480×33f fixture `examples/configs/grids/_fixtures/wan21_strength_cell0.mp4` → 2x upscale. No new capability axis — logged because it is the live counterpart to the U53 needs-only-embed RED probe: the same config's rendered env payload dropped from 112,831 B (raw HTTP 500 on `podFindAndDeployOnDemand`, no pod created — see `tests/live/evidence/2026-09-23-u53-env-payload/red-oversized-create.txt`) to 73,123 B after Tasks 1–6 trimmed 3 unused `servers/` modules (`minimax_h3_server.py`, `_lora.py`, `_av_io.py`) out of the embed. This run proves the create now succeeds AND the pod boots and serves `/upscale` correctly without those 3 modules on disk — no ImportError, no ModuleNotFoundError. GPU util probed non-zero (100%) mid-run, not just `est_spend`. Frame-QA PASS: composition, colour and scene content match the source 1:1, genuine 2x detail gain, no false-colour/banding corruption. Full evidence at `tests/live/evidence/2026-09-23-u53-env-payload/green-create-and-upscale.txt`. Output `output/20260923-182148_upscaled_spandrel_spandrel-realesrgan-fp16_upscale.mp4` (549268 bytes).
@@ -90,6 +91,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 34. `2026-09-23 00:33:31` — [MiniMax-H3 t2va + LoRA on Modal H200 — the first LoRA on H3 and the first on a t2va model, two applies on one pod — t2va+lora](#34-2026-09-23-003331--minimax-h3-t2va--lora-on-modal-h200--the-first-lora-on-h3-and-the-first-on-a-t2va-model-two-applies-on-one-pod--t2valora)
     - See also: `2026-09-23 01:17:02` — **the seeded strength A/B that explains this entry's frame-QA FAIL.** Same tuple `(modal, DiffusersEngine, MiniMaxAI/MiniMax-H3, t2va)`, new cfg `examples/configs/modal-diffusers-minimax-h3-t2va-lora-style-seeded.yaml` (20 steps, **`spec.seed: 424242` PINNED** — the first seeded comparison in this whole task). Pod `run-20260923-011131` (H200), two cells: LineartAnime at **strength 1.0** → `output/20260923-011408_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (1,398,302 B, sha256 `bc617c3b01b9fb20…`) is photorealistic with **no style at all**; the same seed at **strength 2.0** (the schema maximum) → `output/20260923-011702_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (910,484 B, sha256 `8d3b0a26dacf7e99…`) is a **total stylistic transformation** — photorealism gone, flat painterly brushwork, stylised foliage, saturated illustrative colour, the subject a painted character. Both cells share composition, camera path and figure placement (the seed pin visibly holding), so the ONLY difference is style. **Verdict: strength was the variable, not dtype — the profile's fp32→bf16 restore path is EXONERATED**, and §34's FAIL was a config artifact (strength 1.0 compounded by 8 steps). Cell A isolates it: 20 steps alone does NOT produce the style. `/health` held a third time; GPU probe read **100 %** mid-denoise, resolving §34's low-utilisation caveat as point-sampling. Spend **est≤$0.51**, teardown verified from a fresh process. Full delta in `.superpowers/sdd/2026-09-22-h3-lora-shared-seam/task-11-report.md`.
 35. `2026-10-03 17:44:27` — [`kinoforge image` — the first generation produced by a kinoforge command that terminates at an image (Luma UNI-1) — t2i](#35-2026-10-03-174427--kinoforge-image--the-first-generation-produced-by-a-kinoforge-command-that-terminates-at-an-image-luma-uni-1--t2i)
+36. `2026-10-03 21:51:04` — [kinoforge upscale --image — spandrel RealESRGAN-x2 on a Luma UNI-1 still — image-upscale](#36-2026-10-03-215104--kinoforge-upscale---image--spandrel-realesrgan-x2-on-a-luma-uni-1-still--image-upscale)
 
           MARK="$(mktemp)"
 
@@ -4039,5 +4041,126 @@ fabric definition at the left shoulder. Neither is a defect at this model tier.
   exits 0. The live run is the first thing that resolves the engine.
 - The published filename carrying `luma_agents` and `uni-1` rather than `unknown` is the
   §17 `_fal_unknown_` trap confirmed closed on this path.
+
+---
+
+## 36. `2026-10-03 21:51:04` — kinoforge upscale --image — spandrel RealESRGAN-x2 on a Luma UNI-1 still — image-upscale
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `runpod / SpandrelEngine / RealESRGAN_x2.pth (ai-forever/Real-ESRGAN)` |
+| **Mode** | image-upscale |
+| **kinoforge version** | `v0.1.0` |
+| **First-success SHA** | `c3258a2f` (branch `feat/standalone-image-upscaling`) |
+| **Date (local TZ)** | 2026-10-03 21:51:04 -0700 (PDT) |
+| **Layer / phase** | Standalone image upscaling, design `docs/superpowers/specs/2026-10-03-standalone-image-upscaling-design.md`, plan `docs/superpowers/plans/2026-10-03-standalone-image-upscaling.md` (9 tasks) |
+
+### The new capability axis
+
+New: a kinoforge command that upscales a STILL image (mode axis `image-upscale`); and the
+first image → upscale chain across two commands (§35's `kinoforge image` output fed straight
+into `kinoforge upscale --image`). Same engine/model tuple as §12 (`runpod`, `SpandrelEngine`,
+`RealESRGAN_x2`) but a new mode, so this is a new section, not a "See also". Also the first
+time spandrel's `tile_size` is honoured on the still-image path: 512-px tiles, 32-px overlap,
+2672×1504 → a 6×3 = 18-tile grid.
+
+### Exact command
+
+```bash
+pixi run kinoforge upscale \
+  --image output/20261003-174427_image_luma_agents_uni-1_Photorealistic-cinem.png \
+  --config examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml \
+  --no-reuse
+```
+
+Input is the §35 `kinoforge image` PNG (Luma UNI-1, 2672×1504 RGB, 9,033,875 B, sha256
+`a188b7cd3e5945cd7ad18898759171dce0603835a3e04d9a31f5413d5c730599`). Run 1 used the example
+cfg verbatim; runs 2-4 used the isolated copy described below. Nothing else differs between
+runs.
+
+### Cfg
+
+`examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml` verbatim, except that from run 3
+on the smoke runs a **copy** of the cfg with `output: {dir: <pytest tmp_path>}` appended. This
+is needed because `tests/conftest.py`'s autouse `_no_writes_to_repo_output_dir` guard fails any
+test that publishes into the repo's real `output/`. `upscale` has **no** `--output-dir` flag
+(only `image` has one), so the cfg's `output.dir` block is the only isolation mechanism
+available on this path.
+
+### Runs
+
+| run | pod | $/hr | provision → destroyed | wall | result |
+|---|---|---|---|---|---|
+| 1 | `immqiz2ci94j9u` | 0.27 | 21:37:19 → 21:38:51 | ~96 s | PNG published to `output/`, pod destroyed; pytest "1 passed, 1 error" — the error is the repo `output/` guard (harness-only), product fine |
+| 2 | `2uxn36uj2nvmj3` | 0.49 | 21:42:00 → 21:43:58 | ~122 s | same harness error; `bootstrap.log` tail: upload_received 9,033,875 B sha `a188b7cd…`, `POST /upscale` 200, 5× `GET /upscale/status` 200, `GET /artifacts/a188b7cd.upscaled.png` 200, `[bootstrap-trap] rc=0` |
+| 3 | (none) | 0 | — | 0.95 s | argparse failure, $0 — scaffold passed `--output-dir`, which `upscale` lacks |
+| 4 | `9xluga4yhv8pfb` | not probed (≤ 0.49) | 21:48:47 → 21:51:06 | ~140 s | **1 passed, 0 errors** (145.76 s pytest) — the green proof |
+
+Spend: run 1 ≈ $0.007, run 2 ≈ $0.017, run 4 ≤ $0.02 (rate not probed; ≤ $0.49/hr) — total ≈
+$0.03-0.05 across the four runs. Pod image `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-
+ubuntu22.04`; pod reported torch `2.6.0+cu124` at startup; `KINOFORGE_SKIP_WAN_LOAD=1`
+(upscale-only boot).
+
+### Utilisation polling
+
+Probed with `RunPodGraphQLUtilEndpoint.probe` every 75 s (run 1), 15 s (run 2), 5 s (runs 3-4).
+**No non-zero GPU reading was captured in any of the four runs.** Run 1's single probe (uptime
+72 s) landed during the pip-install phase (gpu 0%, cpu 6%); run 2's three probes (uptime
+22/48/77 s) all read gpu 0%, cpu 1-9%, and the util API visibly returns the same cached
+snapshot for 15-30 s at a time. The actual inference window (upload 04:43:38Z → artifact GET
+~04:43:55Z) is ~20 s — shorter than the probe cadence can resolve. This is a limit of polling a
+~20 s job, not a stall: the bootstrap log shows the full request sequence completing with
+`rc=0`, and runs 1 and 4 produced byte-identical 5344×3008 outputs on two different pods. The
+evidence of real compute here is the request trace + deterministic output, not a GPU-util
+reading — recorded honestly rather than claiming a percentage that was never observed.
+
+### Output
+
+All three retained outputs are 5344×3008 RGB PNG — exactly 2× the 2672×1504 input. Filename
+shape: `{ts}_upscaled_spandrel_spandrel-realesrgan-fp16_upscale.png`.
+
+- Run 1: 18,849,039 B, sha256 `7648d42f1ceb1615…`
+- Run 4: 18,849,039 B, sha256 `7648d42f1ceb1615…` — **byte-identical to run 1**, despite running
+  on a different pod.
+- Run 2: 18,848,817 B, sha256 `7f9d63e67e2e75de…` — 222 B different, attributed to the
+  different GPU class at $0.49/hr (fp16 kernels differ across GPU classes).
+
+Operator-visible copies: `output/20261003-213849_…png` (run 1) and `output/20261003-214356_…png`
+(run 2); run 4's output landed in a pytest tmp dir (the isolation cfg) and was copied into the
+evidence dir by the test itself.
+
+### Visual QA — PASS
+
+Side-by-side at 1200 px: scene, composition and colour identical to the input; no false
+colour, no banding. Full-res 700×700 crops centred on two tile-grid intersections (output
+coords 2048,1024 — on the subject's hair/face by the waterfall — and 3072,2048 in the meadow):
+no visible seam, no offset, no brightness step across the 32-px-overlap boundaries. Genuine
+detail gain: individual backlit hair strands resolved, flower heads and grass blades sharper,
+waterfall texture crisper.
+
+Soft flags (normal RealESRGAN behaviour, not defects): mild skin smoothing/plasticity on the
+face; grass texture slightly painterly/over-sharpened.
+
+(QA was performed once, against run 1's PNG, which is byte-identical to run 4's.)
+
+### Teardown
+
+`pixi run kinoforge list` was run after **every** run and printed both lines each time:
+`[instance overview] No running instances.` and `No instances recorded in ledger.`
+
+### Evidence
+
+`tests/live/evidence/2026-10-03-spandrel-image-upscale/` holds `stdout.txt` and `stderr.txt`
+(run 4's — the green run — committed with this log entry) plus the three output PNGs. The PNGs
+are **not** committed: they match the repo's `*.png` gitignore rule and stay local-only.
+
+### Lessons
+
+- A live smoke that drives the CLI must isolate `cfg.output.dir` (or chdir) or the repo
+  `output/` guard fails it at teardown — two scaffold iterations (runs 1-2 hit it, run 3's fix
+  attempt used a flag `upscale` doesn't have, run 4's cfg-copy approach is what finally worked).
+- The RunPod util endpoint cannot witness a ~20 s GPU job. For jobs this short, the
+  `bootstrap.log` request trace plus output determinism is the evidence, not a GPU-util
+  percentage.
 
 ---
