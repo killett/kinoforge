@@ -1,12 +1,12 @@
 Pixi task (kinoforge in default): python -m kinoforge upscale --image /workspace/output/20261003-174427_image_luma_agents_uni-1_Photorealistic-cinem.png --config /workspace/examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml --no-reuse
-2026-10-03 21:37:15,449 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (39 keys)
-2026-10-03 21:37:15,466 WARNING kinoforge.validation provider_capabilities: runpod guardrail gaps:
+2026-10-03 21:41:57,988 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (39 keys)
+2026-10-03 21:41:58,005 WARNING kinoforge.validation provider_capabilities: runpod guardrail gaps:
   [WARN] compute.lifecycle.idle_timeout: runpod cannot enforce IDLE_AUTOSTOP (the instance is alive but doing nothing) — provider-side autostop does not fire at workload shape server; bounded instead by ON_INSTANCE_DEADLINE at min(2*idle_timeout, max_lifetime-time_buffer)=3420.0s, further shortened at create by budget=1.0 USD divided by the booked offer's rate (not knowable at load)
-2026-10-03 21:37:15,466 WARNING kinoforge.validation unsupported_fields: runpod field-support gaps:
+2026-10-03 21:41:58,005 WARNING kinoforge.validation unsupported_fields: runpod field-support gaps:
   [WARN] compute.placement.disk_gb=40: runpod does not read it (the run runs out of disk mid-download) — bounded instead by the create-pod mutation's hardcoded containerDiskInGb=250 GB, above the 40 GB you asked for
-2026-10-03 21:37:15,652 WARNING kinoforge.orchestrator [capabilities] compute.lifecycle.idle_timeout: provider-side autostop does not fire at workload shape server; bounded instead by ON_INSTANCE_DEADLINE at min(2*idle_timeout, max_lifetime-time_buffer)=3420.0s, further shortened at create by budget=1.0 USD divided by the booked offer's rate (not knowable at load)
-2026-10-03 21:37:19,947 INFO kinoforge.orchestrator running provisioner.provision for instance immqiz2ci94j9u (engine=diffusers key=b36f749a5703)
-2026-10-03 21:38:46,399 INFO kinoforge.orchestrator materializing upscaled artifact from https://immqiz2ci94j9u-8000.proxy.runpod.net/artifacts/a188b7cd.upscaled.png
-2026-10-03 21:38:49,581 INFO kinoforge.kinoforge.outputs.local output published: /workspace/output/20261003-213849_upscaled_spandrel_spandrel-realesrgan-fp16_upscale.png
-2026-10-03 21:38:49,581 INFO kinoforge.orchestrator generate completed — artifact uri='file:///workspace/output/<output:ad7736>'
-2026-10-03 21:38:51,394 INFO kinoforge.orchestrator --no-reuse: destroyed + forgot pod immqiz2ci94j9u
+2026-10-03 21:41:58,044 WARNING kinoforge.orchestrator [capabilities] compute.lifecycle.idle_timeout: provider-side autostop does not fire at workload shape server; bounded instead by ON_INSTANCE_DEADLINE at min(2*idle_timeout, max_lifetime-time_buffer)=3420.0s, further shortened at create by budget=1.0 USD divided by the booked offer's rate (not knowable at load)
+2026-10-03 21:42:02,579 INFO kinoforge.orchestrator running provisioner.provision for instance 2uxn36uj2nvmj3 (engine=diffusers key=b36f749a5703)
+2026-10-03 21:43:52,049 INFO kinoforge.orchestrator materializing upscaled artifact from https://2uxn36uj2nvmj3-8000.proxy.runpod.net/artifacts/a188b7cd.upscaled.png
+2026-10-03 21:43:56,353 INFO kinoforge.kinoforge.outputs.local output published: /workspace/output/20261003-214356_upscaled_spandrel_spandrel-realesrgan-fp16_upscale.png
+2026-10-03 21:43:56,353 INFO kinoforge.orchestrator generate completed — artifact uri='file:///workspace/output/<output:980ba6>'
+2026-10-03 21:43:58,235 INFO kinoforge.orchestrator --no-reuse: destroyed + forgot pod 2uxn36uj2nvmj3
