@@ -88,6 +88,19 @@ def _required_argv(path: tuple[str, ...]) -> list[str]:
 
     Returns:
         Argv fragment satisfying the leaf's required arguments.
+
+    Note:
+        A required *mutually exclusive group* (e.g. ``upscale``'s
+        ``--video`` | ``--image``) marks ``required=True`` on the GROUP,
+        not on its member actions — each member's own ``.required`` stays
+        ``False``. The plain ``act.required`` scan below is blind to that
+        shape, which is exactly how this helper went stale when Task 3 of
+        standalone-image-upscaling turned ``upscale``'s previously-plain-
+        required ``--video`` into such a group: every leaf matrix entry for
+        ``upscale`` started hitting argparse's "one of the arguments
+        --video --image is required" exit 2. Satisfied here by picking the
+        first member of each required group before the plain-required scan,
+        so a future subcommand reusing the same pattern does not reopen it.
     """
     parser: argparse.ArgumentParser = _build_parser()
     for token in path:
@@ -97,11 +110,22 @@ def _required_argv(path: tuple[str, ...]) -> list[str]:
         parser = action.choices[token]
 
     argv: list[str] = []
+    satisfied_dests: set[str] = set()
+    for group in parser._mutually_exclusive_groups:
+        if not group.required:
+            continue
+        first = group._group_actions[0]
+        argv.append(first.option_strings[-1])  # the long form
+        if first.nargs != 0:
+            argv.append(f"probe-{first.dest}")
+        satisfied_dests.add(first.dest)
     for act in parser._actions:
         if isinstance(act, argparse._HelpAction):
             continue
         if not act.option_strings:  # a positional
             argv.append(f"probe-{act.dest}")
+            continue
+        if act.dest in satisfied_dests:
             continue
         if not act.required:
             continue
