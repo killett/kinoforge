@@ -3047,7 +3047,20 @@ def generate(
             )
         )
         if _needs_materialize and upscaled is not None and sink is not None:
+            from kinoforge.core.media import extension_for, media_of
             from kinoforge.pipeline.materialize import finalize_upscaled_bytes
+
+            media = media_of(upscaled)
+            if media == "image" and _downscale_to is not None:
+                # Unreachable by construction — spandrel refuses height
+                # targets and the CLI refuses them for --image — but
+                # finalize_upscaled_bytes is an ffmpeg mp4 pipeline, so never
+                # let PNG bytes near it.
+                raise RuntimeError(
+                    "upscaled image artifact carries downscale_to="
+                    f"{_downscale_to}; height-target downscale is video-only"
+                )
+            publish_ext = extension_for(media)
 
             if upscaled.uri.startswith(("http://", "https://")):
                 import urllib.request as _urequest  # orchestrator stays urllib-free
@@ -3080,7 +3093,7 @@ def generate(
                 fullres_path = sink.publish(
                     body,
                     prompt="upscale",
-                    extension=".mp4",
+                    extension=publish_ext,
                     provider=provider_tag,
                     model=model_tag,
                     kind="fullres",
@@ -3091,7 +3104,7 @@ def generate(
             local_path = sink.publish(
                 body,
                 prompt="upscale",
-                extension=".mp4",
+                extension=publish_ext,
                 provider=provider_tag,
                 model=model_tag,
                 kind="upscaled",
