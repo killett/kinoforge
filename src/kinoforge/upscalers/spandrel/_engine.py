@@ -42,6 +42,9 @@ class SpandrelEngine(PodHTTPClientMixin, UpscalerEngine):
     requires_compute = True
     requires_local_weights = True
     _pod_user_agent = _USER_AGENT
+    # Still-image input (`kinoforge upscale --image`) — the model IS a
+    # still-image SR model; the pod runtime's upscale_image() is the consumer.
+    supports_image_input = True
     # Empty tuple = runtime declares scale at weights-load time (spec §3.5:
     # spandrel's ModelLoader reports model.scale). Matcher pre-flight
     # short-circuits on emptiness; cfg-time validation defers to runtime.
