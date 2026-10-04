@@ -36,7 +36,7 @@ _USER_AGENT = "kinoforge-spandrel/0.1"
 
 
 class SpandrelEngine(PodHTTPClientMixin, UpscalerEngine):
-    """spandrel-based image super-resolution per-frame video upscaler."""
+    """spandrel-based image super-resolution: per-frame video upscaler, and still-image upscaler via ``UpscaleJob.media="image"``."""
 
     name = "spandrel"
     requires_compute = True
@@ -176,7 +176,7 @@ class SpandrelEngine(PodHTTPClientMixin, UpscalerEngine):
         # the ``/upscale`` job.
         if source_uri.startswith("file://") or source_uri.startswith("/"):
             local_path = Path(source_uri.removeprefix("file://"))
-            source_uri = self._upload_source(instance, local_path)
+            source_uri = self._upload_source(instance, local_path, media=job.media)
 
         block = cast(
             dict[str, Any],
@@ -187,6 +187,7 @@ class SpandrelEngine(PodHTTPClientMixin, UpscalerEngine):
             "source_filename": source_uri.rsplit("/", 1)[-1] or "in.mp4",
             "scale": f"{job.scale.value:g}x",
             "engine": "spandrel",
+            "media": job.media,
             "spandrel": block,
         }
         result, elapsed_s = submit_and_poll(
@@ -205,6 +206,9 @@ class SpandrelEngine(PodHTTPClientMixin, UpscalerEngine):
                 uri=f"{base}/artifacts/{result['filename']}",
                 sha256=result["sha256"],
                 size=result["size"],
+                # The kind rides the artifact forward so the orchestrator's
+                # publish step picks .png for a still (core/media.py).
+                meta={"media": job.media},
             ),
             input_resolution=tuple(result["input_resolution"]),
             output_resolution=tuple(result["output_resolution"]),

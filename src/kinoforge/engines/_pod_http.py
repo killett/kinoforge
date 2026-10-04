@@ -36,6 +36,12 @@ _HTTP_TIMEOUT_S = 60
 _UPLOAD_TIMEOUT_S = 600
 """Per-request timeout for the PUT /upload body stream."""
 
+_IMAGE_CONTENT_TYPES: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+}
+
 _POLL_INTERVAL_S = 2.0
 """Inter-poll cadence for the job status loop."""
 
@@ -188,32 +194,47 @@ class PodHTTPClientMixin:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             return cast(dict[str, Any], _json.loads(resp.read().decode("utf-8")))
 
-    def _upload_source(self, instance: Instance, local_path: Path) -> str:
-        """Upload ``local_path`` mp4 to the pod via PUT /upload; return file:// URL.
+    def _upload_source(
+        self, instance: Instance, local_path: Path, *, media: str = "video"
+    ) -> str:
+        """Upload ``local_path`` to the pod via PUT /upload; return its file:// URL.
 
-        Computes sha256 locally, streams the file body as the PUT
-        payload, and cross-checks the server's reported sha256 before
-        returning. Recovers once from a proxy cold-warmup 502;
-        subsequent failures bubble.
+        Computes sha256 locally, streams the file body as the PUT payload,
+        and cross-checks the server's reported sha256 before returning.
+        Recovers once from a proxy cold-warmup 502; subsequent failures
+        bubble. For ``media="video"`` the body is sent as ``video/mp4`` under
+        ``<sha8>.mp4``; for ``media="image"`` the content type and suffix
+        follow the local file's suffix (``.png`` / ``.jpg`` / ``.jpeg``).
 
         Args:
             instance: Compute instance exposing the pod server endpoint.
-            local_path: Local mp4 to upload.
+            local_path: Local file to upload.
+            media: ``"video"`` (default) or ``"image"``.
 
         Returns:
             ``file://`` URL of the uploaded file on the pod.
 
         Raises:
+            ValueError: ``media="image"`` with a suffix outside png/jpg/jpeg.
             UploadIntegrityError: Server-reported sha256 does not match
                 the locally computed one.
         """
+        if media == "image":
+            suffix = local_path.suffix.lower()
+            content_type = _IMAGE_CONTENT_TYPES.get(suffix)
+            if content_type is None:
+                raise ValueError(
+                    f"image upload needs a .png/.jpg/.jpeg source, got {local_path.name!r}"
+                )
+        else:
+            suffix, content_type = ".mp4", "video/mp4"
         body = local_path.read_bytes()
         local_sha = hashlib.sha256(body).hexdigest()
         short = local_sha[:8]
         url = f"{self._base_url(instance)}/upload"
         headers = {
-            "Content-Type": "video/mp4",
-            "X-Filename": f"{short}.mp4",
+            "Content-Type": content_type,
+            "X-Filename": f"{short}{suffix}",
             "Content-Length": str(len(body)),
             "User-Agent": self._pod_user_agent,
         }
