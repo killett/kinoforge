@@ -174,9 +174,11 @@ recovery are unchanged.
 
 Passes `job.media` into `_upload_source` and adds `"media": job.media` to the
 `/upscale` payload. `validate_spec`, `model_identity`, `render_provision` and
-the embed set are untouched: **no launch golden moves and the env-payload
-ceiling guard is unaffected.** The returned `UpscaleResult.artifact` gets
-`meta={"media": job.media}`.
+the embed set are untouched: **however, the spandrel configs' launch goldens
+and `_BASELINE_BYTES` entries do move, deliberately, in Task 8 — the
+`_engine.py`/`_runtime.py` growth from this and the sibling tasks rides onto
+the pod because those two files are embedded whole.** The returned
+`UpscaleResult.artifact` gets `meta={"media": job.media}`.
 
 ## 5. Pod side
 
@@ -322,7 +324,9 @@ design predicted would be "file hand-off between two commands".
 | docs | `engines.md`, `configuration.md`, `README.md`, `PROGRESS.md` |
 
 Two new fields with defaults, one new method, one new 20-line module, zero
-config changes, zero golden moves.
+config changes — but the spandrel configs' launch goldens and `_BASELINE_BYTES`
+do move, deliberately, in Task 8, because the spandrel package they embed
+whole grew.
 
 ## 10. Open question the plan must verify, not assume
 
