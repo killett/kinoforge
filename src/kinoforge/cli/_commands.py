@@ -230,13 +230,27 @@ def _cmd_deploy(args: argparse.Namespace, ctx: SessionContext) -> int:
         ctx: Per-invocation session context.
 
     Returns:
-        Exit code (0 on success, non-zero on error).
+        Exit code: 0 on success, 2 for an image cfg (no ``engine:`` to
+        deploy), 1 for a duplicate instance or unknown adapter.
     """
     from kinoforge.core.orchestrator import deploy
 
     if ctx.cfg is None:
         raise RuntimeError("_cmd_deploy requires --config")
     cfg = ctx.cfg
+    if cfg.engine is None:
+        # An `image:` cfg has no compute to deploy — `kinoforge image` never
+        # books an instance. An operator who points `deploy` at one (easy to
+        # do: both are `--config <yaml>`) used to reach `cfg.capability_key()`
+        # a few lines down, which raises `ConfigError` by design for an
+        # image cfg — an uncaught traceback instead of a named refusal.
+        # Mirrors `_cmd_provision`'s guard (same shape, same wording).
+        print(
+            "error: deploy requires a video cfg (`engine:` block) — "
+            "image configs have no compute to deploy; use `kinoforge image`",
+            file=sys.stderr,
+        )
+        return 2
 
     # C28 A3: --diagnostic-mode is a per-invocation cfg override; rebuild the
     # Config with the flag set so the orchestrator's _build_spec sees it and
@@ -923,11 +937,28 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
         ctx: Per-invocation session context.
 
     Returns:
-        Exit code (0 on success, non-zero on error).
+        Exit code: 0 on success, 2 for an image cfg (no ``engine:`` to
+        generate against), 1 on a LoRA-parse error or unknown adapter, 2
+        on a preflight validation failure.
     """
     if ctx.cfg is None:
         raise RuntimeError("_cmd_generate requires --config")
     cfg = ctx.cfg
+    if cfg.engine is None:
+        # An `image:` cfg has no compute and no `engine:` to generate
+        # against — `kinoforge generate` is a video-pipeline command.
+        # Before this guard, `_cmd_generate` reached `cfg.capability_key()`
+        # downstream (warm-attach / ephemeral-row bookkeeping), which raises
+        # `ConfigError` by design for an image cfg — an uncaught traceback
+        # instead of a named refusal. Mirrors `_cmd_provision`'s guard
+        # (same shape, same wording).
+        print(
+            "error: generate requires a video cfg (`engine:` block) — "
+            "image configs have no compute to generate against; use "
+            "`kinoforge image`",
+            file=sys.stderr,
+        )
+        return 2
 
     # P3 — parse --loras heredoc and resolve eagerly so parse errors fail
     # fast (before preflight + provider work) and CLI refs hit
@@ -1388,11 +1419,16 @@ def _cmd_image(args: argparse.Namespace, ctx: SessionContext) -> int:
         ctx: Per-invocation session context.
 
     Returns:
-        Exit code: 2 for a missing ``image:`` block or an unresolvable
-        prompt, 1 for a cancelled or otherwise failed generation, 0 on
-        success or on ``--dry-run``.
+        Exit code: 2 for a missing ``image:`` block, an unresolvable prompt,
+        or an unknown ``image.engine``; 1 for a cancelled or otherwise
+        failed generation, 0 on success or on ``--dry-run``.
     """
-    from kinoforge.core.errors import Cancelled, KinoforgeError, ValidationError
+    from kinoforge.core.errors import (
+        Cancelled,
+        KinoforgeError,
+        UnknownAdapter,
+        ValidationError,
+    )
     from kinoforge.core.image_run import _resolve_prompt, generate_image
 
     if ctx.cfg is None:
@@ -1446,6 +1482,15 @@ def _cmd_image(args: argparse.Namespace, ctx: SessionContext) -> int:
     except Cancelled:
         print("image: cancelled", file=sys.stderr)
         return 1
+    except UnknownAdapter as exc:
+        # UnknownAdapter subclasses KinoforgeError, so it MUST be caught
+        # ahead of the broad `except KinoforgeError` below — an unknown
+        # `image.engine` is a config/precondition problem (design §2.4,
+        # exit 2), not a run-time generation failure (exit 1). Ordered
+        # after the two exit-2 cases above purely for readability; nothing
+        # here depends on that ordering.
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     except KinoforgeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

@@ -394,6 +394,40 @@ def test_cancelled_generation_exits_1(
     assert "cancelled" in capsys.readouterr().err
 
 
+def test_unknown_image_engine_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A typo'd ``image.engine`` is a config/precondition problem, not exit 1.
+
+    Bug this catches: ``UnknownAdapter`` subclasses ``KinoforgeError``, so a
+    handler that checks the broad ``except KinoforgeError`` clause before (or
+    without) a dedicated ``except UnknownAdapter`` clause swallows it as a
+    generic run-time failure and returns 1. Design §2.4 lists an unknown
+    image engine under exit 2 (config/precondition) — the same exit code
+    ``docs/configuration.md`` tells operators to act on, because only a real
+    run resolves the engine name. No monkeypatch needed: a genuinely
+    unregistered engine name drives the real ``registry.get_image_engine``
+    lookup inside ``resolve_image_stack``.
+    """
+    from kinoforge.cli._main import main
+
+    cfg = _write_cfg(tmp_path, "lmua_agents")  # typo'd engine name, never registered
+    rc = main(
+        [
+            "--state-dir",
+            str(tmp_path / "state"),
+            "image",
+            "-c",
+            str(cfg),
+            "--prompt",
+            "a cat",
+        ]
+    )
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "lmua_agents" in err
+
+
 def test_dry_run_prompt_resolution_matches_the_real_path(tmp_path: Path) -> None:
     """Dry-run prompt resolution must not drift from generate_image's.
 

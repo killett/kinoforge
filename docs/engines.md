@@ -168,8 +168,12 @@ for the `image:` block's schema and allowlist, and
 for runnable terminal-image examples.
 
 **What `ImageProfile` actually gates.** `supported_modes` **is** checked before submit
-— `generate_image` / the keyframe stage both raise `ValidationError` if `"t2i"` isn't
-in the resolved profile's `supported_modes`. `max_resolution` is carried on the
+— but only on the `generate_image` path: it raises `ValidationError` if `"t2i"` isn't
+in the resolved profile's `supported_modes`. The keyframe stage has no such check —
+`KeyframeStage.image_profile` is carried on the dataclass and never read; nothing in
+`pipeline/keyframe.py` references `image_profile` or `supported_modes`, so a keyframe
+role can submit to a profile that does not advertise `"t2i"` support with no pre-submit
+refusal. `max_resolution` is carried on the
 dataclass but **is not enforced anywhere** in the codebase today: fal's wire shape
 takes `image_size`, Luma's takes `aspect_ratio`, and `image.params` is an opaque
 pass-through merged straight into the provider's request body with no

@@ -93,6 +93,60 @@ def test_token_tripped_mid_poll_stops_the_loop_early() -> None:
     )
 
 
+def test_real_fal_backend_honours_cancel_token_mid_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Drive the REAL ``FalImageBackend.result``, not ``_CountingBackend``.
+
+    Bug this catches: every other test in this module proves the ABC
+    signature + the four shipped engines ACCEPT ``cancel_token`` (signature
+    inspection), and that a hand-rolled mimic of fal's own loop honours it.
+    The shipped ``FalImageBackend.result`` itself — the one engine the
+    keyframe path actually used live (module docstring above) — was never
+    DRIVEN with a tripping token until this test. A regression that broke
+    its own cancel-check (e.g. moving ``token.raise_if_set()`` to after the
+    status GET, or dropping it from the loop body) would pass every other
+    test here, since none of them call this class's ``result`` at all.
+    """
+    monkeypatch.setenv("FAL_KEY", "tk-test")
+    from kinoforge.core.credentials import EnvCredentialProvider
+    from kinoforge.core.interfaces import ImageProfile
+    from kinoforge.image_engines.fal import FalImageBackend
+
+    status_get_calls: list[str] = []
+    token = CancelToken()
+
+    def get(url: str, headers: dict[str, str]) -> dict[str, str]:
+        status_get_calls.append(url)
+        if len(status_get_calls) == 3:
+            # Trip the token mid-poll — same point _CountingBackend trips at
+            # above, so the two tests assert the identical contract on two
+            # different implementations.
+            token.set()
+        return {"status": "IN_PROGRESS"}
+
+    backend = FalImageBackend(
+        cfg={"model": "fal-ai/flux-schnell"},
+        creds=EnvCredentialProvider(),
+        profile_to_return=ImageProfile(
+            name="fal-ai/flux-schnell",
+            max_resolution=(1024, 1024),
+            supported_modes={"t2i"},
+        ),
+        http_get=get,
+        poll_interval_s=0.0,
+    )
+
+    with pytest.raises(Cancelled):
+        backend.result("req-1", cancel_token=token)
+
+    assert len(status_get_calls) == 3, (
+        f"expected the loop to stop polling the iteration after the token "
+        f"was set; got {len(status_get_calls)} status GETs — the real "
+        f"FalImageBackend is checking the token too late (or not at all)"
+    )
+
+
 def test_no_token_means_no_behaviour_change() -> None:
     """The default keeps every existing caller source- and behaviour-compatible.
 

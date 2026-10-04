@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
+from kinoforge.core.cancel import CancelToken
 from kinoforge.core.config import KeyframeConfig, KeyframeRoleOverride
 from kinoforge.core.errors import ValidationError
 from kinoforge.core.interfaces import (
@@ -16,7 +18,7 @@ from kinoforge.core.interfaces import (
     GenerationRequest,
     PipelineState,
 )
-from kinoforge.image_engines.fake import FakeImageEngine
+from kinoforge.image_engines.fake import FakeImageBackend, FakeImageEngine
 from kinoforge.pipeline.keyframe import KeyframeStage
 from kinoforge.stores.local import LocalArtifactStore
 
@@ -332,3 +334,58 @@ def test_artifacts_dict_carries_existing_entries(tmp_path: Path) -> None:
     out = stage.run(state)
     assert "upstream" in out.artifacts
     assert out.artifacts["upstream"] is pre
+
+
+@dataclass
+class _RecordingBackend(FakeImageBackend):
+    """``FakeImageBackend`` that records every ``cancel_token`` it receives."""
+
+    received_tokens: list[object | None] = field(default_factory=list)
+
+    def result(self, job_id: str, *, cancel_token: object | None = None) -> Artifact:
+        """Record *cancel_token*, then delegate to the deterministic fake.
+
+        Args:
+            job_id: The job id returned by ``submit``.
+            cancel_token: The token KeyframeStage passed through (or ``None``).
+
+        Returns:
+            The same synthetic ``Artifact`` ``FakeImageBackend.result`` returns.
+        """
+        self.received_tokens.append(cancel_token)
+        return super().result(job_id, cancel_token=cancel_token)
+
+
+def test_cancel_token_reaches_backend_result(tmp_path: Path) -> None:
+    """``KeyframeStage(cancel_token=tok)`` must reach ``backend.result(cancel_token=tok)``.
+
+    Bug this catches (final-review Finding 4): both wiring sites that construct
+    a ``KeyframeStage`` (``core/orchestrator.py`` and ``core/batch.py``) pass
+    ``cancel_token=cancel_token`` to the constructor, and
+    ``KeyframeStage.run`` passes ``self.cancel_token`` on to
+    ``self.image_backend.result(...)``. Before this test, `rg cancel_token
+    tests/pipeline/` returned nothing — the field could be added to the
+    dataclass and silently never read in ``run()`` (exactly as
+    ``image_profile`` sits unread today, Finding 2) and no test anywhere
+    would notice. A real ``CancelToken`` dropped on the floor here means a
+    CLI SIGINT during keyframe generation waits out the full poll instead of
+    stopping promptly.
+    """
+    cfg = KeyframeConfig(engine="fake", prompt="cat", spec={"model": "m"})
+    eng = FakeImageEngine()
+    backend = _RecordingBackend(profile_to_return=eng.profile_to_return)
+    profile = eng.profile_for(cfg.capability_key())
+    token = CancelToken()
+    stage = KeyframeStage(
+        keyframe_cfg=cfg,
+        image_engine=eng,
+        image_backend=backend,
+        image_profile=profile,
+        store=LocalArtifactStore(tmp_path),
+        run_id="r1",
+        cancel_token=token,
+    )
+
+    stage.run(PipelineState(request=GenerationRequest(prompt="ignored", mode="i2v")))
+
+    assert backend.received_tokens == [token]
