@@ -5,7 +5,7 @@ Runs on the GPU pod. Exposes the DiffusersBackend HTTP contract:
   GET  /health                  -> {"ready": bool, "model": str}
   POST /generate                -> {"job_id": str}
   GET  /status/{job_id}         -> {"status": ..., ...}
-  GET  /artifacts/{filename}    -> MP4 bytes (added in Task 6)
+  GET  /artifacts/{filename}    -> artifact bytes (added in Task 6)
 
 Model loaded once at startup, persists across requests.
 """
@@ -1746,7 +1746,9 @@ def status(job_id: str) -> dict[str, Any]:
 
 @app.get("/artifacts/{filename}")
 def artifact(filename: str) -> Any:  # noqa: ANN401 — returns FileResponse, opaque here.
-    """Serve a generated MP4 by filename with path-traversal guard."""
+    """Serve a generated artifact by filename with path-traversal guard."""
+    import mimetypes
+
     from fastapi.responses import FileResponse
 
     if "/" in filename or "\\" in filename or ".." in filename:
@@ -1759,7 +1761,9 @@ def artifact(filename: str) -> Any:  # noqa: ANN401 — returns FileResponse, op
         raise HTTPException(status_code=400, detail="path escapes artifact dir") from e
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="artifact not found")
-    return FileResponse(str(target), media_type="video/mp4", filename=filename)
+    # Stills ship through this route too; mp4 stays the fallback.
+    media_type = mimetypes.guess_type(filename)[0] or "video/mp4"
+    return FileResponse(str(target), media_type=media_type, filename=filename)
 
 
 class InventoryResponse(BaseModel):

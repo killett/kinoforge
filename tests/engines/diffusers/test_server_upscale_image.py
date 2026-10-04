@@ -164,3 +164,25 @@ class TestUploadContentTypes:
             headers={"Content-Type": "text/plain", "X-Filename": "x.txt"},
         )
         assert r.status_code == 415
+
+
+class TestArtifactMimeType:
+    def test_png_artifact_is_served_as_image_png(self, srv_env: Any) -> None:
+        # Bug caught: /artifacts hardcodes video/mp4, so an upscaled still
+        # downloads as an mp4 and every consumer mis-detects its kind.
+        srv, client, *_ = srv_env
+        srv.ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+        (srv.ARTIFACT_DIR / "still.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        r = client.get("/artifacts/still.png")
+        assert r.status_code == 200, r.text
+        assert r.headers["content-type"].startswith("image/png")
+
+    def test_mp4_artifact_keeps_video_mp4(self, srv_env: Any) -> None:
+        # Bug caught: the MIME lookup regresses the live-proven video path
+        # (e.g. an unknown suffix defaulting to application/octet-stream).
+        srv, client, *_ = srv_env
+        srv.ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+        (srv.ARTIFACT_DIR / "clip.mp4").write_bytes(b"\x00" * 32)
+        r = client.get("/artifacts/clip.mp4")
+        assert r.status_code == 200, r.text
+        assert r.headers["content-type"] == "video/mp4"
