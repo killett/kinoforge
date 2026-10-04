@@ -122,3 +122,41 @@ class TestUpscaleStageFailureModes:
         )
         with pytest.raises(ScaleUnsatisfiableError):
             stage.run(remote)
+
+
+class TestMediaThreading:
+    def test_image_meta_reaches_the_job(self) -> None:
+        # Bug caught: the CLI stamps meta["media"]="image" and the stage
+        # builds UpscaleJob without it, so the pod receives a "video" job
+        # and feeds PNG bytes to the FFMPEG frame reader.
+        eng = _FakeEngine()
+        stage = UpscaleStage(
+            engine=eng,
+            scale=ScaleTarget(kind="factor", value=2.0),
+            instance=None,
+            cfg={},
+        )
+        clip = Artifact(
+            uri="file:///tmp/in.png",
+            sha256="0" * 64,
+            size=1,
+            meta={"media": "image"},
+        )
+        stage.run(
+            PipelineState(
+                request=GenerationRequest(prompt="p", mode="t2v"),
+                artifacts={"clip": clip},
+            )
+        )
+        assert eng.called_with[0].media == "image"
+
+    def test_no_meta_is_video(self) -> None:
+        eng = _FakeEngine()
+        stage = UpscaleStage(
+            engine=eng,
+            scale=ScaleTarget(kind="factor", value=2.0),
+            instance=None,
+            cfg={},
+        )
+        stage.run(_state())
+        assert eng.called_with[0].media == "video"
