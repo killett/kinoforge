@@ -26,40 +26,37 @@ first unchecked task without redoing committed work.
 > `examples/configs/modal-diffusers-minimax-h3-t2va-long.yaml`.
 
 ## Pointers
-- **IN FLIGHT — standalone image generation (`kinoforge image`):** design doc
-  `docs/superpowers/specs/2026-10-03-standalone-image-generation-design.md`, approved
-  2026-10-03. **Implementation plan:**
-  `docs/superpowers/plans/2026-10-03-standalone-image-generation.md` (+ `.tasks.json`,
-  10 tasks, dependencies set). **Tasks 1-9 DONE** — `ImageConfig`/`KeyframeConfig`,
-  the `image:` allowlist validator, the `kinoforge image` subcommand (dry-run +
-  live path), `--ephemeral` refusal for every image engine except `fake`, the two
-  example configs (`examples/configs/luma-uni1-t2i.yaml` pinned to `uni-1`,
-  `examples/configs/fal-flux-schnell-t2i.yaml`) and operator docs (`docs/configuration.md`
-  §`image:`, `docs/engines.md` §Keyframe stage intro, README §Generate a single image).
-  **Single next action: execute Task 10** — the live-spend smoke (~$0.01-0.05 on Luma,
-  tagged a user gate; `--dry-run` only has been run so far, never a live generation).
-  Closes the gap that kinoforge has four registered image engines, an image-profile
-  cache and an image sink schema but no way to produce an image: the only route into
-  an `ImageEngine` used to be `cfg.keyframe` -> `KeyframeStage`, which fills
-  conditioning roles for a video mode and never terminates at a PNG. Decisions locked
-  in the design: a new `image` subcommand (NOT `generate --mode t2i` —
-  `Config.engine`/`models` are required and `core/validation.py:48` checks the mode
-  against the VIDEO profile); a new `image:` block with `ImageConfig` as the base
-  `KeyframeConfig` extends (deletes the duplicate `capability_key()`); an ALLOWLIST of
-  permitted keys, not a denylist, because silently-inert config is the U51/U56 defect class;
-  one image per invocation (no pod to amortise, so a shell loop costs the same as a batch);
-  `--ephemeral` refused DELIBERATELY via a separate `IMAGE_EPHEMERAL_CAPABILITIES` table
-  keyed on image-engine name (today it is refused only by an accidental `("", None)` key
-  miss at `cli/_main.py:270`). Two findings the design surfaced and fixes: `ImageBackend`
-  cannot be cancelled (`core/interfaces.py:852`/`:855` take no token, so a ~125 s Luma poll
-  ignores SIGINT) and `ImageProfile` has NO consumer anywhere besides the
-  pre-submit `supported_modes` gate in `core/image_run.py` — `max_resolution` is read
-  nowhere; documented plainly in `docs/engines.md` so no reader assumes dimension
-  validation exists. The doctor-survives-`engine: null` open question from Task 1 was
-  resolved by Task 3 (two `applies_to` guards fixed in `validation/checks/models.py` +
-  `loras.py`) and re-exercised live in Task 9 against the two real shipped image configs
-  (`kinoforge doctor -c examples/configs/{luma-uni1-t2i,fal-flux-schnell-t2i}.yaml` both
-  exit 0, no `AttributeError`) — no third unguarded `cfg.engine` dereference found.
+- **SHIPPED — standalone image generation (`kinoforge image`):** design
+  `docs/superpowers/specs/2026-10-03-standalone-image-generation-design.md`, plan
+  `docs/superpowers/plans/2026-10-03-standalone-image-generation.md` (+ `.tasks.json`).
+  **All 10 tasks complete on branch `feat/standalone-image-generation`**, live-proven
+  2026-10-03 on Luma UNI-1 — `successful-generations.md` §35 (104 s, 2672x1504,
+  ~$0.01-0.05, ZERO compute provisioned, frame-QA PASS with an apparent-age flag).
+  Closes the gap that kinoforge had four registered image engines, an image-profile cache
+  and an image sink schema but no way to produce an image: the only route into an
+  `ImageEngine` was `cfg.keyframe` -> `KeyframeStage`, which fills a conditioning role for
+  a video mode and never terminates at a PNG.
+  **What shipped:** a new `image` subcommand (NOT `generate --mode t2i`); an `image:`
+  config block with `ImageConfig` as the base `KeyframeConfig` extends; an ALLOWLIST of
+  permitted keys, because silently-inert config is the U51/U56 defect class;
+  `resolve_image_stack` extracted so the duplicated resolve blocks in `orchestrator.py`
+  and `batch.py` are DELETED rather than tripled; `--ephemeral` refused deliberately via a
+  separate `IMAGE_EPHEMERAL_CAPABILITIES` table (it was previously refused only by an
+  accidental `("", None)` key miss).
+  **Two pre-existing defects fixed en route:** `ImageBackend.result` could not be
+  cancelled, so a ~125 s Luma poll ignored the CLI's SIGINT handler while
+  `RemoteSubmitPollBackend` underneath had supported cancellation all along; and
+  `ImageProfile` had NO consumer anywhere in the tree (`pipeline/keyframe.py` held it with
+  a "reserved for future spec validation" comment) — it now gates `t2i` before submit.
+  Also fixed: two `applies_to` predicates that crashed `kinoforge doctor` on `engine: None`,
+  and two example-config sweeps that assumed every shipped config is a video config.
+  **Deferred, NOT done:** still-image UPSCALING (spandrel already holds the model; only its
+  I/O is video-shaped), user-supplied INPUT images (there is no `--init-image` and no
+  asset-supply seam — `cli/_commands.py` builds `GenerationRequest` with no assets), and
+  live-firing the Replicate image engine (coded, offline-tested, never run).
+  **Known gap:** the AST structural guard in `tests/core/test_image_run.py` inspects import
+  nodes only, so `from kinoforge.core import orchestrator` + attribute access evades it;
+  the complete fix is AST imports plus an `Attribute`-node walk.
 - **Spec (the *what*):** `SPEC.md`
 - **Design (validated):** `DESIGN.md`
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`

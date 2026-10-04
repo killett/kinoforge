@@ -88,6 +88,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
     - See also: `2026-09-18 16:08:41` — **the 960x544 max-length clip through the same chain, pre-downscaled on the controller** (the operator's step 2: keep the documented H3 canvas for generation, shrink only for FlashVSR). Source `output/20260918-014621_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (§31's first See-also). Pre-step: `ffmpeg -vf "scale=640:-2:flags=lanczos,crop=640:352" -an -c:v libx264 -qp 0` → `output/20260918-014621_diffusers_MiniMax-H3_Photorealistic-cinem_pre640x352.mp4` (23,196,068 B, sha256 `49ae0261504428b0...`) — **crop, not squeeze: FlashVSR source dims must be multiples of 32** (the block-sparse attention window divides the latent grid; a 640x360 attempt died on the booked card with `Dims must divide by window size`, ~$0.04, cfg header updated `ca6ded78`). Then the exact §32 command with `--video "$PRE"` and the re-mux still reading `"$SRC"`. Pods `upscale-20260918-155905` (chunks 15:59:20 → 16:03:26, join 16:04:24, published 16:06:11, destroyed 16:06:17, ~$0.30) and `interpolate-20260918-160618` (cached image, GPU 83 %, published 16:08:41, destroyed 16:08:47, ~$0.03), both verified from fresh processes. Outputs: upscale `output/20260918-160611_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4` (1964x1080 / 24 fps / 345 f; 13,199,057 B, sha256 `3a78c773291dd13c...`) → **final** `output/20260918-160841_interpolated_rife_interp_interpolate_with-audio.mp4` (1964x1080 / 60 fps / 862 f / aac stereo 32 kHz; 21,529,009 B, sha256 `f27caf83ae8fff10...`). **Alignment proof, for free:** `av_qa --no-audio --cut-scan` on the upscale found exactly ONE hard cut, at **frame 272** — the source's known cut (delta 66.9 vs 70.05 in the source) — and nothing at the chunk seams 69/138/207/276, so split → pad → trim → join is frame-exact. Frame QA PASS, high quality: frame-200 crop shows hair strands, cliff texture and dress folds the lanczos'd source smears, no invented structure. ⚠️ On the 60 fps final the scan flags frames 678-680 (= 272 x 2.5): RIFE blends ACROSS the hard cut into a 1-2 frame crossfade — inherent to interpolating over a cut, not a pipeline defect; a cut-aware interpolate (split at cuts, interpolate each side) would remove it.
 33. `2026-09-18 21:10:03` — [960x544 MiniMax-H3 max-length clip → SPATIALLY TILED FlashVSR 1080p (no downscale) → RIFE 60 fps → soundtrack re-mux, on Modal — upscale+interpolate (tiled)](#33-2026-09-18-211003--960x544-minimax-h3-max-length-clip--spatially-tiled-flashvsr-1080p-no-downscale--rife-60-fps--soundtrack-re-mux-on-modal--upscaleinterpolate-tiled)
 34. `2026-09-23 00:33:31` — [MiniMax-H3 t2va + LoRA on Modal H200 — the first LoRA on H3 and the first on a t2va model, two applies on one pod — t2va+lora](#34-2026-09-23-003331--minimax-h3-t2va--lora-on-modal-h200--the-first-lora-on-h3-and-the-first-on-a-t2va-model-two-applies-on-one-pod--t2valora)
+35. `2026-10-03 17:44:27` — [`kinoforge image` — the first generation produced by a kinoforge command that terminates at an image (Luma UNI-1) — t2i](#35-2026-10-03-174427--kinoforge-image--the-first-generation-produced-by-a-kinoforge-command-that-terminates-at-an-image-luma-uni-1--t2i)
     - See also: `2026-09-23 01:17:02` — **the seeded strength A/B that explains this entry's frame-QA FAIL.** Same tuple `(modal, DiffusersEngine, MiniMaxAI/MiniMax-H3, t2va)`, new cfg `examples/configs/modal-diffusers-minimax-h3-t2va-lora-style-seeded.yaml` (20 steps, **`spec.seed: 424242` PINNED** — the first seeded comparison in this whole task). Pod `run-20260923-011131` (H200), two cells: LineartAnime at **strength 1.0** → `output/20260923-011408_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (1,398,302 B, sha256 `bc617c3b01b9fb20…`) is photorealistic with **no style at all**; the same seed at **strength 2.0** (the schema maximum) → `output/20260923-011702_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (910,484 B, sha256 `8d3b0a26dacf7e99…`) is a **total stylistic transformation** — photorealism gone, flat painterly brushwork, stylised foliage, saturated illustrative colour, the subject a painted character. Both cells share composition, camera path and figure placement (the seed pin visibly holding), so the ONLY difference is style. **Verdict: strength was the variable, not dtype — the profile's fp32→bf16 restore path is EXONERATED**, and §34's FAIL was a config artifact (strength 1.0 compounded by 8 steps). Cell A isolates it: 20 steps alone does NOT produce the style. `/health` held a third time; GPU probe read **100 %** mid-denoise, resolving §34's low-utilisation caveat as point-sampling. Spend **est≤$0.51**, teardown verified from a fresh process. Full delta in `.superpowers/sdd/2026-09-22-h3-lora-shared-seam/task-11-report.md`.
 
           MARK="$(mktemp)"
@@ -3922,3 +3923,126 @@ experiment and was not run.
   despite `kernels>=0.4` being installed. The config header documents the
   degradation as possible; nothing warns when it happens. Performance impact
   unmeasured.
+
+## 35. `2026-10-03 17:44:27` — `kinoforge image` — the first generation produced by a kinoforge command that terminates at an image (Luma UNI-1) — t2i
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `lumalabs.ai (agents API) / LumaAgentsImageEngine / uni-1` |
+| **Mode** | t2i |
+| **kinoforge version** | `v0.1.0` |
+| **First-success SHA** | `5eb96a7a` (branch `feat/standalone-image-generation`) |
+| **Date (local TZ)** | 2026-10-03 17:44:27 -0700 (PDT) |
+| **Layer / phase** | Standalone image generation, design `docs/superpowers/specs/2026-10-03-standalone-image-generation-design.md`, plan `docs/superpowers/plans/2026-10-03-standalone-image-generation.md` (Tasks 1-10) |
+
+### The new capability axis
+
+**A kinoforge COMMAND that terminates at an image.** §15 and §18 share this exact
+`(luma_agents, uni-1, t2i)` tuple, so by the same-tuple rule they would normally get a
+"See also" — but neither was produced by a command. §15 ran from a live pytest
+(`tests/live/test_luma_keyframe_live.py`) and §18 from a one-off scratchpad matrix
+runner, both driving `registry.get_image_engine(...)` directly. Until this run the only
+route into an `ImageEngine` was `cfg.keyframe` → `KeyframeStage`, which fills a
+conditioning role for a video mode and never terminates at a PNG. `kinoforge image` is a
+new command, which `CLAUDE.md` names as its own qualifying axis.
+
+### Exact command
+
+```bash
+pixi run -e live-hosted kinoforge image \
+  --config examples/configs/luma-uni1-t2i.yaml \
+  --prompt "$(cat examples/configs/prompts/field-realistic.txt)"
+```
+
+`-e live-hosted` is required: the hosted-engine deps are scoped to that pixi feature.
+
+### Cfg
+
+`examples/configs/luma-uni1-t2i.yaml` verbatim — `image.engine: luma_agents`,
+`spec.model: uni-1`, `params.aspect_ratio: "16:9"`, `output.dir: output`. The config
+carries **no** `engine:`, `models:` or `compute:` block; the allowlist validator refuses
+those alongside `image:`.
+
+Model pinned to `uni-1`, not `uni-1-max`: §18 rated max better on quality but the pin
+stays until max-tier per-image pricing is confirmed on the dashboard (that deferral is
+recorded in the config's own comment).
+
+### Input
+
+Standard prompt read verbatim from `examples/configs/prompts/field-realistic.txt`
+(995 B) — no paraphrase, no per-run override, so this image is comparable with every
+other standard-prompt generation in this log.
+
+### Output
+
+- `output/20261003-174427_image_luma_agents_uni-1_Photorealistic-cinem.png`
+- **2672×1504** (exactly 16:9), 9,033,875 B
+- sha256 `a188b7cd3e5945cd7ad18898759171dce0603835a3e04d9a31f5413d5c730599`
+- Internal store copy at `.kinoforge/image-20261003-174244/image.png` — the fixed,
+  non-prompt-derived name, byte-identical in size.
+- Wall-clock **104 s** (17:42:43 → 17:44:27), inside §15's observed 102-194 s band.
+- Evidence: `tests/live/evidence/2026-10-03_kinoforge_image_luma_stdout.txt`
+  (query strings scrubbed — Luma returns pre-signed URLs carrying short-lived tokens).
+
+Note the dimensions differ from §15's 2784×1504 for the same model and the same
+`aspect_ratio: "16:9"`: 2672/1504 is exactly 1.778, where 2784/1504 is 1.851. This run
+is the more precisely 16:9 of the two; the cause of the drift is not established here.
+
+### Visual QA — PASS with flags
+
+Judged at full frame (downscaled) and at native 1:1 on a face/torso crop, per the
+`CLAUDE.md` rule that exit code and dimensions cannot see pixels.
+
+**Technical quality: clean.** No false colour and no corruption of the entry-#13/#14
+class. No frame-wide out-of-focus blobs of the §18 `uni-1` dawn-flight class — the
+specific artifact that entry warned would propagate into any i2v clip seeded from it.
+Face anatomy correct: both eyes well-formed and symmetric with proper catchlights, nose,
+mouth and chin coherent. Hair strands individually resolved with backlit flyaway wisps.
+Skin tones natural under the warm grade; waterfall texture and the blue mist pool read
+correctly.
+
+**Prompt adherence: strong.** Alpine wildflower meadow, tall waterfall over moss-covered
+cliffs into a misting pool, golden-hour backlight, volumetric god rays, floating pollen
+like embers, vividly coloured rippling dress, luminous butterflies trailing light
+ribbons — all present. The pose is exactly "facing away, she turns to glance over her
+shoulder with a coy, gentle smile". The "camera glides into an intimate close-up" clause
+is a motion instruction a still cannot express; not counted as a miss.
+
+⚠️ **Apparent age deviates from the prompt.** The prompt says "a young woman"; the
+subject renders as an adolescent. This is the one substantive prompt deviation, and it
+matters more than a cosmetic one because this image's purpose is to seed an i2v clip —
+anything generated from it inherits the subject. Flagged rather than smoothed over.
+
+⚠️ Minor: mild waxy skin smoothing (normal generative sheen at this model tier) and soft
+fabric definition at the left shoulder.
+
+### Reproduction recipe notes
+
+- **Zero compute provisioned**, by construction: every image engine declares
+  `requires_compute = False`, and `generate_image` builds no provider, no ledger row and
+  no lifecycle. Verified after the run from a fresh process — `kinoforge list` printed
+  **both** `[instance overview] No running instances.` AND `No instances recorded in
+  ledger.`
+- **`--ephemeral` is refused on this path by design** (`IMAGE_EPHEMERAL_CAPABILITIES`
+  maps every hosted image engine to `False`; only the in-process `fake` is `True`). No
+  image engine implements provider-side record deletion, and two of three cannot — Luma's
+  agents API has no DELETE endpoint at all. The consequence is that **every**
+  `kinoforge image` run is loggable; none can be ephemeral.
+- Auth: `Authorization: Bearer $LUMAAI_API_KEY` against `agents.lumalabs.ai/v1`. The
+  retired `api.lumalabs.ai/dream-machine` surface 403s for platform keys (§15).
+- Spend: one generation against the Luma platform credit, ~$0.01-0.05. Luma does not
+  return per-generation cost on the wire.
+- `--prompt` is optional for this command (unlike `generate`); precedence is
+  `--prompt` > `cfg.image.prompt` > `cfg.prompt`.
+
+### Notes
+
+- Pre-spend gate: full suite **6450 passed, 184 skipped, 18 xfailed, exit 0** at
+  `5eb96a7a`, and `pixi run preflight` PASS, both immediately before the run.
+- A green `--dry-run` does **not** prove the engine name resolves — dry-run skips the
+  registry lookup so it costs nothing, so a typo'd `image.engine` previews happily and
+  exits 0. The live run is the first thing that resolves the engine.
+- The published filename carrying `luma_agents` and `uni-1` rather than `unknown` is the
+  §17 `_fal_unknown_` trap confirmed closed on this path.
+
+---
