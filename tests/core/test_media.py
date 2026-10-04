@@ -24,6 +24,8 @@ class TestMediaOf:
         assert media_of(Artifact(uri="file:///x.mp4")) == "video"
 
     def test_image_meta_is_read(self) -> None:
+        # Bug caught: media_of ignores the meta and always returns "video",
+        # so every --image run publishes as .mp4.
         from kinoforge.core.media import media_of
 
         art = Artifact(uri="file:///x.png", meta={"media": "image"})
@@ -41,6 +43,8 @@ class TestMediaOf:
 
 class TestExtensionFor:
     def test_mapping(self) -> None:
+        # Bug caught: the two extensions swapped or extension_for returning
+        # a bare suffix without the dot, so published filenames are wrong.
         from kinoforge.core.media import extension_for
 
         assert extension_for("image") == ".png"
@@ -58,6 +62,8 @@ class TestUpscaleJobMedia:
         assert job.media == "video"
 
     def test_image_is_accepted(self) -> None:
+        # Bug caught: a Literal typo or a validator rejecting "image",
+        # so the stage can never build an image job.
         job = UpscaleJob(
             source=Artifact(uri="file:///x.png"),
             scale=ScaleTarget(kind="factor", value=2.0),
