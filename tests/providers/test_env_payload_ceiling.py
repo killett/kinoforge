@@ -139,24 +139,37 @@ _RUNPOD_CEILING_BYTES = 101_000
 #: bump. Deliberate, reviewed (see the Task 8 report's decoded-diff summary),
 #: and still well clear of the ceiling (worst case now 91,910 B, 9,090 B of
 #: headroom).
+#:
+#: 2026-10-03 (standalone-image-upscaling, final-review fix wave): every entry
+#: bumped once more. The shared +92..116 B on every stem is item I's
+#: `/artifacts` MIME lookup in `wan_t2v_server.py` (`import mimetypes`, the
+#: `guess_type` line and two comment/docstring edits) — that module is
+#: embedded whole by EVERY RunPod diffusers config. The two spandrel stems
+#: carry +204 B instead: on top of the shared server bump they also take item
+#: H's non-uint8 guard and `(H, W, 1)` broadcast in `upscalers/spandrel/
+#: _runtime.py` plus item K's reflowed `_engine.py` class docstring, both of
+#: which are whole-package `embed_modules` entries on those two configs only.
+#: Deliberate and reviewed (every changed embedded blob was decoded and
+#: diffed: only those three modules moved, and only on those lines). Worst
+#: case is now 92,014 B — 8,986 B of headroom under the 101,000 B ceiling.
 _BASELINE_BYTES: dict[str, int] = {
-    "runpod-diffusers-flashvsr-1080p-upscale": 91_884,
-    "runpod-diffusers-flashvsr-x4-torch26-upscale": 91_910,
-    "runpod-diffusers-flashvsr-x4-upscale": 91_884,
-    "runpod-diffusers-rife-60fps-interpolate": 79_528,
-    "runpod-diffusers-spandrel-x2-upscale": 79_280,
-    "runpod-diffusers-wan-2_1-1_3b-base": 52_918,
-    "runpod-diffusers-wan-2_1-1_3b-base-no-loras": 52_918,
-    "runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke": 52_918,
-    "runpod-diffusers-wan-2_1-1_3b-t2v-strength-grid": 52_918,
-    "runpod-diffusers-wan-2_2-14b-base": 52_942,
-    "runpod-diffusers-wan-2_2-14b-t2v": 52_910,
-    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-1080p-upscale": 91_906,
-    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale": 91_906,
-    "runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release": 52_942,
-    "runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale": 79_342,
-    "runpod-diffusers-wan-2_2-14b-t2v-lora-target-spelled": 52_942,
-    "runpod-diffusers-wan-2_2-14b-t2v-strength-grid": 52_942,
+    "runpod-diffusers-flashvsr-1080p-upscale": 91_984,
+    "runpod-diffusers-flashvsr-x4-torch26-upscale": 92_014,
+    "runpod-diffusers-flashvsr-x4-upscale": 91_984,
+    "runpod-diffusers-rife-60fps-interpolate": 79_644,
+    "runpod-diffusers-spandrel-x2-upscale": 79_484,
+    "runpod-diffusers-wan-2_1-1_3b-base": 53_010,
+    "runpod-diffusers-wan-2_1-1_3b-base-no-loras": 53_010,
+    "runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke": 53_010,
+    "runpod-diffusers-wan-2_1-1_3b-t2v-strength-grid": 53_010,
+    "runpod-diffusers-wan-2_2-14b-base": 53_034,
+    "runpod-diffusers-wan-2_2-14b-t2v": 53_002,
+    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-1080p-upscale": 92_010,
+    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale": 92_010,
+    "runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release": 53_034,
+    "runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale": 79_546,
+    "runpod-diffusers-wan-2_2-14b-t2v-lora-target-spelled": 53_034,
+    "runpod-diffusers-wan-2_2-14b-t2v-strength-grid": 53_034,
 }
 
 
