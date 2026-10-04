@@ -79,6 +79,25 @@ U19_CHANGED_CFGS = frozenset(
 # against a load_config regression turning the whole sweep vacuous.
 MIN_LOADABLE_CFGS = 40
 
+# Task 9 (2026-10-03) shipped the first two example configs carrying an
+# `image:` block instead of `engine:`/`models:` — terminal image configs for
+# `kinoforge image`. They load fine (so they belong in `loaded` above), but
+# `Config.capability_key()` raises `ConfigError` BY DESIGN for an `image:`
+# config ("no video identity" — core/config.py:1742), and `_cfg_want_stages`
+# delegates to exactly that. Stages (`t2v`/`upscale`/`interpolate`) are
+# themselves video-pipeline concepts a terminal image run never exercises —
+# there is no pod, no /health, no warm-attach matcher for it to gate — so
+# excluding `image:` configs from the two stage-sweeps below is semantically
+# correct, not a narrowing to dodge a failure. Named explicitly here (rather
+# than only filtered dynamically) so the anti-vacuity guard below can pin the
+# excluded count.
+KNOWN_IMAGE_CFGS = frozenset({"luma-uni1-t2i.yaml", "fal-flux-schnell-t2i.yaml"})
+
+
+def _video_cfgs(loaded: dict[str, Any]) -> dict[str, Any]:
+    """``loaded`` minus any `image:` config — see ``KNOWN_IMAGE_CFGS`` above."""
+    return {name: cfg for name, cfg in loaded.items() if cfg.image is None}
+
 
 def _want_stages_pre_u14(cfg: Any) -> tuple[str, ...]:  # noqa: ANN401 — duck-typed Config
     """The derivation ``49394b1d`` replaced, transcribed verbatim.
@@ -151,11 +170,16 @@ def test_no_shipped_cfg_demands_a_stage_no_pod_can_advertise(
     ``_HEALTH_UNGATEABLE_STAGES`` before ``_capability_for_model`` learns the
     ``rife-`` prefix (the half-done U19 remedy), and it fails if any future
     cfg family introduces a stage term the pod cannot report.
+
+    Excludes `image:` configs — see ``KNOWN_IMAGE_CFGS`` above; stages are a
+    video-pipeline concept they never exercise and ``_cfg_want_stages`` raises
+    ``ConfigError`` on one by design.
     """
     loaded, _ = swept
+    video_cfgs = _video_cfgs(loaded)
     offenders = {
         name: sorted(set(_cfg_want_stages(cfg)) - ADVERTISABLE_STAGES)
-        for name, cfg in loaded.items()
+        for name, cfg in video_cfgs.items()
         if set(_cfg_want_stages(cfg)) - ADVERTISABLE_STAGES
     }
     assert offenders == {}, (
@@ -181,11 +205,16 @@ def test_exactly_the_enumerated_cfgs_moved_off_the_pre_u14_derivation(
     into the other: U14's eight upscale-only cfgs drop a phantom ``t2v`` they
     could never satisfy, while U19's two RIFE cfgs gain a real
     ``interpolate`` gate they previously bypassed entirely.
+
+    Excludes `image:` configs — see ``KNOWN_IMAGE_CFGS`` above; they predate
+    neither U14 nor U19 and ``_cfg_want_stages`` raises ``ConfigError`` on one
+    by design, so there is no "pre/post" derivation to compare for them.
     """
     loaded, _ = swept
+    video_cfgs = _video_cfgs(loaded)
     changed = {
         name
-        for name, cfg in loaded.items()
+        for name, cfg in video_cfgs.items()
         if _want_stages_pre_u14(cfg) != _cfg_want_stages(cfg)
     }
     expected = set(U14_CHANGED_CFGS) | set(U19_CHANGED_CFGS)
@@ -209,3 +238,41 @@ def test_exactly_the_enumerated_cfgs_moved_off_the_pre_u14_derivation(
             "('interpolate',) — the U19 claim is that a RIFE cfg demands "
             "exactly the stage its pod now advertises"
         )
+
+
+def test_image_cfg_carveout_excludes_exactly_the_known_two(
+    swept: tuple[dict[str, Any], list[Path]],
+) -> None:
+    """Anti-vacuity guard for the `image:` carve-out above.
+
+    Two failure modes this catches:
+
+    1. The carve-out silently grows (a future video cfg accidentally gets an
+       `image:` block, or `_video_cfgs`'s filter logic breaks and starts
+       dropping video cfgs too) — the two stage sweeps above would then
+       cover fewer configs than they should while staying green.
+    2. The carve-out shrinks to nothing without the enumerated set being
+       updated — the two stage sweeps above would then start raising
+       ``ConfigError`` again on the exact bug this fix-round exists to close.
+
+    Also pins that the stage sweeps still cover every non-image cfg: the
+    video-cfg count must equal loaded-total minus the excluded count.
+    """
+    loaded, _ = swept
+    image_cfg_names = {name for name, cfg in loaded.items() if cfg.image is not None}
+    assert image_cfg_names == KNOWN_IMAGE_CFGS, (
+        f"expected exactly the two known image configs excluded from the "
+        f"stage sweep; got {sorted(image_cfg_names)}. A grown set means a "
+        "new image cfg needs adding to KNOWN_IMAGE_CFGS; a shrunk set means "
+        "the carve-out no longer has anything to exclude and may be dead."
+    )
+    video_cfgs = _video_cfgs(loaded)
+    assert len(video_cfgs) == len(loaded) - len(image_cfg_names), (
+        "the video-cfg carve-out dropped more (or fewer) configs than the "
+        "known image-cfg set accounts for — _video_cfgs is filtering on "
+        "something other than cfg.image is not None"
+    )
+    assert len(video_cfgs) >= MIN_LOADABLE_CFGS - len(KNOWN_IMAGE_CFGS), (
+        f"only {len(video_cfgs)} video cfgs after the carve-out; the two "
+        "stage sweeps above would be testing too few configs to mean anything"
+    )
