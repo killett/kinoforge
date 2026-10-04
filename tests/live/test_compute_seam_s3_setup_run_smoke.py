@@ -173,6 +173,7 @@ def test_s3_setup_terminates_and_the_launch_is_task_run() -> None:
 
     assert _CONFIG_PATH.exists(), f"missing config: {_CONFIG_PATH}"
     cfg = load_config(str(_CONFIG_PATH))
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
 
     evidence: dict[str, Any] = {
         "smoke": "compute-seam S3 — Task.setup is setup, Task.run is the launch",

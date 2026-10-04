@@ -364,6 +364,20 @@ flf2v, per-role prompts + seeds supported). Image engines: `fal` (flux et al.), 
 as inline data URIs — no storage round-trip. Both flows are live-verified end-to-end
 (`fal-luma-keyframe-i2v.yaml` → fal wan-i2v; `fal-keyframe-flf2v.yaml` → fal wan-flf2v).
 
+**Generate a single image** — standalone image generation (`image:` cfg block +
+`kinoforge image`) is the terminal sibling of the keyframe path above — same
+image-engine registry, but the image is the deliverable instead of a conditioning
+asset for a video job.
+
+```bash
+pixi run -e live-hosted kinoforge image \
+  --config examples/configs/fal-flux-schnell-t2i.yaml \
+  --prompt "a cat in a sunlit meadow, 35mm film"
+```
+
+Lands at `output/<ts>_image_<provider>_<model>_<slug>.png`. No compute is
+provisioned — every image engine is a hosted API.
+
 **Joint audio** — MiniMax-H3 (`modal-diffusers-minimax-h3-t2va.yaml`) adds a `t2va` mode: the model
 emits a soundtrack jointly with the video and the pod muxes it into the mp4. The upscale and
 interpolate stages are video-only, so a chained run re-muxes the original soundtrack onto the

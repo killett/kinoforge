@@ -55,7 +55,7 @@ class LoraServerSupportCheck:
         path entirely. Firing here on a non-diffusers engine would reject
         cfgs whose LoRA support this check cannot see.
         """
-        if cfg.engine.kind != "diffusers":
+        if cfg.engine is None or cfg.engine.kind != "diffusers":
             return False
         return bool(getattr(cfg, "loras", []))
 
@@ -406,6 +406,27 @@ class LoraEngineSupportCheck:
                 passed=True,
                 severity=Severity.ERROR,
                 message="no LoRA stack requested",
+            )
+        if cfg.engine is None:
+            # image cfgs forbid `loras:` (Config's allowlist), but the CLI
+            # `--loras` path reads off the ambient EphemeralSession,
+            # independent of cfg — an operator CAN reach `kinoforge image
+            # --config <image.yaml> --loras ...` with count > 0 and no
+            # engine. Same U56 shape this check exists for: the stack would
+            # be silently inert, just with no engine at all to blame it on.
+            return CheckResult(
+                name=self.name,
+                passed=False,
+                severity=Severity.ERROR,
+                message=(
+                    f"this run requests {count} LoRA(s) but carries no "
+                    f"`engine:` block (an `image:` config) — there is "
+                    f"nothing to apply the stack to"
+                ),
+                fix_suggestion=(
+                    "remove the LoRA stack (cfg.loras / --loras) from an "
+                    "image run; image configs do not support LoRAs"
+                ),
             )
         kind = cfg.engine.kind
         try:

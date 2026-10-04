@@ -20,7 +20,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 import kinoforge._adapters  # noqa: F401 — side-effect: register builtins
-from kinoforge.cli._commands import _cmd_provision
+from kinoforge.cli._commands import _cmd_deploy, _cmd_generate, _cmd_provision
 from kinoforge.cli.context import SessionContext
 from kinoforge.core.config import load_config
 from kinoforge.core.errors import CapacityError, ProvisionTimeout
@@ -105,6 +105,93 @@ def _run(tmp_path: Path) -> _SpyProvider:
     assert rc == 0
     assert len(spy.specs) == 1
     return spy
+
+
+_IMAGE_CFG = 'image:\n  engine: fake\n  prompt: "a cat"\n  spec:\n    model: m\n'
+
+
+def test_provision_refuses_an_image_cfg_not_crashed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An image cfg has no `engine:`/compute to provision — refuse it by name.
+
+    Bug caught (fix-round-1 review): an earlier implementation of the
+    Config.engine-optional migration asserted ``cfg.engine is not None``
+    right before the ``registry.get_engine(cfg.engine.kind)()`` call, on the
+    (false, for a CLI command) belief that ``provision`` never sees an image
+    cfg. ``kinoforge provision --config <image.yaml>`` and ``kinoforge
+    provision --config <video.yaml>`` are both just ``--config <path>`` —
+    trivially easy for an operator to point at the wrong file — and the
+    assert fired as a bare, messageless ``AssertionError`` instead of the
+    named ``error: ...`` + exit 1 every other refusal in this function uses.
+    """
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(_IMAGE_CFG)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    ctx = SessionContext.from_args(state_dir=state_dir, cfg_path=cfg_path)
+
+    rc = _cmd_provision(argparse.Namespace(config=str(cfg_path)), ctx)
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "image" in err.lower() and "engine" in err.lower(), (
+        f"stderr must name the missing engine: block; got {err!r}"
+    )
+
+
+def test_generate_refuses_an_image_cfg_not_crashed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`generate` on an image cfg must refuse by name, not raise ConfigError.
+
+    Bug this catches (final-review regression, Finding 1): making
+    ``Config.engine`` optional removed the parse-time refusal
+    ``load_config`` used to give (``engine:`` was required). Without this
+    guard, ``_cmd_generate`` reaches ``cfg.capability_key()`` downstream
+    (warm-attach / ephemeral-row bookkeeping), which raises ``ConfigError``
+    by design for an image cfg (``Config.capability_key`` docstring) — an
+    uncaught traceback instead of a named `error: ...` + exit 2, for an
+    operator who typed ``generate`` when they meant ``kinoforge image`` (both
+    are just ``--config <path>``). Mirrors
+    ``test_provision_refuses_an_image_cfg_not_crashed`` above.
+    """
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(_IMAGE_CFG)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    ctx = SessionContext.from_args(state_dir=state_dir, cfg_path=cfg_path)
+
+    rc = _cmd_generate(argparse.Namespace(config=str(cfg_path)), ctx)
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "image" in err.lower(), f"stderr must name `kinoforge image`; got {err!r}"
+
+
+def test_deploy_refuses_an_image_cfg_not_crashed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`deploy` on an image cfg must refuse by name, not raise ConfigError.
+
+    Bug this catches (final-review regression, Finding 1): same defect as
+    ``test_generate_refuses_an_image_cfg_not_crashed`` above, but for
+    ``_cmd_deploy`` — it reaches ``cfg.capability_key()`` a few lines into
+    the handler (duplicate-instance check) and would raise an uncaught
+    ``ConfigError`` for ``kinoforge deploy -c <image.yaml> --dry-run``
+    without this guard.
+    """
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(_IMAGE_CFG)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    ctx = SessionContext.from_args(state_dir=state_dir, cfg_path=cfg_path)
+
+    rc = _cmd_deploy(argparse.Namespace(config=str(cfg_path), dry_run=True), ctx)
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "image" in err.lower(), f"stderr must name `kinoforge image`; got {err!r}"
 
 
 def test_provision_spec_carries_rendered_ports(tmp_path: Path) -> None:

@@ -4,13 +4,13 @@
     {
       "id": 1,
       "subject": "Task 1: ImageConfig base, KeyframeConfig extends it",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Re-parent KeyframeConfig onto a new ImageConfig base holding engine/prompt/spec/params/capability_key(), with zero behaviour change for existing keyframe configs.\n\n**Files:**\n- Modify: `src/kinoforge/core/config.py:1222-1278`\n- Test: `tests/core/test_image_config.py` (create)\n- Test (must stay unmodified and green): `tests/core/test_keyframe_config.py`\n\n**Acceptance Criteria:**\n- [ ] ImageConfig exists with engine/prompt/spec/params, extra=\"forbid\", and capability_key()\n- [ ] KeyframeConfig subclasses ImageConfig and adds only roles plus its two existing validators\n- [ ] capability_key() appears exactly twice in config.py (ImageConfig + Config)\n- [ ] All 8 existing tests in tests/core/test_keyframe_config.py pass with that file UNMODIFIED\n- [ ] ImageConfig(engine=\"x\") is valid with no prompt\n- [ ] KeyframeConfig(engine=\"x\") still raises \u2014 the prompt validator stayed on the subclass\n\n**Verify:** `pixi run pytest tests/core/test_keyframe_config.py tests/core/test_image_config.py -v` -> all pass, zero edits to test_keyframe_config.py\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_image_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_keyframe_config.py tests/core/test_image_config.py -v\", \"acceptanceCriteria\": [\"ImageConfig base exists with capability_key()\", \"KeyframeConfig subclasses it, keeps its prompt+role validators\", \"capability_key defined exactly twice in config.py\", \"all 8 existing keyframe-config tests green with that file unmodified\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: Config.image, optional engine/models, allowlist",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         1
       ],
@@ -19,7 +19,7 @@
     {
       "id": 3,
       "subject": "Task 3: doctor survives an engine-less config",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         2
       ],
@@ -28,7 +28,7 @@
     {
       "id": 4,
       "subject": "Task 4: extract resolve_image_stack, delete both copies",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         1
       ],
@@ -37,13 +37,13 @@
     {
       "id": 5,
       "subject": "Task 5: make ImageBackend.result cancellable",
-      "status": "pending",
-      "description": "**Goal:** Widen the ImageBackend ABC so a long image poll honours the CLI's SIGINT token, and wire it through all four engines plus KeyframeStage.\n\n**Files:**\n- Modify: `src/kinoforge/core/interfaces.py:855`\n- Modify: `src/kinoforge/image_engines/luma_agents/__init__.py:252`\n- Modify: `src/kinoforge/image_engines/replicate/__init__.py:171`\n- Modify: `src/kinoforge/image_engines/fal/__init__.py:139-182`\n- Modify: `src/kinoforge/image_engines/fake/__init__.py:60`\n- Modify: `src/kinoforge/pipeline/keyframe.py` (cancel_token field, passed to result)\n- Test: `tests/image_engines/test_cancellation.py` (create)\n\n**Acceptance Criteria:**\n- [ ] ImageBackend.result(self, job_id, *, cancel_token=None) -> Artifact on the ABC\n- [ ] luma_agents and replicate forward the token to their inner backend\n- [ ] fal's loop calls raise_if_set() each iteration and waits on the token instead of sleeping ONLY when a token was supplied \u2014 with no token it still uses the injected self.sleep\n- [ ] A token tripped mid-poll stops the loop early, proven by poll COUNT not only exception type\n- [ ] KeyframeStage accepts an optional cancel_token and passes it through\n- [ ] All existing image-engine and keyframe-stage tests pass unmodified\n\n**Verify:** `pixi run pytest tests/image_engines/ tests/pipeline/test_keyframe_stage.py -v` -> all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/image_engines/fal/__init__.py\", \"src/kinoforge/image_engines/luma_agents/__init__.py\", \"src/kinoforge/image_engines/replicate/__init__.py\", \"src/kinoforge/image_engines/fake/__init__.py\", \"src/kinoforge/pipeline/keyframe.py\", \"tests/image_engines/test_cancellation.py\"], \"verifyCommand\": \"pixi run pytest tests/image_engines/ tests/pipeline/test_keyframe_stage.py -v\", \"acceptanceCriteria\": [\"ABC declares cancel_token with default None\", \"all four shipped backends accept the keyword\", \"fal keeps the injected-sleep path when no token is passed\", \"mid-poll trip asserted by poll count\", \"KeyframeStage forwards the orchestrator token\", \"existing image-engine + keyframe tests green unmodified\"], \"modelTier\": \"standard\"}\n```"
+      "status": "completed",
+      "description": "**Goal:** Widen the ImageBackend ABC so a long image poll honours the CLI's SIGINT token, and wire it through all four engines plus KeyframeStage.\n\n**Files:**\n- Modify: `src/kinoforge/core/interfaces.py:855`\n- Modify: `src/kinoforge/image_engines/luma_agents/__init__.py:252`\n- Modify: `src/kinoforge/image_engines/replicate/__init__.py:171`\n- Modify: `src/kinoforge/image_engines/fal/__init__.py:139-182`\n- Modify: `src/kinoforge/image_engines/fake/__init__.py:60`\n- Modify: `src/kinoforge/pipeline/keyframe.py` (cancel_token field, passed to result)\n- Test: `tests/image_engines/test_cancellation.py` (create)\n\n**Acceptance Criteria:**\n- [ ] ImageBackend.result(self, job_id, *, cancel_token=None) -> Artifact on the ABC\n- [ ] luma_agents and replicate forward the token to their inner backend\n- [ ] fal's loop calls raise_if_set() each iteration and waits on the token instead of sleeping ONLY when a token was supplied \u2014 with no token it still uses the injected self.sleep\n- [ ] A token tripped mid-poll stops the loop early, proven by poll COUNT not only exception type\n- [ ] KeyframeStage accepts an optional cancel_token and passes it through\n- [ ] All existing image-engine and keyframe-stage tests pass unmodified\n\n**Verify:** `pixi run pytest tests/image_engines/ tests/pipeline/test_keyframe_stage.py -v` -> all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/image_engines/fal/__init__.py\", \"src/kinoforge/image_engines/luma_agents/__init__.py\", \"src/kinoforge/image_engines/replicate/__init__.py\", \"src/kinoforge/image_engines/fake/__init__.py\", \"src/kinoforge/pipeline/keyframe.py\", \"tests/image_engines/test_cancellation.py\", \"src/kinoforge/core/orchestrator.py\", \"src/kinoforge/core/batch.py\"], \"verifyCommand\": \"pixi run pytest tests/image_engines/ tests/pipeline/test_keyframe_stage.py -v\", \"acceptanceCriteria\": [\"ABC declares cancel_token with default None\", \"all four shipped backends accept the keyword\", \"fal keeps the injected-sleep path when no token is passed\", \"mid-poll trip asserted by poll count\", \"KeyframeStage forwards the orchestrator token\", \"existing image-engine + keyframe tests green unmodified\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 6,
       "subject": "Task 6: generate_image() and the t2i profile gate",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         2,
         4,
@@ -54,7 +54,7 @@
     {
       "id": 7,
       "subject": "Task 7: refuse --ephemeral for image configs deliberately",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         2
       ],
@@ -63,7 +63,7 @@
     {
       "id": 8,
       "subject": "Task 8: wire the image subcommand",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         6,
         7
@@ -73,7 +73,7 @@
     {
       "id": 9,
       "subject": "Task 9: example configs and documentation",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         8,
         3
@@ -83,12 +83,12 @@
     {
       "id": 10,
       "subject": "Task 10: live-fire kinoforge image + log entry",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         9
       ],
       "description": "**Goal:** Produce one real PNG from `kinoforge image` against Luma UNI-1, visually judge it, and record a new successful-generations.md section \u2014 observable: a published PNG under output/ whose filename contains _image_ and a non-'unknown' model slug; captured via reading the PNG plus `kinoforge list`; pass = visual verdict recorded and zero compute provisioned.\n\n> **USER-ORDERED GATE \u2014 NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it \"verified inline\", or by substituting a cheaper check. Close only after every item in `acceptanceCriteria` has been re-validated independently, with output captured.\n\n**Files:**\n- Modify: `successful-generations.md` (new numbered section, not a See-also)\n- Modify: `PROGRESS.md` (ship summary)\n- Create: `tests/live/evidence/2026-10-03_kinoforge_image_luma_stdout.txt`\n\n**Acceptance Criteria:**\n- [ ] pixi run preflight exits 0 BEFORE the spend and the working tree is clean (Tasks 1-9 committed)\n- [ ] The live command exits 0 and publishes a PNG under output/\n- [ ] The published filename contains _image_ and a model slug that is NOT 'unknown' (the entry-17 trap)\n- [ ] The PNG is read and visually judged \u2014 artifacts, prompt adherence, subject clarity \u2014 with the verdict written into the log entry and an explicit warning flag on anything not clearly high quality\n- [ ] Pixel dimensions confirmed and recorded in the entry\n- [ ] A new numbered section plus TOC line in successful-generations.md per that file's schema\n- [ ] stdout captured to the evidence file with pre-signed URL query strings scrubbed\n- [ ] pixi run kinoforge list shows both empty lines \u2014 no compute was provisioned\n\n**Verify:** `pixi run -e live-hosted kinoforge image --config examples/configs/luma-uni1-t2i.yaml --prompt \"$(cat examples/configs/prompts/field-realistic.txt)\"` -> exit 0, PNG published under output/, filename containing _image_luma_agents_uni-1_\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\", \"tests/live/evidence/2026-10-03_kinoforge_image_luma_stdout.txt\"], \"verifyCommand\": \"pixi run -e live-hosted kinoforge image --config examples/configs/luma-uni1-t2i.yaml --prompt \\\"$(cat examples/configs/prompts/field-realistic.txt)\\\"\", \"acceptanceCriteria\": [\"pixi run preflight exits 0 before the spend and the tree is clean\", \"the live command exits 0 and publishes a PNG under output/\", \"the published filename contains _image_ and a model slug that is not 'unknown'\", \"the PNG is read and visually judged, verdict written into the log entry with explicit warning flags on anything not clearly high quality\", \"pixel dimensions confirmed and recorded\", \"a new numbered section plus TOC line in successful-generations.md, not a See-also under 15\", \"stdout captured to the evidence file with pre-signed URL query strings scrubbed\", \"pixi run kinoforge list shows both empty lines - no compute was provisioned\"], \"userGate\": true, \"tags\": [\"user-gate\", \"live-spend\"], \"requiresUserSpecification\": false, \"gateScope\": \"single-live-run\", \"failurePolicy\": \"stop-and-report\", \"modelTier\": \"frontier\"}\n```"
     }
   ],
-  "lastUpdated": "2026-10-03T14:12:09"
+  "lastUpdated": "2026-10-03T17:48:22"
 }

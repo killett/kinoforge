@@ -112,6 +112,27 @@ EPHEMERAL_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     ("luma", None): False,
 }
 
+# Image engines get their OWN table rather than rows in the dict above,
+# because the two registries are independent namespaces: registry.py's
+# register_image_engine docstring states names may legitimately collide with
+# video-engine names, and "fake" already does. Keying both capability questions
+# off one bare-name table would be a latent bug the moment fal-video and
+# fal-image diverge on scrub support.
+#
+# Every value here is False except the in-process fake, and that is the honest
+# state of the world, not caution: no image engine implements provider-side
+# record deletion, and two of three cannot. Luma's agents API has no DELETE
+# endpoint at all (successful-generations.md §15 — records purge via the
+# dashboard). Replicate's predictions API does support deletion, but the IMAGE
+# engine implements no scrub hook; flip its entry when one exists AND has been
+# live-proven.
+IMAGE_EPHEMERAL_CAPABILITIES: dict[str, bool] = {
+    "fake": True,
+    "fal": False,
+    "luma_agents": False,
+    "replicate": False,
+}
+
 
 class EphemeralSession:
     """Context manager activating the ephemeral policy.

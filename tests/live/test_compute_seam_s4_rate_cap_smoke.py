@@ -226,6 +226,7 @@ def test_s4_a_violated_rate_cap_destroys_the_instance(
 
     assert _CONFIG_PATH.exists(), f"missing config: {_CONFIG_PATH}"
     cfg = load_config(str(_CONFIG_PATH))
+    assert cfg.engine is not None  # noqa: S101 — loaded from a real video cfg
 
     evidence: dict[str, Any] = {
         "smoke": "compute-seam S4 — a violated rate cap tears the instance down",

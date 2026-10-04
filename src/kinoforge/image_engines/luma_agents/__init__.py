@@ -25,6 +25,7 @@ from urllib.error import HTTPError, URLError
 
 from kinoforge.core import registry
 from kinoforge.core.auth import Bearer
+from kinoforge.core.cancel import CancelToken
 from kinoforge.core.credentials import EnvCredentialProvider
 from kinoforge.core.errors import AuthError, KinoforgeError
 from kinoforge.core.interfaces import (
@@ -249,9 +250,25 @@ class LumaAgentsImageBackend(ImageBackend):
         )
         return self._inner.submit(adapted)
 
-    def result(self, job_id: str) -> Artifact:
-        """Poll until the image is ready."""
-        return self._inner.result(job_id)
+    def result(
+        self, job_id: str, *, cancel_token: CancelToken | None = None
+    ) -> Artifact:
+        """Delegate to the inner submit-poll backend, forwarding the token.
+
+        Args:
+            job_id: Provider-side job ID returned by :meth:`submit`.
+            cancel_token: Optional :class:`CancelToken`, forwarded unchanged
+                to :class:`~kinoforge.core.remote_backend.RemoteSubmitPollBackend.result`,
+                which already honours it (checks every iteration, waits on
+                the token instead of sleeping).
+
+        Returns:
+            The completed Artifact.
+
+        Raises:
+            Cancelled: ``cancel_token`` was set.
+        """
+        return self._inner.result(job_id, cancel_token=cancel_token)
 
     def endpoints(self) -> dict[str, str]:
         """No endpoint URLs for the hosted path."""

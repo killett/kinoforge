@@ -143,6 +143,32 @@ def _build_sink(cfg: Config, args: argparse.Namespace) -> OutputSink | None:
     return LocalOutputSink(dir=cfg.output.dir, clock=clock)
 
 
+def _resolve_run_id(args: argparse.Namespace, prefix: str) -> str:
+    """Return the explicit ``--run-id`` or derive ``<prefix>-<local timestamp>``.
+
+    Extracted from the three identical derivations in ``_cmd_generate``,
+    ``_cmd_upscale`` and ``_cmd_interpolate``; ``_cmd_image`` would have been a
+    fourth copy. Reads the clock through the ``kinoforge.cli`` namespace (the
+    same seam ``_build_sink`` uses) so ``_cmd_generate``'s existing
+    ``monkeypatch.setattr("kinoforge.cli._cli_clock", fake_clock)`` test keeps
+    producing a deterministic id — a plain ``datetime.now()`` here would have
+    silently detached that derivation from the seam it already honoured.
+
+    Args:
+        args: Parsed CLI arguments; ``run_id`` may be absent or ``None``.
+        prefix: Run-kind prefix, e.g. ``"run"``, ``"upscale"``, ``"image"``.
+
+    Returns:
+        The run identifier.
+    """
+    explicit = getattr(args, "run_id", None)
+    if explicit is not None:
+        return str(explicit)
+    clock = getattr(sys.modules.get("kinoforge.cli"), "_cli_clock", _cli_clock)
+    ts = datetime.fromtimestamp(clock.now()).strftime("%Y%m%d-%H%M%S")
+    return f"{prefix}-{ts}"
+
+
 @runtime_checkable
 class _LedgerProto(Protocol):
     """Structural protocol for the subset of Ledger used by _SingleIdLedgerView."""
@@ -204,13 +230,27 @@ def _cmd_deploy(args: argparse.Namespace, ctx: SessionContext) -> int:
         ctx: Per-invocation session context.
 
     Returns:
-        Exit code (0 on success, non-zero on error).
+        Exit code: 0 on success, 2 for an image cfg (no ``engine:`` to
+        deploy), 1 for a duplicate instance or unknown adapter.
     """
     from kinoforge.core.orchestrator import deploy
 
     if ctx.cfg is None:
         raise RuntimeError("_cmd_deploy requires --config")
     cfg = ctx.cfg
+    if cfg.engine is None:
+        # An `image:` cfg has no compute to deploy — `kinoforge image` never
+        # books an instance. An operator who points `deploy` at one (easy to
+        # do: both are `--config <yaml>`) used to reach `cfg.capability_key()`
+        # a few lines down, which raises `ConfigError` by design for an
+        # image cfg — an uncaught traceback instead of a named refusal.
+        # Mirrors `_cmd_provision`'s guard (same shape, same wording).
+        print(
+            "error: deploy requires a video cfg (`engine:` block) — "
+            "image configs have no compute to deploy; use `kinoforge image`",
+            file=sys.stderr,
+        )
+        return 2
 
     # C28 A3: --diagnostic-mode is a per-invocation cfg override; rebuild the
     # Config with the flag set so the orchestrator's _build_spec sees it and
@@ -363,14 +403,25 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
         ctx: Per-invocation session context.
 
     Returns:
-        Exit code: 0 on success, 1 for an unknown adapter, an already-recorded
-        instance, or an id-less create. Exceptions from ``create_instance``
-        propagate; the pre-launch row they leave behind is deliberate
-        (ruling C1).
+        Exit code: 0 on success, 1 for an image cfg (no ``engine:`` to
+        provision), an unknown adapter, an already-recorded instance, or an
+        id-less create. Exceptions from ``create_instance`` propagate; the
+        pre-launch row they leave behind is deliberate (ruling C1).
     """
     if ctx.cfg is None:
         raise RuntimeError("_cmd_provision requires --config")
     cfg = ctx.cfg
+    if cfg.engine is None:
+        # An `image:` cfg has no compute to provision — `kinoforge image`
+        # never books an instance. An operator who points `provision` at one
+        # (easy to do: both are `--config <yaml>`) gets a named refusal
+        # instead of an AttributeError three lines down.
+        print(
+            "error: provision requires a video cfg (`engine:` block) — "
+            "image configs have no compute to provision",
+            file=sys.stderr,
+        )
+        return 1
 
     # Resolve provider and engine, then call provisioner.
     # build_provider_for threads compute.backend_options.skypilot into
@@ -886,11 +937,28 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
         ctx: Per-invocation session context.
 
     Returns:
-        Exit code (0 on success, non-zero on error).
+        Exit code: 0 on success, 2 for an image cfg (no ``engine:`` to
+        generate against), 1 on a LoRA-parse error or unknown adapter, 2
+        on a preflight validation failure.
     """
     if ctx.cfg is None:
         raise RuntimeError("_cmd_generate requires --config")
     cfg = ctx.cfg
+    if cfg.engine is None:
+        # An `image:` cfg has no compute and no `engine:` to generate
+        # against — `kinoforge generate` is a video-pipeline command.
+        # Before this guard, `_cmd_generate` reached `cfg.capability_key()`
+        # downstream (warm-attach / ephemeral-row bookkeeping), which raises
+        # `ConfigError` by design for an image cfg — an uncaught traceback
+        # instead of a named refusal. Mirrors `_cmd_provision`'s guard
+        # (same shape, same wording).
+        print(
+            "error: generate requires a video cfg (`engine:` block) — "
+            "image configs have no compute to generate against; use "
+            "`kinoforge image`",
+            file=sys.stderr,
+        )
+        return 2
 
     # P3 — parse --loras heredoc and resolve eagerly so parse errors fail
     # fast (before preflight + provider work) and CLI refs hit
@@ -945,14 +1013,9 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     # test monkeypatches on ``kinoforge.cli._cli_clock`` /
     # ``kinoforge.cli.generate`` are honoured.
     _cli_mod = sys.modules.get("kinoforge.cli")
-    _clock = getattr(_cli_mod, "_cli_clock", _cli_clock)
     _generate = getattr(_cli_mod, "generate", generate)
 
-    if args.run_id is not None:
-        run_id: str = args.run_id
-    else:
-        ts = datetime.fromtimestamp(_clock.now()).strftime("%Y%m%d-%H%M%S")
-        run_id = f"run-{ts}"
+    run_id: str = _resolve_run_id(args, "run")
 
     # B3 / B4 — warm-attach precedence chain.
     attach_pod_id: str | None = getattr(args, "attach_pod", None)
@@ -1114,11 +1177,7 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
     input_artifact = _resolve_input_video_as_artifact(args.video)
     store = ctx.store()
     sink_local = _build_sink(cfg, args)
-    run_id = (
-        args.run_id
-        if getattr(args, "run_id", None) is not None
-        else f"upscale-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-    )
+    run_id = _resolve_run_id(args, "upscale")
 
     instance: Instance | None = None
     attach_pod_id = getattr(args, "attach_pod", None)
@@ -1231,11 +1290,7 @@ def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
     input_artifact = _resolve_input_video_as_artifact(args.video)
     store = ctx.store()
     sink_local = _build_sink(cfg, args)
-    run_id = (
-        args.run_id
-        if getattr(args, "run_id", None) is not None
-        else f"interpolate-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-    )
+    run_id = _resolve_run_id(args, "interpolate")
 
     instance: Instance | None = None
     attach_pod_id = getattr(args, "attach_pod", None)
@@ -1344,6 +1399,103 @@ def _upscaler_precision_tag(cfg: Config) -> str:
     if cfg.upscale.seedvr2 is not None:
         return f"{cfg.upscale.seedvr2.variant.lower()}-{cfg.upscale.seedvr2.precision}"
     return ""
+
+
+def _cmd_image(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Handle ``image`` subcommand — terminal image generation, no compute.
+
+    Every image engine declares ``requires_compute = False``, so there is no
+    provider, no ledger row and no lifecycle here: the handler resolves the
+    sink and run id, then hands off to
+    :func:`kinoforge.core.image_run.generate_image`.
+
+    ``--dry-run`` returns before the store, the registry engine, or a
+    profile are ever constructed — only the sink (local filesystem only,
+    never network) and the run id are built first, so a dry run makes no
+    provider or HTTP call.
+
+    Args:
+        args: Parsed CLI arguments for the ``image`` subcommand.
+        ctx: Per-invocation session context.
+
+    Returns:
+        Exit code: 2 for a missing ``image:`` block, an unresolvable prompt,
+        or an unknown ``image.engine``; 1 for a cancelled or otherwise
+        failed generation, 0 on success or on ``--dry-run``.
+    """
+    from kinoforge.core.errors import (
+        Cancelled,
+        KinoforgeError,
+        UnknownAdapter,
+        ValidationError,
+    )
+    from kinoforge.core.image_run import _resolve_prompt, generate_image
+
+    if ctx.cfg is None:
+        print("error: --config required for image", file=sys.stderr)
+        return 2
+    cfg = ctx.cfg
+    if cfg.image is None:
+        print(
+            "error: --config must contain an `image:` block; "
+            "see examples/configs/luma-uni1-t2i.yaml",
+            file=sys.stderr,
+        )
+        return 2
+
+    sink = _build_sink(cfg, args)
+    run_id = _resolve_run_id(args, "image")
+
+    if getattr(args, "dry_run", False):
+        # Resolve the prompt through the SAME helper generate_image uses — no
+        # registry construction, no profile resolution, no provider call, so
+        # a dry run costs nothing — but also no second copy of the
+        # precedence chain (CLI > image.prompt > top-level prompt) or its
+        # whitespace-only handling to drift from the real path's.
+        try:
+            prompt = _resolve_prompt(cfg, cfg.image, getattr(args, "prompt", None))
+        except ValidationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print("image plan:")
+        print(f"  engine: {cfg.image.engine}")
+        print(f"  model: {cfg.image.spec.get('model', '(unset)')}")
+        print(f"  params: {cfg.image.params or '{}'}")
+        print(f"  prompt: {prompt[:80]!r}")
+        print(f"  run_id: {run_id}")
+        print(f"  sink: {'disabled' if sink is None else 'enabled'}")
+        return 0
+
+    store = ctx.store()
+    try:
+        artifact = generate_image(
+            cfg,
+            store=store,
+            run_id=run_id,
+            sink=sink,
+            prompt_override=getattr(args, "prompt", None),
+            cancel_token=ctx.cancel_token,
+        )
+    except ValidationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except Cancelled:
+        print("image: cancelled", file=sys.stderr)
+        return 1
+    except UnknownAdapter as exc:
+        # UnknownAdapter subclasses KinoforgeError, so it MUST be caught
+        # ahead of the broad `except KinoforgeError` below — an unknown
+        # `image.engine` is a config/precondition problem (design §2.4,
+        # exit 2), not a run-time generation failure (exit 1). Ordered
+        # after the two exit-2 cases above purely for readability; nothing
+        # here depends on that ordering.
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except KinoforgeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"image: uri={artifact.uri!r}")
+    return 0
 
 
 def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:

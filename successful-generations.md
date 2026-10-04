@@ -89,6 +89,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 33. `2026-09-18 21:10:03` — [960x544 MiniMax-H3 max-length clip → SPATIALLY TILED FlashVSR 1080p (no downscale) → RIFE 60 fps → soundtrack re-mux, on Modal — upscale+interpolate (tiled)](#33-2026-09-18-211003--960x544-minimax-h3-max-length-clip--spatially-tiled-flashvsr-1080p-no-downscale--rife-60-fps--soundtrack-re-mux-on-modal--upscaleinterpolate-tiled)
 34. `2026-09-23 00:33:31` — [MiniMax-H3 t2va + LoRA on Modal H200 — the first LoRA on H3 and the first on a t2va model, two applies on one pod — t2va+lora](#34-2026-09-23-003331--minimax-h3-t2va--lora-on-modal-h200--the-first-lora-on-h3-and-the-first-on-a-t2va-model-two-applies-on-one-pod--t2valora)
     - See also: `2026-09-23 01:17:02` — **the seeded strength A/B that explains this entry's frame-QA FAIL.** Same tuple `(modal, DiffusersEngine, MiniMaxAI/MiniMax-H3, t2va)`, new cfg `examples/configs/modal-diffusers-minimax-h3-t2va-lora-style-seeded.yaml` (20 steps, **`spec.seed: 424242` PINNED** — the first seeded comparison in this whole task). Pod `run-20260923-011131` (H200), two cells: LineartAnime at **strength 1.0** → `output/20260923-011408_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (1,398,302 B, sha256 `bc617c3b01b9fb20…`) is photorealistic with **no style at all**; the same seed at **strength 2.0** (the schema maximum) → `output/20260923-011702_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (910,484 B, sha256 `8d3b0a26dacf7e99…`) is a **total stylistic transformation** — photorealism gone, flat painterly brushwork, stylised foliage, saturated illustrative colour, the subject a painted character. Both cells share composition, camera path and figure placement (the seed pin visibly holding), so the ONLY difference is style. **Verdict: strength was the variable, not dtype — the profile's fp32→bf16 restore path is EXONERATED**, and §34's FAIL was a config artifact (strength 1.0 compounded by 8 steps). Cell A isolates it: 20 steps alone does NOT produce the style. `/health` held a third time; GPU probe read **100 %** mid-denoise, resolving §34's low-utilisation caveat as point-sampling. Spend **est≤$0.51**, teardown verified from a fresh process. Full delta in `.superpowers/sdd/2026-09-22-h3-lora-shared-seam/task-11-report.md`.
+35. `2026-10-03 17:44:27` — [`kinoforge image` — the first generation produced by a kinoforge command that terminates at an image (Luma UNI-1) — t2i](#35-2026-10-03-174427--kinoforge-image--the-first-generation-produced-by-a-kinoforge-command-that-terminates-at-an-image-luma-uni-1--t2i)
 
           MARK="$(mktemp)"
 
@@ -3922,3 +3923,121 @@ experiment and was not run.
   despite `kernels>=0.4` being installed. The config header documents the
   degradation as possible; nothing warns when it happens. Performance impact
   unmeasured.
+
+## 35. `2026-10-03 17:44:27` — `kinoforge image` — the first generation produced by a kinoforge command that terminates at an image (Luma UNI-1) — t2i
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `lumalabs.ai (agents API) / LumaAgentsImageEngine / uni-1` |
+| **Mode** | t2i |
+| **kinoforge version** | `v0.1.0` |
+| **First-success SHA** | `5eb96a7a` (branch `feat/standalone-image-generation`) |
+| **Date (local TZ)** | 2026-10-03 17:44:27 -0700 (PDT) |
+| **Layer / phase** | Standalone image generation, design `docs/superpowers/specs/2026-10-03-standalone-image-generation-design.md`, plan `docs/superpowers/plans/2026-10-03-standalone-image-generation.md` (Tasks 1-10) |
+
+### The new capability axis
+
+**A kinoforge COMMAND that terminates at an image.** §15 and §18 share this exact
+`(luma_agents, uni-1, t2i)` tuple, so by the same-tuple rule they would normally get a
+"See also" — but neither was produced by a command. §15 ran from a live pytest
+(`tests/live/test_luma_keyframe_live.py`) and §18 from a one-off scratchpad matrix
+runner, both driving `registry.get_image_engine(...)` directly. Until this run the only
+route into an `ImageEngine` was `cfg.keyframe` → `KeyframeStage`, which fills a
+conditioning role for a video mode and never terminates at a PNG. `kinoforge image` is a
+new command, which `CLAUDE.md` names as its own qualifying axis.
+
+### Exact command
+
+```bash
+pixi run -e live-hosted kinoforge image \
+  --config examples/configs/luma-uni1-t2i.yaml \
+  --prompt "$(cat examples/configs/prompts/field-realistic.txt)"
+```
+
+`-e live-hosted` is required: the hosted-engine deps are scoped to that pixi feature.
+
+### Cfg
+
+`examples/configs/luma-uni1-t2i.yaml` verbatim — `image.engine: luma_agents`,
+`spec.model: uni-1`, `params.aspect_ratio: "16:9"`, `output.dir: output`. The config
+carries **no** `engine:`, `models:` or `compute:` block; the allowlist validator refuses
+those alongside `image:`.
+
+Model pinned to `uni-1`, not `uni-1-max`: §18 rated max better on quality but the pin
+stays until max-tier per-image pricing is confirmed on the dashboard (that deferral is
+recorded in the config's own comment).
+
+### Input
+
+Standard prompt read verbatim from `examples/configs/prompts/field-realistic.txt`
+(995 B) — no paraphrase, no per-run override, so this image is comparable with every
+other standard-prompt generation in this log.
+
+### Output
+
+- `output/20261003-174427_image_luma_agents_uni-1_Photorealistic-cinem.png`
+- **2672×1504** (exactly 16:9), 9,033,875 B
+- sha256 `a188b7cd3e5945cd7ad18898759171dce0603835a3e04d9a31f5413d5c730599`
+- Internal store copy at `.kinoforge/image-20261003-174244/image.png` — the fixed,
+  non-prompt-derived name, byte-identical in size.
+- Wall-clock **104 s** (17:42:43 → 17:44:27), inside §15's observed 102-194 s band.
+- Evidence: `tests/live/evidence/2026-10-03_kinoforge_image_luma_stdout.txt`
+  (query strings scrubbed — Luma returns pre-signed URLs carrying short-lived tokens).
+
+Note the dimensions differ from §15's 2784×1504 for the same model and the same
+`aspect_ratio: "16:9"`: 2672/1504 is exactly 1.778, where 2784/1504 is 1.851. This run
+is the more precisely 16:9 of the two; the cause of the drift is not established here.
+
+### Visual QA — PASS
+
+Judged at full frame (downscaled) and at native 1:1 on a face/torso crop, per the
+`CLAUDE.md` rule that exit code and dimensions cannot see pixels.
+
+**Technical quality: clean.** No false colour and no corruption of the entry-#13/#14
+class. No frame-wide out-of-focus blobs of the §18 `uni-1` dawn-flight class — the
+specific artifact that entry warned would propagate into any i2v clip seeded from it.
+Face anatomy correct: both eyes well-formed and symmetric with proper catchlights, nose,
+mouth and chin coherent. Hair strands individually resolved with backlit flyaway wisps.
+Skin tones natural under the warm grade; waterfall texture and the blue mist pool read
+correctly.
+
+**Prompt adherence: strong.** Alpine wildflower meadow, tall waterfall over moss-covered
+cliffs into a misting pool, golden-hour backlight, volumetric god rays, floating pollen
+like embers, vividly coloured rippling dress, luminous butterflies trailing light
+ribbons — all present. The pose is exactly "facing away, she turns to glance over her
+shoulder with a coy, gentle smile". The "camera glides into an intimate close-up" clause
+is a motion instruction a still cannot express; not counted as a miss.
+
+Minor: mild waxy skin smoothing (normal generative sheen at this model tier) and soft
+fabric definition at the left shoulder. Neither is a defect at this model tier.
+
+### Reproduction recipe notes
+
+- **Zero compute provisioned**, by construction: every image engine declares
+  `requires_compute = False`, and `generate_image` builds no provider, no ledger row and
+  no lifecycle. Verified after the run from a fresh process — `kinoforge list` printed
+  **both** `[instance overview] No running instances.` AND `No instances recorded in
+  ledger.`
+- **`--ephemeral` is refused on this path by design** (`IMAGE_EPHEMERAL_CAPABILITIES`
+  maps every hosted image engine to `False`; only the in-process `fake` is `True`). No
+  image engine implements provider-side record deletion, and two of three cannot — Luma's
+  agents API has no DELETE endpoint at all. The consequence is that **every**
+  `kinoforge image` run is loggable; none can be ephemeral.
+- Auth: `Authorization: Bearer $LUMAAI_API_KEY` against `agents.lumalabs.ai/v1`. The
+  retired `api.lumalabs.ai/dream-machine` surface 403s for platform keys (§15).
+- Spend: one generation against the Luma platform credit, ~$0.01-0.05. Luma does not
+  return per-generation cost on the wire.
+- `--prompt` is optional for this command (unlike `generate`); precedence is
+  `--prompt` > `cfg.image.prompt` > `cfg.prompt`.
+
+### Notes
+
+- Pre-spend gate: full suite **6450 passed, 184 skipped, 18 xfailed, exit 0** at
+  `5eb96a7a`, and `pixi run preflight` PASS, both immediately before the run.
+- A green `--dry-run` does **not** prove the engine name resolves — dry-run skips the
+  registry lookup so it costs nothing, so a typo'd `image.engine` previews happily and
+  exits 0. The live run is the first thing that resolves the engine.
+- The published filename carrying `luma_agents` and `uni-1` rather than `unknown` is the
+  §17 `_fal_unknown_` trap confirmed closed on this path.
+
+---

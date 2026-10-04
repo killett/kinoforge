@@ -79,7 +79,9 @@ def test_register_and_get_image_engine_round_trip() -> None:
         def submit(self, job: ImageJob) -> str:
             return "id"
 
-        def result(self, job_id: str) -> Artifact:
+        def result(
+            self, job_id: str, *, cancel_token: object | None = None
+        ) -> Artifact:
             return Artifact(filename="x.png")
 
         def endpoints(self) -> dict[str, str]:

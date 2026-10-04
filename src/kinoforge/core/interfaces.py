@@ -852,7 +852,9 @@ class ImageBackend(ABC):
     def submit(self, job: ImageJob) -> str: ...  # noqa: D102
 
     @abstractmethod
-    def result(self, job_id: str) -> Artifact: ...  # noqa: D102
+    def result(  # noqa: D102
+        self, job_id: str, *, cancel_token: CancelToken | None = None
+    ) -> Artifact: ...
 
     @abstractmethod
     def endpoints(self) -> dict[str, str]: ...  # noqa: D102

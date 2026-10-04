@@ -1,0 +1,27 @@
+# Standalone image generation via fal.ai (flux/schnell) — the fast, cheap one.
+#
+# ~5 s and ~$0.005 per image against Luma's ~2 min, so this is the config to
+# iterate prompts with. Quality is lower; use luma-uni1-t2i.yaml for a keeper.
+#
+# Set the fal API key in the environment before running.
+#
+# Run (with an explicit --prompt, for a one-off):
+#   pixi run -e live-hosted kinoforge image \
+#     --config examples/configs/fal-flux-schnell-t2i.yaml \
+#     --prompt "a cat in a sunlit meadow, 35mm film"
+#
+# Or bare — this config carries its own `prompt:` below, so it is
+# self-contained and runnable with no --prompt at all:
+#   pixi run -e live-hosted kinoforge image \
+#     --config examples/configs/fal-flux-schnell-t2i.yaml
+
+mode: t2i
+prompt: "a cat in a sunlit meadow, 35mm film"
+
+image:
+  engine: fal
+  spec:
+    model: "fal-ai/flux/schnell"
+
+output:
+  dir: output

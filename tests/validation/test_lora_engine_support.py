@@ -262,6 +262,38 @@ def test_a_cli_stack_on_a_hosted_engine_is_refused(
     assert check.run(cfg).passed is False
 
 
+def test_a_cli_stack_on_an_image_cfg_is_refused_not_crashed(
+    session: list[_Session | None],
+) -> None:
+    """An image cfg has no engine to apply a LoRA stack to — gate it visibly.
+
+    Bug caught (fix-round-1 review): an earlier implementation of the
+    Config.engine-optional migration asserted ``cfg.engine is not None``
+    here on the belief that a nonzero declared-stack-size always implies a
+    video cfg with an engine. ``--loras`` is read off the ambient session
+    (see ``_declared_stack_size``), independent of ``cfg`` — so
+    ``kinoforge image --config <image.yaml> --loras hf:a/b`` reaches this
+    check with ``cfg.engine is None`` and a nonzero count. The assert fired
+    as a bare, messageless ``AssertionError`` with nothing to contain it
+    (``_run_gated`` does not wrap ``check.run(cfg)``), instead of the named
+    ``CheckResult`` refusal this U56 check exists to produce.
+    """
+    from kinoforge.core.config import Config
+    from kinoforge.core.lora import LoraEntry
+    from kinoforge.validation.checks.loras import LoraEngineSupportCheck
+
+    session[0] = _Session(cli_loras=[LoraEntry(ref="civitai:3333@4444")])
+    cfg = Config.model_validate(
+        {"image": {"engine": "fake", "prompt": "a cat", "spec": {"model": "m"}}}
+    )
+    check = LoraEngineSupportCheck()
+
+    assert check.applies_to(cfg) is True
+    result = check.run(cfg)
+    assert result.passed is False
+    assert "engine" in result.message
+
+
 def test_an_explicit_empty_cli_stack_is_not_refused(
     session: list[_Session | None],
 ) -> None:

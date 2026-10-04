@@ -43,6 +43,10 @@ class _FakeCfg:
         self._key = key
         self.compute = None
         self.models: list[Any] = []
+        # Non-None sentinel: this fake always represents a video cfg (it
+        # has capability_key()/models/compute), so _cmd_generate's
+        # `cfg.engine is None` image-cfg guard (Finding 1) must not fire.
+        self.engine = object()
         self._lifecycle = type("L", (), {"lora_swap_re_probe_after_s": 300.0})()
 
     def capability_key(self) -> CapabilityKey:

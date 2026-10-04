@@ -57,15 +57,17 @@ class FakeImageBackend(ImageBackend):
         )
         return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
 
-    def result(self, job_id: str) -> Artifact:
+    def result(self, job_id: str, *, cancel_token: object | None = None) -> Artifact:
         """Return a synthetic Artifact keyed off ``job_id``.
 
         Args:
             job_id: The job id returned by ``submit``.
+            cancel_token: Ignored — there is no poll loop to interrupt.
 
         Returns:
             An ``Artifact`` with a filename derived from ``job_id``.
         """
+        del cancel_token
         return Artifact(
             filename=f"fake-image-{job_id}.png",
             meta={"_kf_job_id": job_id, "_synthetic": True},

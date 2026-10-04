@@ -19,7 +19,9 @@ in either is a `ConfigError` at load. The pre-2026-08 `compute.requirements` / `
 [breaking-changes.md](breaking-changes.md) for the before/after and the per-field verdicts.
 
 Optional blocks add pipeline stages and plumbing: `keyframe:`, `upscale:`, `interpolate:`,
-`store:`, `output:`, `lifecycle:`, `loras:`, `spec:`, `params:`.
+`store:`, `output:`, `lifecycle:`, `loras:`, `spec:`, `params:`. `image:` is different in kind
+from the rest — its presence opts the whole config into a separate terminal-image path
+(`kinoforge image`) rather than adding a stage to the video pipeline; see below.
 
 For hosted engines (e.g. fal.ai) the `compute:` block is omitted and a top-level `lifecycle: {budget: N}` carries the spend guard instead.
 
@@ -198,3 +200,43 @@ Interpolation is video-only. A clip carrying a soundtrack (MiniMax-H3's `t2va` m
 audio re-muxed onto the interpolated result.
 
 See [`../examples/configs/modal-diffusers-rife-60fps-interpolate.yaml`](../examples/configs/modal-diffusers-rife-60fps-interpolate.yaml).
+
+## `image:` (optional, standalone image generation)
+
+Opts a config into the terminal-image path: `kinoforge image` produces one PNG from one
+prompt — no pipeline, no video engine, no compute. Presence of `image:` activates this path
+instead of the video one; a config with both `image:` and `engine:`/`models:` is refused at load
+(see the refused-keys list below). `mode:` must be `t2i` or omitted — any other value is refused.
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `image.engine` | `"fal"` \| `"replicate"` \| `"luma_agents"` \| `"fake"` | — | Required. Registry key resolved through `get_image_engine`. |
+| `image.prompt` | string | `null` | Optional — `kinoforge image` also accepts `--prompt` (wins) or the top-level `prompt:` (fallback). Precedence: `--prompt` > `image.prompt` > `prompt`. |
+| `image.spec` | mapping | `{}` | `spec.model` is the provider's model id (e.g. `"uni-1"`, `"fal-ai/flux/schnell"`). |
+| `image.params` | mapping | `{}` | Opaque pass-through merged **verbatim** into the provider's request body — kinoforge does not validate its keys. `aspect_ratio` works on Luma; `image_size` works on fal. Neither is checked here; a typo'd key is only caught (or not) by the provider. |
+
+An `image:` config is allowed to carry **only**: `mode`, `prompt`, `image`, `store`, `output`.
+Every other top-level key is refused by name at load, because it would be silently inert on a
+run that has no compute, no video engine and no model fetch:
+
+- `engine`, `models`, `loras` — there is no video engine to configure and nothing to fetch.
+- `compute` — every image engine declares `requires_compute = False`; no pod, no warm reuse.
+- `keyframe`, `upscale`, `interpolate`, `splitter` — video-pipeline stages that never run.
+- `lifecycle` (top-level) — no compute means no budget/idle-timeout surface to apply it to.
+- `spec` / `params` (top-level) — the per-job equivalents live under `image.spec` / `image.params`
+  instead; the bare top-level keys are a video-pipeline concept.
+
+`--ephemeral` is refused for every image engine except the in-process `fake` engine: no image
+engine implements provider-side record deletion, and two of the three hosted ones cannot today —
+Luma's agents API has no DELETE endpoint (records purge only via the dashboard) and fal exposes no
+delete path.
+
+**A green `--dry-run` does not prove `image.engine` resolves.** `kinoforge image --dry-run`
+deliberately returns before the registry lookup, the store, or the profile are ever constructed —
+by design, so a dry run costs nothing and makes no provider or HTTP call. That also means a typo'd
+engine name (`engine: lmua_agents`) previews happily and exits 0; the typo only surfaces on a real
+run, when `get_image_engine` raises `UnknownAdapter`. Do not read a clean `--dry-run` as
+confirmation that the engine key is valid.
+
+See [`../examples/configs/luma-uni1-t2i.yaml`](../examples/configs/luma-uni1-t2i.yaml) and
+[`../examples/configs/fal-flux-schnell-t2i.yaml`](../examples/configs/fal-flux-schnell-t2i.yaml).

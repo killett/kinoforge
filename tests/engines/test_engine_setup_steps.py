@@ -26,6 +26,24 @@ from tools.snapshot_launch_payloads import compute_configs, render_for_config
 _INVARIANT_EXCLUDED_ENGINE = "fake"
 
 
+def _engine_kind(config_path: Path) -> str:
+    """Return the declared ``engine.kind`` for a shipped compute config.
+
+    ``compute_configs()`` ships only video configs with a ``compute:`` block,
+    which image configs forbid (Config's allowlist) alongside ``engine:`` —
+    so every config this helper sees has a real engine block.
+
+    Args:
+        config_path: Path to a shipped compute YAML config.
+
+    Returns:
+        The config's ``engine.kind`` string.
+    """
+    cfg = load_config(str(config_path))
+    assert cfg.engine is not None  # noqa: S101 — see docstring
+    return cfg.engine.kind
+
+
 def _configs_for(engine_kind: str | None = None) -> list[Path]:
     """Return shipped compute configs, optionally narrowed to one engine.
 
@@ -38,7 +56,7 @@ def _configs_for(engine_kind: str | None = None) -> list[Path]:
     Returns:
         Sorted config paths, excluding every config on the fake engine.
     """
-    kinds = {p: load_config(str(p)).engine.kind for p in compute_configs()}
+    kinds = {p: _engine_kind(p) for p in compute_configs()}
     return [
         p
         for p, kind in kinds.items()
@@ -75,7 +93,7 @@ def test_the_config_sets_are_not_empty_and_cover_more_than_one_engine() -> None:
     """
     assert len(_DIFFUSERS_CONFIGS) >= 10
     assert len(_ALL_CONFIGS) > len(_DIFFUSERS_CONFIGS)
-    kinds = {load_config(str(p)).engine.kind for p in _ALL_CONFIGS}
+    kinds = {_engine_kind(p) for p in _ALL_CONFIGS}
     assert "comfyui" in kinds
     # The launch-bearing split must not be where the coverage quietly goes.
     assert len(_LAUNCHING_CONFIGS) >= len(_ALL_CONFIGS) - 1
