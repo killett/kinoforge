@@ -2,7 +2,8 @@
 
 RED scaffold committed BEFORE the live spend per CLAUDE.md. Input is the §35
 `kinoforge image` PNG, so this run is also the first image -> upscale chain.
-Output is published to tmp_path to keep the repo output/ guard clean.
+The test runs a copy of the example cfg with output.dir pointed at tmp_path,
+so the repo output/ guard stays clean and the published file lands under tmp_path.
 Evidence lands under ``tests/live/evidence/2026-10-03-spandrel-image-upscale/``.
 """
 
@@ -44,6 +45,10 @@ def test_spandrel_upscales_a_still_image_2x(tmp_path: Path) -> None:
     assert _CFG.exists(), f"cfg missing: {_CFG}"
     _EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
+    cfg_text = _CFG.read_text() + f'\noutput:\n  dir: "{tmp_path}"\n'
+    cfg_path = tmp_path / _CFG.name
+    cfg_path.write_text(cfg_text)
+
     proc = subprocess.run(  # noqa: S603,S607
         [
             "pixi",
@@ -53,9 +58,7 @@ def test_spandrel_upscales_a_still_image_2x(tmp_path: Path) -> None:
             "--image",
             str(_INPUT),
             "--config",
-            str(_CFG),
-            "--output-dir",
-            str(tmp_path),
+            str(cfg_path),
             "--no-reuse",
         ],
         capture_output=True,
