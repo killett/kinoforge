@@ -107,6 +107,24 @@ class TestTileUpscale:
         assert len(counter.calls) == 6
         # The VRAM bound the tiler exists for: no patch wider than tile+2*overlap.
         assert all(h <= 512 + 64 and w <= 512 + 64 for (_, h, w, _) in counter.calls)
+        # Bug caught: the overlap padding is never applied (every patch is a
+        # bare tile). The NN fake is pixel-local, so `tiled == untiled` stays
+        # true and only the recorded patch geometry can see it. Row 0, column
+        # 1 is the interior tile: +32 on both horizontal sides and +32 below.
+        assert (1, 544, 576, 3) in counter.calls
+        assert max(w for (_, _, w, _) in counter.calls) == 512 + 2 * 32
+
+    def test_overlap_value_drives_the_padding(self) -> None:
+        # Bug caught: the padding is hardcoded to the _TILE_OVERLAP constant
+        # instead of the `overlap` argument, so a caller-chosen value is
+        # silently ignored.
+        from kinoforge.upscalers.spandrel._runtime import tile_upscale
+
+        rng = np.random.default_rng(1)
+        img = rng.integers(0, 255, (900, 1100, 3), dtype=np.uint8)
+        counter = _Counter()
+        tile_upscale(img, scale=2, tile=512, overlap=16, infer=counter)
+        assert max(w for (_, _, w, _) in counter.calls) == 512 + 2 * 16
 
     def test_exactly_divisible_edges(self) -> None:
         from kinoforge.upscalers.spandrel._runtime import tile_upscale
@@ -153,6 +171,24 @@ class TestToRgb:
 
         rgb = np.zeros((5, 6, 3), dtype=np.uint8)
         assert _to_rgb(rgb, Path("c.png")) is rgb
+
+    def test_single_channel_axis_is_broadcast(self) -> None:
+        # Bug caught: an (H, W, 1) greyscale PNG (imageio keeps the axis for
+        # some encoders) falls through to the shape raise instead of being
+        # broadcast to RGB.
+        from kinoforge.upscalers.spandrel._runtime import _to_rgb
+
+        out = _to_rgb(np.full((5, 6, 1), 7, dtype=np.uint8), Path("g1.png"))
+        assert out.shape == (5, 6, 3)
+        assert (out == 7).all()
+
+    def test_uint16_raises(self) -> None:
+        # Bug caught: a 16-bit PNG is handed to the model as if it were 8-bit
+        # and the upscale silently returns garbage pixels.
+        from kinoforge.upscalers.spandrel._runtime import _to_rgb
+
+        with pytest.raises(ValueError, match="8-bit"):
+            _to_rgb(np.zeros((5, 6, 3), dtype=np.uint16), Path("deep.png"))
 
     def test_two_channels_raise(self) -> None:
         from kinoforge.upscalers.spandrel._runtime import _to_rgb

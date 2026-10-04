@@ -1154,13 +1154,19 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     # --video | --image is a required argparse mutex group, so exactly one
     # is set. The kind travels as DATA from here on (core/media.py).
-    media: Media = "image" if getattr(args, "image", None) else "video"
+    media: Media = "image" if getattr(args, "image", None) is not None else "video"
     source: str = args.image if media == "image" else args.video
 
     # Config-fact refusals fire BEFORE --dry-run prints so a dry run surfaces
     # them too, and long before any pod work.
     if media == "image" and (pre_err := _image_preflight_error(cfg, scale)) is not None:
         print(pre_err, file=sys.stderr)
+        return 2
+
+    # An empty ``--image ""`` is a path fault, not an absent flag. Refuse it
+    # before the dry-run block so a dry run cannot exit 0 on an empty path.
+    if media == "image" and not source:
+        print(_image_arg_error(source), file=sys.stderr)
         return 2
 
     if getattr(args, "dry_run", False):
@@ -1445,9 +1451,9 @@ def _image_preflight_error(cfg: Config, scale: ScaleTarget) -> str | None:
         factory = registry.get_upscaler(block.engine)
     except UnknownAdapter as exc:
         return f"error: {exc}"
-    supports = getattr(factory, "supports_image_input", None)
-    if supports is None:
-        supports = factory().supports_image_input
+    # Every registered upscaler declares the flag on the class, so the
+    # preflight never constructs an engine.
+    supports = getattr(factory, "supports_image_input", False)
     if not supports:
         return (
             f"error: upscale engine {block.engine!r} does not support --image "

@@ -41,7 +41,11 @@ def _dims(path: Path) -> tuple[int, int]:
 
 @pytest.mark.live
 def test_spandrel_upscales_a_still_image_2x(tmp_path: Path) -> None:
-    assert _INPUT.exists(), f"input PNG missing: {_INPUT}"
+    if not _INPUT.exists():
+        pytest.skip(
+            f"input PNG missing ({_INPUT.name}); regenerate with "
+            "`kinoforge image -c examples/configs/luma-uni1-t2i.yaml`"
+        )
     assert _CFG.exists(), f"cfg missing: {_CFG}"
     _EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 

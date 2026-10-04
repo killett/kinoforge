@@ -111,6 +111,8 @@ class TestUploadHeaders:
         assert seen["headers"]["X-Filename"] == f"{sha8}.mp4"
 
     def test_image_with_unknown_suffix_raises_before_http(self, tmp_path: Path) -> None:
+        # Bug caught: an unmapped suffix falls back to a default content type
+        # and the pod is paid to receive a file it will reject.
         from kinoforge.upscalers.spandrel import SpandrelEngine
 
         engine = SpandrelEngine()
@@ -169,6 +171,8 @@ class TestUpscalePayload:
         assert result.artifact.meta["media"] == "image"
 
     def test_video_job_sends_media_video(self, tmp_path: Path) -> None:
+        # Bug caught: the new image path becomes the default, so the proven
+        # video run uploads as an image and the artifact is stamped image.
         captured, upl, result = self._drive("video", _file(tmp_path, "in.mp4"))
         assert upl.call_args.kwargs["media"] == "video"
         assert captured["media"] == "video"

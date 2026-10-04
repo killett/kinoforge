@@ -151,6 +151,8 @@ class TestMediaThreading:
         assert eng.called_with[0].media == "image"
 
     def test_no_meta_is_video(self) -> None:
+        # Bug caught: the stage hardcodes media="image" regardless of the
+        # clip's meta, so every --video run uploads as image/png.
         eng = _FakeEngine()
         stage = UpscaleStage(
             engine=eng,

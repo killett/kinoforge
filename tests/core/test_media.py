@@ -108,9 +108,6 @@ class TestSupportsImageInput:
         supporting: set[str] = set()
         for name in names:
             factory = registry.get_upscaler(name)
-            flag = getattr(factory, "supports_image_input", None)
-            if flag is None:
-                flag = factory().supports_image_input
-            if flag:
+            if getattr(factory, "supports_image_input", False):
                 supporting.add(name)
         assert supporting == {"spandrel"}

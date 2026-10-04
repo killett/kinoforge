@@ -204,6 +204,26 @@ class TestPathRefusals:
         assert rc == 2
         assert "local file" in capsys.readouterr().err
 
+    def test_empty_image_exits_2(
+        self, tmp_path: Path, no_generate: None, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Bug caught: `--image ""` is read as "flag absent" and the run
+        # silently becomes a VIDEO run that then complains about --video.
+        rc = main(["upscale", "--image", "", "-c", str(_spandrel_cfg(tmp_path))])
+        assert rc == 2
+        assert "--image is empty" in capsys.readouterr().err
+
+    def test_empty_image_dry_run_exits_2(
+        self, tmp_path: Path, no_generate: None, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Bug caught: the empty-path check sits after the --dry-run block, so
+        # `--image "" --dry-run` prints a plan (`media: video`) and exits 0.
+        rc = main(
+            ["upscale", "--image", "", "-c", str(_spandrel_cfg(tmp_path)), "--dry-run"]
+        )
+        assert rc == 2
+        assert "--image is empty" in capsys.readouterr().err
+
 
 class TestDryRun:
     def test_prints_media_and_source(

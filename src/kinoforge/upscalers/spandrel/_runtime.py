@@ -77,8 +77,14 @@ def _to_rgb(img: np.ndarray, source: Path) -> np.ndarray:
     """Return *img* as uint8 HxWx3: broadcast greyscale, drop alpha (logged).
 
     Raises:
-        ValueError: Channel count other than 1 (2-D), 3 or 4.
+        ValueError: Non-uint8 input, or a channel count other than 1, 3 or 4.
     """
+    if img.dtype != np.uint8:
+        raise ValueError(
+            f"{source.name}: expected an 8-bit image, got dtype {img.dtype}"
+        )
+    if img.ndim == 3 and img.shape[2] == 1:
+        img = img[:, :, 0]
     if img.ndim == 2:
         return np.repeat(img[:, :, None], 3, axis=2)
     if img.ndim == 3 and img.shape[2] == 4:
@@ -199,7 +205,7 @@ class SpandrelRuntime:
         Raises:
             NotYetImplementedError: ``scale.kind == "height"``.
             UnsupportedScaleError: ``scale.value != self._scale``.
-            ValueError: The image has a channel count other than 1, 3 or 4.
+            ValueError: Channel count other than 1, 3 or 4, or non-8-bit input.
         """
         del params
         self._check_scale(scale)

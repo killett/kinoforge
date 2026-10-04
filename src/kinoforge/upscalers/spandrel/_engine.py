@@ -36,7 +36,10 @@ _USER_AGENT = "kinoforge-spandrel/0.1"
 
 
 class SpandrelEngine(PodHTTPClientMixin, UpscalerEngine):
-    """spandrel-based image super-resolution: per-frame video upscaler, and still-image upscaler via ``UpscaleJob.media="image"``."""
+    """spandrel-based super-resolution for video and still images.
+
+    Per-frame video upscaler; stills arrive via ``UpscaleJob.media="image"``.
+    """
 
     name = "spandrel"
     requires_compute = True

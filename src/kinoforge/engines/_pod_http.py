@@ -20,7 +20,7 @@ import time
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
-from typing import IO, Any, cast
+from typing import IO, Any, Literal, cast
 from urllib.error import HTTPError
 
 from kinoforge.core.cancel import CancelToken
@@ -195,7 +195,11 @@ class PodHTTPClientMixin:
             return cast(dict[str, Any], _json.loads(resp.read().decode("utf-8")))
 
     def _upload_source(
-        self, instance: Instance, local_path: Path, *, media: str = "video"
+        self,
+        instance: Instance,
+        local_path: Path,
+        *,
+        media: Literal["video", "image"] = "video",
     ) -> str:
         """Upload ``local_path`` to the pod via PUT /upload; return its file:// URL.
 
