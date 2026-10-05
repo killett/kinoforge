@@ -89,7 +89,10 @@ compute:
       - "NVIDIA GeForce RTX 3090"
   lifecycle:
     boot_timeout: 20m
-    idle_timeout: 10m
+    # self-terminator deadline = min(2*idle_timeout, max_lifetime-time_buffer)
+    # = min(30m, 42m) = 30m, which must exceed boot_timeout (20m) or the pod
+    # kills itself mid-boot before /health can ever report ready.
+    idle_timeout: 15m
     job_timeout: 10m
     time_buffer: 3m
     max_lifetime: 45m

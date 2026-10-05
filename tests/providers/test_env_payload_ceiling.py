@@ -168,14 +168,30 @@ _RUNPOD_CEILING_BYTES = 101_000
 #:
 #: 2026-10-05 (kinoforge text, Task 8): three new rows. The text server
 #: embeds `text_server.py` + `_util_stats.py` + `_upload.py` only
-#: (needs-only, U53), so these sit far below the Wan-server configs:
-#: 17,282 B for the Qwen3-0.6B and Qwen3.8-27B configs (identical server
-#: wiring, only `models`/`placement`/`text.params` differ — none of which
-#: enter the rendered env), 17,322 B for the SmolVLM config (the extra
-#: `num2words` pip entry).
+#: (needs-only, U53), so these sit far below the Wan-server configs. The
+#: model ref DOES enter the rendered env — `KINOFORGE_TEXT_MODEL_ID` plus the
+#: legacy `WAN_MODEL_ID` both carry it — and the lifecycle block enters via
+#: `KINOFORGE_SELFTERM_SCRIPT`; the three stems are not byte-identical
+#: content, their near-equal sizes are a gzip+base64 rounding effect (the
+#: compressed+encoded blob's length is insensitive to small differences in a
+#: few numeric/string fields buried inside a much larger shared script).
+#:
+#: 2026-10-05 (kinoforge text, Task 8 review fix round 1 — lifecycle
+#: self-terminator inversion, Important/plan-mandated): all three
+#: `idle_timeout` values bumped per the controller's ruling so
+#: `min(2*idle_timeout, max_lifetime-time_buffer)` clears each config's
+#: `boot_timeout` (previously the cap sat AT or BELOW the boot window, so a
+#: slow download could self-terminate the pod before `/health` ever reports
+#: ready — see the task-8-report.md DELTA entry). Qwen3-0.6B and SmolVLM:
+#: `idle_timeout` 10m -> 15m (cap 20m -> 30m); bytes unchanged (17,282 /
+#: 17,322) — "10m"/"15m" are the same length and the computed deadline
+#: digit-count did not change either. Qwen3.8-27B: `idle_timeout` 15m -> 25m
+#: (cap 30m -> 50m); bytes 17,282 -> 17,284, a +2 B gzip rounding artifact
+#: from the changed deadline value threading through the selfterm script,
+#: not a meaningfully larger payload.
 _BASELINE_BYTES: dict[str, int] = {
     "runpod-diffusers-qwen3-0_6b-t2t": 17_282,
-    "runpod-diffusers-qwen3_8-27b-it2t": 17_282,
+    "runpod-diffusers-qwen3_8-27b-it2t": 17_284,
     "runpod-diffusers-smolvlm-256m-it2t": 17_322,
     "runpod-diffusers-flashvsr-1080p-upscale": 92_124,
     "runpod-diffusers-flashvsr-x4-torch26-upscale": 92_150,

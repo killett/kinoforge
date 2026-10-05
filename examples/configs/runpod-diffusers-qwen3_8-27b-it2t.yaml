@@ -86,7 +86,10 @@ compute:
       - "NVIDIA H100 PCIe"
   lifecycle:
     boot_timeout: 45m
-    idle_timeout: 15m
+    # self-terminator deadline = min(2*idle_timeout, max_lifetime-time_buffer)
+    # = min(50m, 85m) = 50m, which must exceed boot_timeout (45m) or the pod
+    # kills itself mid-download before /health can ever report ready.
+    idle_timeout: 25m
     job_timeout: 20m
     time_buffer: 5m
     max_lifetime: 90m
