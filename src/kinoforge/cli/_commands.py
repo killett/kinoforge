@@ -1619,6 +1619,172 @@ def _cmd_image(args: argparse.Namespace, ctx: SessionContext) -> int:
     return 0
 
 
+def _cmd_text(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Handle ``text`` — one chat completion on a reserved pod.
+
+    Design ``docs/superpowers/specs/2026-10-04-text-command-design.md`` §2 and
+    §7.3. Ordering mirrors ``_cmd_upscale``: flag conflicts (no config needed),
+    config presence, then EVERY config-fact refusal — image args, the pre-spend
+    mode gate, the prompt — BEFORE the ``--dry-run`` block, so a dry run
+    surfaces them too and nothing here can cost a pod boot. After that the
+    warm-scan / attach / launch-row wiring is ``_cmd_upscale``'s, and the
+    orchestrator runs ``TextStage`` on the skip-clip path.
+
+    stdout carries the completion text and NOTHING else, so the command pipes;
+    the run id, store uri and published path go to the logger.
+
+    Args:
+        args: Parsed CLI arguments for the ``text`` subcommand.
+        ctx: Per-invocation session context.
+
+    Returns:
+        2 for a config/precondition fault (including an unregistered
+        ``text.engine``), 1 for a pod-side or operational failure (including a
+        pod-reported mode mismatch and cancellation), 0 on success or
+        ``--dry-run``.
+    """
+    from kinoforge.core.errors import Cancelled, KinoforgeError, ValidationError
+    from kinoforge.core.text_request import (
+        base_model_ref,
+        build_request,
+        declared_modes,
+        derive_mode,
+        image_arg_error,
+        preflight_mode_error,
+        resolve_prompt,
+    )
+
+    # Mutual exclusion FIRST — does not require cfg load.
+    if getattr(args, "no_reuse", False) and getattr(args, "attach_pod", None):
+        print(
+            "error: --no-reuse and --attach-pod are mutually exclusive "
+            "(--no-reuse forces cold create + destroy; --attach-pod "
+            "implies pod survival)",
+            file=sys.stderr,
+        )
+        return 2
+    if ctx.cfg is None:
+        print("error: --config required for text", file=sys.stderr)
+        return 2
+    cfg = ctx.cfg
+    if cfg.text is None:
+        print(
+            "error: --config must contain a `text:` block; "
+            "see examples/configs/runpod-diffusers-qwen3-0_6b-t2t.yaml",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Config-fact refusals — all BEFORE --dry-run and long before any pod work.
+    image_paths: list[str] = list(getattr(args, "images", None) or [])
+    for path in image_paths:
+        if (img_err := image_arg_error(path)) is not None:
+            print(img_err, file=sys.stderr)
+            return 2
+    mode = derive_mode(len(image_paths))
+    if (mode_err := preflight_mode_error(cfg, mode)) is not None:
+        print(mode_err, file=sys.stderr)
+        return 2
+    try:
+        prompt = resolve_prompt(cfg, getattr(args, "prompt", None))
+    except ValidationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    sink = _build_sink(cfg, args)
+    run_id = _resolve_run_id(args, "text")
+    if getattr(args, "dry_run", False):
+        print("text plan:")
+        print(f"  mode: {mode}")
+        print(f"  images: {len(image_paths)}")
+        print(f"  engine: {cfg.text.engine}")
+        print(f"  model: {base_model_ref(cfg)}")
+        print(f"  declared_modes: {sorted(declared_modes(cfg))}")
+        print(f"  prompt: {prompt[:80]!r}")
+        print(f"  run_id: {run_id}")
+        print(f"  no_reuse: {bool(getattr(args, 'no_reuse', False))}")
+        print(f"  attach_pod: {getattr(args, 'attach_pod', None)}")
+        print(f"  sink: {'disabled' if sink is None else 'enabled'}")
+        return 0
+
+    from kinoforge.core import orchestrator as _orchestrator
+
+    request = build_request(
+        prompt, [_resolve_input_as_artifact(p, "image") for p in image_paths]
+    )
+    store = ctx.store()
+
+    instance: Instance | None = None
+    attach_pod_id = getattr(args, "attach_pod", None)
+    if attach_pod_id:
+        instance, rc = _resolve_attach_pod(ctx, cfg, attach_pod_id)
+        if rc is not None:
+            return rc
+    elif not args.no_reuse:
+        instance, report = _scan_warm_candidates(ctx, cfg)
+        logger.info(report.summarize())
+
+    # Spec A2 — same pre-create reservation as _cmd_generate / _cmd_upscale.
+    launch = (
+        _ephemeral_launch_row_reserve(ctx, cfg, run_id) if instance is None else None
+    )
+    try:
+        artifact, returned_instance = _orchestrator.generate(
+            cfg,
+            request=request,
+            store=store,
+            sink=sink,
+            run_id=run_id,
+            state_dir=ctx.state_dir,
+            cancel_token=ctx.cancel_token,
+            instance=instance,
+            single=bool(args.no_reuse),
+            skip_clip_stage=True,
+            on_instance_created=_ephemeral_row_upgrade_hook(ctx, cfg, launch),
+        )
+    except Cancelled:
+        _settle_unused_launch_row(ctx, cfg, launch, None)
+        print("text: cancelled", file=sys.stderr)
+        return 1
+    except UnknownAdapter as exc:
+        # UnknownAdapter subclasses KinoforgeError, so it MUST be caught
+        # ahead of the broad `except KinoforgeError` below — an unknown
+        # `text.engine` is a config/precondition problem (spec §2.6, exit 2),
+        # not a run-time generation failure (exit 1). Mirrors _cmd_image's
+        # ordering.
+        _settle_unused_launch_row(ctx, cfg, launch, None)
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except KinoforgeError as exc:
+        # A pod-reported mode mismatch (TextStage's ValidationError) lands here
+        # too: by then a boot has been paid for, so it is operational (exit 1),
+        # not a precondition fault — those all returned 2 above.
+        _settle_unused_launch_row(ctx, cfg, launch, None)
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if returned_instance is not None and instance is None and not args.no_reuse:
+        _stamp_cold_created_instance(
+            ctx,
+            cfg,
+            returned_instance,
+            created_at_local=launch.created_at_local if launch else None,
+            supersedes=launch.id if launch else None,
+        )
+    else:
+        _settle_unused_launch_row(ctx, cfg, launch, returned_instance)
+
+    text = str(artifact.meta.get("text", ""))
+    sys.stdout.write(text if text.endswith("\n") else text + "\n")
+    logger.info(
+        "text: run_id=%s store=%s published=%s",
+        run_id,
+        artifact.uri,
+        artifact.meta.get("published"),
+    )
+    return 0
+
+
 def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``batch`` subcommand.
 

@@ -44,6 +44,7 @@ from kinoforge.cli._commands import (
     _cmd_sweeper_start,
     _cmd_sweeper_status,
     _cmd_sweeper_stop,
+    _cmd_text,
     _cmd_upscale,
 )
 from kinoforge.cli._reconcile import (
@@ -94,7 +95,7 @@ class _LorasOnceAction(argparse.Action):
 # were missing from the set, so Ctrl-C bypassed the Phase-50 cooperative
 # drain on exactly the ``--no-reuse`` one-shot paths (audit B6).
 _INTERRUPTIBLE_CMDS: frozenset[str] = frozenset(
-    {"generate", "batch", "upscale", "interpolate", "image"}
+    {"generate", "batch", "upscale", "interpolate", "image", "text"}
 )
 
 # Subcommands that never trigger orchestration. ``--ephemeral`` is a no-op
@@ -152,6 +153,7 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
     "upscale": _cmd_upscale,
     "interpolate": _cmd_interpolate,
     "image": _cmd_image,
+    "text": _cmd_text,
     "batch": _cmd_batch,
     "list": _cmd_list,
     "status": _cmd_status,
@@ -819,6 +821,67 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         help="emit the resolved plan to stdout and exit 0; no provider call",
     )
 
+    # text — `kinoforge text`: one chat completion on a reserved pod
+    # (docs/superpowers/specs/2026-10-04-text-command-design.md §2).
+    p_text = sub.add_parser(
+        "text", help="generate text with an open-weight LLM on a reserved pod"
+    )
+    p_text.add_argument("-c", "--config", required=True, metavar="PATH")
+    p_text.add_argument(
+        "--prompt",
+        default=None,
+        metavar="TEXT",
+        help=(
+            "prompt text; overrides cfg.text.prompt, which overrides the "
+            "top-level cfg.prompt. Optional — a config carrying a prompt runs "
+            "without it."
+        ),
+    )
+    p_text.add_argument(
+        "--image",
+        action="append",
+        default=[],
+        dest="images",
+        metavar="PATH",
+        help=(
+            "input image (.png/.jpg/.jpeg, local file); repeatable. Any --image "
+            "selects mode it2t, which engine.diffusers.capability.supported_modes "
+            "must declare — refused before any pod work otherwise."
+        ),
+    )
+    p_text.add_argument(
+        "--no-reuse",
+        action="store_true",
+        dest="no_reuse",
+        help="force cold create + destroy on completion. Mutex with --attach-pod.",
+    )
+    p_text.add_argument(
+        "--attach-pod",
+        type=str,
+        default=None,
+        metavar="POD_ID",
+        help="attach to an existing pod; skip provision. Mutex with --no-reuse.",
+    )
+    p_text_output = p_text.add_mutually_exclusive_group()
+    p_text_output.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="PATH",
+        help="user-facing output directory (overrides cfg.output.dir)",
+    )
+    p_text_output.add_argument(
+        "--no-output-dir",
+        action="store_true",
+        help="disable user-facing publish; the text remains only in the store",
+    )
+    p_text.add_argument("--run-id", default=None, metavar="ID")
+    p_text.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="emit the resolved plan to stdout and exit 0; no pod work",
+    )
+
     # list
     sub.add_parser("list", help="list running instances from ledger")
 
@@ -1263,9 +1326,14 @@ def main(argv: list[str] | None = None) -> int:
 
     # In JSONL streaming mode, route the instance-overview header to stderr
     # so stdout stays pure JSONL for piping (`kinoforge batch ... | jq .`).
+    # `text` gets the same treatment unconditionally: its stdout contract is
+    # the completion text and nothing else (global-constraints.md), so the
+    # preamble cannot land on stdout for that subcommand either.
     _print_instance_overview(
         ctx,
-        file=sys.stderr if getattr(args, "stream_format", None) == "jsonl" else None,
+        file=sys.stderr
+        if getattr(args, "stream_format", None) == "jsonl" or args.cmd == "text"
+        else None,
     )
 
     if args.cmd is None:

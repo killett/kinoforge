@@ -1,0 +1,281 @@
+"""kinoforge text: refusal ordering, dry run, request shape, stdout contract."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+import kinoforge._adapters  # noqa: F401
+from kinoforge.cli._main import main
+from kinoforge.core.errors import Cancelled, TextGenerationFailed, UnknownAdapter
+from kinoforge.core.interfaces import Artifact
+
+_CFG = """\
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    server_cmd: [python, -m, kinoforge.engines.diffusers.servers.text_server]
+    capability:
+      supported_modes: [{modes}]
+models:
+  - kind: base
+    ref: hf:Qwen/Qwen3-0.6B
+    target: checkpoints
+text:
+  engine: transformers
+{prompt_line}compute:
+  provider: fake
+  image: fake:latest
+"""
+
+
+def _cfg(tmp_path: Path, modes: str = "t2t", prompt: str | None = None) -> Path:
+    line = f"  prompt: {prompt!r}\n" if prompt else ""
+    p = tmp_path / "text.yaml"
+    p.write_text(_CFG.format(modes=modes, prompt_line=line))
+    return p
+
+
+def _png(tmp_path: Path, name: str = "in.png") -> Path:
+    p = tmp_path / name
+    p.write_bytes(b"\x89PNG\r\n\x1a\n")
+    return p
+
+
+@pytest.fixture
+def no_pod_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Any pod-adjacent call fails the test — proves refusals fire first."""
+
+    def _boom(*a: Any, **k: Any) -> None:
+        raise AssertionError("pod work must not start")
+
+    monkeypatch.setattr("kinoforge.cli._commands._scan_warm_candidates", _boom)
+    monkeypatch.setattr("kinoforge.cli._commands._resolve_attach_pod", _boom)
+    monkeypatch.setattr("kinoforge.core.orchestrator.generate", _boom)
+
+
+def _run(tmp_path: Path, *argv: str) -> int:
+    return main(["--state-dir", str(tmp_path / "state"), "text", *argv])
+
+
+@pytest.mark.usefixtures("no_pod_work")
+def test_images_to_a_text_only_model_exit_2_before_pod_work(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Design §4.1. Bug caught: booking the pod and refusing after (the weak
+    assert-raises version passes against that); a message naming neither model nor mode."""
+    rc = _run(
+        tmp_path,
+        "-c",
+        str(_cfg(tmp_path, "t2t")),
+        "--prompt",
+        "describe",
+        "--image",
+        str(_png(tmp_path)),
+    )
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "hf:Qwen/Qwen3-0.6B" in err and "it2t" in err and "['t2t']" in err
+
+
+@pytest.mark.usefixtures("no_pod_work")
+@pytest.mark.parametrize(
+    ("argv_extra", "needle"),
+    [
+        (["--image", "/nonexistent/x.png"], "not found"),
+        (["--image", "__GIF__"], ".png/.jpg/.jpeg"),
+        (["--no-reuse", "--attach-pod", "p1"], "mutually exclusive"),
+    ],
+    ids=["missing-image", "bad-suffix", "reuse-vs-attach"],
+)
+def test_precondition_faults_exit_2(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    argv_extra: list[str],
+    needle: str,
+) -> None:
+    if "__GIF__" in argv_extra:
+        gif = tmp_path / "x.gif"
+        gif.write_bytes(b"GIF89a")
+        argv_extra = [a if a != "__GIF__" else str(gif) for a in argv_extra]
+    rc = _run(
+        tmp_path, "-c", str(_cfg(tmp_path, "t2t, it2t")), "--prompt", "p", *argv_extra
+    )
+    assert rc == 2
+    assert needle in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("no_pod_work")
+def test_no_prompt_anywhere_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc = _run(tmp_path, "-c", str(_cfg(tmp_path)))
+    assert rc == 2
+    assert "--prompt" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("no_pod_work")
+def test_config_without_text_block_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = tmp_path / "video.yaml"
+    cfg.write_text(
+        "engine:\n  kind: diffusers\n  precision: fp8\nmodels:\n  - kind: base\n    ref: hf:Wan-AI/Wan2.2-T2V\n"
+        "    target: diffusion_models\ncompute:\n  provider: fake\n  image: fake:latest\n"
+    )
+    rc = _run(tmp_path, "-c", str(cfg), "--prompt", "p")
+    assert rc == 2
+    assert "`text:` block" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("no_pod_work")
+def test_dry_run_reports_the_derived_mode_and_makes_no_call(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Bug caught: a dry run that scans warm pods, or reports t2t with an image."""
+    rc = _run(
+        tmp_path,
+        "-c",
+        str(_cfg(tmp_path, "t2t, it2t", prompt="from config")),
+        "--image",
+        str(_png(tmp_path)),
+        "--dry-run",
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "mode: it2t" in out and "images: 1" in out
+    assert "hf:Qwen/Qwen3-0.6B" in out and "['it2t', 't2t']" in out
+    assert "'from config'" in out
+
+
+def test_happy_path_request_shape_and_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Bug caught: stdout polluted with a `text: uri=...` line (breaks piping);
+    request=None (the upscale placeholder) so the stage has no prompt."""
+    captured: dict[str, Any] = {}
+
+    def fake_generate(cfg: Any, request: Any, **kw: Any) -> Any:
+        captured["request"] = request
+        captured.update(kw)
+        return (
+            Artifact(
+                uri="/store/text-x/response.txt",
+                meta={"text": "hello world", "published": None},
+            ),
+            None,
+        )
+
+    monkeypatch.setattr("kinoforge.core.orchestrator.generate", fake_generate)
+    rc = _run(
+        tmp_path,
+        "-c",
+        str(_cfg(tmp_path, "t2t, it2t")),
+        "--prompt",
+        "describe",
+        "--image",
+        str(_png(tmp_path)),
+        "--no-reuse",
+    )
+    assert rc == 0
+    assert capsys.readouterr().out == "hello world\n"
+    req = captured["request"]
+    assert req.prompt == "describe" and req.mode == "it2t"
+    assert [a.role for a in req.assets] == ["image_1"]
+    assert req.assets[0].ref.uri.startswith("file://")
+    assert captured["skip_clip_stage"] is True
+    assert captured["single"] is True
+    assert "initial_clip" not in captured or captured["initial_clip"] is None
+
+
+@pytest.mark.parametrize(
+    ("exc", "needle"),
+    # needle is matched against err.lower() (repo convention, e.g.
+    # test_resolve_warm_instance.py:328) — "oom" lowercase, not "OOM" as the
+    # brief's literal parametrize list had it, which is unsatisfiable since
+    # TextGenerationFailed preserves the server_error's case verbatim.
+    [(TextGenerationFailed("j1", "OOM"), "oom"), (Cancelled(), "cancelled")],
+)
+def test_pod_side_failures_exit_1_with_one_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    exc: Exception,
+    needle: str,
+) -> None:
+    """Bug caught: a traceback on a pod-side error (upscale's current shape),
+    or exit 2 for an operational failure."""
+
+    def fake_generate(*a: Any, **k: Any) -> Any:
+        raise exc
+
+    settled: list[Any] = []
+    monkeypatch.setattr("kinoforge.core.orchestrator.generate", fake_generate)
+    monkeypatch.setattr(
+        "kinoforge.cli._commands._settle_unused_launch_row",
+        lambda *a, **k: settled.append(a),
+    )
+    rc = _run(tmp_path, "-c", str(_cfg(tmp_path)), "--prompt", "p", "--no-reuse")
+    assert rc == 1
+    assert needle in capsys.readouterr().err.lower()
+    assert settled, "the launch row must be settled on failure"
+
+
+def test_unknown_text_engine_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Controller ruling 1 / spec §2.6: an unknown ``text.engine`` is a
+    config/precondition fault (exit 2), not an operational failure (exit 1).
+    Bug caught: UnknownAdapter falling through the broad `except
+    KinoforgeError` rung below it and exiting 1."""
+
+    def fake_generate(*a: Any, **k: Any) -> Any:
+        raise UnknownAdapter(
+            "no text engine registered as 'nope'; known: ['transformers']"
+        )
+
+    settled: list[Any] = []
+    monkeypatch.setattr("kinoforge.core.orchestrator.generate", fake_generate)
+    monkeypatch.setattr(
+        "kinoforge.cli._commands._settle_unused_launch_row",
+        lambda *a, **k: settled.append(a),
+    )
+    rc = _run(tmp_path, "-c", str(_cfg(tmp_path)), "--prompt", "p", "--no-reuse")
+    assert rc == 2
+    assert "error:" in capsys.readouterr().err
+    assert settled, "the launch row must be settled on an unknown-engine fault too"
+
+
+def test_unknown_text_engine_not_checked_on_dry_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--dry-run`` never constructs the engine registry, so an unregistered
+    ``text.engine`` name does not block a dry run (parallels the image
+    command's dry-run path, which also skips engine resolution)."""
+    cfg = _cfg(tmp_path)
+    cfg.write_text(cfg.read_text().replace("engine: transformers", "engine: nope"))
+    rc = _run(tmp_path, "-c", str(cfg), "--prompt", "p", "--dry-run")
+    assert rc == 0
+    assert "engine: nope" in capsys.readouterr().out
+
+
+def test_text_is_dispatched_and_interruptible() -> None:
+    """Bug caught: a handler nobody can reach, or a 2-minute boot that ignores Ctrl-C."""
+    from kinoforge.cli._main import _DISPATCH, _INTERRUPTIBLE_CMDS
+
+    assert "text" in _DISPATCH
+    assert "text" in _INTERRUPTIBLE_CMDS
+
+
+def test_prompt_is_optional_and_images_repeat_at_the_parser() -> None:
+    from kinoforge.cli._main import _build_parser
+
+    args = _build_parser().parse_args(
+        ["text", "-c", "cfg.yaml", "--image", "a.png", "--image", "b.jpg"]
+    )
+    assert args.prompt is None
+    assert args.images == ["a.png", "b.jpg"]
+    assert _build_parser().parse_args(["text", "-c", "cfg.yaml"]).images == []
