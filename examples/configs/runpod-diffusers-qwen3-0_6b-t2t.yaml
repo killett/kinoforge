@@ -1,0 +1,103 @@
+# `kinoforge text` smoke config — TEXT-ONLY model (modes: t2t).
+#
+# Design: docs/superpowers/specs/2026-10-04-text-command-design.md
+# Plan:   docs/superpowers/plans/2026-10-04-text-command.md
+#
+# Qwen3-0.6B (0.75 B params, 1.5 GB bf16, Apache 2.0) has NO image processor,
+# so `--image` against this config is refused at the CLI before any pod work —
+# the §4 negative path is real, not mocked. The checkpoint is the smallest
+# credible instruction-tuned LLM in the 2026-10-04 survey
+# (docs/superpowers/research/2026-10-04-open-weight-llm-survey.md).
+#
+# Boot is pip (transformers + accelerate, no torch pull — the 2.8 image ships
+# torch 2.8) plus a 1.5 GB download: ~3-5 min on the secure pool.
+#
+# Usage (one-shot; --no-reuse so the pod auto-destroys, then ALWAYS verify with
+# a fresh `pixi run kinoforge list` — a mid-run "No running instances" line is
+# not proof):
+#   pixi run kinoforge text \
+#     --config examples/configs/runpod-diffusers-qwen3-0_6b-t2t.yaml \
+#     --prompt "$(cat examples/configs/prompts/text-smoke-t2t.txt)" \
+#     --no-reuse
+
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.text_server"
+    pip:
+      - "transformers>=5.10"
+      - "accelerate>=1.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "pillow>=10"
+      - "psutil>=5.9"
+      - "nvidia-ml-py>=12"
+    embed_files:
+      # Needs-only embed (U53): the server and exactly the two sibling helpers
+      # it imports. tests/providers/test_pod_embed_closure.py asserts both
+      # directions.
+      - "kinoforge.engines.diffusers.servers.text_server"
+      - "kinoforge.engines.diffusers.servers._util_stats"
+      - "kinoforge.engines.diffusers.servers._upload"
+    capability:
+      # The pre-spend half of the multimodal gate reads THIS (design §4.1); the
+      # pod derives the truth from the checkpoint and /health re-checks it.
+      supported_modes: ["t2t"]
+
+models:
+  - ref: "hf:Qwen/Qwen3-0.6B"
+    kind: base
+    target: checkpoints  # informational; transformers manages the HF cache
+
+text:
+  engine: transformers
+  params:
+    max_new_tokens: 256
+    do_sample: true
+    temperature: 0.7
+    top_p: 0.9
+    # Qwen3's chat template defaults to a <think> block; the smoke wants a terse
+    # answer. Routed to apply_chat_template, never to generate().
+    chat_template_kwargs:
+      enable_thinking: false
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+  mode: pod
+  # Secure pool: the community pool reclaims pods minutes after create (U65 —
+  # seventeen long-boot configs were being killed mid-fetch). Guarded by
+  # tests/test_runpod_long_boot_needs_secure_pool.py.
+  backend_options:
+    runpod:
+      cloud_type: secure
+  placement:
+    min_vram_gb: 16
+    disk_gb: 40
+    # Pin NVIDIA — without an allowlist the offer chooser can pick an AMD
+    # Instinct that RunPod's create-pod mutation rejects with HTTP 500.
+    accelerators:
+      - "NVIDIA RTX A4000"
+      - "NVIDIA RTX A5000"
+      - "NVIDIA L4"
+      - "NVIDIA GeForce RTX 4090"
+      - "NVIDIA GeForce RTX 3090"
+  lifecycle:
+    boot_timeout: 20m
+    idle_timeout: 10m
+    job_timeout: 10m
+    time_buffer: 3m
+    max_lifetime: 45m
+    budget: 1.0
+    heartbeat_interval_s: 30
+
+# spec.model is informational for text cfgs (TextStage never POSTs /generate),
+# but test_no_unknown_slug_for_example_configs asserts DiffusersEngine.
+# model_identity is non-empty for every shipped config.
+spec:
+  model: "qwen3-0.6b-bf16"

@@ -165,7 +165,18 @@ _RUNPOD_CEILING_BYTES = 101_000
 #: `TextGenerationFailed` class body and, on Modal/SkyPilot configs out of
 #: this ceiling test's scope, two new `servers/` files moved). Worst case is
 #: now 92,150 B — 8,850 B of headroom under the 101,000 B ceiling.
+#:
+#: 2026-10-05 (kinoforge text, Task 8): three new rows. The text server
+#: embeds `text_server.py` + `_util_stats.py` + `_upload.py` only
+#: (needs-only, U53), so these sit far below the Wan-server configs:
+#: 17,282 B for the Qwen3-0.6B and Qwen3.8-27B configs (identical server
+#: wiring, only `models`/`placement`/`text.params` differ — none of which
+#: enter the rendered env), 17,322 B for the SmolVLM config (the extra
+#: `num2words` pip entry).
 _BASELINE_BYTES: dict[str, int] = {
+    "runpod-diffusers-qwen3-0_6b-t2t": 17_282,
+    "runpod-diffusers-qwen3_8-27b-it2t": 17_282,
+    "runpod-diffusers-smolvlm-256m-it2t": 17_322,
     "runpod-diffusers-flashvsr-1080p-upscale": 92_124,
     "runpod-diffusers-flashvsr-x4-torch26-upscale": 92_150,
     "runpod-diffusers-flashvsr-x4-upscale": 92_124,

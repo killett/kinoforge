@@ -183,3 +183,24 @@ def test_load_config_accepts_the_yaml_shape() -> None:
         "  image: fake:latest\n"
     )
     assert cfg.text is not None and cfg.text.system == "Be terse."
+
+
+def test_exactly_three_text_configs_ship() -> None:
+    """Guard the guard: a discovery that finds nothing passes every per-config
+    sweep. Bug caught: a config renamed or moved out of the sweep's reach."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "examples" / "configs"
+    found = sorted(
+        p.name
+        for p in root.rglob("*.yaml")
+        if not p.name.endswith(".grid.yaml")
+        and "manifests" not in p.parts
+        and "text:" in p.read_text()
+        and load_config(str(p)).text is not None
+    )
+    assert found == [
+        "runpod-diffusers-qwen3-0_6b-t2t.yaml",
+        "runpod-diffusers-qwen3_8-27b-it2t.yaml",
+        "runpod-diffusers-smolvlm-256m-it2t.yaml",
+    ]

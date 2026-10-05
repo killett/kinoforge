@@ -27,7 +27,7 @@ README_PATH = REPO_ROOT / "README.md"
 CI_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 # ---------------------------------------------------------------------------
-# AC1 — All 9 example configs load without raising
+# AC1 — All 12 example configs load without raising
 # ---------------------------------------------------------------------------
 
 EXAMPLE_CONFIGS = [
@@ -40,6 +40,9 @@ EXAMPLE_CONFIGS = [
     "skypilot-lambda-comfyui.yaml",
     "cost.yaml",
     "sweeper.yaml",
+    "runpod-diffusers-qwen3-0_6b-t2t.yaml",
+    "runpod-diffusers-smolvlm-256m-it2t.yaml",
+    "runpod-diffusers-qwen3_8-27b-it2t.yaml",
 ]
 
 
