@@ -19,7 +19,7 @@
     {
       "id": 3,
       "subject": "Task 3: core/text_request.py pure helpers",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** One I/O-free module holding the mode derivation, prompt precedence, the pre-spend gate message, `--image` argument checks, request building, and base-ref/declared-modes lookups over both `Config` and the cfg dict (the engine and stage see dicts).\n\n**Files:**\n- Create: `src/kinoforge/core/text_request.py`\n- Test: `tests/core/test_text_request.py`\n\n**Acceptance Criteria:**\n- [ ] `derive_mode(0) == \"t2t\"`, `derive_mode(2) == \"it2t\"`.\n- [ ] Prompt precedence: CLI > `text.prompt` > top-level `prompt` > `ValidationError` naming all three sources; whitespace-only counts as absent.\n- [ ] `preflight_mode_error(cfg, \"it2t\")` on a `[\"t2t\"]` config returns a string naming the model ref, the declared modes and `it2t`; returns `None` when declared.\n- [ ] `image_arg_error`: empty path, bad suffix, missing file each return a message naming the fault; a real `.png` returns `None`.\n- [ ] `build_request` assigns roles `image_1 \u2026 image_N` in order, `kind=\"image\"`, and the derived mode.\n- [ ] `base_model_ref` / `declared_modes` work on the cfg **dict** (what `_cfg_dict(cfg)` yields).\n\n**Verify:** `pixi run pytest tests/core/test_text_request.py -q` \u2192 pass.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/text_request.py\", \"tests/core/test_text_request.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_text_request.py -q\", \"acceptanceCriteria\": [\"`derive_mode(0) == \\\"t2t\\\"`, `derive_mode(2) == \\\"it2t\\\"`.\", \"Prompt precedence: CLI > `text.prompt` > top-level `prompt` > `ValidationError` naming all three sources; whitespace-only counts as absent.\", \"`preflight_mode_error(cfg, \\\"it2t\\\")` on a `[\\\"t2t\\\"]` config returns a string naming the model ref, the declared modes and `it2t`; returns `None` when declared.\", \"`image_arg_error`: empty path, bad suffix, missing file each return a message naming the fault; a real `.png` returns `None`.\", \"`build_request` assigns roles `image_1 \\u2026 image_N` in order, `kind=\\\"image\\\"`, and the derived mode.\", \"`base_model_ref` / `declared_modes` work on the cfg **dict** (what `_cfg_dict(cfg)` yields).\"], \"modelTier\": \"standard\"}\n```",
       "blockedBy": [
         2
@@ -98,5 +98,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-10-04T23:20:23.443999"
+  "lastUpdated": "2026-10-04T23:25:31.387572"
 }
