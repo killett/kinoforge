@@ -35,8 +35,10 @@ first unchecked task without redoing committed work.
   images-to-a-text-only-model refused pre-spend from the declared `capability.supported_modes`
   and re-checked against the pod's `/health`. Smoke models Qwen3-0.6B + SmolVLM-256M; quality
   config Qwen3.8-27B (offline-validated only). Plan: not yet written — next action is the
-  operator's spec review, then `writing-plans`. Two pipeline hooks (prompt enhancement,
-  frame QA) are a FOLLOW-ON spec that depends on this one.
+  operator's spec review, then `writing-plans`. **Spec approved 2026-10-04 ("no changes"); plan
+  written:** `docs/superpowers/plans/2026-10-04-text-command.md` (+ `.tasks.json`, 10 tasks,
+  Task 10 = the two live smokes, user-gate). Next action: execute Task 1. Two pipeline hooks
+  (prompt enhancement, frame QA) are a FOLLOW-ON spec that depends on this one.
 - **SHIPPED — standalone image upscaling (`kinoforge upscale --image`):** design
   `docs/superpowers/specs/2026-10-03-standalone-image-upscaling-design.md`, plan
   `docs/superpowers/plans/2026-10-03-standalone-image-upscaling.md` (+ `.tasks.json`),
