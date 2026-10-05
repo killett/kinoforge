@@ -35,7 +35,9 @@ EXAMPLES_DIR = REPO_ROOT / "examples" / "configs"
 # wan_t2v_server.py) rather than imported, so a change on either side breaks
 # this test instead of the two silently agreeing on a new term.
 # ``"upload"`` is always advertised but is never a stage a cfg *wants*.
-ADVERTISABLE_STAGES = frozenset({"t2v", "upscale", "interpolate"})
+# ``"text"`` is advertised by servers/text_server.py (`kinoforge text`);
+# transcribed by hand like the other three, for the same reason.
+ADVERTISABLE_STAGES = frozenset({"t2v", "upscale", "interpolate", "text"})
 
 # The eight configs the U14 delegation changed, listed by hand from the
 # repo's upscale cfg filenames. Every one is ``upscale_only: true`` with
