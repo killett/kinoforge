@@ -10,7 +10,7 @@
     {
       "id": 2,
       "subject": "Task 2: TextConfig, validator, text stage term",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** `text:` block parses; the \u00a73.3 rules refuse the inert/lying shapes with messages naming the key; `Config.capability_key().stages == (\"text\",)` so `_cfg_want_stages` wants `text`.\n\n**Files:**\n- Modify: `src/kinoforge/core/config.py` (new `TextConfig` after `InterpolateConfig`; `Config.text` after `interpolate` at line 1528; `_validate_cross_fields` after the `KNOWN_ENGINES` check at ~line 1648; `capability_key` after the interpolate block at ~line 1816)\n- Test: `tests/core/test_text_config.py`\n\n**Acceptance Criteria:**\n- [ ] A valid text config loads with `cfg.text.engine == \"transformers\"`, `cfg.text.port == 8000`.\n- [ ] One refusal per rule (non-diffusers engine; missing/empty `supported_modes`; a non-text mode; top-level `mode:`; each of `upscale`/`interpolate`/`keyframe`/`loras`; zero or two base models), each raising `ConfigError` whose message names the offending key or rule.\n- [ ] `cfg.capability_key().stages == (\"text\",)` and `_cfg_want_stages(cfg) == (\"text\",)`; a video config's key is unchanged (existing `tests/core/test_capability_key_stages.py` stays green).\n\n**Verify:** `pixi run pytest tests/core/test_text_config.py tests/core/test_capability_key_stages.py tests/core/test_config.py -q` \u2192 pass.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_text_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_text_config.py tests/core/test_capability_key_stages.py tests/core/test_config.py -q\", \"acceptanceCriteria\": [\"A valid text config loads with `cfg.text.engine == \\\"transformers\\\"`, `cfg.text.port == 8000`.\", \"One refusal per rule (non-diffusers engine; missing/empty `supported_modes`; a non-text mode; top-level `mode:`; each of `upscale`/`interpolate`/`keyframe`/`loras`; zero or two base models), each raising `ConfigError` whose message names the offending key or rule.\", \"`cfg.capability_key().stages == (\\\"text\\\",)` and `_cfg_want_stages(cfg) == (\\\"text\\\",)`; a video config's key is unchanged (existing `tests/core/test_capability_key_stages.py` stays green).\"], \"modelTier\": \"standard\"}\n```",
       "blockedBy": [
         1
@@ -98,5 +98,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-10-04T23:12:59.702860"
+  "lastUpdated": "2026-10-04T23:20:23.443999"
 }
