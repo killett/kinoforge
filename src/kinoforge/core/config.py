@@ -69,6 +69,11 @@ VALID_KIND_TARGETS: dict[str, set[str]] = {
     "clip_vision": {"clip_vision"},
 }
 
+#: Modes `kinoforge text` can derive (design §2.1): t2t = text-generation,
+#: it2t = image-text-to-text. The validator below bounds
+#: `capability.supported_modes` on a text config to this set.
+TEXT_MODES: frozenset[str] = frozenset({"t2t", "it2t"})
+
 KNOWN_ENGINES = {
     "comfyui",
     "diffusers",
@@ -1465,6 +1470,32 @@ class InterpolateConfig(BaseModel):
         return self
 
 
+class TextConfig(BaseModel):
+    """Top-level ``text:`` block; presence routes ``kinoforge text`` to a TextStage.
+
+    Coexists with ``engine:`` / ``models:`` / ``compute:`` the way ``upscale:``
+    does — a text config IS a pod config. Design:
+    ``docs/superpowers/specs/2026-10-04-text-command-design.md`` §3.
+
+    Attributes:
+        engine: Text-engine registry key (``"transformers"``).
+        prompt: Optional default prompt. ``--prompt`` overrides it; it
+            overrides the top-level ``prompt:``.
+        system: Optional system turn sent ahead of the user turn.
+        params: Opaque pass-through to the pod's ``generate()`` call; a
+            ``chat_template_kwargs`` mapping inside it goes to the chat template.
+        port: Pod port the text server listens on. Only the default is
+            exercised today; the hooks spec sets it for a sidecar launch.
+    """
+
+    engine: str
+    prompt: str | None = None
+    system: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+    port: int = 8000
+    model_config = ConfigDict(extra="forbid")
+
+
 # An image config (`image:` present) is a terminal-image run: no pod, no video
 # engine, no model fetch. Every other top-level key would be INERT on it, and an
 # accepted-but-ignored key is the defect class behind U51 (`lifecycle.budget`
@@ -1526,6 +1557,7 @@ class Config(BaseModel):
     image: ImageConfig | None = None
     upscale: UpscaleConfig | None = None
     interpolate: InterpolateConfig | None = None
+    text: TextConfig | None = None
     sweeper: SweeperConfig = Field(default_factory=SweeperConfig)
     # C28 A1.5: opt-in diagnostic mode. When True the engine's render_provision
     # prepends an EXIT trap that captures the boot log + system snapshot and
@@ -1651,6 +1683,9 @@ class Config(BaseModel):
                 f"valid engines: {sorted(KNOWN_ENGINES)}"
             )
 
+        if self.text is not None:
+            self._validate_text_block()
+
         # Hosted engine must not have a compute block
         if self.engine.kind == "hosted" and self.compute is not None:
             raise ValueError("compute: must not be set when engine.kind == 'hosted'")
@@ -1708,6 +1743,64 @@ class Config(BaseModel):
                 )
 
         return self
+
+    def _validate_text_block(self) -> None:
+        """Refuse the text-config shapes that would be silently inert or lie.
+
+        Design §3.3. Every message names the offending key or rule, because a
+        validator that refuses for the wrong reason is the bug the tests look
+        for. Raises :class:`ConfigError` directly (as ``UpscaleConfig`` does),
+        so the type survives pydantic unwrapped.
+
+        Raises:
+            ConfigError: One of the §3.3 rules is violated.
+        """
+        assert self.engine is not None  # noqa: S101 — caller checked
+        assert self.text is not None  # noqa: S101 — caller checked
+        if self.engine.kind != "diffusers":
+            raise ConfigError(
+                f"text: requires engine.kind == 'diffusers' (got "
+                f"{self.engine.kind!r}); only the diffusers engine provisions "
+                "an arbitrary server_cmd"
+            )
+        cap = self.engine.diffusers.capability if self.engine.diffusers else None
+        declared = set(cap.supported_modes or []) if cap is not None else set()
+        if not declared:
+            raise ConfigError(
+                "text: requires engine.diffusers.capability.supported_modes to "
+                "declare the modes the model serves (['t2t'] or ['t2t', 'it2t']); "
+                "without it the shared diffusers probe says ['t2v'] and every "
+                "`kinoforge text` run is refused for the wrong reason"
+            )
+        unknown = sorted(declared - TEXT_MODES)
+        if unknown:
+            raise ConfigError(
+                f"text: capability.supported_modes {unknown} are not text modes; "
+                f"allowed: {sorted(TEXT_MODES)}"
+            )
+        if self.mode is not None:
+            raise ConfigError(
+                "text: top-level `mode:` must be absent — `kinoforge text` derives "
+                "t2t/it2t from --image, so a written mode is documentation that "
+                "can lie"
+            )
+        for key in ("upscale", "interpolate", "keyframe"):
+            if getattr(self, key) is not None:
+                raise ConfigError(
+                    f"text: `{key}:` is not allowed in a text config — it would be "
+                    "silently inert on a text pod"
+                )
+        if self.loras:
+            raise ConfigError(
+                "text: `loras:` is not allowed in a text config — it would be "
+                "silently inert on a text pod"
+            )
+        base_count = sum(1 for e in self.models if e.kind == "base")
+        if base_count != 1:
+            raise ConfigError(
+                f"text: models must contain exactly one `kind: base` entry "
+                f"(found {base_count}); the text server loads one checkpoint"
+            )
 
     def _effective_lifecycle_config(self) -> LifecycleConfig | None:
         """Return the effective lifecycle config (compute path or top-level hosted path).
@@ -1816,6 +1909,12 @@ class Config(BaseModel):
             stages.append("interpolate")
             interpolator = self.interpolate.engine
             interpolator_fps = self.interpolate.fps
+
+        if self.text is not None:
+            # `kinoforge text` pods advertise "text" in /health capabilities
+            # (servers/text_server.py); the warm matcher reads the want-set
+            # from here via _cfg_want_stages, so the two must move together.
+            stages.append("text")
 
         return CapabilityKey(
             base_model=base_model,
