@@ -1742,8 +1742,13 @@ def _cmd_text(args: argparse.Namespace, ctx: SessionContext) -> int:
             skip_clip_stage=True,
             on_instance_created=_ephemeral_row_upgrade_hook(ctx, cfg, launch),
         )
+    # None of these except rungs settle the launch row. A raise keeps the
+    # row (ruling C1): the pod may still be alive and billing, and
+    # settling here would release launch.upgraded_id too — the row
+    # on_instance_created re-keyed to the REAL pod id — deleting the only
+    # durable handle to a possibly-live ephemeral pod. Only the return
+    # path below (where the orchestrator has confirmed the outcome) settles.
     except Cancelled:
-        _settle_unused_launch_row(ctx, cfg, launch, None)
         print("text: cancelled", file=sys.stderr)
         return 1
     except UnknownAdapter as exc:
@@ -1752,14 +1757,12 @@ def _cmd_text(args: argparse.Namespace, ctx: SessionContext) -> int:
         # `text.engine` is a config/precondition problem (spec §2.6, exit 2),
         # not a run-time generation failure (exit 1). Mirrors _cmd_image's
         # ordering.
-        _settle_unused_launch_row(ctx, cfg, launch, None)
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except KinoforgeError as exc:
         # A pod-reported mode mismatch (TextStage's ValidationError) lands here
         # too: by then a boot has been paid for, so it is operational (exit 1),
         # not a precondition fault — those all returned 2 above.
-        _settle_unused_launch_row(ctx, cfg, launch, None)
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

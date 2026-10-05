@@ -207,7 +207,11 @@ def test_pod_side_failures_exit_1_with_one_line(
     needle: str,
 ) -> None:
     """Bug caught: a traceback on a pod-side error (upscale's current shape),
-    or exit 2 for an operational failure."""
+    or exit 2 for an operational failure. Also (ruling C1, review finding):
+    a failed run must NOT settle the launch row — settling releases
+    launch.upgraded_id, the row on_instance_created re-keyed to the real pod
+    id, deleting the only durable handle to a pod that may still be alive
+    and billing. Only the return path settles."""
 
     def fake_generate(*a: Any, **k: Any) -> Any:
         raise exc
@@ -221,7 +225,11 @@ def test_pod_side_failures_exit_1_with_one_line(
     rc = _run(tmp_path, "-c", str(_cfg(tmp_path)), "--prompt", "p", "--no-reuse")
     assert rc == 1
     assert needle in capsys.readouterr().err.lower()
-    assert settled, "the launch row must be settled on failure"
+    assert not settled, (
+        "a raise must keep the launch row (ruling C1) — settling it here "
+        "would release the handle to a pod that may still be alive and "
+        "billing"
+    )
 
 
 def test_unknown_text_engine_exits_2(
@@ -230,7 +238,10 @@ def test_unknown_text_engine_exits_2(
     """Controller ruling 1 / spec §2.6: an unknown ``text.engine`` is a
     config/precondition fault (exit 2), not an operational failure (exit 1).
     Bug caught: UnknownAdapter falling through the broad `except
-    KinoforgeError` rung below it and exiting 1."""
+    KinoforgeError` rung below it and exiting 1. Also (ruling C1, review
+    finding): this is still a raise from the orchestrator call, so it must
+    NOT settle the launch row either — same "pod may still be alive"
+    reasoning as the KinoforgeError/Cancelled rungs."""
 
     def fake_generate(*a: Any, **k: Any) -> Any:
         raise UnknownAdapter(
@@ -246,7 +257,11 @@ def test_unknown_text_engine_exits_2(
     rc = _run(tmp_path, "-c", str(_cfg(tmp_path)), "--prompt", "p", "--no-reuse")
     assert rc == 2
     assert "error:" in capsys.readouterr().err
-    assert settled, "the launch row must be settled on an unknown-engine fault too"
+    assert not settled, (
+        "a raise must keep the launch row (ruling C1) even for an "
+        "unknown-engine fault — settling it here would release the handle "
+        "to a pod that may still be alive and billing"
+    )
 
 
 def test_unknown_text_engine_not_checked_on_dry_run(
