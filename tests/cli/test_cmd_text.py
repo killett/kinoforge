@@ -264,17 +264,34 @@ def test_unknown_text_engine_exits_2(
     )
 
 
-def test_unknown_text_engine_not_checked_on_dry_run(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.usefixtures("no_pod_work")
+@pytest.mark.parametrize("extra", [["--dry-run"], []], ids=["dry-run", "real-run"])
+def test_unknown_text_engine_is_refused_before_dry_run_and_pod_work(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], extra: list[str]
 ) -> None:
-    """``--dry-run`` never constructs the engine registry, so an unregistered
-    ``text.engine`` name does not block a dry run (parallels the image
-    command's dry-run path, which also skips engine resolution)."""
+    """Behaviour: an unregistered ``text.engine`` is a config fact (spec §2.5),
+    so it exits 2 from the refusal block — before the ``--dry-run`` report,
+    before the warm scan, before ``_resolve_attach_pod`` and before the launch
+    row — with a message naming the bad name and the registered ones.
+
+    Bug caught: the refusal happening only incidentally, deep inside
+    ``DiffusersEngine.render_provision``. Exit 2 was right, but it arrived
+    after a warm-candidate scan and a ledger launch row, and a ``--dry-run``
+    (the one command whose whole job is to validate a config without spending)
+    reported a happy plan for a config that can never run. A typo'd engine name
+    then surfaces only once the operator has committed to a 10-minute boot.
+    The ``no_pod_work`` fixture is what makes "before any pod work" an
+    assertion rather than a claim.
+    """
     cfg = _cfg(tmp_path)
     cfg.write_text(cfg.read_text().replace("engine: transformers", "engine: nope"))
-    rc = _run(tmp_path, "-c", str(cfg), "--prompt", "p", "--dry-run")
-    assert rc == 0
-    assert "engine: nope" in capsys.readouterr().out
+
+    rc = _run(tmp_path, "-c", str(cfg), "--prompt", "p", *extra)
+
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "nope" in captured.err and "transformers" in captured.err
+    assert "text plan:" not in captured.out
 
 
 def test_text_is_dispatched_and_interruptible() -> None:

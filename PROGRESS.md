@@ -3258,6 +3258,36 @@ through the real CLI with `--no-reuse`, both torn down and verified.
 - The quality config `examples/configs/runpod-diffusers-qwen3_8-27b-it2t.yaml` remains
   **OFFLINE-VALIDATED ONLY** — not fired live this session.
 
+**Follow-ups from the final review (not done in this plan).** The final whole-branch review's
+fix wave landed three fixes (`health.ready` gate in `TextStage`, pre-spend `text.engine` registry
+refusal in `_cmd_text`, new guard `tests/test_runpod_lifecycle_cap_clears_boot.py`). These were
+found in the same pass and deliberately left:
+
+- **Legacy lifecycle-inverted configs** — `min(2*idle_timeout, max_lifetime - time_buffer) <=
+  boot_timeout`, i.e. the pod self-terminates before the boot it was permitted. The three `text:`
+  configs were fixed by hand in `e301a6a0`; four pre-existing RunPod configs still invert and are
+  enumerated in the new guard's `LEGACY_INVERTED` allowlist (which can only shrink):
+  `runpod-diffusers-wan-2_1-1_3b-base.yaml`, `runpod-diffusers-wan-2_1-1_3b-base-no-loras.yaml`,
+  `runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml`,
+  `runpod-diffusers-wan-2_1-1_3b-t2v-strength-grid.yaml` (all `idle 10m` / `max_lifetime 1h` /
+  `buffer 2m` → a 1200 s cap under an 1800 s `boot_timeout`). A further **12** Modal/SkyPilot
+  configs trip the same arithmetic but are OUT OF SCOPE for that guard — their deadline is
+  `boot_timeout`-derived, so the inversion is not a defect there.
+- **15 Modal/SkyPilot configs still embed `kinoforge.engines.diffusers.servers` by DIRECTORY**
+  (13 Modal + 2 SkyPilot) — the U53 class defect, which walks the whole package and ships every
+  sibling server module. Convert to the named-`embed_files` shape the RunPod configs now use.
+  (One RunPod config, `extras/runpod-diffusers-wan-2_2-14b-t2v-seedvr2-upscale.yaml`, also does;
+  it is one of the two `extras/` configs excluded by name from the payload-ceiling guard.)
+- **`_image_arg_error` / `text_request.image_arg_error` duplication** — two copies of the same
+  `--image` suffix/existence refusal. Blocked on four pinned upscale tests that assert the
+  `_commands.py` copy's exact wording; de-duplicating means re-pinning those first.
+- **AST import guard widening** — the pod-side-import guard only walks module-level statements,
+  so a `kinoforge.*` import inside a `Try` or `If` body is invisible to it (exactly the U66
+  shape). Widen it to those bodies and derive the scanned path list rather than hard-coding it.
+- **`@app.on_event` deprecation, third site** — `servers/text_server.py` joins
+  `wan_t2v_server.py` and `minimax_h3_server.py` on the deprecated FastAPI startup hook; all
+  three should move to the `lifespan` context manager in one pass.
+
 **Single next action:** merge `feat/text-command` to main; the hooks spec — prompt enhancement
 + frame QA — is the follow-on.
 

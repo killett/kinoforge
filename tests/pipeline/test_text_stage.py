@@ -29,15 +29,18 @@ class _CountingEngine(TextEngine):
     name = "transformers"
     requires_compute = True
 
-    def __init__(self, modes: frozenset[str]) -> None:
+    def __init__(self, modes: frozenset[str], *, ready: bool = True) -> None:
         self.modes = modes
+        self.ready = ready
         self.health_calls = 0
         self.uploads: list[Path] = []
         self.jobs: list[TextJob] = []
 
     def health(self, instance, cfg):  # noqa: ANN001, ANN201
         self.health_calls += 1
-        return TextHealth(ready=True, model="pod-model", supported_modes=self.modes)
+        return TextHealth(
+            ready=self.ready, model="pod-model", supported_modes=self.modes
+        )
 
     def upload_image(self, instance, local_path, cfg):  # noqa: ANN001, ANN201
         self.uploads.append(Path(local_path))
@@ -132,6 +135,36 @@ def _stage(
         run_id="text-test",
         cancel_token=None,
     )
+
+
+def test_a_pod_still_loading_is_refused_as_not_ready_not_as_a_bad_config(
+    tmp_path: Path,
+) -> None:
+    """Behaviour: a ``/health`` with ``ready=false`` stops the stage with a
+    message that says the pod is still loading, before any upload or complete.
+
+    Bug caught: the stage reading only ``supported_modes`` and never
+    ``health.ready``. A pre-ready pod reports an EMPTY mode set, so the mode
+    gate fires instead and tells the operator to "fix
+    capability.supported_modes" — blaming the config for a pod that is merely
+    mid-load. Reachable on every ``--attach-pod`` run (that path skips
+    ``wait_for_ready``), and the wrong advice invites an edit to a correct
+    config.
+    """
+    eng = _CountingEngine(frozenset(), ready=False)
+    stage = _stage(tmp_path, eng, None)
+    req = GenerationRequest(prompt="describe", mode="t2t")
+
+    with pytest.raises(ValidationError) as excinfo:
+        stage.run(PipelineState(request=req, artifacts={}))
+
+    message = str(excinfo.value)
+    assert "still loading" in message
+    assert "pod-model" in message
+    assert "supported_modes" not in message
+    assert eng.health_calls == 1
+    assert eng.uploads == []
+    assert eng.jobs == []
 
 
 def test_mode_mismatch_stops_before_any_upload(tmp_path: Path) -> None:

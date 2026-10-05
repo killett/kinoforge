@@ -1625,8 +1625,9 @@ def _cmd_text(args: argparse.Namespace, ctx: SessionContext) -> int:
     Design ``docs/superpowers/specs/2026-10-04-text-command-design.md`` §2 and
     §7.3. Ordering mirrors ``_cmd_upscale``: flag conflicts (no config needed),
     config presence, then EVERY config-fact refusal — image args, the pre-spend
-    mode gate, the prompt — BEFORE the ``--dry-run`` block, so a dry run
-    surfaces them too and nothing here can cost a pod boot. After that the
+    mode gate, the prompt, an unregistered ``text.engine`` — BEFORE the
+    ``--dry-run`` block, so a dry run surfaces them too and nothing here can
+    cost a pod boot. After that the
     warm-scan / attach / launch-row wiring is ``_cmd_upscale``'s, and the
     orchestrator runs ``TextStage`` on the skip-clip path.
 
@@ -1688,6 +1689,23 @@ def _cmd_text(args: argparse.Namespace, ctx: SessionContext) -> int:
     try:
         prompt = resolve_prompt(cfg, getattr(args, "prompt", None))
     except ValidationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    # An unregistered `text.engine` is a config FACT, so it is refused here
+    # with the other config facts — spec §2.5 wants it "long before any ledger
+    # row, warm scan or pod create", and before --dry-run so the one command
+    # whose job is to validate a config without spending actually does. Until
+    # this rung existed the refusal was incidental: `render_provision` resolves
+    # the registry on the way to `create_instance`, so exit 2 arrived only
+    # after a warm scan and a launch row, and a dry run reported a happy plan
+    # for a config that could never run. The later `except UnknownAdapter`
+    # rung stays as defence in depth (an engine name can also come from
+    # elsewhere in the cfg graph).
+    from kinoforge.core import registry as _registry
+
+    try:
+        _registry.get_text_engine(cfg.text.engine)
+    except UnknownAdapter as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

@@ -69,7 +69,26 @@ class TextStage:
     cancel_token: CancelToken | None = None
 
     def run(self, state: PipelineState) -> PipelineState:
-        """Health-gate, upload, complete, store, publish; return the new state."""
+        """Health-gate, upload, complete, store, publish; return the new state.
+
+        The health gate has two rungs and the order matters: ``ready`` first,
+        then the mode check. A pod that is still loading answers ``/health``
+        with ``ready=false`` and an EMPTY ``supported_modes``, which satisfies
+        no request — checking the modes first would therefore report a config
+        defect ("fix capability.supported_modes") for a pod whose config is
+        perfectly correct and simply needs another minute.
+
+        Args:
+            state: The incoming pipeline state; ``state.request`` carries the
+                prompt, the derived mode and the ``--image`` assets.
+
+        Returns:
+            The state with ``artifacts["text"]`` set to the stored completion.
+
+        Raises:
+            ValidationError: The pod is not ready yet, an asset is a URL, or
+                the pod's model does not serve the requested mode.
+        """
         request = state.request
         block: dict[str, Any] = dict(self.cfg.get("text") or {})
         local_paths = [
@@ -78,6 +97,21 @@ class TextStage:
 
         # 1. Health gate BEFORE any bytes move (design §4.2).
         health = self.engine.health(self.instance, self.cfg)
+        # Readiness FIRST: a pre-ready /health reports `supported_modes: []`
+        # (the pod derives them from the loaded model class, so it has nothing
+        # to report until the checkpoint is in memory). Letting that fall into
+        # the mode gate below blames the CONFIG for a pod that is merely still
+        # loading — reachable whenever `wait_for_ready` was skipped, i.e. every
+        # `--attach-pod` run against a freshly booted pod.
+        if not health.ready:
+            raise ValidationError(
+                f"text: the pod "
+                f"{self.instance.id if self.instance is not None else '(in-process)'}"
+                f" is still loading model {health.model!r} — /health reports "
+                "ready=false, so no request can be served yet. This is not a "
+                "config fault: retry once /health reports ready (drop "
+                "--attach-pod to let kinoforge wait for readiness itself)."
+            )
         if request.mode not in health.supported_modes:
             raise ValidationError(
                 f"text: the pod's model {health.model!r} serves modes "
@@ -132,8 +166,12 @@ class TextStage:
         }
         text_bytes = result.text.encode("utf-8")
         json_bytes = json.dumps(sidecar, indent=2, sort_keys=True).encode("utf-8")
-        stored_txt = self.store.put_bytes(self.run_id, _STORE_TEXT, text_bytes)
-        stored_json = self.store.put_bytes(self.run_id, _STORE_JSON, json_bytes)
+        stored_txt = self.store.put_bytes(  # kinoforge:public-name — fixed identifier, not prompt-derived (image_run precedent)
+            self.run_id, _STORE_TEXT, text_bytes
+        )
+        stored_json = self.store.put_bytes(  # kinoforge:public-name — fixed identifier, not prompt-derived (image_run precedent)
+            self.run_id, _STORE_JSON, json_bytes
+        )
         published: str | None = None
         if self.sink is not None:
             model = self.engine.model_identity(self.cfg)
