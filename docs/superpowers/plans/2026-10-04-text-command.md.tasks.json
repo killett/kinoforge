@@ -4,7 +4,7 @@
     {
       "id": 1,
       "subject": "Task 1: TextEngine seam, modes, registry, error",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Define the `TextEngine` seam (`TextJob`, `TextResult`, `TextHealth`, `TextEngine`), the two text modes in `MODE_ROLE_REQUIREMENTS`, the duplicate-rejecting text-engine registry trio, and `TextGenerationFailed`.\n\n**Files:**\n- Modify: `src/kinoforge/core/interfaces.py` (after `class InterpolatorEngine`, ~line 1449+; `MODE_ROLE_REQUIREMENTS` at line 801)\n- Modify: `src/kinoforge/core/registry.py` (after `interpolator_names`, ~line 330; import block at line 20)\n- Modify: `src/kinoforge/core/errors.py` (append after `UpscaleFailed`, line 569+)\n- Test: `tests/core/test_text_interfaces.py`\n\n**Acceptance Criteria:**\n- [ ] `register_text_engine` raises `UnknownAdapter` on a duplicate name; `get_text_engine` raises `UnknownAdapter` naming the known engines; `text_engine_names()` is sorted.\n- [ ] `required_image_roles(\"t2t\") == []` and `required_image_roles(\"it2t\") == []`; both keys exist in `MODE_ROLE_REQUIREMENTS`.\n- [ ] `TextEngine.render_provision` default raises `NotImplementedError`; a concrete subclass with the five abstract methods instantiates.\n- [ ] `TextGenerationFailed(\"j1\", \"boom\")` carries `job_id`, `server_error`, and its message contains both.\n\n**Verify:** `pixi run pytest tests/core/test_text_interfaces.py -q` \u2192 all pass; `pixi run mypy src/kinoforge/core/interfaces.py src/kinoforge/core/registry.py src/kinoforge/core/errors.py` \u2192 clean.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/registry.py\", \"src/kinoforge/core/errors.py\", \"tests/core/test_text_interfaces.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_text_interfaces.py -q\", \"acceptanceCriteria\": [\"`register_text_engine` raises `UnknownAdapter` on a duplicate name; `get_text_engine` raises `UnknownAdapter` naming the known engines; `text_engine_names()` is sorted.\", \"`required_image_roles(\\\"t2t\\\") == []` and `required_image_roles(\\\"it2t\\\") == []`; both keys exist in `MODE_ROLE_REQUIREMENTS`.\", \"`TextEngine.render_provision` default raises `NotImplementedError`; a concrete subclass with the five abstract methods instantiates.\", \"`TextGenerationFailed(\\\"j1\\\", \\\"boom\\\")` carries `job_id`, `server_error`, and its message contains both.\"], \"modelTier\": \"standard\"}\n```"
     },
     {
@@ -98,5 +98,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-10-04T22:37:46"
+  "lastUpdated": "2026-10-04T23:12:59.702860"
 }
