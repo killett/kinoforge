@@ -204,3 +204,67 @@ def test_no_attention_backend_export_when_the_cfg_omits_it() -> None:
     cfg = load_config("examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml")
     rendered = DiffusersEngine().render_provision(cfg.model_dump())
     assert "KINOFORGE_H3_ATTENTION_BACKEND" not in rendered.script
+
+
+def _with_text(cfg: dict[str, Any]) -> dict[str, Any]:
+    cfg = dict(cfg)
+    cfg["engine"] = dict(cfg["engine"])
+    cfg["engine"]["diffusers"] = {
+        **cfg["engine"]["diffusers"],
+        "server_cmd": [
+            "python",
+            "-m",
+            "kinoforge.engines.diffusers.servers.text_server",
+        ],
+        "capability": {"supported_modes": ["t2t"]},
+    }
+    cfg["text"] = {"engine": "transformers", "params": {}}
+    return cfg
+
+
+def test_compose_text_fragment_before_server_exec() -> None:
+    # Bug caught: the text fragment missing (KINOFORGE_TEXT_MODEL_ID unset →
+    # the server's startup RuntimeError on a booked card) or appended AFTER
+    # the server line, where it never runs.
+    rp = DiffusersEngine().render_provision(_with_text(_wan_only_cfg()))
+    export_idx = rp.script.find("export KINOFORGE_TEXT_MODEL_ID=Wan-AI/Wan2.2-T2V")
+    server_idx = rp.script.find("kinoforge.engines.diffusers.servers.text_server")
+    assert export_idx >= 0
+    assert server_idx >= 0
+    assert export_idx < server_idx
+
+
+def test_text_fragment_is_a_runtime_step_not_bakeable() -> None:
+    # Bug caught: composing the exports in the "build" phase like the weight
+    # fetches — Modal bakes build steps into the image, where an `export` is
+    # gone by the time the container runs (design §5.3).
+    rp = DiffusersEngine().render_provision(_with_text(_wan_only_cfg()))
+    steps = [s for s in rp.setup_steps if "KINOFORGE_TEXT_MODEL_ID" in s.script]
+    assert steps, "no setup step carries the text export"
+    assert all(s.runtime and not s.bakeable for s in steps)
+
+
+def test_no_text_block_means_no_text_composition() -> None:
+    # Bug caught: composition firing unconditionally.
+    rp = DiffusersEngine().render_provision(_wan_only_cfg())
+    assert "KINOFORGE_TEXT_MODEL_ID" not in rp.script
+
+
+def test_compose_text_port_unions_into_ports() -> None:
+    """Controller ruling 1: the text fragment's `ports` must union into
+    DiffusersEngine's own `ports` list (built from `_extract_port_from_base_url`),
+    not be silently dropped.
+
+    Bug caught: `render_provision` composes only `text_rp.script` and ignores
+    `text_rp.ports`, so a `text.port: 8002` config never gets its port exposed
+    by the provider's proxy — the sidecar hooks seam (spec §5.2) would be
+    unreachable even though the server boots and listens on it.
+    """
+    cfg = _with_text(_wan_only_cfg())
+    cfg["text"]["port"] = 8002
+    rp = DiffusersEngine().render_provision(cfg)
+    assert "8002" in rp.ports
+    assert "8000" in rp.ports  # the base server port stays — this is a union
+
+    rp_no_text = DiffusersEngine().render_provision(_wan_only_cfg())
+    assert "8002" not in rp_no_text.ports

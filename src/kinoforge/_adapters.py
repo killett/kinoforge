@@ -60,6 +60,9 @@ import kinoforge.stores.gcs  # noqa: F401
 import kinoforge.stores.local  # noqa: F401
 import kinoforge.stores.s3  # noqa: F401
 
+# Text engines
+import kinoforge.text_engines.transformers  # noqa: F401  # self-registers under "transformers"
+
 # Upscalers
 import kinoforge.upscalers.flashvsr  # noqa: F401  # self-registers under "flashvsr" (v1 default diffusion VSR)
 import kinoforge.upscalers.seedvr2  # noqa: F401  # self-registers under "seedvr2" (extras-stub until Phase 2)
