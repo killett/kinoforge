@@ -576,6 +576,21 @@ class UpscaleFailed(KinoforgeError):
         self.server_error = server_error
 
 
+class TextGenerationFailed(KinoforgeError):
+    """The pod's text server reported ``state == "error"`` for a job.
+
+    Attributes:
+        job_id: The pod-assigned job id.
+        server_error: The server's ``error`` string, verbatim.
+    """
+
+    def __init__(self, job_id: str, server_error: str) -> None:
+        """Record the failed job_id and server-supplied error description."""
+        self.job_id = job_id
+        self.server_error = server_error
+        super().__init__(f"text job {job_id} failed on the pod: {server_error}")
+
+
 class InterpolationError(KinoforgeError):
     """Server-side frame-interpolation job entered an error state."""
 

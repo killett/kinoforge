@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -807,6 +808,14 @@ MODE_ROLE_REQUIREMENTS: dict[str, dict[str, str]] = {
     "t2va": {},
     "i2v": {"init_image": "image"},
     "flf2v": {"first_frame": "image", "last_frame": "image"},
+    # `kinoforge text` (docs/superpowers/specs/2026-10-04-text-command-design.md
+    # §2.1). Hugging Face task names in the repo's x2y spelling: t2t is
+    # text-generation, it2t is image-text-to-text. Both are EMPTY because the
+    # image count is open-ended — roles are image_1 … image_N in flag order and
+    # none is *required* by this table; TextStage gates it2t on the pod's
+    # /health instead (§4.2).
+    "t2t": {},
+    "it2t": {},
 }
 
 
@@ -1512,6 +1521,130 @@ class InterpolatorEngine(ABC):
         self,
         probe: BootLivenessProbe | None,
     ) -> None:
+        """Store the boot-liveness probe; mirrors UpscalerEngine's setter."""
+        self._boot_liveness_probe = probe  # noqa: SLF001
+
+
+@dataclass(frozen=True)
+class TextJob:
+    """One unit of text-generation work — engine-agnostic.
+
+    Attributes:
+        prompt: The user turn's text.
+        system: Optional system turn; ``None`` sends no system message.
+        images: Pod-side paths of already-uploaded images, in flag order.
+            Empty for ``t2t``.
+        params: Opaque generation parameters passed through to the pod
+            (``max_new_tokens``, ``temperature`` …). A ``chat_template_kwargs``
+            mapping inside it goes to the chat template, not to ``generate()``.
+    """
+
+    prompt: str
+    system: str | None = None
+    images: tuple[str, ...] = ()
+    params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TextResult:
+    """The pod's answer to one :class:`TextJob`.
+
+    Attributes:
+        text: The completion, decoded with special tokens stripped.
+        finish_reason: ``"stop"`` or ``"length"`` (hit ``max_new_tokens``).
+        usage: ``prompt_tokens`` and ``completion_tokens``.
+        model: The checkpoint id the pod loaded.
+        elapsed_s: Submit-acknowledged to done, controller clock.
+    """
+
+    text: str
+    finish_reason: str
+    usage: dict[str, int]
+    model: str
+    elapsed_s: float
+
+
+@dataclass(frozen=True)
+class TextHealth:
+    """What the pod's ``/health`` says about the loaded text model.
+
+    Attributes:
+        ready: The model is loaded and the worker is running.
+        model: The checkpoint id the pod loaded.
+        supported_modes: Modes DERIVED on the pod from the model class
+            (``{"t2t"}`` or ``{"t2t", "it2t"}``) — the truth the config's
+            declaration is checked against.
+    """
+
+    ready: bool
+    model: str
+    supported_modes: frozenset[str]
+
+
+class TextEngine(ABC):
+    """A swappable text-generation engine; owns its pod-side server contract.
+
+    Shaped like :class:`UpscalerEngine`: a registry key, a compute flag, a
+    composable provision fragment, and the calls a stage makes against a
+    booted pod. ``health`` is consulted BEFORE ``upload_image`` and
+    ``complete`` so a model that cannot take images refuses before any bytes
+    move (design §4.2). Every pod-facing call takes ``cfg`` so the engine can
+    read ``text.port`` — the seam a later sidecar launch needs (design §5.2).
+
+    Attributes:
+        name: Registry key (e.g. ``"transformers"``).
+        requires_compute: True when this engine needs a remote pod.
+    """
+
+    name: str
+    requires_compute: bool
+
+    def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
+        """Emit the composable boot fragment. Default raises; pod engines override."""
+        del cfg
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support remote provisioning"
+        )
+
+    @abstractmethod
+    def health(self, instance: Instance | None, cfg: dict[str, object]) -> TextHealth:
+        """Read the pod's ``/health`` into a :class:`TextHealth`."""
+        ...
+
+    @abstractmethod
+    def upload_image(
+        self, instance: Instance | None, local_path: Path, cfg: dict[str, object]
+    ) -> str:
+        """Upload one local PNG/JPEG to the pod; return its pod-side path."""
+        ...
+
+    @abstractmethod
+    def complete(
+        self,
+        instance: Instance | None,
+        job: TextJob,
+        cfg: dict[str, object],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> TextResult:
+        """Run one chat completion on the pod and return its result."""
+        ...
+
+    @abstractmethod
+    def validate_spec(self, job: TextJob) -> None:
+        """Raise ``ValidationError`` on a job this engine cannot serve."""
+        ...
+
+    @abstractmethod
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """Sink-filename slug (e.g. ``"Qwen3-0.6B"``). MUST NOT raise on missing fields."""
+        ...
+
+    def attach_get_instance(self, get_instance: Callable[[str], Instance]) -> None:
+        """Wire provider lookup; mirrors UpscalerEngine.attach_get_instance."""
+        self._get_instance = get_instance  # noqa: SLF001
+
+    def attach_boot_liveness_probe(self, probe: BootLivenessProbe | None) -> None:
         """Store the boot-liveness probe; mirrors UpscalerEngine's setter."""
         self._boot_liveness_probe = probe  # noqa: SLF001
 

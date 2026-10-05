@@ -23,6 +23,7 @@ from kinoforge.core.interfaces import (
     InterpolatorEngine,
     ModelSource,
     Splitter,
+    TextEngine,
     UpscalerEngine,
 )
 from kinoforge.stores.base import ArtifactStore
@@ -38,6 +39,7 @@ _artifact_stores: dict[str, Callable[[], ArtifactStore]] = {}
 _splitters: dict[str, Callable[[], Splitter]] = {}
 _upscalers: dict[str, Callable[[], UpscalerEngine]] = {}
 _interpolators: dict[str, Callable[[], InterpolatorEngine]] = {}
+_text_engines: dict[str, Callable[[], TextEngine]] = {}
 
 
 def register_provider(
@@ -343,3 +345,47 @@ def get_interpolator(name: str) -> Callable[[], InterpolatorEngine]:
 def interpolator_names() -> list[str]:
     """Return all registered interpolator names, sorted."""
     return sorted(_interpolators)
+
+
+# ---------------------------------------------------------------------------
+# Text engines — `kinoforge text` (design §5.1). Own namespace, like image
+# engines: a text-engine name may legitimately collide with a video engine's.
+# ---------------------------------------------------------------------------
+
+
+def register_text_engine(name: str, factory: Callable[[], TextEngine]) -> None:
+    """Register a text-engine factory under ``name``.
+
+    Duplicate registration is rejected, as for upscalers: an adapter
+    import-order accident must surface loudly rather than silently rebind the
+    production engine.
+
+    Args:
+        name: Registry key (e.g. ``"transformers"``).
+        factory: Zero-arg callable returning a :class:`TextEngine`.
+
+    Raises:
+        UnknownAdapter: ``name`` is already registered.
+    """
+    if name in _text_engines:
+        raise UnknownAdapter(f"text engine {name!r} already registered")
+    _text_engines[name] = factory
+
+
+def get_text_engine(name: str) -> Callable[[], TextEngine]:
+    """Return the factory registered under ``name``.
+
+    Raises:
+        UnknownAdapter: No text engine registered under ``name``.
+    """
+    try:
+        return _text_engines[name]
+    except KeyError:
+        raise UnknownAdapter(
+            f"no text engine registered as {name!r}; known: {sorted(_text_engines)}"
+        ) from None
+
+
+def text_engine_names() -> list[str]:
+    """Return the registered text-engine names, sorted."""
+    return sorted(_text_engines)
