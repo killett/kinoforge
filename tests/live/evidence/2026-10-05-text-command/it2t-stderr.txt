@@ -1,0 +1,16 @@
+Pixi task (kinoforge in default): python -m kinoforge text --config /workspace/examples/configs/runpod-diffusers-smolvlm-256m-it2t.yaml --prompt Describe this image in two sentences. Name the dominant colours.
+ --output-dir /tmp/pytest-of-claudeuser/pytest-1222/test_it2t_on_smolvlm_256m0 --no-reuse --image /workspace/output/20261003-174427_image_luma_agents_uni-1_Photorealistic-cinem.png
+2026-10-05 01:11:04,880 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (39 keys)
+2026-10-05 01:11:04,895 WARNING kinoforge.validation provider_capabilities: runpod guardrail gaps:
+  [WARN] compute.lifecycle.idle_timeout: runpod cannot enforce IDLE_AUTOSTOP (the instance is alive but doing nothing) — provider-side autostop does not fire at workload shape server; bounded instead by ON_INSTANCE_DEADLINE at min(2*idle_timeout, max_lifetime-time_buffer)=1800.0s, further shortened at create by budget=1.0 USD divided by the booked offer's rate (not knowable at load)
+2026-10-05 01:11:04,895 WARNING kinoforge.validation unsupported_fields: runpod field-support gaps:
+  [WARN] compute.placement.disk_gb=40: runpod does not read it (the run runs out of disk mid-download) — bounded instead by the create-pod mutation's hardcoded containerDiskInGb=250 GB, above the 40 GB you asked for
+[instance overview] No running instances.
+2026-10-05 01:11:04,963 WARNING kinoforge.orchestrator [capabilities] compute.lifecycle.idle_timeout: provider-side autostop does not fire at workload shape server; bounded instead by ON_INSTANCE_DEADLINE at min(2*idle_timeout, max_lifetime-time_buffer)=1800.0s, further shortened at create by budget=1.0 USD divided by the booked offer's rate (not knowable at load)
+2026-10-05 01:11:09,078 INFO kinoforge.orchestrator running provisioner.provision for instance 69f9a15t91p6td (engine=diffusers key=97d17b038553)
+2026-10-05 01:11:43,072 INFO kinoforge.kinoforge.outputs.local output published: /tmp/pytest-of-claudeuser/pytest-1222/test_it2t_on_smolvlm_256m0/20261005-011143_text_transformers_SmolVLM-256M-Instruct_Describe-this-image.txt
+2026-10-05 01:11:43,072 INFO kinoforge.kinoforge.outputs.local output published: /tmp/pytest-of-claudeuser/pytest-1222/test_it2t_on_smolvlm_256m0/20261005-011143_text_transformers_SmolVLM-256M-Instruct_Describe-this-image.json
+2026-10-05 01:11:43,073 INFO kinoforge.pipeline.text text published: /tmp/pytest-of-claudeuser/pytest-1222/test_it2t_on_smolvlm_256m0/<output:9782c8>
+2026-10-05 01:11:43,073 INFO kinoforge.orchestrator generate completed — artifact uri='/workspace/.kinoforge/text-20261005-011104/response.txt'
+2026-10-05 01:11:44,613 INFO kinoforge.orchestrator --no-reuse: destroyed + forgot pod 69f9a15t91p6td
+2026-10-05 01:11:44,613 INFO kinoforge.cli._commands text: run_id=text-20261005-011104 store=/workspace/.kinoforge/text-20261005-011104/response.txt published=/tmp/pytest-of-claudeuser/pytest-1222/test_it2t_on_smolvlm_256m0/<output:9782c8>

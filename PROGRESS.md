@@ -26,7 +26,7 @@ first unchecked task without redoing committed work.
 > `examples/configs/modal-diffusers-minimax-h3-t2va-long.yaml`.
 
 ## Pointers
-- **IN FLIGHT — text generation on reserved compute (`kinoforge text`):** design
+- **SHIPPED — text generation on reserved compute (`kinoforge text`):** design
   `docs/superpowers/specs/2026-10-04-text-command-design.md` (approved 2026-10-04, committed
   `a51dad8a`), research `docs/superpowers/research/2026-10-04-open-weight-llm-survey.md`, plan
   `docs/superpowers/plans/2026-10-04-text-command.md` (+ `.tasks.json`, 10 tasks).
@@ -35,7 +35,8 @@ first unchecked task without redoing committed work.
   `servers/text_server.py` on the H3 skeleton; modes `t2t`/`it2t` derived from `--image`;
   images-to-a-text-only-model refused pre-spend from the declared `capability.supported_modes`
   and re-checked against the pod's `/health`. Smoke models Qwen3-0.6B + SmolVLM-256M; quality
-  config Qwen3.8-27B (offline-validated only). **Tasks 1-9 done; Task 10 (live smokes) next.**
+  config Qwen3.8-27B (offline-validated only). **Tasks 1-10 done; live-proven 2026-10-05 (§37
+  t2t Qwen3-0.6B, §38 it2t SmolVLM-256M).**
   Two pipeline hooks
   (prompt enhancement, frame QA) are a FOLLOW-ON spec that depends on this one.
 - **SHIPPED — standalone image upscaling (`kinoforge upscale --image`):** design
@@ -3237,7 +3238,28 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-09-25 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-10-05 — read this, then STOP; below is history)
+
+### SESSION 2026-10-05 — kinoforge text shipped (plan 10/10, live-proven)
+
+**Plan complete 10/10 on branch `feat/text-command`.** `kinoforge text` is live-proven on real
+RunPod hardware: a `t2t` run on Qwen3-0.6B and an `it2t` run on SmolVLM-256M-Instruct, both
+through the real CLI with `--no-reuse`, both torn down and verified.
+
+- **t2t — Qwen3-0.6B** (pod `x0crhwy2l9g5et`, costPerHr $0.49, ~65 s life, ≈$0.009): **PASS** —
+  coherent two-sentence summary naming subject, setting and light. `successful-generations.md`
+  §37.
+- **it2t — SmolVLM-256M-Instruct** (pod `69f9a15t91p6td`, costPerHr $0.27, ~40 s life, ≈$0.003):
+  **⚠️ PARTIAL** — description is correct for the §35 Luma UNI-1 still but the model gave one
+  sentence and no colours against a two-sentences-plus-colours prompt; pipeline proven, model
+  weak on instruction-following at 256M. `successful-generations.md` §38.
+- Total live spend this session ≈ **$0.01-0.02** (estimate from costPerHr × pod life, not a
+  billing read).
+- The quality config `examples/configs/runpod-diffusers-qwen3_8-27b-it2t.yaml` remains
+  **OFFLINE-VALIDATED ONLY** — not fired live this session.
+
+**Single next action:** merge `feat/text-command` to main; the hooks spec — prompt enhancement
++ frame QA — is the follow-on.
 
 ### SESSION 2026-09-24/25 — the URGENT ACTION ITEMS queue is EMPTY
 

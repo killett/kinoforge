@@ -1,0 +1,27 @@
+{
+  "elapsed_s": 2.8682297319173813,
+  "engine": "transformers",
+  "finish_reason": "stop",
+  "images": [],
+  "instance_id": "x0crhwy2l9g5et",
+  "kinoforge_version": "0.5.0",
+  "mode": "t2t",
+  "model": "hf:Qwen/Qwen3-0.6B",
+  "params": {
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    },
+    "do_sample": true,
+    "max_new_tokens": 256,
+    "temperature": 0.7,
+    "top_p": 0.9
+  },
+  "prompt": "Summarise the following shot description in two sentences, naming the subject, the setting and the light.\n\nPhotorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace \u2014 luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking.\n",
+  "run_id": "text-20261005-010902",
+  "system": null,
+  "text": "A photorealistic, cinematic 5-second shot captures a young woman in an alpine meadow under golden-hour light, with a shallow depth of field and subtle lens flare, as a slow push-in leads to her in a sweeping wildflower field behind her. The scene features a tall waterfall, misting pool, and a serene, ethereal setting with a filmic color grade, warm highlights, and volumetric god rays.",
+  "usage": {
+    "completion_tokens": 88,
+    "prompt_tokens": 244
+  }
+}

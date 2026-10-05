@@ -1,0 +1,6 @@
+01:09:20 [t2t] poll start
+01:09:20 pod=x0crhwy2l9g5et name=text-20261005-010902 status=RUNNING costPerHr=0.49 gpu=0.0 cpu=3.0 mem=0.0
+01:10:37 no pods
+01:10:49 [it2t] poll start
+01:11:10 pod=69f9a15t91p6td name=text-20261005-011104 status=RUNNING costPerHr=0.27 probe=unavailable
+01:11:56 no pods

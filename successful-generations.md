@@ -92,6 +92,8 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
     - See also: `2026-09-23 01:17:02` — **the seeded strength A/B that explains this entry's frame-QA FAIL.** Same tuple `(modal, DiffusersEngine, MiniMaxAI/MiniMax-H3, t2va)`, new cfg `examples/configs/modal-diffusers-minimax-h3-t2va-lora-style-seeded.yaml` (20 steps, **`spec.seed: 424242` PINNED** — the first seeded comparison in this whole task). Pod `run-20260923-011131` (H200), two cells: LineartAnime at **strength 1.0** → `output/20260923-011408_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (1,398,302 B, sha256 `bc617c3b01b9fb20…`) is photorealistic with **no style at all**; the same seed at **strength 2.0** (the schema maximum) → `output/20260923-011702_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (910,484 B, sha256 `8d3b0a26dacf7e99…`) is a **total stylistic transformation** — photorealism gone, flat painterly brushwork, stylised foliage, saturated illustrative colour, the subject a painted character. Both cells share composition, camera path and figure placement (the seed pin visibly holding), so the ONLY difference is style. **Verdict: strength was the variable, not dtype — the profile's fp32→bf16 restore path is EXONERATED**, and §34's FAIL was a config artifact (strength 1.0 compounded by 8 steps). Cell A isolates it: 20 steps alone does NOT produce the style. `/health` held a third time; GPU probe read **100 %** mid-denoise, resolving §34's low-utilisation caveat as point-sampling. Spend **est≤$0.51**, teardown verified from a fresh process. Full delta in `.superpowers/sdd/2026-09-22-h3-lora-shared-seam/task-11-report.md`.
 35. `2026-10-03 17:44:27` — [`kinoforge image` — the first generation produced by a kinoforge command that terminates at an image (Luma UNI-1) — t2i](#35-2026-10-03-174427--kinoforge-image--the-first-generation-produced-by-a-kinoforge-command-that-terminates-at-an-image-luma-uni-1--t2i)
 36. `2026-10-03 21:51:04` — [kinoforge upscale --image — spandrel RealESRGAN-x2 on a Luma UNI-1 still — image-upscale](#36-2026-10-03-215104--kinoforge-upscale---image--spandrel-realesrgan-x2-on-a-luma-uni-1-still--image-upscale)
+37. `2026-10-05 01:09:02` — [kinoforge text — t2t on Qwen3-0.6B, the first text-generation command — t2t](#37-2026-10-05-010902--kinoforge-text--t2t-on-qwen3-06b-the-first-text-generation-command--t2t)
+38. `2026-10-05 01:11:04` — [kinoforge text --image — it2t on SmolVLM-256M-Instruct, first image-to-text chain — it2t](#38-2026-10-05-011104--kinoforge-text---image--it2t-on-smolvlm-256m-instruct-first-image-to-text-chain--it2t)
 
           MARK="$(mktemp)"
 
@@ -4162,5 +4164,192 @@ are **not** committed: they match the repo's `*.png` gitignore rule and stay loc
 - The RunPod util endpoint cannot witness a ~20 s GPU job. For jobs this short, the
   `bootstrap.log` request trace plus output determinism is the evidence, not a GPU-util
   percentage.
+
+---
+
+## 37. `2026-10-05 01:09:02` — kinoforge text — t2t on Qwen3-0.6B, the first text-generation command — t2t
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `runpod / TransformersTextEngine / hf:Qwen/Qwen3-0.6B` |
+| **Mode** | t2t |
+| **kinoforge version** | `v0.5.0` |
+| **First-success SHA** | `96c2ba06` (branch `feat/text-command`) |
+| **Date (local TZ)** | 2026-10-05 01:09:02 -0700 (PDT) |
+| **Layer / phase** | `kinoforge text` command, design `docs/superpowers/specs/2026-10-04-text-command-design.md`, plan `docs/superpowers/plans/2026-10-04-text-command.md` (Tasks 1-10) |
+
+### The new capability axis
+
+New kinoforge COMMAND: `kinoforge text`. New engine family: `TextEngine` / `transformers`
+(`TransformersTextEngine`), mirroring `UpscalerEngine`'s composable provision-fragment +
+pod-client seam, with a new `TextStage` appended by `orchestrator.generate(skip_clip_stage=True)`.
+New modes: `t2t` and `it2t`, derived from the presence/absence of `--image`. This run is the
+first completion the command has ever produced on real hardware — `t2t`, text-only, no image.
+
+### Exact command
+
+```bash
+KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_text_command_smoke.py::test_t2t_on_qwen3_0_6b -v -s
+```
+
+which drives the real CLI as a subprocess:
+
+```bash
+pixi run kinoforge text \
+  --config examples/configs/runpod-diffusers-qwen3-0_6b-t2t.yaml \
+  --prompt "$(cat examples/configs/prompts/text-smoke-t2t.txt)" \
+  --output-dir <tmp_path> \
+  --no-reuse
+```
+
+### Cfg
+
+`examples/configs/runpod-diffusers-qwen3-0_6b-t2t.yaml` verbatim.
+
+### Input
+
+Prompt file `examples/configs/prompts/text-smoke-t2t.txt` (verbatim: a summarisation
+instruction followed by the standard `field-realistic.txt` shot description).
+
+### Output
+
+Completion (verbatim):
+
+> A photorealistic, cinematic 5-second shot captures a young woman in an alpine meadow under
+> golden-hour light, with a shallow depth of field and subtle lens flare, as a slow push-in
+> leads to her in a sweeping wildflower field behind her. The scene features a tall waterfall,
+> misting pool, and a serene, ethereal setting with a filmic color grade, warm highlights, and
+> volumetric god rays.
+
+usage: `prompt_tokens=244`, `completion_tokens=88`; `finish_reason=stop`; `elapsed_s=2.87`;
+params `{max_new_tokens: 256, do_sample: true, temperature: 0.7, top_p: 0.9,
+chat_template_kwargs: {enable_thinking: false}}`.
+
+### Verdict — PASS
+
+Two sentences; names the subject (young woman), the setting (alpine meadow, wildflowers,
+waterfall, misting pool) and the light (golden hour, god rays, warm highlights); coherent.
+Minor: the first sentence's closing clause ("leads to her in a sweeping wildflower field
+behind her") is grammatically awkward.
+
+### Spend
+
+Pod `x0crhwy2l9g5et` (RunPod secure pool, `costPerHr=$0.49`). `run_id text-20261005-010902`,
+created ~01:09:02, completion 01:10:05, destroyed+forgotten 01:10:07 → ~65 s pod life ≈
+**$0.009** (estimate from `costPerHr × life`, not a billing read).
+
+### Monitoring
+
+`util.log` probed once at 01:09:20 (pod uptime ~18 s): `gpu=0.0% cpu=3.0% mem=0.0%`. The pod
+lived <70 s — inside the RunPod util endpoint's ~15-30 s cache window — so no non-zero GPU
+reading was captured; the completion itself (`elapsed_s=2.87`) is the evidence the GPU path
+ran, recorded honestly rather than claiming a percentage that was never observed.
+
+### Teardown
+
+`pixi run kinoforge list` → `[instance overview] No running instances.` and `No instances
+recorded in ledger.`, verified after the pytest process exited.
+
+### Evidence
+
+`tests/live/evidence/2026-10-05-text-command/` — `t2t-stdout.txt`, `t2t-stderr.txt`,
+`t2t-20261005-011005_text_transformers_Qwen3-0.6B_Summarise-the-follow.txt` and its
+same-stem `.json` sidecar, `util.log` (shared with §38).
+
+---
+
+## 38. `2026-10-05 01:11:04` — kinoforge text --image — it2t on SmolVLM-256M-Instruct, first image-to-text chain — it2t
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `runpod / TransformersTextEngine / hf:HuggingFaceTB/SmolVLM-256M-Instruct` |
+| **Mode** | it2t |
+| **kinoforge version** | `v0.5.0` |
+| **First-success SHA** | `96c2ba06` (branch `feat/text-command`) |
+| **Date (local TZ)** | 2026-10-05 01:11:04 -0700 (PDT) |
+| **Layer / phase** | `kinoforge text` command, design `docs/superpowers/specs/2026-10-04-text-command-design.md`, plan `docs/superpowers/plans/2026-10-04-text-command.md` (Tasks 1-10) |
+
+### The new capability axis
+
+New mode `it2t` (image + text → text) on the same new `TextEngine` / `transformers` seam as
+§37. Also the first image → text chain across two commands: §35's `kinoforge image` output
+(the Luma UNI-1 still) fed straight into `kinoforge text --image`.
+
+### Exact command
+
+```bash
+KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_text_command_smoke.py::test_it2t_on_smolvlm_256m -v -s
+```
+
+which drives the real CLI as a subprocess:
+
+```bash
+pixi run kinoforge text \
+  --config examples/configs/runpod-diffusers-smolvlm-256m-it2t.yaml \
+  --prompt "$(cat examples/configs/prompts/text-smoke-it2t.txt)" \
+  --image output/20261003-174427_image_luma_agents_uni-1_Photorealistic-cinem.png \
+  --output-dir <tmp_path> \
+  --no-reuse
+```
+
+### Cfg
+
+`examples/configs/runpod-diffusers-smolvlm-256m-it2t.yaml` verbatim.
+
+### Input
+
+Prompt file `examples/configs/prompts/text-smoke-it2t.txt`, plus the §35 `kinoforge image`
+output `output/20261003-174427_image_luma_agents_uni-1_Photorealistic-cinem.png` (sha256
+`a188b7cd3e5945cd7ad18898759171dce0603835a3e04d9a31f5413d5c730599`), uploaded to the pod at
+`/tmp/kf-uploads/a188b7cd.png` — the sidecar's recorded sha256 matches the local file exactly.
+
+### Output
+
+Completion (verbatim):
+
+> In the foreground of the image there is a girl standing and in the background there is a
+> waterfall, grass, plants, flowers and the sky.
+
+usage: `prompt_tokens=883`, `completion_tokens=30`; `finish_reason=stop`; `elapsed_s=2.68`;
+params `{max_new_tokens: 128, do_sample: false}`.
+
+### Verdict — ⚠️ PARTIAL
+
+The description is coherent and correct for the §35 still (girl in the foreground; waterfall,
+grass, plants, flowers, sky behind), but the prompt asked for TWO sentences and the dominant
+colours: the model produced ONE sentence and named NO colours. Expected of a 256M VLM with
+`do_sample=false`; the pipeline is proven, the model is weak on instruction-following. Recorded
+as ⚠️ with this reason, not PASS.
+
+### Spend
+
+Pod `69f9a15t91p6td` (RunPod secure pool, `costPerHr=$0.27`). `run_id text-20261005-011104`,
+created ~01:11:04, completion 01:11:43, destroyed+forgotten 01:11:44 → ~40 s pod life ≈
+**$0.003** (estimate from `costPerHr × life`, not a billing read).
+
+### Monitoring
+
+`util.log` probed once at 01:11:10 (pod uptime ~6 s): `probe=unavailable` — the runtime had
+not yet attached. The pod lived ~40 s total, so no second probe landed before teardown and no
+non-zero GPU reading was captured; the completion itself (`elapsed_s=2.68`) is the evidence
+the GPU path ran. Neither §37 nor §38 hit the "3× 0% after ready" stall condition — both
+completions prove the GPU path ran, recorded honestly rather than claiming a percentage that
+was never observed.
+
+### Teardown
+
+`pixi run kinoforge list` → both lines verified after the pytest process exited.
+
+### Evidence
+
+`tests/live/evidence/2026-10-05-text-command/` — `it2t-stdout.txt`, `it2t-stderr.txt`,
+`it2t-20261005-011143_text_transformers_SmolVLM-256M-Instruct_Describe-this-image.txt` and its
+same-stem `.json` sidecar, `util.log` (shared with §37).
+
+### Spend (combined, both runs)
+
+Total ≈ **$0.01-0.02** for §37 + §38 together (65 s @ $0.49/hr + 40 s @ $0.27/hr); estimate
+from `costPerHr × life`, not a billing read. Session total for this plan: that plus nothing
+else (all other work offline).
 
 ---
