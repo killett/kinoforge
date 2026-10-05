@@ -26,18 +26,17 @@ first unchecked task without redoing committed work.
 > `examples/configs/modal-diffusers-minimax-h3-t2va-long.yaml`.
 
 ## Pointers
-- **IN DESIGN — text generation on reserved compute (`kinoforge text`):** design
+- **IN FLIGHT — text generation on reserved compute (`kinoforge text`):** design
   `docs/superpowers/specs/2026-10-04-text-command-design.md` (approved 2026-10-04, committed
-  `a51dad8a`), research `docs/superpowers/research/2026-10-04-open-weight-llm-survey.md`.
+  `a51dad8a`), research `docs/superpowers/research/2026-10-04-open-weight-llm-survey.md`, plan
+  `docs/superpowers/plans/2026-10-04-text-command.md` (+ `.tasks.json`, 10 tasks).
   A `text:` block beside `engine:`/`models:`/`compute:`; `TextEngine` ABC shaped like
   `UpscalerEngine`; `TextStage` via `orchestrator.generate(skip_clip_stage=True)`; lean
   `servers/text_server.py` on the H3 skeleton; modes `t2t`/`it2t` derived from `--image`;
   images-to-a-text-only-model refused pre-spend from the declared `capability.supported_modes`
   and re-checked against the pod's `/health`. Smoke models Qwen3-0.6B + SmolVLM-256M; quality
-  config Qwen3.8-27B (offline-validated only). Plan: not yet written — next action is the
-  operator's spec review, then `writing-plans`. **Spec approved 2026-10-04 ("no changes"); plan
-  written:** `docs/superpowers/plans/2026-10-04-text-command.md` (+ `.tasks.json`, 10 tasks,
-  Task 10 = the two live smokes, user-gate). Next action: execute Task 1. Two pipeline hooks
+  config Qwen3.8-27B (offline-validated only). **Tasks 1-9 done; Task 10 (live smokes) next.**
+  Two pipeline hooks
   (prompt enhancement, frame QA) are a FOLLOW-ON spec that depends on this one.
 - **SHIPPED — standalone image upscaling (`kinoforge upscale --image`):** design
   `docs/superpowers/specs/2026-10-03-standalone-image-upscaling-design.md`, plan

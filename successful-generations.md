@@ -1,8 +1,8 @@
 # Successful generations — kinoforge
 
-This file records every qualifying successful kinoforge video generation.
+This file records every qualifying successful kinoforge generation (video, image or text).
 A run qualifies if it introduces a new capability axis — a new mode
-(t2v, i2v, flf2v, keyframe, ...), a new provider, engine, or model, or
+(t2v, i2v, flf2v, keyframe, t2i, t2t, it2t, ...), a new provider, engine, or model, or
 materially changes the reproduction recipe. Same-tuple repeats get a
 "See also" line under the existing TOC entry, not a new section.
 

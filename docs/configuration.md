@@ -246,3 +246,87 @@ confirmation that the engine key is valid.
 
 See [`../examples/configs/luma-uni1-t2i.yaml`](../examples/configs/luma-uni1-t2i.yaml) and
 [`../examples/configs/fal-flux-schnell-t2i.yaml`](../examples/configs/fal-flux-schnell-t2i.yaml).
+
+## `text:` (optional, text generation on reserved compute)
+
+`kinoforge text` runs one chat completion against an open-weight LLM on a RunPod pod kinoforge
+books, boots and tears down. A text config is a **pod config** — it keeps `engine:`, `models:`
+and `compute:` (the `upscale:` shape), plus this block (design:
+`docs/superpowers/specs/2026-10-04-text-command-design.md`):
+
+```yaml
+engine:
+  kind: diffusers                          # text: requires this — the only engine that
+                                            # provisions an arbitrary server_cmd
+  precision: bf16
+  diffusers:
+    server_cmd: ["python", "-m", "kinoforge.engines.diffusers.servers.text_server"]
+    pip: ["transformers>=5.10", "accelerate>=1.0", "fastapi>=0.115", "uvicorn>=0.30",
+          "pillow>=10", "psutil>=5.9", "nvidia-ml-py>=12"]
+    embed_files: ["kinoforge.engines.diffusers.servers.text_server",
+                  "kinoforge.engines.diffusers.servers._util_stats",
+                  "kinoforge.engines.diffusers.servers._upload"]
+    capability:
+      supported_modes: ["t2t"]             # ["t2t", "it2t"] for a vision-language model
+models:
+  - {ref: "hf:Qwen/Qwen3-0.6B", kind: base, target: checkpoints}
+text:
+  engine: transformers                     # text-engine registry key (get_text_engine)
+  prompt: "..."                            # optional default
+  system: "..."                            # optional system turn
+  params:                                  # opaque pass-through to the pod's generate()
+    max_new_tokens: 256
+    temperature: 0.7
+    chat_template_kwargs: {enable_thinking: false}   # routed to apply_chat_template instead
+  port: 8000                               # pod port; default, only one exercised today
+compute: { ... }
+```
+
+**The mode is derived, never typed.** No `--image` → `t2t` (text-generation); one or more
+`--image PATH` (local `.png`/`.jpg`/`.jpeg` only — an `http(s)://` source is refused) → `it2t`
+(image-text-to-text). Images go to the pod over `PUT /upload`, sha256-cross-checked against the
+server's reported digest before the pod path is trusted.
+
+**Prompt precedence:** `--prompt` > `text.prompt` > top-level `prompt:`; a whitespace-only or
+absent value from all three is refused (exit 2).
+
+**The multimodal gate runs twice.** Before any pod work, `kinoforge text` refuses a mode the
+config did not declare in `engine.diffusers.capability.supported_modes` (exit 2) — this is the
+pre-spend half. On the pod, `text_server.py` DERIVES its true modes from the loaded checkpoint (a
+processor carrying an `image_processor` serves `t2t` + `it2t`; anything else serves `t2t` only)
+and reports them in `/health`; `TextStage.run` checks health before any upload or submit and
+refuses (exit 1) if the config's declaration doesn't match what the pod actually loaded.
+
+**The `port:` key is a seam, not a feature yet.** `text.port` (default `8000`) is threaded through
+every pod-facing `TransformersTextEngine` call and unioned into the pod's exposed ports
+(`TransformersTextEngine.render_provision` exports it; the diffusers engine's RUNTIME-phase
+composition adds it to the provider's port list even when it differs from the base server port).
+Today every shipped config uses the default; the seam exists for a future sidecar launch beside a
+video server, not for anything `kinoforge text` itself varies.
+
+**Refused at config load** (`Config._validate_text_block`, design §3.3 — each message names the
+offending key):
+
+- `engine.kind` other than `diffusers` — only the diffusers engine provisions an arbitrary
+  `server_cmd`.
+- A missing or empty `engine.diffusers.capability.supported_modes` — without it the shared
+  diffusers probe reports `["t2v"]` and every `kinoforge text` run is refused for the wrong
+  reason.
+- `supported_modes` naming anything outside `{"t2t", "it2t"}`.
+- A top-level `mode:` — `kinoforge text` derives `t2t`/`it2t` from `--image`, so a written mode is
+  documentation that can lie.
+- `upscale:`, `interpolate:` or `keyframe:` — each would be silently inert on a text pod.
+- `loras:` — also silently inert on a text pod.
+- `models` with anything other than exactly one `kind: base` entry — the text server loads one
+  checkpoint.
+
+**Output.** stdout carries the completion text and nothing else; run chatter (run id, store uri,
+published path) goes to the logger. Two files land under `output.dir`:
+`{ts}_text_{text.engine}_{model}_{slug}.txt` (the completion) and the `.json` sidecar — `prompt`,
+`system`, `mode`, `images` (per image: `role`, `local` path, `sha256`, `pod_path`), `model`
+(the `hf:` base ref), `engine` (the `text.engine` value), `params`, `text`, `usage`,
+`finish_reason`, `elapsed_s`, `run_id`, `kinoforge_version`, `instance_id`.
+
+Shipped configs: `runpod-diffusers-qwen3-0_6b-t2t.yaml` (text-only smoke),
+`runpod-diffusers-smolvlm-256m-it2t.yaml` (vision smoke),
+`runpod-diffusers-qwen3_8-27b-it2t.yaml` (quality; offline-validated only — see the file header).
