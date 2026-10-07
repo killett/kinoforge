@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +46,9 @@ ItemOutcome = Literal["written", "failed", "aborted"]
 
 ItemCallback = Callable[[ImageDirItem, ItemOutcome, str | None], None]
 """``on_item(item, outcome, reason)`` — fires exactly once per pending item, in order."""
+
+HealthProbe = Callable[[str, CancelToken | None], Any]
+"""``(url, cancel_token) -> json``; raises when the pod is unreachable."""
 
 _FATAL: tuple[type[BaseException], ...] = (
     KeyboardInterrupt,
@@ -91,10 +95,28 @@ class ImageDirResult:
         return self._count("aborted")
 
 
-def _default_health_probe(url: str) -> dict[str, Any]:
-    from kinoforge.engines._pod_http import http_json
+def _default_health_probe(url: str, cancel_token: CancelToken | None) -> dict[str, Any]:
+    """GET ``/health`` with bounded retry on the RunPod proxy's transient 404/502/503/504.
 
-    return http_json(method="GET", url=url, payload=None, user_agent=_HEALTH_USER_AGENT)
+    A dead pod and a routine proxy warmup blip look identical on a single
+    request (``_pod_http.py`` lines ~99-102 document the same proxy
+    tolerance every other engine call goes through). Routing the probe
+    through :func:`~kinoforge.engines._proxy_retry.retry_proxy_call` means
+    one transient hiccup does not get misread as :class:`PodDead` and
+    abort every remaining item.
+    """
+    from kinoforge.engines._pod_http import http_json
+    from kinoforge.engines._proxy_retry import retry_proxy_call
+
+    return retry_proxy_call(
+        label="upscale_dir.health",
+        url=url,
+        fn=lambda: http_json(
+            method="GET", url=url, payload=None, user_agent=_HEALTH_USER_AGENT
+        ),
+        sleep=time.sleep,
+        cancel_token=cancel_token,
+    )
 
 
 def _health_url(instance: Instance | None) -> str | None:
@@ -127,7 +149,7 @@ def upscale_image_dir(
     provider: ComputeProvider | None = None,
     engine: GenerationEngine | None = None,
     upscaler: UpscalerEngine | None = None,
-    health_probe: Callable[[str], Any] = _default_health_probe,
+    health_probe: HealthProbe = _default_health_probe,
 ) -> tuple[ImageDirResult, Instance | None]:
     """Upscale every ``pending`` item of *plan* inside one deploy session.
 
@@ -156,7 +178,8 @@ def upscale_image_dir(
         engine: Test-injection ``GenerationEngine`` for the session.
         upscaler: Test-injection ``UpscalerEngine``; defaults to the
             registry's ``cfg.upscale.engine``.
-        health_probe: ``(url) -> json``; raises when the pod is unreachable.
+        health_probe: ``(url, cancel_token) -> json``; raises when the pod
+            is unreachable.
 
     Returns:
         ``(result, instance)`` — the session's instance so the CLI can stamp
@@ -220,15 +243,27 @@ def upscale_image_dir(
         with tempfile.TemporaryDirectory(prefix="kf-image-dir-") as scratch_str:
             scratch = Path(scratch_str)
             for idx, item in enumerate(pending):
+                upload: Path | None = None
                 try:
-                    upload = prepare_upload(item, scratch)
-                    state = PipelineState(
-                        request=GenerationRequest(prompt="", mode="upscale"),
-                        artifacts={"clip": local_artifact(upload, "image")},
-                    )
-                    state = stage.run(state)
-                    body = _orch.fetch_artifact_bytes(state.artifacts["upscaled"])
-                    _write_atomic(item.output, body)
+                    try:
+                        upload = prepare_upload(item, scratch)
+                        state = PipelineState(
+                            request=GenerationRequest(prompt="", mode="upscale"),
+                            artifacts={"clip": local_artifact(upload, "image")},
+                        )
+                        state = stage.run(state)
+                        body = _orch.fetch_artifact_bytes(state.artifacts["upscaled"])
+                        _write_atomic(item.output, body)
+                    finally:
+                        # Unlink the converted scratch PNG the moment this item
+                        # is done (success or failure) — at the ~1,000-image
+                        # scale this targets, leaving every conversion on disk
+                        # for the whole run is multiple GB of controller /tmp.
+                        # The passthrough source (upload is item.source) is
+                        # never touched; TemporaryDirectory stays the backstop
+                        # for the run as a whole.
+                        if upload is not None and upload != item.source:
+                            upload.unlink(missing_ok=True)
                 except _FATAL as exc:
                     _abort_rest(pending[idx:], type(exc).__name__)
                     raise
@@ -239,7 +274,7 @@ def upscale_image_dir(
                     url = _health_url(session.instance)
                     if url is not None:
                         try:
-                            health_probe(url)
+                            health_probe(url, cancel_token)
                         except Exception as probe_exc:  # noqa: BLE001 — unreachable is the signal
                             rest = pending[idx + 1 :]
                             _abort_rest(rest, "pod stopped answering /health")

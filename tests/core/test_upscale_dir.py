@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import time
+import urllib.error
 from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
+from email.message import Message
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -12,9 +15,12 @@ import pytest
 from PIL import Image
 
 import kinoforge._adapters  # noqa: F401 — self-register upscalers
+import kinoforge.engines._pod_http as _pod_http
+from kinoforge.core import upscale_dir as mod
 from kinoforge.core.config import Config
 from kinoforge.core.errors import BudgetExceeded, Cancelled, KinoforgeError
 from kinoforge.core.image_dir import plan_image_dir
+from kinoforge.core.image_dir import prepare_upload as _real_prepare_upload
 from kinoforge.core.interfaces import (
     Artifact,
     Instance,
@@ -150,7 +156,9 @@ def _run(
         on_item=lambda item, outcome, reason: seen.append(
             (item.source.name, outcome, reason)
         ),
-        health_probe=probe if probe is not None else (lambda url: {"ok": True}),
+        health_probe=probe
+        if probe is not None
+        else (lambda url, cancel_token: {"ok": True}),
     )
     return result, seen
 
@@ -189,7 +197,7 @@ def test_per_item_failure_continues_and_probes_once(
     src = _src(tmp_path, ["a.png", "b.png", "c.png"])
     probes: list[str] = []
 
-    def probe(url: str) -> dict[str, bool]:
+    def probe(url: str, cancel_token: Any) -> dict[str, bool]:
         probes.append(url)
         return {"ok": True}
 
@@ -207,7 +215,7 @@ def test_dead_pod_aborts_the_rest(tmp_path: Path, session: dict[str, Any]) -> No
     # pod that is gone.
     src = _src(tmp_path, ["a.png", "b.png", "c.png", "d.png"])
 
-    def probe(url: str) -> dict[str, bool]:
+    def probe(url: str, cancel_token: Any) -> dict[str, bool]:
         raise OSError("connection refused")
 
     up = _Upscaler(tmp_path, fail_on={2})
@@ -223,7 +231,7 @@ def test_dead_pod_reports_aborted_items_via_on_item(
     seen: list[tuple[str, str]] = []
     plan = plan_image_dir(src, scale=2, max_output_megapixels=256)
 
-    def probe(url: str) -> dict[str, bool]:
+    def probe(url: str, cancel_token: Any) -> dict[str, bool]:
         raise OSError("down")
 
     with pytest.raises(PodDead):
@@ -268,7 +276,7 @@ def test_cancel_and_fatal_abort_the_rest_and_reraise(
             on_item=lambda item, outcome, reason: seen.append(
                 (item.source.name, outcome)
             ),
-            health_probe=lambda url: {"ok": True},
+            health_probe=lambda url, cancel_token: {"ok": True},
         )
     assert seen == [("a.png", "written"), ("b.png", "aborted"), ("c.png", "aborted")]
     assert len(up.calls) == 2
@@ -304,3 +312,92 @@ def test_stage_receives_image_media_and_no_tiling(
     up = _Upscaler(tmp_path)
     _run(tmp_path, src, up)
     assert up.calls[0].media == "image" and up.calls[0].scale.value == 2
+
+
+def test_scratch_cleared_after_each_item(
+    tmp_path: Path, session: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug caught: the per-run scratch directory accumulated one decoded PNG
+    # per CONVERTED item for the whole run — at the ~1,000-image scale this
+    # feature targets that is multiple GB of controller /tmp. Each item's
+    # converted upload must be unlinked the moment its own stage.run
+    # completes (success or failure), not only when the whole-run
+    # TemporaryDirectory is torn down at the very end.
+    src = _src(tmp_path, ["a.webp", "b.webp", "c.webp"])
+    up = _Upscaler(tmp_path)
+
+    scratch_dirs: list[Path] = []
+
+    def spy_prepare_upload(item: Any, scratch: Path) -> Path:
+        scratch_dirs.append(scratch)
+        return _real_prepare_upload(item, scratch)
+
+    monkeypatch.setattr(mod, "prepare_upload", spy_prepare_upload)
+
+    snapshots: list[list[str]] = []
+
+    def on_item(item: Any, outcome: str, reason: str | None) -> None:
+        # Captured synchronously inside the callback, while the scratch
+        # dir still exists (the whole-run TemporaryDirectory is still
+        # open) — this is the moment the finding asked to check.
+        snapshots.append(sorted(p.name for p in scratch_dirs[-1].iterdir()))
+
+    plan = plan_image_dir(src, scale=2, max_output_megapixels=256)
+    upscale_image_dir(
+        _cfg(),
+        plan,
+        store=MagicMock(),
+        run_id="r",
+        state_dir=tmp_path / ".kf",
+        upscaler=up,  # type: ignore[arg-type]
+        on_item=on_item,
+    )
+    assert len(scratch_dirs) == 3
+    # Every item converts (all three are WebP), so every item's PNG must be
+    # gone by the time its own on_item fires — the per-item cleanup runs
+    # before the outcome is reported, so the scratch dir never accumulates
+    # a finished item's file.
+    assert snapshots == [[], [], []]
+
+
+def test_transient_proxy_502_does_not_abort_the_run(
+    tmp_path: Path, session: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug caught: a routine RunPod-proxy startup-window 502 on /health (the
+    # same proxy race _pod_http.py documents around lines 99-102, which
+    # every other engine call already tolerates via retry_proxy_call) was
+    # indistinguishable from a dead pod and aborted every remaining item.
+    # The default probe must retry transient codes before raising PodDead.
+    calls = {"n": 0}
+
+    def flaky_http_json(
+        *, method: str, url: str, payload: Any, user_agent: str
+    ) -> dict[str, Any]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise urllib.error.HTTPError(url, 502, "Bad Gateway", Message(), None)
+        return {"ok": True}
+
+    monkeypatch.setattr(_pod_http, "http_json", flaky_http_json)
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    src = _src(tmp_path, ["a.png", "b.png", "c.png"])
+    up = _Upscaler(tmp_path, fail_on={2})
+    seen: list[tuple[str, str, str | None]] = []
+    plan = plan_image_dir(src, scale=2, max_output_megapixels=256)
+    # No health_probe override here — this exercises the real default
+    # probe (_default_health_probe -> retry_proxy_call), not a test double.
+    result, _inst = upscale_image_dir(
+        _cfg(),
+        plan,
+        store=MagicMock(),
+        run_id="r",
+        state_dir=tmp_path / ".kf",
+        upscaler=up,  # type: ignore[arg-type]
+        on_item=lambda item, outcome, reason: seen.append(
+            (item.source.name, outcome, reason)
+        ),
+    )
+    assert [s[1] for s in seen] == ["written", "failed", "written"]
+    assert result.written == 2 and result.failed == 1 and result.aborted == 0
+    assert calls["n"] == 2
