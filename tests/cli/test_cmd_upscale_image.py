@@ -142,6 +142,28 @@ class TestConfigRefusals:
         assert rc == 2
         assert "1080p" in capsys.readouterr().err
 
+    def test_fractional_scale_exits_2(
+        self, tmp_path: Path, no_generate: None, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Bug caught: a fractional factor like 1.5x truncates to 1 via
+        # int(scale.value) in the megapixel guard, silently upscaling at 1x
+        # while the operator asked for 1.5x.
+        cfg = _spandrel_cfg(tmp_path)
+        rc = main(
+            [
+                "upscale",
+                "--image",
+                str(_png(tmp_path)),
+                "-c",
+                str(cfg),
+                "--scale",
+                "1.5x",
+                "--dry-run",
+            ]
+        )
+        assert rc == 2
+        assert "1.5" in capsys.readouterr().err
+
     def test_video_with_height_scale_is_still_allowed(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from kinoforge.core.cancel import CancelToken
 from kinoforge.core.config import Config
@@ -38,6 +38,9 @@ from kinoforge.core.interfaces import (
 )
 from kinoforge.core.media import local_artifact
 from kinoforge.stores.base import ArtifactStore
+
+if TYPE_CHECKING:
+    from kinoforge.core.scale_target import ScaleTarget
 
 _log = logging.getLogger("kinoforge.core.upscale_dir")
 
@@ -150,6 +153,7 @@ def upscale_image_dir(
     engine: GenerationEngine | None = None,
     upscaler: UpscalerEngine | None = None,
     health_probe: HealthProbe = _default_health_probe,
+    scale: ScaleTarget | None = None,
 ) -> tuple[ImageDirResult, Instance | None]:
     """Upscale every ``pending`` item of *plan* inside one deploy session.
 
@@ -180,6 +184,11 @@ def upscale_image_dir(
             registry's ``cfg.upscale.engine``.
         health_probe: ``(url, cancel_token) -> json``; raises when the pod
             is unreachable.
+        scale: The effective scale the CLI already resolved (CLI ``--scale``
+            override or ``cfg.upscale.scale``). When ``None``, falls back to
+            parsing ``cfg.upscale.scale`` directly — but a caller that
+            planned with a ``--scale`` override MUST pass it here too, or the
+            stage upscales at a different factor than the plan promised.
 
     Returns:
         ``(result, instance)`` — the session's instance so the CLI can stamp
@@ -235,7 +244,7 @@ def upscale_image_dir(
         )
         stage = UpscaleStage(
             engine=up,
-            scale=ScaleTarget.parse(cfg.upscale.scale),
+            scale=scale if scale is not None else ScaleTarget.parse(cfg.upscale.scale),
             instance=session.instance,
             cfg=_orch._cfg_dict(cfg),  # noqa: SLF001 — same dict generate() hands its stages
             cancel_token=cancel_token,

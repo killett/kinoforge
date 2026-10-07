@@ -190,6 +190,33 @@ def test_one_session_three_items_written(
     )
 
 
+def test_scale_override_takes_precedence_over_cfg(
+    tmp_path: Path, session: dict[str, Any]
+) -> None:
+    # Bug caught: the stage re-derived cfg.upscale.scale (2x) instead of
+    # honouring a --scale override the CLI already resolved and used for
+    # the plan's own arithmetic/guard — pod would render at a different
+    # factor than the plan (and progress lines) promised.
+    from kinoforge.core.scale_target import ScaleTarget
+
+    src = _src(tmp_path, ["a.png"])
+    up = _Upscaler(tmp_path)
+    plan = plan_image_dir(src, scale=4, max_output_megapixels=256)
+    upscale_image_dir(
+        _cfg(),  # cfg.upscale.scale == "2x"
+        plan,
+        store=MagicMock(),
+        run_id="r",
+        state_dir=tmp_path / ".kf",
+        upscaler=up,  # type: ignore[arg-type]
+        scale=ScaleTarget.parse("4x"),
+        on_item=lambda item, outcome, reason: None,
+        health_probe=lambda url, cancel_token: {"ok": True},
+    )
+    assert len(up.calls) == 1
+    assert up.calls[0].scale.value == 4
+
+
 def test_per_item_failure_continues_and_probes_once(
     tmp_path: Path, session: dict[str, Any]
 ) -> None:

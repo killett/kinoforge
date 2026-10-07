@@ -1430,10 +1430,14 @@ def _image_arg_error(image: str) -> str | None:
 def _image_preflight_error(cfg: Config, scale: ScaleTarget) -> str | None:
     """Return the exit-2 message for an ``--image`` run this config cannot serve.
 
-    Spec §2.1 items 2-4, in order: a height-target scale, an engine without
+    Spec §2.1 items 2-4, in order: a height-target scale, a non-integral
+    factor scale (spandrel tiles at whole-number factors; a fractional
+    factor like ``1.5x`` would also disagree between the directory plan's
+    arithmetic and the guard that computed it), an engine without
     ``supports_image_input``, then ``chunk_frames`` / ``tile_grid``. All are
     config facts, so they fire before ``--dry-run`` prints and before any
-    pod work.
+    pod work. Shared by both ``--image`` and ``--image-dir`` (both resolve
+    to ``media == "image"``).
 
     Args:
         cfg: Loaded config; ``cfg.upscale`` must be present (caller checked).
@@ -1451,6 +1455,11 @@ def _image_preflight_error(cfg: Config, scale: ScaleTarget) -> str | None:
             f"error: --image cannot use a height-target scale "
             f"({int(scale.value)}p); use --scale Nx (height targets for stills "
             "are deferred)"
+        )
+    if scale.value != int(scale.value):
+        return (
+            f"error: --image/--image-dir need an integer factor scale "
+            f"(got {scale.value}x); spandrel tiles at whole-number factors"
         )
     try:
         factory = registry.get_upscaler(block.engine)
@@ -1737,6 +1746,11 @@ def _cmd_upscale_image_dir(
             single=bool(args.no_reuse),
             on_instance_created=_ephemeral_row_upgrade_hook(ctx, cfg, launch),
             on_item=_on_item,
+            # The same effective ScaleTarget the plan used for its arithmetic
+            # (CLI --scale override or cfg.upscale.scale) — otherwise the
+            # stage would re-derive cfg.upscale.scale and disagree with the
+            # plan on a --scale override.
+            scale=scale,
         )
     # None of these rungs settle the launch row — a raise keeps it (ruling C1):
     # the pod may still be alive and billing, and the row is its only handle.

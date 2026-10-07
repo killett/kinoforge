@@ -221,6 +221,16 @@ class TestRefusals:
         rc = main(_argv(tmp_path, src, "--scale", "1080p"))
         assert rc == 2 and "1080p" in capsys.readouterr().err
 
+    def test_fractional_scale_exits_2(
+        self, tmp_path: Path, no_runner: None, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Bug caught: a fractional factor like 1.5x truncates to 1 via
+        # int(scale.value) in both the plan's arithmetic and the megapixel
+        # guard, silently upscaling at 1x while claiming 1.5x.
+        src = _photos(tmp_path)
+        rc = main(_argv(tmp_path, src, "--scale", "1.5x"))
+        assert rc == 2 and "1.5" in capsys.readouterr().err
+
     def test_no_images_exits_2(
         self, tmp_path: Path, no_runner: None, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -325,6 +335,23 @@ class TestRun:
             in o
         )
         assert cap["single"] is True and cap["instance"] is None
+
+    def test_scale_override_reaches_the_runner(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Bug caught: --scale 4x plans/prints at 4x but the runner re-derives
+        # cfg.upscale.scale (2x in the fixture cfg) for the actual stage, so
+        # the pod renders at a different factor than the plan promised.
+        src = _photos(tmp_path)
+        cap = _fake_runner(monkeypatch)
+        rc = main(_argv(tmp_path, src, "--no-reuse", "--scale", "4x"))
+        o = capsys.readouterr().out
+        assert rc == 0
+        assert cap["scale"].value == 4
+        assert "(8x6 -> 32x24)" in o
 
     def test_one_failure_exits_1_and_names_it(
         self,
