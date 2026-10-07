@@ -26,6 +26,13 @@ first unchecked task without redoing committed work.
 > `examples/configs/modal-diffusers-minimax-h3-t2va-long.yaml`.
 
 ## Pointers
+- **IN FLIGHT — directory image upscaling (`kinoforge upscale --image-dir`):** design
+  `docs/superpowers/specs/2026-10-06-directory-image-upscale-design.md` (approved 2026-10-06,
+  committed `7916b91d`), plan `docs/superpowers/plans/2026-10-06-directory-image-upscale.md`
+  (+ `.tasks.json`, 9 tasks). One flag on `upscale`; pure planner `core/image_dir.py`;
+  one-session runner `core/upscale_dir.py`; `upscale.max_output_megapixels` (default 256);
+  tilers deliberately NOT unified (spec §3.3). Zero pod-side changes.
+  **Tasks 1-8 done (offline, green); Task 9 (live) next.**
 - **SHIPPED — text generation on reserved compute (`kinoforge text`):** design
   `docs/superpowers/specs/2026-10-04-text-command-design.md` (approved 2026-10-04, committed
   `a51dad8a`), research `docs/superpowers/research/2026-10-04-open-weight-llm-survey.md`, plan
@@ -3238,7 +3245,38 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-10-05 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-10-06 — read this, then STOP; below is history)
+
+### SESSION 2026-10-06 — directory image upscaling, Tasks 1-8 done, Task 9 (live) next
+
+Offline work complete and green; no launch golden moved (snapshot diff empty). **Single next
+action:** Task 9 — commit the RED live scaffold, `pixi run preflight`, then exactly one run:
+
+    pixi run kinoforge upscale \
+      -c examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml \
+      --image-dir /workspace/output/dir-smoke --no-reuse
+
+Expected six written / one existing / one oversize (a designed-in plan-time failure), exit 1 —
+NOT exit 0, because any plan-time failure makes the run exit 1 even though the six writable
+images all succeed; poll utilisation every 60-90 s; `kinoforge list` must show both clean lines
+afterwards; frame-QA every output; new `successful-generations.md` section.
+
+**Follow-ups found during review (not done in this plan):**
+- (a) `kinoforge upscale --scale` on the single `--video`/`--image` path has NEVER taken effect
+  at runtime — `_cmd_upscale` does `del scale` and `generate()` rebuilds the stage from
+  `cfg.upscale.scale` (`core/orchestrator.py`, the `UpscaleStage(` construction); the directory
+  path now honours it, the single path still does not.
+- (b) the `nothing to do: every image already has an output` line also prints when every file
+  failed at plan time (exit code is right, wording is not).
+- (c) `_image_preflight_error` messages say `--image` even on the `--image-dir` path.
+- (d) `--image-dir photos_upscaled` produces `photos_upscaled_upscaled` unguarded.
+- (e) a `.part` file is left behind if an output write fails mid-way.
+- (f) `_cmd_generate` and `_cmd_interpolate` still carry their own copies of the launch-row
+  stamp/settle block that `_finish_launch_row` now owns for `upscale`.
+- (g) per-task Verify commands in this plan omitted the whole-tree invariant tests
+  (`tests/test_core_invariant.py`, `tests/test_no_unredacted_writes.py`,
+  `tests/test_source_audit.py`); Task 8's full-suite run caught two breaks that Tasks 6/7 had
+  missed — future plans should include those three files in every task's Verify.
 
 ### SESSION 2026-10-05 — kinoforge text shipped (plan 10/10, live-proven)
 

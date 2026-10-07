@@ -621,6 +621,25 @@ are refused at preflight for `--image`. FlashVSR and SeedVR2 refuse `--image`
 (`UpscalerEngine.supports_image_input` is false), because a temporal model has
 no meaning for one frame.
 
+**Directory input.** `--image-dir DIR` runs the same path once per file on one
+pod (`core/upscale_dir.py`, one `deploy_session`, one `UpscaleStage`). Inputs
+are normalised on the controller (`core/image_dir.py`): the pod never sees
+anything but 8-bit PNG/JPEG, and each converted scratch PNG is unlinked right
+after its item finishes rather than batched to the end of the run. Two tilers
+exist by decision and stay separate: the video path's `tile_grid` crops mp4
+frames on the controller and feather-blends them (FlashVSR is generative,
+tiles can disagree); the still path's `tile_size` slices the array on the pod
+with 32 px of context and discards the overlap (RealESRGAN is deterministic,
+so the tile interior equals the whole-image result — asserted pixel-for-pixel
+in `tests/upscalers/test_spandrel_runtime_image.py`). The runner's post-failure
+`/health` probe goes through the RunPod proxy-retry helper
+(`engines/_proxy_retry.py`), so a transient 502 does not abort the rest of the
+directory — but the core runner never imports that adapter layer itself: the
+concrete probe lives in `cli/pod_health.py` (`probe_pod_health`) and the CLI
+injects it into `upscale_image_dir(health_probe=...)`; a library caller that
+injects nothing still gets per-item failures (never an abort) plus one logged
+warning, just without the dead-pod abort.
+
 ### `seedvr2` (extras-gated, Phase 2)
 
 Video-coherent diffusion upscaling via ByteDance-Seed/SeedVR2. The

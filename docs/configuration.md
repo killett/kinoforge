@@ -143,11 +143,16 @@ Activates the in-pipeline `UpscaleStage` after `GenerateClipStage` for
 `kinoforge generate`, or stands alone for `kinoforge upscale`. The CLI
 flag `--scale` overrides `upscale.scale` for one-off runs.
 
-`kinoforge upscale` takes exactly one of `--video PATH_OR_URL` or
-`--image PATH` (local `.png` / `.jpg` / `.jpeg` only). With `--image` the
-engine must declare image support (today: `spandrel`), `scale` must be a
-factor (`2x`, `4x`), and `chunk_frames` / `tile_grid` must be unset — each
-violation exits 2 before any pod is booted. Output is always PNG.
+`kinoforge upscale` takes exactly one of `--video PATH_OR_URL`, `--image PATH`
+(local `.png` / `.jpg` / `.jpeg` only), or `--image-dir DIR` (see
+**Directories** below). With `--image` or `--image-dir` the engine must
+declare image support (today: `spandrel`), `scale` must be an integer factor
+(`2x`, `4x` — a non-integral factor such as `1.5x` is refused, since
+spandrel tiles at whole-number factors), and `chunk_frames` / `tile_grid`
+must be unset — each violation exits 2 before any pod is booted. Output is
+always PNG. `--output-dir` / `--no-output-dir` override the publish
+destination for `--video` and `--image` runs (ignored, with a note on
+stderr, for `--image-dir`).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -157,6 +162,30 @@ violation exits 2 before any pod is booted. Output is always PNG.
 | `chunk_overlap` | int | `8` | Warm-up frames rendered before each chunk's kept range. Must be below `chunk_frames`. |
 | `tile_grid` | `[cols, rows]` \| null | `null` | Crop each frame into a grid, upscale the tiles, feather-stitch them back. Combines with `chunk_frames`. |
 | `tile_overlap` | int | `32` | Minimum overlap between neighbouring tiles, in source pixels. |
+| `max_output_megapixels` | int | `256` | Still images only (`--image` / `--image-dir`): refuses an output larger than `width × height × scale²` megapixels before any upload. Bounds the pod's host-RAM output canvas, which the pod-side tiler does not. |
+
+**Directories.** `kinoforge upscale --image-dir photos/` upscales every image
+under `photos/` (recursive) on ONE pod and writes lossless PNGs into a sibling
+`photos_upscaled/` that mirrors the tree: `photos/sub/b.webp` →
+`photos_upscaled/sub/b.png`. Two files in the same folder with the same stem
+(`a.webp` + `a.png`) keep their full name plus `.png` (`a.webp.png`,
+`a.png.png`). An output that already exists is skipped, so re-running the
+same command after a crash pays only for what is missing. Recognised
+suffixes: png jpg jpeg jfif webp avif gif bmp dib tif tiff tga heic heif jp2
+j2k psd ico pcx pbm pgm ppm pnm qoi dds; other files are counted and
+skipped, dot-files and symlinks ignored. An 8-bit RGB/RGBA/greyscale PNG or
+JPEG with no EXIF rotation is uploaded unchanged; anything else is converted
+on the controller to an 8-bit RGB PNG with EXIF orientation applied
+(animated GIFs and multi-page TIFFs contribute their first frame).
+`--output-dir` / `--no-output-dir` are ignored for a directory run. One line
+per image is printed as it finishes; the closing line is
+`upscaled N, skipped N existing, failed N, aborted N -> <dir>`. Exit 0 when
+nothing failed, 1 when any image failed (oversize, unreadable, or a pod
+error — the rest still run; after a failure the pod's `/health` is probed
+and a dead pod aborts the remainder), 2 for a precondition. Each output
+stays on the pod's disk until the pod dies; the example config's
+`disk_gb: 40` is roughly 1,000 4-MP 2x outputs per pod lifetime.
+`--no-reuse` destroys the pod once, after the last image.
 
 **`flashvsr`** — streaming diffusion VSR (Wan 2.1 1.3B backbone), native 4x, 80 GB tier.
 
