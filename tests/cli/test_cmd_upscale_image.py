@@ -295,3 +295,37 @@ class TestMediaStamp:
             monkeypatch,
         )
         assert captured["initial_clip"].meta["media"] == "video"
+
+
+class TestMegapixelGuard:
+    def test_oversize_image_exits_2(
+        self, tmp_path: Path, no_generate: None, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Bug caught: --image and --image-dir disagree on the cap; a 50 MP
+        # still at 4x reaches the pod and kills it on host RAM.
+        import imageio.v3 as iio
+
+        big = tmp_path / "big.png"
+        iio.imwrite(big, np.zeros((600, 600, 3), dtype=np.uint8))
+        cfg = _spandrel_cfg(tmp_path, extra="  max_output_megapixels: 1\n")
+        rc = main(["upscale", "--image", str(big), "-c", str(cfg), "--no-reuse"])
+        err = capsys.readouterr().err
+        assert rc == 2
+        assert "max_output_megapixels=1" in err and "600x600" in err
+
+    def test_unreadable_image_exits_2(
+        self, tmp_path: Path, no_generate: None, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        bad = tmp_path / "bad.png"
+        bad.write_bytes(b"not a png")
+        rc = main(
+            [
+                "upscale",
+                "--image",
+                str(bad),
+                "-c",
+                str(_spandrel_cfg(tmp_path)),
+                "--no-reuse",
+            ]
+        )
+        assert rc == 2 and "bad.png" in capsys.readouterr().err
