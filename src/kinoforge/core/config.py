@@ -833,6 +833,13 @@ class UpscaleConfig(BaseModel):
             full fidelity. ``None`` (default) keeps the whole-frame path.
         tile_overlap: Minimum overlap between neighbouring tiles in source
             pixels; the feather ramp spans the actual overlap.
+        max_output_megapixels: Controller-side cap on ``width × height ×
+            scale²`` of a STILL-IMAGE output (``--image`` / ``--image-dir``).
+            An oversize still is refused (``--image``) or recorded as a
+            per-file failure (``--image-dir``) before any upload. Bounds the
+            pod's host-RAM output canvas and PNG encode — a 50 MP photo at 4x
+            is an 800 MP canvas, ~2.4 GB raw — which the pod-side tiler does
+            not bound. Ignored for video.
     """
 
     engine: str
@@ -844,6 +851,7 @@ class UpscaleConfig(BaseModel):
     chunk_overlap: int = 8
     tile_grid: tuple[int, int] | None = None
     tile_overlap: int = 32
+    max_output_megapixels: int = 256
 
     @model_validator(mode="after")
     def _validate_tiling(self) -> Self:
@@ -874,6 +882,16 @@ class UpscaleConfig(BaseModel):
                 "upscale.chunk_overlap must be below chunk_frames (every chunk "
                 f"would keep nothing); got overlap={self.chunk_overlap} "
                 f"chunk_frames={self.chunk_frames}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_megapixels(self) -> Self:
+        """Validate max_output_megapixels is positive."""
+        if self.max_output_megapixels <= 0:
+            raise ConfigError(
+                "upscale.max_output_megapixels must be positive, "
+                f"got {self.max_output_megapixels}"
             )
         return self
 
