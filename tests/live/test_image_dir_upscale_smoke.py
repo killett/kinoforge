@@ -32,8 +32,6 @@ pytestmark = pytest.mark.skipif(
 
 _ROOT = Path(__file__).parent.parent.parent
 _CFG = _ROOT / "examples" / "configs" / "runpod-diffusers-spandrel-x2-upscale.yaml"
-_SRC = _ROOT / "output" / "dir-smoke"
-_OUT = _ROOT / "output" / "dir-smoke_upscaled"
 _EVIDENCE = Path(__file__).parent / "evidence" / "2026-10-06-image-dir-upscale"
 _LEDGER_PATH = _ROOT / ".kinoforge" / "_lifecycle" / "ledger.json"
 
@@ -93,16 +91,19 @@ def _poll_utilisation(stop: threading.Event) -> None:
 
 
 @pytest.mark.live
-def test_directory_upscale_on_one_pod() -> None:
+def test_directory_upscale_on_one_pod(tmp_path: Path) -> None:
     from kinoforge.core.dotenv_loader import load_env_file
 
     load_env_file()
 
     from tests.live.build_image_dir_fixture import build
 
-    build(_SRC)
+    src = tmp_path / "dir-smoke"
+    out = tmp_path / "dir-smoke_upscaled"
+
+    build(src)
     _EVIDENCE.mkdir(parents=True, exist_ok=True)
-    existing_before = _sha(_OUT / "existing.png")
+    existing_before = _sha(out / "existing.png")
 
     stop = threading.Event()
     poller = threading.Thread(target=_poll_utilisation, args=(stop,), daemon=True)
@@ -117,7 +118,7 @@ def test_directory_upscale_on_one_pod() -> None:
                 "-c",
                 str(_CFG),
                 "--image-dir",
-                str(_SRC),
+                str(src),
                 "--no-reuse",
             ],
             capture_output=True,
@@ -153,15 +154,15 @@ def test_directory_upscale_on_one_pod() -> None:
         "sub/alpha.png": (600, 360),
     }
     for rel, size in expected.items():
-        p = _OUT / rel
+        p = out / rel
         assert p.exists(), rel
         assert _size(p) == size, (rel, _size(p))
         shutil.copy2(p, _EVIDENCE / rel.replace("/", "__"))
-    assert not (_OUT / "huge.png").exists()
-    assert _sha(_OUT / "existing.png") == existing_before
-    assert sorted(
-        p.relative_to(_OUT).as_posix() for p in _OUT.rglob("*.png")
-    ) == sorted([*expected, "existing.png"])
+    assert not (out / "huge.png").exists()
+    assert _sha(out / "existing.png") == existing_before
+    assert sorted(p.relative_to(out).as_posix() for p in out.rglob("*.png")) == sorted(
+        [*expected, "existing.png"]
+    )
 
     assert "No running instances." in ledger.stdout
     assert "No instances recorded in ledger." in ledger.stdout

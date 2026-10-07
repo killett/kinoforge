@@ -48,7 +48,10 @@ def build(dest: Path) -> None:
     alpha = Image.new("RGBA", (300, 180), (40, 120, 220, 255))
     alpha.putalpha(Image.linear_gradient("L").resize((300, 180)))
     alpha.save(dest / "sub" / "alpha.png")
-    Image.new("RGB", (12000, 12000), (90, 90, 90)).save(dest / "huge.webp", quality=50)
+    # 9000x9000 (81 MP) stays under Pillow's 89.5 MP decompression-bomb
+    # warning threshold, but 2x (324 MP) is still > upscale.max_output_
+    # megapixels=256 — the designed-in oversize failure.
+    Image.new("RGB", (9000, 9000), (90, 90, 90)).save(dest / "huge.webp", quality=50)
     (dest / "notes.txt").write_text("not an image\n")
     Image.new("RGB", (64, 64), (0, 0, 0)).save(dest / "existing.png")
     out = dest.parent / f"{dest.name}_upscaled"

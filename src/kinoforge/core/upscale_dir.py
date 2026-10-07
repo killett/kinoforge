@@ -29,6 +29,7 @@ from kinoforge.core.errors import (
 from kinoforge.core.image_dir import ImageDirItem, ImageDirPlan, prepare_upload
 from kinoforge.core.interfaces import (
     ComputeProvider,
+    CredentialProvider,
     GenerationEngine,
     GenerationRequest,
     Instance,
@@ -130,6 +131,7 @@ def upscale_image_dir(
     upscaler: UpscalerEngine | None = None,
     health_probe: HealthProbe | None = None,
     scale: ScaleTarget | None = None,
+    creds: CredentialProvider | None = None,
 ) -> tuple[ImageDirResult, Instance | None]:
     """Upscale every ``pending`` item of *plan* inside one deploy session.
 
@@ -171,6 +173,13 @@ def upscale_image_dir(
             parsing ``cfg.upscale.scale`` directly — but a caller that
             planned with a ``--scale`` override MUST pass it here too, or the
             stage upscales at a different factor than the plan promised.
+        creds: Credential provider forwarded to :func:`deploy_session`.
+            ``None`` (the default) is shimmed to
+            :class:`~kinoforge.core.credentials.EnvCredentialProvider` —
+            sibling to :func:`kinoforge.core.batch.batch_generate`'s
+            default-shim. Without this, a ``None`` reaches the provisioner
+            and trips ``AuthError`` on the first ``env_required`` var even
+            though ``.env`` is already loaded into ``os.environ``.
 
     Returns:
         ``(result, instance)`` — the session's instance so the CLI can stamp
@@ -183,9 +192,16 @@ def upscale_image_dir(
     """
     from kinoforge.core import orchestrator as _orch
     from kinoforge.core import registry as _registry
+    from kinoforge.core.credentials import EnvCredentialProvider
     from kinoforge.core.ephemeral import EphemeralSession
     from kinoforge.core.scale_target import ScaleTarget
     from kinoforge.pipeline.upscale import UpscaleStage
+
+    # Default-shim: sibling to batch_generate's (core/batch.py). A None
+    # creds reaches deploy_session and every live run dies with AuthError
+    # before create_instance, exactly as the 2026-10-06 first live fire did.
+    if creds is None:
+        creds = EnvCredentialProvider()
 
     if cfg.upscale is None:
         raise ValueError("upscale_image_dir needs an `upscale:` block")
@@ -217,6 +233,7 @@ def upscale_image_dir(
         cancel_token=cancel_token,
         single=single,
         on_instance_created=on_instance_created,
+        creds=creds,
     ) as session:
         eph = EphemeralSession.current()
         if eph is not None:

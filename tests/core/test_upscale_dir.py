@@ -187,6 +187,54 @@ def test_one_session_three_items_written(
     )
 
 
+def test_creds_defaults_to_env_credential_provider(
+    tmp_path: Path, session: dict[str, Any]
+) -> None:
+    """Calling without ``creds=`` must hand ``EnvCredentialProvider`` to
+    ``deploy_session``.
+
+    Bug caught: a None creds reaches deploy_session and every live run dies
+    with AuthError before create_instance, exactly as the 2026-10-06 first
+    live fire did.
+    """
+    from kinoforge.core.credentials import EnvCredentialProvider
+
+    src = _src(tmp_path, ["a.png"])
+    plan = plan_image_dir(src, scale=2, max_output_megapixels=256)
+    upscale_image_dir(
+        _cfg(),
+        plan,
+        store=MagicMock(),
+        run_id="r",
+        state_dir=tmp_path / ".kf",
+        upscaler=_Upscaler(tmp_path),  # type: ignore[arg-type]
+        health_probe=lambda url, cancel_token: {"ok": True},
+    )
+    assert isinstance(session["kwargs"]["creds"], EnvCredentialProvider)
+
+
+def test_creds_explicit_provider_is_forwarded(
+    tmp_path: Path, session: dict[str, Any]
+) -> None:
+    """Explicit ``creds=`` must not be replaced by the default-shim."""
+    from kinoforge.core.credentials import EnvCredentialProvider
+
+    sentinel = EnvCredentialProvider()
+    src = _src(tmp_path, ["a.png"])
+    plan = plan_image_dir(src, scale=2, max_output_megapixels=256)
+    upscale_image_dir(
+        _cfg(),
+        plan,
+        store=MagicMock(),
+        run_id="r",
+        state_dir=tmp_path / ".kf",
+        upscaler=_Upscaler(tmp_path),  # type: ignore[arg-type]
+        health_probe=lambda url, cancel_token: {"ok": True},
+        creds=sentinel,
+    )
+    assert session["kwargs"]["creds"] is sentinel
+
+
 def test_scale_override_takes_precedence_over_cfg(
     tmp_path: Path, session: dict[str, Any]
 ) -> None:
