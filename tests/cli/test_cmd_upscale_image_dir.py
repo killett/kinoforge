@@ -14,6 +14,7 @@ from PIL import Image
 
 import kinoforge._adapters  # noqa: F401 — self-register engines + upscalers
 from kinoforge.cli._main import main
+from kinoforge.cli.pod_health import probe_pod_health
 from kinoforge.core.image_dir import ImageDirItem, ImageDirPlan
 from kinoforge.core.interfaces import Instance
 from kinoforge.core.upscale_dir import ImageDirResult, ItemOutcome, PodDead
@@ -352,6 +353,24 @@ class TestRun:
         assert rc == 0
         assert cap["scale"].value == 4
         assert "(8x6 -> 32x24)" in o
+
+    def test_runner_receives_the_cli_health_probe(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Bug caught: core.upscale_dir must never import an adapter
+        # namespace (kinoforge.engines), so its health_probe default is
+        # `None` — dead-pod detection only works when the CLI explicitly
+        # injects the concrete probe. If this call site drops the kwarg,
+        # every directory run silently loses dead-pod detection.
+        src = _photos(tmp_path)
+        cap = _fake_runner(monkeypatch)
+        rc = main(_argv(tmp_path, src, "--no-reuse"))
+        capsys.readouterr()
+        assert rc == 0
+        assert cap["health_probe"] is probe_pod_health
 
     def test_one_failure_exits_1_and_names_it(
         self,

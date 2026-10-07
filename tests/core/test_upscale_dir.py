@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import time
-import urllib.error
+import logging
 from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
-from email.message import Message
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -15,7 +13,6 @@ import pytest
 from PIL import Image
 
 import kinoforge._adapters  # noqa: F401 — self-register upscalers
-import kinoforge.engines._pod_http as _pod_http
 from kinoforge.core import upscale_dir as mod
 from kinoforge.core.config import Config
 from kinoforge.core.errors import BudgetExceeded, Cancelled, KinoforgeError
@@ -387,33 +384,20 @@ def test_scratch_cleared_after_each_item(
     assert snapshots == [[], [], []]
 
 
-def test_transient_proxy_502_does_not_abort_the_run(
-    tmp_path: Path, session: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+def test_no_probe_means_no_abort(
+    tmp_path: Path, session: dict[str, Any], caplog: pytest.LogCaptureFixture
 ) -> None:
-    # Bug caught: a routine RunPod-proxy startup-window 502 on /health (the
-    # same proxy race _pod_http.py documents around lines 99-102, which
-    # every other engine call already tolerates via retry_proxy_call) was
-    # indistinguishable from a dead pod and aborted every remaining item.
-    # The default probe must retry transient codes before raising PodDead.
-    calls = {"n": 0}
-
-    def flaky_http_json(
-        *, method: str, url: str, payload: Any, user_agent: str
-    ) -> dict[str, Any]:
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise urllib.error.HTTPError(url, 502, "Bad Gateway", Message(), None)
-        return {"ok": True}
-
-    monkeypatch.setattr(_pod_http, "http_json", flaky_http_json)
-    monkeypatch.setattr(time, "sleep", lambda s: None)
-
+    # Bug caught: core must never import an adapter namespace
+    # (test_no_adapter_imports_in_core), so the concrete RunPod-proxy probe
+    # moved to kinoforge.cli.pod_health and core's default became `None`.
+    # A silent `None` would make a dead pod disappear into unexplained
+    # per-item failures with no signal at all that dead-pod detection is
+    # off — exactly one warning must fire, on the first skipped probe.
+    caplog.set_level(logging.WARNING, logger="kinoforge.core.upscale_dir")
     src = _src(tmp_path, ["a.png", "b.png", "c.png"])
     up = _Upscaler(tmp_path, fail_on={2})
     seen: list[tuple[str, str, str | None]] = []
     plan = plan_image_dir(src, scale=2, max_output_megapixels=256)
-    # No health_probe override here — this exercises the real default
-    # probe (_default_health_probe -> retry_proxy_call), not a test double.
     result, _inst = upscale_image_dir(
         _cfg(),
         plan,
@@ -424,7 +408,14 @@ def test_transient_proxy_502_does_not_abort_the_run(
         on_item=lambda item, outcome, reason: seen.append(
             (item.source.name, outcome, reason)
         ),
+        health_probe=None,
     )
     assert [s[1] for s in seen] == ["written", "failed", "written"]
     assert result.written == 2 and result.failed == 1 and result.aborted == 0
-    assert calls["n"] == 2
+    warnings = [
+        r.message for r in caplog.records if "no health probe injected" in r.message
+    ]
+    assert warnings == [
+        "no health probe injected; a dead pod will surface as per-item "
+        "failures, not an abort"
+    ]

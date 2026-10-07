@@ -1651,6 +1651,7 @@ def _cmd_upscale_image_dir(
     Returns:
         Exit code: 2 precondition, 1 any failure or abort, 0 otherwise.
     """
+    from kinoforge.cli.pod_health import probe_pod_health
     from kinoforge.core.errors import Cancelled, KinoforgeError
     from kinoforge.core.image_dir import ImageDirItem, plan_image_dir
     from kinoforge.core.upscale_dir import upscale_image_dir
@@ -1746,6 +1747,10 @@ def _cmd_upscale_image_dir(
             single=bool(args.no_reuse),
             on_instance_created=_ephemeral_row_upgrade_hook(ctx, cfg, launch),
             on_item=_on_item,
+            # core never imports an adapter namespace, so the runner takes
+            # the probe as a seam; the CLI is the one place that may import
+            # kinoforge.engines, so it injects the concrete RunPod-proxy probe.
+            health_probe=probe_pod_health,
             # The same effective ScaleTarget the plan used for its arithmetic
             # (CLI --scale override or cfg.upscale.scale) — otherwise the
             # stage would re-derive cfg.upscale.scale and disagree with the

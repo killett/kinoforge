@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,7 +59,6 @@ _FATAL: tuple[type[BaseException], ...] = (
     CapabilityMismatch,
     TeardownError,
 )
-_HEALTH_USER_AGENT = "kinoforge-upscale-dir/0.1"
 
 
 class PodDead(KinoforgeError):
@@ -98,30 +96,6 @@ class ImageDirResult:
         return self._count("aborted")
 
 
-def _default_health_probe(url: str, cancel_token: CancelToken | None) -> dict[str, Any]:
-    """GET ``/health`` with bounded retry on the RunPod proxy's transient 404/502/503/504.
-
-    A dead pod and a routine proxy warmup blip look identical on a single
-    request (``_pod_http.py`` lines ~99-102 document the same proxy
-    tolerance every other engine call goes through). Routing the probe
-    through :func:`~kinoforge.engines._proxy_retry.retry_proxy_call` means
-    one transient hiccup does not get misread as :class:`PodDead` and
-    abort every remaining item.
-    """
-    from kinoforge.engines._pod_http import http_json
-    from kinoforge.engines._proxy_retry import retry_proxy_call
-
-    return retry_proxy_call(
-        label="upscale_dir.health",
-        url=url,
-        fn=lambda: http_json(
-            method="GET", url=url, payload=None, user_agent=_HEALTH_USER_AGENT
-        ),
-        sleep=time.sleep,
-        cancel_token=cancel_token,
-    )
-
-
 def _health_url(instance: Instance | None) -> str | None:
     if instance is None:
         return None
@@ -133,7 +107,9 @@ def _health_url(instance: Instance | None) -> str | None:
 def _write_atomic(path: Path, body: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".part")
-    tmp.write_bytes(body)
+    # kinoforge:public-write — the operator named <dir>_upscaled as the
+    # destination (plan_image_dir's output_dir_for); nothing prompt-derived.
+    tmp.write_bytes(body)  # kinoforge:public-write
     os.replace(tmp, path)
 
 
@@ -152,7 +128,7 @@ def upscale_image_dir(
     provider: ComputeProvider | None = None,
     engine: GenerationEngine | None = None,
     upscaler: UpscalerEngine | None = None,
-    health_probe: HealthProbe = _default_health_probe,
+    health_probe: HealthProbe | None = None,
     scale: ScaleTarget | None = None,
 ) -> tuple[ImageDirResult, Instance | None]:
     """Upscale every ``pending`` item of *plan* inside one deploy session.
@@ -183,7 +159,13 @@ def upscale_image_dir(
         upscaler: Test-injection ``UpscalerEngine``; defaults to the
             registry's ``cfg.upscale.engine``.
         health_probe: ``(url, cancel_token) -> json``; raises when the pod
-            is unreachable.
+            is unreachable. ``core`` never imports an adapter namespace, so
+            this module has no concrete probe of its own — the CLI injects
+            ``kinoforge.cli.pod_health.probe_pod_health``. ``None`` (the
+            default here) disables dead-pod detection: a failure is still
+            recorded as ``failed`` and the run continues, but a dead pod
+            will surface only as a string of per-item failures, never as
+            :class:`PodDead`.
         scale: The effective scale the CLI already resolved (CLI ``--scale``
             override or ``cfg.upscale.scale``). When ``None``, falls back to
             parsing ``cfg.upscale.scale`` directly — but a caller that
@@ -221,6 +203,8 @@ def upscale_image_dir(
 
     if not pending:
         return ImageDirResult(plan, ()), instance
+
+    warned_no_probe = False
 
     with _orch.deploy_session(
         cfg,
@@ -280,6 +264,14 @@ def upscale_image_dir(
                     reason = f"{type(exc).__name__}: {exc}"
                     _log.warning("%s failed: %s", item.source, reason)
                     _emit(item, "failed", reason)
+                    if health_probe is None:
+                        if not warned_no_probe:
+                            _log.warning(
+                                "no health probe injected; a dead pod will "
+                                "surface as per-item failures, not an abort"
+                            )
+                            warned_no_probe = True
+                        continue
                     url = _health_url(session.instance)
                     if url is not None:
                         try:
