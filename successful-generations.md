@@ -92,8 +92,10 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
     - See also: `2026-09-23 01:17:02` — **the seeded strength A/B that explains this entry's frame-QA FAIL.** Same tuple `(modal, DiffusersEngine, MiniMaxAI/MiniMax-H3, t2va)`, new cfg `examples/configs/modal-diffusers-minimax-h3-t2va-lora-style-seeded.yaml` (20 steps, **`spec.seed: 424242` PINNED** — the first seeded comparison in this whole task). Pod `run-20260923-011131` (H200), two cells: LineartAnime at **strength 1.0** → `output/20260923-011408_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (1,398,302 B, sha256 `bc617c3b01b9fb20…`) is photorealistic with **no style at all**; the same seed at **strength 2.0** (the schema maximum) → `output/20260923-011702_diffusers_MiniMax-H3_Photorealistic-cinem.mp4` (910,484 B, sha256 `8d3b0a26dacf7e99…`) is a **total stylistic transformation** — photorealism gone, flat painterly brushwork, stylised foliage, saturated illustrative colour, the subject a painted character. Both cells share composition, camera path and figure placement (the seed pin visibly holding), so the ONLY difference is style. **Verdict: strength was the variable, not dtype — the profile's fp32→bf16 restore path is EXONERATED**, and §34's FAIL was a config artifact (strength 1.0 compounded by 8 steps). Cell A isolates it: 20 steps alone does NOT produce the style. `/health` held a third time; GPU probe read **100 %** mid-denoise, resolving §34's low-utilisation caveat as point-sampling. Spend **est≤$0.51**, teardown verified from a fresh process. Full delta in `.superpowers/sdd/2026-09-22-h3-lora-shared-seam/task-11-report.md`.
 35. `2026-10-03 17:44:27` — [`kinoforge image` — the first generation produced by a kinoforge command that terminates at an image (Luma UNI-1) — t2i](#35-2026-10-03-174427--kinoforge-image--the-first-generation-produced-by-a-kinoforge-command-that-terminates-at-an-image-luma-uni-1--t2i)
 36. `2026-10-03 21:51:04` — [kinoforge upscale --image — spandrel RealESRGAN-x2 on a Luma UNI-1 still — image-upscale](#36-2026-10-03-215104--kinoforge-upscale---image--spandrel-realesrgan-x2-on-a-luma-uni-1-still--image-upscale)
+   - See also: same engine tuple (`runpod`, `SpandrelEngine`, `RealESRGAN_x2`) now also upscales a whole DIRECTORY via `kinoforge upscale --image-dir` — §39.
 37. `2026-10-05 01:09:02` — [kinoforge text — t2t on Qwen3-0.6B, the first text-generation command — t2t](#37-2026-10-05-010902--kinoforge-text--t2t-on-qwen3-06b-the-first-text-generation-command--t2t)
 38. `2026-10-05 01:11:04` — [kinoforge text --image — it2t on SmolVLM-256M-Instruct, first image-to-text chain — it2t](#38-2026-10-05-011104--kinoforge-text---image--it2t-on-smolvlm-256m-instruct-first-image-to-text-chain--it2t)
+39. `2026-10-06 23:44:39` — [kinoforge upscale --image-dir — spandrel RealESRGAN-x2 directory batch on RunPod — image-dir-upscale](#39-2026-10-06-234439--kinoforge-upscale---image-dir--spandrel-realesrgan-x2-directory-batch-on-runpod--image-dir-upscale)
 
           MARK="$(mktemp)"
 
@@ -4351,5 +4353,140 @@ same-stem `.json` sidecar, `util.log` (shared with §37).
 Total ≈ **$0.01-0.02** for §37 + §38 together (65 s @ $0.49/hr + 40 s @ $0.27/hr); estimate
 from `costPerHr × life`, not a billing read. Session total for this plan: that plus nothing
 else (all other work offline).
+
+---
+
+## 39. `2026-10-06 23:44:39` — kinoforge upscale --image-dir — spandrel RealESRGAN-x2 directory batch on RunPod — image-dir-upscale
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `runpod / SpandrelEngine / RealESRGAN_x2.pth (ai-forever/Real-ESRGAN)` |
+| **Mode** | image-dir-upscale |
+| **kinoforge version** | `v0.5.0` |
+| **First-success SHA** | `448d53d5` (branch `feat/image-dir-upscale`) |
+| **Date (local TZ)** | 2026-10-06 23:44:39 -0700 (PDT) |
+| **Layer / phase** | Directory image upscaling, design `docs/superpowers/specs/2026-10-06-directory-image-upscale-design.md`, plan `docs/superpowers/plans/2026-10-06-directory-image-upscale.md` (9 tasks) |
+
+### The new capability axis
+
+New mode `image-dir-upscale` — the first kinoforge command that upscales an entire DIRECTORY
+of images on one pod, the first controller-side image-format conversion (AVIF/WEBP/GIF ->
+PNG) and EXIF-orientation handling, and the first multi-item run with per-item failure
+semantics (one oversize file fails without aborting the other five). Same engine/model tuple
+as §36 (`runpod`, `SpandrelEngine`, `RealESRGAN_x2`) but a new mode, so this is a new section
+and §36 also gets a "See also" line pointing here.
+
+### Exact command
+
+Run by the live test as a subprocess, against a fixture built under pytest's `tmp_path` by
+`tests/live/build_image_dir_fixture.py`:
+
+```bash
+pixi run kinoforge upscale \
+  -c examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml \
+  --image-dir <tmp>/dir-smoke \
+  --no-reuse
+```
+
+Driven by `tests/live/test_image_dir_upscale_smoke.py`.
+
+### Cfg
+
+`examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml` verbatim — same cfg as §12/§36.
+
+### Plan
+
+```
+found 8: pending 6, exists 1, oversize 1, unreadable 0; non-image skipped 1
+```
+
+`existing.png` was pre-placed in the output dir and skipped with its sha256 unchanged.
+`notes.txt` counted as the non-image skip. `huge.webp` (9000×9000 at 2x) is the designed-in
+oversize failure against `upscale.max_output_megapixels=256`.
+
+### Per-file results
+
+| # | Input | Output | Dims (in -> out) | Conversion | QA |
+|---|---|---|---|---|---|
+| 1/6 | `luma-avif.avif` | `luma-avif.png` | 2672×1504 -> 5344×3008 | AVIF -> PNG | PASS |
+| 2/6 | `luma-webp.webp` | `luma-webp.png` | 2672×1504 -> 5344×3008 | WEBP -> PNG | PASS |
+| 3/6 | `luma.png` | `luma.png` | 2672×1504 -> 5344×3008 | passthrough | PASS |
+| 4/6 | `rotated.jpg` | `rotated.png` | 2672×1504 -> 5344×3008 | JPEG -> PNG, EXIF orientation 6 applied | PASS |
+| 5/6 | `sub/alpha.png` | `sub/alpha.png` | 300×180 -> 600×360 | alpha dropped | PASS (⚠️ mottling on flat colour) |
+| 6/6 | `sub/anim.gif` | `sub/anim.png` | 320×200 -> 640×400 | GIF frame 0 -> PNG | PASS (⚠️ mottling on flat colour) |
+| — | `huge.webp` | — | 9000×9000 at 2x -> 324.0 MP | **failed**: exceeds `upscale.max_output_megapixels=256` | N/A — controller-side guard, zero pod effect |
+| — | `existing.png` | (unchanged) | — | skipped — already has an output | N/A |
+| — | `notes.txt` | — | — | non-image, skipped | N/A |
+
+Summary line (verbatim): `upscaled 6, skipped 1 existing, failed 1, aborted 0 ->
+<tmp>/dir-smoke_upscaled`, then `  failed: huge.webp: 9000x9000 at 2x -> 324.0 MP exceeds
+upscale.max_output_megapixels=256`. **Exit code 1 — BY DESIGN**: any plan-time failure makes
+the run exit 1 even though all six writable images succeeded; the designed-in oversize file
+proves the guard refuses on the controller with zero pod effect.
+
+### Output
+
+Four large outputs (5344×3008 RGB PNG, ~18.8 MB each) and two small ones:
+
+- `luma.png` sha256 `7f9d63e67e2e75de…`
+- `luma-webp.png` sha256 `e1e6bb4058848dc6…`
+- `luma-avif.png` sha256 `e79e7ef260d11ce8…`
+- `rotated.png` sha256 `edb4bc6c32c3c43e…`
+- `sub/alpha.png` 600×360, sha256 `821ecb6c8ed45372…`
+- `sub/anim.png` 640×400, sha256 `e01287d1e5341768…`
+
+The four large outputs are **not** committed (~18.8 MB each, over the pre-commit 500 KB hook
+limit); the full fixture plus all outputs are kept for the operator at
+`output/20261006-234439_image-dir-upscale/` (gitignored).
+
+### Visual QA — PASS (6/6), one soft flag
+
+Contact sheets `qa-*.jpg`/`qa-*.png` read side-by-side by the controller: detail preserved
+(waterfall mist, sparkle particles crisper than nearest-neighbour), no tile seams (512-px
+tiles, 32-px context), no colour shift; `rotated.png` is upright and identical in composition
+to `luma.png` (EXIF orientation 6 applied on the controller before upload); `sub/anim.png` is
+red = frame 0 (frame 1 was green, correctly dropped); `sub/alpha.png` has alpha dropped
+cleanly, no checkerboard.
+
+⚠️ On the two flat-colour synthetic inputs (`sub/anim`, `sub/alpha`) RealESRGAN hallucinates
+faint mottling on the featureless field — expected model behaviour on flat colour, not a
+pipeline fault; the photographic inputs show none.
+
+### Utilisation polling
+
+Polled by the harness thread, never inferred from `est_spend`:
+
+```
+2026-10-06T23:41:51 pod=none            found=False gpu=-     cpu=-    mem=-
+2026-10-06T23:42:51 pod=uuxvo4gr5zhtx7  found=True  gpu=0.0   cpu=5.0  mem=0.0   (boot)
+2026-10-06T23:43:52 pod=uuxvo4gr5zhtx7  found=True  gpu=100.0 cpu=52.0 mem=1.0   (inference)
+```
+
+### Spend
+
+Not a billing read. Pod `uuxvo4gr5zhtx7` (secure pool) created ~23:41:55, first `/health`-ready
+inference ~23:43:36, destroyed + forgotten by `--no-reuse` at 23:44:39; test wall 180.6 s. GPU
+type for this pod was not captured. Estimated at the config's usual secure-pool rate (the same
+cfg booked an RTX 4090 at $0.74/hr in §12's 2026-09-11 "See also") ≈ **$0.03-0.05**.
+
+### Attempt 1 — AuthError, $0 spend, fixed same day
+
+First attempt (23:31, same day) failed in 20 s before any pod was created, with `AuthError:
+missing required env var: HF_TOKEN` — `upscale_image_dir()` passed no `creds` to
+`deploy_session`, a real runner bug. Fixed in `8ce31853`. Evidence kept as
+`attempt1-creds-bug-*.txt`. Zero spend.
+
+### Teardown
+
+`pixi run kinoforge list` after the orchestrator exited: `[instance overview] No running
+instances.` and `No instances recorded in ledger.`
+
+### Evidence
+
+`tests/live/evidence/2026-10-06-image-dir-upscale/` holds `stdout.txt`, `stderr.txt`,
+`list.txt`, `util.txt`, the two small outputs (`sub__alpha.png`, `sub__anim.png`), six contact
+sheets (`qa-*.jpg` for the four large outputs, `qa-*.png` for the two small ones), and the
+three attempt-1 files (`attempt1-creds-bug-stdout.txt`, `attempt1-creds-bug-stderr.txt`,
+`attempt1-creds-bug-util.txt`). The four large outputs are not committed (see Output above).
 
 ---
