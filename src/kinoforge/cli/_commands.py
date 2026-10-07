@@ -50,7 +50,7 @@ from kinoforge.core.launch_phase import (
 )
 from kinoforge.core.lifecycle import destroy_confirmed
 from kinoforge.core.lora import LoraEntry, resolve_active_lora_stack
-from kinoforge.core.media import IMAGE_SUFFIXES, MEDIA_KEY
+from kinoforge.core.media import IMAGE_SUFFIXES, MEDIA_KEY, local_artifact
 from kinoforge.core.orchestrator import generate
 from kinoforge.core.reaper import Verdict
 from kinoforge.core.reaper_actor import sweep
@@ -1490,19 +1490,9 @@ def _resolve_input_as_artifact(path_or_url: str, media: Media) -> Artifact:
     Returns:
         The input artifact seeded into ``state.artifacts["clip"]``.
     """
-    import hashlib as _hashlib
-
-    meta = {MEDIA_KEY: media}
     if path_or_url.startswith(("http://", "https://")):
-        return Artifact(uri=path_or_url, sha256="", size=0, meta=meta)
-    p = Path(path_or_url).resolve()
-    h = _hashlib.sha256()
-    with p.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return Artifact(
-        uri=f"file://{p}", sha256=h.hexdigest(), size=p.stat().st_size, meta=meta
-    )
+        return Artifact(uri=path_or_url, sha256="", size=0, meta={MEDIA_KEY: media})
+    return local_artifact(Path(path_or_url), media)
 
 
 def _upscaler_precision_tag(cfg: Config) -> str:
