@@ -303,3 +303,63 @@ def plan_image_dir(
             ImageDirItem(p, output, hdr.width, hdr.height, disposition, reason, renamed)
         )
     return ImageDirPlan(src, out_dir, tuple(items), skipped)
+
+
+_PASSTHROUGH_SUFFIXES = frozenset({".png", ".jpg", ".jpeg"})
+_PASSTHROUGH_MODES = frozenset({"RGB", "RGBA", "L"})
+
+
+def _sha8(path: Path) -> str:
+    """First 8 hex digits of the file's sha256."""
+    import hashlib
+
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()[:8]
+
+
+def prepare_upload(item: ImageDirItem, scratch: Path) -> Path:
+    """Return the path to upload for *item*: the source itself, or a converted PNG.
+
+    The pod accepts only PNG/JPEG, 8-bit, and reads them without applying
+    EXIF orientation. A PNG or JPEG whose mode is ``RGB`` / ``RGBA`` / ``L``
+    and whose orientation is the identity is uploaded byte for byte.
+    Everything else is opened, EXIF-transposed, converted to 8-bit ``RGB``
+    and written as ``<sha8>.png`` under *scratch*. Multi-frame inputs
+    contribute frame 0.
+
+    Args:
+        item: A planned item (``pending``).
+        scratch: Per-run scratch directory; the caller removes it.
+
+    Returns:
+        The path whose bytes go to the pod.
+    """
+    from PIL import Image, ImageOps
+
+    register_heif()
+    with Image.open(item.source) as im:
+        orientation = int(im.getexif().get(_ORIENTATION_TAG, 1) or 1)
+        if (
+            item.source.suffix.lower() in _PASSTHROUGH_SUFFIXES
+            and im.mode in _PASSTHROUGH_MODES
+            and orientation == 1
+        ):
+            return item.source
+        src_mode = im.mode
+        n_frames = int(getattr(im, "n_frames", 1))
+        if n_frames > 1:
+            _log.info(
+                "%s: %d frames; upscaling frame 0 only", item.source.name, n_frames
+            )
+            im.seek(0)
+        transposed = ImageOps.exif_transpose(im)
+        rgb = (transposed if transposed is not None else im).convert("RGB")
+    out = scratch / f"{_sha8(item.source)}.png"
+    rgb.save(out, format="PNG")
+    _log.info(
+        "%s: re-encoded to %s (%s -> RGB PNG)", item.source.name, out.name, src_mode
+    )
+    return out
