@@ -74,6 +74,10 @@ def test_mode_role_requirements_shape() -> None:
         "t2va": {},
         "i2v": {"init_image": "image"},
         "flf2v": {"first_frame": "image", "last_frame": "image"},
+        # kinoforge text modes (design §2.1): t2t is text-generation, it2t is
+        # image-text-to-text. Both are empty because image count is open-ended.
+        "t2t": {},
+        "it2t": {},
     }
 
 

@@ -84,6 +84,10 @@ ignore_missing_imports = true
 module = ["modal", "modal.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]  # transformers: pod-only, lazy-imported in servers/text_server.py; no local stubs.
+module = ["transformers", "transformers.*"]
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]  # pynvml + psutil live only on-pod; lazy-imported+guarded in servers/_util_stats.
 module = ["pynvml", "pynvml.*", "psutil", "psutil.*"]
 ignore_missing_imports = true

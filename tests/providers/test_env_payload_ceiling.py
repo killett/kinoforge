@@ -152,22 +152,62 @@ _RUNPOD_CEILING_BYTES = 101_000
 #: Deliberate and reviewed (every changed embedded blob was decoded and
 #: diffed: only those three modules moved, and only on those lines). Worst
 #: case is now 92,014 B — 8,986 B of headroom under the 101,000 B ceiling.
+#:
+#: 2026-10-05 (text-command, Tasks 1/4 reconciliation): the eight
+#: FlashVSR/RIFE/spandrel stems bump again, +128..140 B each, from
+#: `TextGenerationFailed` landing in `kinoforge.core.errors` (text-command
+#: Task 1, commit `f6bafbfa`) — every one of these eight configs embeds
+#: `kinoforge.core.errors` single-file via `embed_files`, so the new
+#: exception class's source rides onto the pod. The nine wan-t2v-only stems
+#: are unaffected (unchanged in this bump) because they do not embed
+#: `kinoforge.core.errors` as a standalone file. Deliberate and reviewed
+#: (every changed launch-payload golden was decoded: only the
+#: `TextGenerationFailed` class body and, on Modal/SkyPilot configs out of
+#: this ceiling test's scope, two new `servers/` files moved). Worst case is
+#: now 92,150 B — 8,850 B of headroom under the 101,000 B ceiling.
+#:
+#: 2026-10-05 (kinoforge text, Task 8): three new rows. The text server
+#: embeds `text_server.py` + `_util_stats.py` + `_upload.py` only
+#: (needs-only, U53), so these sit far below the Wan-server configs. The
+#: model ref DOES enter the rendered env — `KINOFORGE_TEXT_MODEL_ID` plus the
+#: legacy `WAN_MODEL_ID` both carry it — and the lifecycle block enters via
+#: `KINOFORGE_SELFTERM_SCRIPT`; the three stems are not byte-identical
+#: content, their near-equal sizes are a gzip+base64 rounding effect (the
+#: compressed+encoded blob's length is insensitive to small differences in a
+#: few numeric/string fields buried inside a much larger shared script).
+#:
+#: 2026-10-05 (kinoforge text, Task 8 review fix round 1 — lifecycle
+#: self-terminator inversion, Important/plan-mandated): all three
+#: `idle_timeout` values bumped per the controller's ruling so
+#: `min(2*idle_timeout, max_lifetime-time_buffer)` clears each config's
+#: `boot_timeout` (previously the cap sat AT or BELOW the boot window, so a
+#: slow download could self-terminate the pod before `/health` ever reports
+#: ready — see the task-8-report.md DELTA entry). Qwen3-0.6B and SmolVLM:
+#: `idle_timeout` 10m -> 15m (cap 20m -> 30m); bytes unchanged (17,282 /
+#: 17,322) — "10m"/"15m" are the same length and the computed deadline
+#: digit-count did not change either. Qwen3.8-27B: `idle_timeout` 15m -> 25m
+#: (cap 30m -> 50m); bytes 17,282 -> 17,284, a +2 B gzip rounding artifact
+#: from the changed deadline value threading through the selfterm script,
+#: not a meaningfully larger payload.
 _BASELINE_BYTES: dict[str, int] = {
-    "runpod-diffusers-flashvsr-1080p-upscale": 91_984,
-    "runpod-diffusers-flashvsr-x4-torch26-upscale": 92_014,
-    "runpod-diffusers-flashvsr-x4-upscale": 91_984,
-    "runpod-diffusers-rife-60fps-interpolate": 79_644,
-    "runpod-diffusers-spandrel-x2-upscale": 79_484,
+    "runpod-diffusers-qwen3-0_6b-t2t": 17_282,
+    "runpod-diffusers-qwen3_8-27b-it2t": 17_284,
+    "runpod-diffusers-smolvlm-256m-it2t": 17_322,
+    "runpod-diffusers-flashvsr-1080p-upscale": 92_124,
+    "runpod-diffusers-flashvsr-x4-torch26-upscale": 92_150,
+    "runpod-diffusers-flashvsr-x4-upscale": 92_124,
+    "runpod-diffusers-rife-60fps-interpolate": 79_772,
+    "runpod-diffusers-spandrel-x2-upscale": 79_620,
     "runpod-diffusers-wan-2_1-1_3b-base": 53_010,
     "runpod-diffusers-wan-2_1-1_3b-base-no-loras": 53_010,
     "runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke": 53_010,
     "runpod-diffusers-wan-2_1-1_3b-t2v-strength-grid": 53_010,
     "runpod-diffusers-wan-2_2-14b-base": 53_034,
     "runpod-diffusers-wan-2_2-14b-t2v": 53_002,
-    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-1080p-upscale": 92_010,
-    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale": 92_010,
+    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-1080p-upscale": 92_146,
+    "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale": 92_146,
     "runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release": 53_034,
-    "runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale": 79_546,
+    "runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale": 79_686,
     "runpod-diffusers-wan-2_2-14b-t2v-lora-target-spelled": 53_034,
     "runpod-diffusers-wan-2_2-14b-t2v-strength-grid": 53_034,
 }

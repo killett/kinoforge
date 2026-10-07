@@ -1,0 +1,103 @@
+# `kinoforge text` QUALITY config — Qwen3.8-27B bf16 on an 80 GB card
+# (modes: t2t, it2t).
+#
+# *** OFFLINE-VALIDATED ONLY. This config has NOT been live-fired. ***
+# It loads, renders a provision payload under the RunPod ceiling, and passes
+# every config sweep; the missing proof is one real run — a bf16 27 B load on
+# an A100-80GB (~56 GB download, ~$1.50-2.50 for the boot + one completion).
+# Record that run in successful-generations.md before trusting this file.
+# (Precedent: the Replicate image engine shipped the same way, stated plainly.)
+#
+# Why this model: first in its class on the Artificial Analysis Intelligence
+# Index (v4.3.2 = 34), GPQA Diamond 89.2, LiveCodeBench v6 90.3, SWE-bench Pro
+# 61.7; dense 27.8 B incl. a vision encoder, 262K native context, Apache 2.0.
+# Nothing stronger fits one card — everything above Gemma-4-31B on LMArena is
+# a 295 B+ MoE. See docs/superpowers/research/2026-10-04-open-weight-llm-survey.md.
+#
+# Usage:
+#   pixi run kinoforge text \
+#     --config examples/configs/runpod-diffusers-qwen3_8-27b-it2t.yaml \
+#     --prompt "..." [--image a.png ...] \
+#     --no-reuse
+
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.text_server"
+    pip:
+      - "transformers>=5.10"
+      - "accelerate>=1.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "pillow>=10"
+      - "psutil>=5.9"
+      - "nvidia-ml-py>=12"
+    embed_files:
+      # Needs-only embed (U53): the server and exactly the two sibling helpers
+      # it imports. tests/providers/test_pod_embed_closure.py asserts both
+      # directions.
+      - "kinoforge.engines.diffusers.servers.text_server"
+      - "kinoforge.engines.diffusers.servers._util_stats"
+      - "kinoforge.engines.diffusers.servers._upload"
+    capability:
+      # The pre-spend half of the multimodal gate reads THIS (design §4.1); the
+      # pod derives the truth from the checkpoint and /health re-checks it.
+      supported_modes: ["t2t", "it2t"]
+
+models:
+  - ref: "hf:Qwen/Qwen3.8-27B"
+    kind: base
+    target: checkpoints  # informational; transformers manages the HF cache
+
+text:
+  engine: transformers
+  params:
+    max_new_tokens: 1024
+    do_sample: true
+    temperature: 0.7
+    top_p: 0.9
+    chat_template_kwargs:
+      enable_thinking: false
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+  mode: pod
+  # Secure pool: the community pool reclaims pods minutes after create (U65 —
+  # seventeen long-boot configs were being killed mid-fetch). Guarded by
+  # tests/test_runpod_long_boot_needs_secure_pool.py.
+  backend_options:
+    runpod:
+      cloud_type: secure
+  placement:
+    min_vram_gb: 80
+    disk_gb: 150
+    # Pin NVIDIA 80GB-class accelerators — the 27B bf16 load needs ~56 GB of
+    # VRAM headroom plus activation/KV overhead.
+    accelerators:
+      - "NVIDIA A100 80GB PCIe"
+      - "NVIDIA A100-SXM4-80GB"
+      - "NVIDIA H100 80GB HBM3"
+      - "NVIDIA H100 PCIe"
+  lifecycle:
+    boot_timeout: 45m
+    # self-terminator deadline = min(2*idle_timeout, max_lifetime-time_buffer)
+    # = min(50m, 85m) = 50m, which must exceed boot_timeout (45m) or the pod
+    # kills itself mid-download before /health can ever report ready.
+    idle_timeout: 25m
+    job_timeout: 20m
+    time_buffer: 5m
+    max_lifetime: 90m
+    budget: 5.0
+    heartbeat_interval_s: 30
+
+# spec.model is informational for text cfgs (TextStage never POSTs /generate),
+# but test_no_unknown_slug_for_example_configs asserts DiffusersEngine.
+# model_identity is non-empty for every shipped config.
+spec:
+  model: "qwen3.8-27b-bf16"

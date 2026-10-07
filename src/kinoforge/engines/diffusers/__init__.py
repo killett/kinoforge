@@ -1391,6 +1391,29 @@ class DiffusersEngine(GenerationEngine):
                     *(line for line in interp_rp.script.split("\n") if line),
                 )
 
+        # Compose the text engine's provision fragment when cfg.text is set.
+        # Mirrors the two blocks above with ONE difference: phase "runtime",
+        # not "build". Those fragments install weights, which Modal bakes into
+        # the image; this one is `export` lines, and an export baked into an
+        # image layer is gone by the time the container runs. RunPod
+        # concatenates both phases, so this is invisible there and correct on
+        # Modal (design §5.3).
+        text_block_raw = cfg.get("text") if isinstance(cfg, dict) else None
+        text_ports: list[str] = []
+        if isinstance(text_block_raw, dict):
+            text_engine_name = text_block_raw.get("engine")
+            if text_engine_name:
+                from kinoforge.core import registry as _registry
+
+                text_engine = _registry.get_text_engine(str(text_engine_name))()
+                text_rp = text_engine.render_provision(cfg)
+                _add(
+                    "runtime",
+                    "# ---- text engine provision (composed) ----",
+                    *(line for line in text_rp.script.split("\n") if line),
+                )
+                text_ports = list(text_rp.ports)
+
         if wan_model_id and server_cmd:
             # Exported BEFORE server_cmd so the launching shell carries
             # it into the wan_t2v_server process. See wan_t2v_server.py
@@ -1417,6 +1440,13 @@ class DiffusersEngine(GenerationEngine):
         # 8001 is the sidecar log-server port; emitted alongside the main
         # server port so the provider exposes both via its proxy URLs.
         ports = [port, "8001"] if port != "8001" else [port]
+        # Union in the composed text engine's port(s) (controller ruling,
+        # Task 5): without this, a `text.port` that differs from the base
+        # server port is never exposed by the provider's proxy, so the text
+        # server boots and listens but nothing can reach it.
+        for text_port in text_ports:
+            if text_port not in ports:
+                ports.append(text_port)
         return RenderedProvision(
             script="\n".join(lines),
             setup_steps=tuple(steps),

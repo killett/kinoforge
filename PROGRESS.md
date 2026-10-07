@@ -26,18 +26,18 @@ first unchecked task without redoing committed work.
 > `examples/configs/modal-diffusers-minimax-h3-t2va-long.yaml`.
 
 ## Pointers
-- **IN DESIGN — text generation on reserved compute (`kinoforge text`):** design
+- **SHIPPED — text generation on reserved compute (`kinoforge text`):** design
   `docs/superpowers/specs/2026-10-04-text-command-design.md` (approved 2026-10-04, committed
-  `a51dad8a`), research `docs/superpowers/research/2026-10-04-open-weight-llm-survey.md`.
+  `a51dad8a`), research `docs/superpowers/research/2026-10-04-open-weight-llm-survey.md`, plan
+  `docs/superpowers/plans/2026-10-04-text-command.md` (+ `.tasks.json`, 10 tasks).
   A `text:` block beside `engine:`/`models:`/`compute:`; `TextEngine` ABC shaped like
   `UpscalerEngine`; `TextStage` via `orchestrator.generate(skip_clip_stage=True)`; lean
   `servers/text_server.py` on the H3 skeleton; modes `t2t`/`it2t` derived from `--image`;
   images-to-a-text-only-model refused pre-spend from the declared `capability.supported_modes`
   and re-checked against the pod's `/health`. Smoke models Qwen3-0.6B + SmolVLM-256M; quality
-  config Qwen3.8-27B (offline-validated only). Plan: not yet written — next action is the
-  operator's spec review, then `writing-plans`. **Spec approved 2026-10-04 ("no changes"); plan
-  written:** `docs/superpowers/plans/2026-10-04-text-command.md` (+ `.tasks.json`, 10 tasks,
-  Task 10 = the two live smokes, user-gate). Next action: execute Task 1. Two pipeline hooks
+  config Qwen3.8-27B (offline-validated only). **Tasks 1-10 done; live-proven 2026-10-05 (§37
+  t2t Qwen3-0.6B, §38 it2t SmolVLM-256M).**
+  Two pipeline hooks
   (prompt enhancement, frame QA) are a FOLLOW-ON spec that depends on this one.
 - **SHIPPED — standalone image upscaling (`kinoforge upscale --image`):** design
   `docs/superpowers/specs/2026-10-03-standalone-image-upscaling-design.md`, plan
@@ -3238,7 +3238,58 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-09-25 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-10-05 — read this, then STOP; below is history)
+
+### SESSION 2026-10-05 — kinoforge text shipped (plan 10/10, live-proven)
+
+**Plan complete 10/10 on branch `feat/text-command`.** `kinoforge text` is live-proven on real
+RunPod hardware: a `t2t` run on Qwen3-0.6B and an `it2t` run on SmolVLM-256M-Instruct, both
+through the real CLI with `--no-reuse`, both torn down and verified.
+
+- **t2t — Qwen3-0.6B** (pod `x0crhwy2l9g5et`, costPerHr $0.49, ~65 s life, ≈$0.009): **PASS** —
+  coherent two-sentence summary naming subject, setting and light. `successful-generations.md`
+  §37.
+- **it2t — SmolVLM-256M-Instruct** (pod `69f9a15t91p6td`, costPerHr $0.27, ~40 s life, ≈$0.003):
+  **⚠️ PARTIAL** — description is correct for the §35 Luma UNI-1 still but the model gave one
+  sentence and no colours against a two-sentences-plus-colours prompt; pipeline proven, model
+  weak on instruction-following at 256M. `successful-generations.md` §38.
+- Total live spend this session ≈ **$0.01-0.02** (estimate from costPerHr × pod life, not a
+  billing read).
+- The quality config `examples/configs/runpod-diffusers-qwen3_8-27b-it2t.yaml` remains
+  **OFFLINE-VALIDATED ONLY** — not fired live this session.
+
+**Follow-ups from the final review (not done in this plan).** The final whole-branch review's
+fix wave landed three fixes (`health.ready` gate in `TextStage`, pre-spend `text.engine` registry
+refusal in `_cmd_text`, new guard `tests/test_runpod_lifecycle_cap_clears_boot.py`). These were
+found in the same pass and deliberately left:
+
+- **Legacy lifecycle-inverted configs** — `min(2*idle_timeout, max_lifetime - time_buffer) <=
+  boot_timeout`, i.e. the pod self-terminates before the boot it was permitted. The three `text:`
+  configs were fixed by hand in `e301a6a0`; four pre-existing RunPod configs still invert and are
+  enumerated in the new guard's `LEGACY_INVERTED` allowlist (which can only shrink):
+  `runpod-diffusers-wan-2_1-1_3b-base.yaml`, `runpod-diffusers-wan-2_1-1_3b-base-no-loras.yaml`,
+  `runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml`,
+  `runpod-diffusers-wan-2_1-1_3b-t2v-strength-grid.yaml` (all `idle 10m` / `max_lifetime 1h` /
+  `buffer 2m` → a 1200 s cap under an 1800 s `boot_timeout`). A further **12** Modal/SkyPilot
+  configs trip the same arithmetic but are OUT OF SCOPE for that guard — their deadline is
+  `boot_timeout`-derived, so the inversion is not a defect there.
+- **15 Modal/SkyPilot configs still embed `kinoforge.engines.diffusers.servers` by DIRECTORY**
+  (13 Modal + 2 SkyPilot) — the U53 class defect, which walks the whole package and ships every
+  sibling server module. Convert to the named-`embed_files` shape the RunPod configs now use.
+  (One RunPod config, `extras/runpod-diffusers-wan-2_2-14b-t2v-seedvr2-upscale.yaml`, also does;
+  it is one of the two `extras/` configs excluded by name from the payload-ceiling guard.)
+- **`_image_arg_error` / `text_request.image_arg_error` duplication** — two copies of the same
+  `--image` suffix/existence refusal. Blocked on four pinned upscale tests that assert the
+  `_commands.py` copy's exact wording; de-duplicating means re-pinning those first.
+- **AST import guard widening** — the pod-side-import guard only walks module-level statements,
+  so a `kinoforge.*` import inside a `Try` or `If` body is invisible to it (exactly the U66
+  shape). Widen it to those bodies and derive the scanned path list rather than hard-coding it.
+- **`@app.on_event` deprecation, third site** — `servers/text_server.py` joins
+  `wan_t2v_server.py` and `minimax_h3_server.py` on the deprecated FastAPI startup hook; all
+  three should move to the `lifespan` context manager in one pass.
+
+**Single next action:** merge `feat/text-command` to main; the hooks spec — prompt enhancement
++ frame QA — is the follow-on.
 
 ### SESSION 2026-09-24/25 — the URGENT ACTION ITEMS queue is EMPTY
 

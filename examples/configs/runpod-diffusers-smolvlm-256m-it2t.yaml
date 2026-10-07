@@ -1,0 +1,95 @@
+# `kinoforge text` smoke config — VISION-LANGUAGE model (modes: t2t, it2t).
+#
+# SmolVLM-256M-Instruct (0.26 B params, 0.5 GB, Apache 2.0, Idefics3) is the
+# smallest credible VLM in the 2026-10-04 survey and its architecture has been
+# stable in transformers since 4.46 — a smoke should fail on kinoforge, not on
+# a library version. Qwen3.5-0.8B is the stronger tiny VLM (also Apache 2.0,
+# 1.75 GB) and the documented alternative: swap the ref and nothing else.
+#
+# Usage:
+#   pixi run kinoforge text \
+#     --config examples/configs/runpod-diffusers-smolvlm-256m-it2t.yaml \
+#     --prompt "$(cat examples/configs/prompts/text-smoke-it2t.txt)" \
+#     --image output/<some>.png \
+#     --no-reuse
+
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.text_server"
+    pip:
+      - "transformers>=5.10"
+      - "accelerate>=1.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "pillow>=10"
+      - "psutil>=5.9"
+      - "nvidia-ml-py>=12"
+      # Idefics3's processor imports num2words for its image-token phrasing.
+      - "num2words>=0.5"
+    embed_files:
+      # Needs-only embed (U53): the server and exactly the two sibling helpers
+      # it imports. tests/providers/test_pod_embed_closure.py asserts both
+      # directions.
+      - "kinoforge.engines.diffusers.servers.text_server"
+      - "kinoforge.engines.diffusers.servers._util_stats"
+      - "kinoforge.engines.diffusers.servers._upload"
+    capability:
+      # The pre-spend half of the multimodal gate reads THIS (design §4.1); the
+      # pod derives the truth from the checkpoint and /health re-checks it.
+      supported_modes: ["t2t", "it2t"]
+
+models:
+  - ref: "hf:HuggingFaceTB/SmolVLM-256M-Instruct"
+    kind: base
+    target: checkpoints  # informational; transformers manages the HF cache
+
+text:
+  engine: transformers
+  params:
+    max_new_tokens: 128
+    do_sample: false
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+  mode: pod
+  # Secure pool: the community pool reclaims pods minutes after create (U65 —
+  # seventeen long-boot configs were being killed mid-fetch). Guarded by
+  # tests/test_runpod_long_boot_needs_secure_pool.py.
+  backend_options:
+    runpod:
+      cloud_type: secure
+  placement:
+    min_vram_gb: 16
+    disk_gb: 40
+    # Pin NVIDIA — without an allowlist the offer chooser can pick an AMD
+    # Instinct that RunPod's create-pod mutation rejects with HTTP 500.
+    accelerators:
+      - "NVIDIA RTX A4000"
+      - "NVIDIA RTX A5000"
+      - "NVIDIA L4"
+      - "NVIDIA GeForce RTX 4090"
+      - "NVIDIA GeForce RTX 3090"
+  lifecycle:
+    boot_timeout: 20m
+    # self-terminator deadline = min(2*idle_timeout, max_lifetime-time_buffer)
+    # = min(30m, 42m) = 30m, which must exceed boot_timeout (20m) or the pod
+    # kills itself mid-boot before /health can ever report ready.
+    idle_timeout: 15m
+    job_timeout: 10m
+    time_buffer: 3m
+    max_lifetime: 45m
+    budget: 1.0
+    heartbeat_interval_s: 30
+
+# spec.model is informational for text cfgs (TextStage never POSTs /generate),
+# but test_no_unknown_slug_for_example_configs asserts DiffusersEngine.
+# model_identity is non-empty for every shipped config.
+spec:
+  model: "smolvlm-256m-bf16"

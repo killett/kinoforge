@@ -35,7 +35,9 @@ EXAMPLES_DIR = REPO_ROOT / "examples" / "configs"
 # wan_t2v_server.py) rather than imported, so a change on either side breaks
 # this test instead of the two silently agreeing on a new term.
 # ``"upload"`` is always advertised but is never a stage a cfg *wants*.
-ADVERTISABLE_STAGES = frozenset({"t2v", "upscale", "interpolate"})
+# ``"text"`` is advertised by servers/text_server.py (`kinoforge text`);
+# transcribed by hand like the other three, for the same reason.
+ADVERTISABLE_STAGES = frozenset({"t2v", "upscale", "interpolate", "text"})
 
 # The eight configs the U14 delegation changed, listed by hand from the
 # repo's upscale cfg filenames. Every one is ``upscale_only: true`` with
@@ -70,6 +72,25 @@ U19_CHANGED_CFGS = frozenset(
         "modal-diffusers-rife-60fps-interpolate-long.yaml",
         "modal-diffusers-rife-60fps-interpolate.yaml",
         "runpod-diffusers-rife-60fps-interpolate.yaml",
+    }
+)
+
+# Task 8 (kinoforge text, 2026-10-05) shipped three brand-new `text:` configs.
+# They did not exist before U14/U19 so there is no real "pre" state to pin —
+# the pre-U14 derivation only ever looked at `cfg.upscale`, which none of
+# these three set, so it reads `()` for all three by construction. Enumerated
+# separately from U14_CHANGED_CFGS / U19_CHANGED_CFGS (which each pin a
+# specific historical PROGRESS.md claim about an *existing* cfg moving
+# between two derivations) so neither of those claims silently absorbs a
+# config family it was never about; folding these in here instead keeps
+# `test_exactly_the_enumerated_cfgs_moved_off_the_pre_u14_derivation`
+# meaningful rather than vacuously passing the moment a new stage-bearing
+# config ships.
+TASK8_TEXT_CFGS = frozenset(
+    {
+        "runpod-diffusers-qwen3-0_6b-t2t.yaml",
+        "runpod-diffusers-qwen3_8-27b-it2t.yaml",
+        "runpod-diffusers-smolvlm-256m-it2t.yaml",
     }
 )
 
@@ -217,7 +238,7 @@ def test_exactly_the_enumerated_cfgs_moved_off_the_pre_u14_derivation(
         for name, cfg in video_cfgs.items()
         if _want_stages_pre_u14(cfg) != _cfg_want_stages(cfg)
     }
-    expected = set(U14_CHANGED_CFGS) | set(U19_CHANGED_CFGS)
+    expected = set(U14_CHANGED_CFGS) | set(U19_CHANGED_CFGS) | set(TASK8_TEXT_CFGS)
     assert changed == expected, (
         f"unexpected: {sorted(changed - expected)}; "
         f"no longer changed: {sorted(expected - changed)}"
@@ -237,6 +258,16 @@ def test_exactly_the_enumerated_cfgs_moved_off_the_pre_u14_derivation(
             f"{name} changed to {_cfg_want_stages(loaded[name])}, not "
             "('interpolate',) — the U19 claim is that a RIFE cfg demands "
             "exactly the stage its pod now advertises"
+        )
+    for name in sorted(TASK8_TEXT_CFGS):
+        assert _want_stages_pre_u14(loaded[name]) == (), (
+            f"{name} is a new text cfg with no `upscale:` block, so the "
+            "pre-U14 derivation reads it as ungated by construction"
+        )
+        assert _cfg_want_stages(loaded[name]) == ("text",), (
+            f"{name} changed to {_cfg_want_stages(loaded[name])}, not "
+            "('text',) — `kinoforge text`'s warm-attach gate expects exactly "
+            "one stage"
         )
 
 

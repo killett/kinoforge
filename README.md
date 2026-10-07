@@ -378,6 +378,19 @@ pixi run -e live-hosted kinoforge image \
 Lands at `output/<ts>_image_<provider>_<model>_<slug>.png`. No compute is
 provisioned — every image engine is a hosted API.
 
+**Text generation** — a `text:` cfg block + `kinoforge text` runs one chat completion against an
+open-weight LLM (`transformers` engine) on a RunPod pod kinoforge books and tears down. The mode
+is derived, never typed: `--image` selects `it2t` and is refused before any spend when the config
+declares a text-only model.
+
+```bash
+pixi run kinoforge text \
+  --config examples/configs/runpod-diffusers-smolvlm-256m-it2t.yaml \
+  --prompt "Describe this image in two sentences." \
+  --image output/some-frame.png \
+  --no-reuse
+```
+
 **Joint audio** — MiniMax-H3 (`modal-diffusers-minimax-h3-t2va.yaml`) adds a `t2va` mode: the model
 emits a soundtrack jointly with the video and the pod muxes it into the mp4. The upscale and
 interpolate stages are video-only, so a chained run re-muxes the original soundtrack onto the

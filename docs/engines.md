@@ -666,3 +666,41 @@ which is the tag the live runs were proven on. Examples:
 Interpolation is video-only. A clip whose soundtrack came from a `t2va` model
 (MiniMax-H3) needs that audio re-muxed onto the interpolated result — the
 interpolator does not carry it through.
+
+## Text engines
+
+The fourth engine family (after video, image, upscale/interpolate). A `TextEngine`
+(`core/interfaces.py`) is shaped like `UpscalerEngine`: a registry key
+(`registry.register_text_engine`, duplicate-rejecting on the same key), a `requires_compute`
+flag, a composable `render_provision` fragment, and the calls `TextStage` makes against a booted
+pod — `health`, `upload_image`, `complete`, `validate_spec`, `model_identity`. Every pod-facing
+call takes `cfg` so the engine reads `text.port` on each call; that, plus the fragment being
+composed in the diffusers engine's RUNTIME phase, are the two seams a later sidecar launch beside
+a video server would use.
+
+### `transformers` (`kinoforge.text_engines.transformers`)
+
+Controller-side client (`TransformersTextEngine`) for the pod-side
+`engines/diffusers/servers/text_server.py`:
+
+| route | contract |
+|---|---|
+| `GET /health` | `{"ready", "model", "supported_modes": [...], "capabilities": ["text", "upload"] when ready else [], "default_max_new_tokens", "torch": {...}}`; `supported_modes` is DERIVED on the pod from the loaded checkpoint, not read from config |
+| `GET /util` | the five `UtilSnapshot` fields (`read_gpu_stats`) |
+| `PUT /upload` | PNG/JPEG only (415 otherwise); `X-Filename` sanitised to a safe basename; `{"path", "size", "sha256"}`, cross-checked by the client against its own local digest |
+| `POST /text` | `{prompt, system?, images: [pod paths], params}` → `{"job_id"}`; 503 while the model is still loading; 400 when `images` is non-empty against a model whose derived modes don't include `it2t` |
+| `GET /text/status/{job_id}` | `{"state": "queued" \| "running" \| "done" \| "error", "result"?: {...}, "error"?: "..."}` |
+
+The status schema is `submit_and_poll`'s (`state`/`result`), not `/generate`'s
+(`status`/`filename`): the completion travels inline in `result`, so there is no artifact file
+and no `/artifacts` route. A ready `/health` advertises `"text"` in `capabilities` — that is the
+same `"text"` stage term `Config.capability_key()` appends to `CapabilityKey.stages` whenever
+`cfg.text is not None`, so the warm-reuse matcher (`_cfg_want_stages`, delegating to
+`capability_key().stages`) matches a warm text pod to a text config with the same base model and
+capability key.
+
+`servers/_upload.py` holds the shared `PUT /upload` handler (streamed body, size cap, atomic
+publish, sha256 reply) that `text_server.py` imports. `wan_t2v_server.py` keeps its own inline
+copy of the same contract on purpose rather than importing this module: migrating it would move
+sixteen configs' embed sets, launch goldens and payload baselines, and needs a live Wan-pod
+witness before it ships (design §6.4 / §13.5).

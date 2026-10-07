@@ -1,0 +1,29 @@
+{
+  "elapsed_s": 2.684110237285495,
+  "engine": "transformers",
+  "finish_reason": "stop",
+  "images": [
+    {
+      "local": "/workspace/output/20261003-174427_image_luma_agents_uni-1_Photorealistic-cinem.png",
+      "pod_path": "/tmp/kf-uploads/a188b7cd.png",
+      "role": "image_1",
+      "sha256": "a188b7cd3e5945cd7ad18898759171dce0603835a3e04d9a31f5413d5c730599"
+    }
+  ],
+  "instance_id": "69f9a15t91p6td",
+  "kinoforge_version": "0.5.0",
+  "mode": "it2t",
+  "model": "hf:HuggingFaceTB/SmolVLM-256M-Instruct",
+  "params": {
+    "do_sample": false,
+    "max_new_tokens": 128
+  },
+  "prompt": "Describe this image in two sentences. Name the dominant colours.\n",
+  "run_id": "text-20261005-011104",
+  "system": null,
+  "text": " In the foreground of the image there is a girl standing and in the background there is a waterfall, grass, plants, flowers and the sky.",
+  "usage": {
+    "completion_tokens": 30,
+    "prompt_tokens": 883
+  }
+}

@@ -2935,6 +2935,25 @@ def generate(
                 )
             )
 
+        # `kinoforge text` — terminal text stage (design §7.2). Exclusive with
+        # upscale/interpolate by the config validator, so ordering is moot.
+        if cfg.text is not None:
+            from kinoforge.core import registry as _registry
+            from kinoforge.pipeline.text import TextStage
+
+            text_engine = _registry.get_text_engine(cfg.text.engine)()
+            stages.append(
+                TextStage(
+                    engine=text_engine,
+                    instance=session.instance,
+                    cfg=cfg_dict,
+                    store=store,
+                    sink=sink,
+                    run_id=run_id,
+                    cancel_token=cancel_token,
+                )
+            )
+
         # Append InterpolateStage when cfg.interpolate is set. Standalone path
         # only (see plan Planning-time correction): interp runs on its own pod
         # via a separate `kinoforge interpolate` invocation, so its input clip
@@ -3015,6 +3034,8 @@ def generate(
             artifact_key = "interpolated"
         elif skip_clip_stage and cfg.upscale is not None:
             artifact_key = "upscaled"
+        elif skip_clip_stage and cfg.text is not None:
+            artifact_key = "text"
         else:
             artifact_key = "clip"
 
