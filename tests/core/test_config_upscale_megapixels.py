@@ -43,6 +43,7 @@ def test_default_is_256() -> None:
 
 
 def test_explicit_value_round_trips() -> None:
+    # Bug caught: a validator that ignores the configured value and always returns the default.
     cfg = Config.model_validate(_cfg({"max_output_megapixels": 64}))
     assert cfg.upscale is not None
     assert cfg.upscale.max_output_megapixels == 64
