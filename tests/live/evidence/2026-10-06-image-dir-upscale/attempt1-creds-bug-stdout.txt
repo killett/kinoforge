@@ -1,0 +1,13 @@
+[instance overview] No running instances.
+upscale plan:
+  source_dir: /workspace/output/dir-smoke
+  output_dir: /workspace/output/dir-smoke_upscaled
+  media: image
+  scale: 2x
+  engine: spandrel
+  no_reuse: True
+  attach_pod: None
+  huge.webp -> huge.png [oversize]: 12000x12000 at 2x -> 576.0 MP exceeds upscale.max_output_megapixels=256
+  found 8: pending 6, exists 1, oversize 1, unreadable 0; non-image skipped 1
+upscaled 0, skipped 1 existing, failed 1, aborted 0 -> /workspace/output/dir-smoke_upscaled
+  failed: huge.webp: 12000x12000 at 2x -> 576.0 MP exceeds upscale.max_output_megapixels=256
