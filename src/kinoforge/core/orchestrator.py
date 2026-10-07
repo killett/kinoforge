@@ -239,6 +239,34 @@ def _cfg_dict(cfg: Config) -> dict[str, object]:
     return cfg.model_dump()
 
 
+def fetch_artifact_bytes(artifact: Artifact) -> bytes:
+    """Read an artifact's bytes from a pod proxy URL or a ``file://`` uri.
+
+    Used by :func:`generate`'s materialize step and by
+    :func:`kinoforge.core.upscale_dir.upscale_image_dir`, so a pod-served
+    result is fetched the same way — same User-Agent (RunPod's Cloudflare
+    edge 403s the default urllib one) and the same 600 s timeout — wherever
+    it is consumed.
+
+    Args:
+        artifact: Its ``uri`` is ``http(s)://…`` or ``file://…``.
+
+    Returns:
+        The raw bytes.
+    """
+    if artifact.uri.startswith(("http://", "https://")):
+        import urllib.request as _urequest  # orchestrator stays urllib-free at module level
+
+        _log.info("materializing artifact from %s", artifact.uri)
+        req = _urequest.Request(  # noqa: S310 — pod proxy URL only
+            artifact.uri,
+            headers={"User-Agent": "kinoforge-orchestrator/0.1"},
+        )
+        with _urequest.urlopen(req, timeout=600) as resp:  # noqa: S310
+            return bytes(resp.read())
+    return Path(artifact.uri.removeprefix("file://")).read_bytes()
+
+
 _DIAG_REGION_DEFAULT = "us-west-2"
 
 
@@ -3083,18 +3111,7 @@ def generate(
                 )
             publish_ext = extension_for(media)
 
-            if upscaled.uri.startswith(("http://", "https://")):
-                import urllib.request as _urequest  # orchestrator stays urllib-free
-
-                _log.info("materializing upscaled artifact from %s", upscaled.uri)
-                req = _urequest.Request(  # noqa: S310 — pod proxy URL only
-                    upscaled.uri,
-                    headers={"User-Agent": "kinoforge-orchestrator/0.1"},
-                )
-                with _urequest.urlopen(req, timeout=600) as resp:  # noqa: S310
-                    body: bytes = resp.read()
-            else:
-                body = Path(upscaled.uri.removeprefix("file://")).read_bytes()
+            body: bytes = fetch_artifact_bytes(upscaled)
 
             provider_tag = cfg.upscale.engine if cfg.upscale is not None else "unknown"
             spec_obj: Any = cfg.spec
