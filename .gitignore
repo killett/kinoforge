@@ -95,6 +95,8 @@ tools/_snapshots/
 *.png
 # live-smoke evidence images are the record of a paid run; keep them (check-added-large-files still bounds size)
 !tests/live/evidence/**/*.png
+# §36's three 2026-10-03 full-size outputs (~18 MB each) stay local-only; §36's prose says so
+tests/live/evidence/2026-10-03-spandrel-image-upscale/*.png
 
 # Local-run output of the post-session thread dump (tests/conftest.py
 # pytest_sessionfinish hook). Diagnostics only — never committed.
