@@ -26,6 +26,13 @@ first unchecked task without redoing committed work.
 > `examples/configs/modal-diffusers-minimax-h3-t2va-long.yaml`.
 
 ## Pointers
+- **SHIPPED — directory image upscaling (`kinoforge upscale --image-dir`):** design
+  `docs/superpowers/specs/2026-10-06-directory-image-upscale-design.md` (approved 2026-10-06,
+  committed `7916b91d`), plan `docs/superpowers/plans/2026-10-06-directory-image-upscale.md`
+  (+ `.tasks.json`, 9 tasks). One flag on `upscale`; pure planner `core/image_dir.py`;
+  one-session runner `core/upscale_dir.py`; `upscale.max_output_megapixels` (default 256);
+  tilers deliberately NOT unified (spec §3.3). Zero pod-side changes.
+  **Tasks 1-9 done, live-proven 2026-10-06 (`successful-generations.md` §39).**
 - **SHIPPED — text generation on reserved compute (`kinoforge text`):** design
   `docs/superpowers/specs/2026-10-04-text-command-design.md` (approved 2026-10-04, committed
   `a51dad8a`), research `docs/superpowers/research/2026-10-04-open-weight-llm-survey.md`, plan
@@ -3238,7 +3245,65 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-10-05 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-10-06 — read this, then STOP; below is history)
+
+### SESSION 2026-10-06 — directory image upscaling, Tasks 1-9 done, live-proven
+
+**Task 9 (live) done — plan 9/9.** `kinoforge upscale --image-dir` is live-proven on real
+RunPod hardware via `tests/live/test_image_dir_upscale_smoke.py` (fixture built under pytest's
+`tmp_path` by `tests/live/build_image_dir_fixture.py`):
+
+    pixi run kinoforge upscale \
+      -c examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml \
+      --image-dir <tmp>/dir-smoke --no-reuse
+
+Pod `uuxvo4gr5zhtx7` (secure pool): created ~23:41:55, first `/health`-ready inference
+~23:43:36, destroyed + forgotten by `--no-reuse` at 23:44:39; test wall 180.6 s; HEAD at the
+time of the run `448d53d5` (includes runner fix `8ce31853`). Utilisation ticks: boot
+`gpu=0.0 cpu=5.0` at 23:42:51, inference `gpu=100.0 cpu=52.0` at 23:43:52 — polled by the
+harness thread, never inferred from `est_spend`. Spend not a billing read: pod life ≈2.75 min
+at the config's usual secure-pool rate (GPU type not captured this run) ≈ **$0.03-0.05**.
+
+Plan: `found 8: pending 6, exists 1, oversize 1, unreadable 0; non-image skipped 1`. Result:
+`upscaled 6, skipped 1 existing, failed 1, aborted 0`, `failed: huge.webp: 9000x9000 at 2x ->
+324.0 MP exceeds upscale.max_output_megapixels=256`. **Exit code 1 — BY DESIGN**: any plan-time
+failure makes the run exit 1 even though all six writable images succeeded; the designed-in
+oversize file proves the guard refuses on the controller with zero pod effect.
+
+Frame-QA: **PASS on all 6** outputs — detail preserved, no tile seams, no colour shift,
+`rotated.png` upright via controller-side EXIF orientation handling, `sub/anim.png` correctly
+took frame 0. ⚠️ On the two flat-colour synthetic inputs (`sub/anim`, `sub/alpha`) RealESRGAN
+hallucinates faint mottling on the featureless field — expected model behaviour on flat colour,
+not a pipeline fault.
+
+Attempt 1 (same day, 23:31) failed in 20 s before any pod with `AuthError: missing required env
+var: HF_TOKEN` — `upscale_image_dir()` passed no `creds` to `deploy_session`; fixed same day in
+`8ce31853`. Zero spend.
+
+Evidence: `tests/live/evidence/2026-10-06-image-dir-upscale/` (stdout/stderr/list/util, the two
+small outputs, six contact sheets, attempt-1 files). Full fixture + the four large outputs kept
+for the operator at `output/20261006-234439_image-dir-upscale/` (gitignored — over the 500 KB
+pre-commit hook limit). `successful-generations.md` §39.
+
+**Single next action:** merge `feat/image-dir-upscale` to main after the final whole-branch
+review.
+
+**Follow-ups found during review (not done in this plan):**
+- (a) `kinoforge upscale --scale` on the single `--video`/`--image` path has NEVER taken effect
+  at runtime — `_cmd_upscale` does `del scale` and `generate()` rebuilds the stage from
+  `cfg.upscale.scale` (`core/orchestrator.py`, the `UpscaleStage(` construction); the directory
+  path now honours it, the single path still does not.
+- (b) the `nothing to do: every image already has an output` line also prints when every file
+  failed at plan time (exit code is right, wording is not).
+- (c) `_image_preflight_error` messages say `--image` even on the `--image-dir` path.
+- (d) `--image-dir photos_upscaled` produces `photos_upscaled_upscaled` unguarded.
+- (e) a `.part` file is left behind if an output write fails mid-way.
+- (f) `_cmd_generate` and `_cmd_interpolate` still carry their own copies of the launch-row
+  stamp/settle block that `_finish_launch_row` now owns for `upscale`.
+- (g) per-task Verify commands in this plan omitted the whole-tree invariant tests
+  (`tests/test_core_invariant.py`, `tests/test_no_unredacted_writes.py`,
+  `tests/test_source_audit.py`); Task 8's full-suite run caught two breaks that Tasks 6/7 had
+  missed — future plans should include those three files in every task's Verify.
 
 ### SESSION 2026-10-05 — kinoforge text shipped (plan 10/10, live-proven)
 

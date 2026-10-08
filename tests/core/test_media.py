@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import kinoforge._adapters  # noqa: F401 — self-register every upscaler
@@ -111,3 +113,62 @@ class TestSupportsImageInput:
             if getattr(factory, "supports_image_input", False):
                 supporting.add(name)
         assert supporting == {"spandrel"}
+
+
+class TestDirImageSuffixes:
+    def test_every_suffix_has_a_pillow_opener(self) -> None:
+        # Bug caught: a typo'd suffix (".jpge") that no file ever matches,
+        # or a suffix Pillow cannot open, silently never reaches the pod.
+        import pillow_heif
+        from PIL import Image
+
+        from kinoforge.core.media import DIR_IMAGE_SUFFIXES
+
+        pillow_heif.register_heif_opener()
+        registered = Image.registered_extensions()
+        openable = {ext for ext, fmt in registered.items() if fmt in Image.OPEN}
+        missing = sorted(s for s in DIR_IMAGE_SUFFIXES if s not in openable)
+        assert missing == []
+        # Guard the guard: a sweep over an empty set passes everything.
+        assert len(DIR_IMAGE_SUFFIXES) >= 20
+
+    def test_non_image_suffixes_are_excluded(self) -> None:
+        # Bug caught: "everything Pillow registers" would classify .mpg,
+        # .pdf and .h5 as images and feed them to the planner.
+        from kinoforge.core.media import DIR_IMAGE_SUFFIXES
+
+        for bad in (".mpg", ".mpeg", ".pdf", ".ps", ".eps", ".h5", ".hdf", ".bufr"):
+            assert bad not in DIR_IMAGE_SUFFIXES
+
+    def test_pod_suffixes_are_a_subset(self) -> None:
+        # Bug caught: a PNG in the directory counted as "non-image".
+        from kinoforge.core.media import DIR_IMAGE_SUFFIXES, IMAGE_SUFFIXES
+
+        assert IMAGE_SUFFIXES <= DIR_IMAGE_SUFFIXES
+        assert all(s == s.lower() and s.startswith(".") for s in DIR_IMAGE_SUFFIXES)
+
+
+class TestLocalArtifact:
+    def test_stamps_uri_sha_size_and_media(self, tmp_path: Path) -> None:
+        # Bug caught: a relative uri, a sha of the wrong bytes, or a missing
+        # media stamp means the pod receives a "video".
+        import hashlib
+
+        from kinoforge.core.media import local_artifact
+
+        p = tmp_path / "in.png"
+        p.write_bytes(b"\x89PNG not really")
+        art = local_artifact(p, "image")
+        assert art.uri == f"file://{p.resolve()}"
+        assert art.sha256 == hashlib.sha256(b"\x89PNG not really").hexdigest()
+        assert art.size == p.stat().st_size
+        assert art.meta == {"media": "image"}
+
+    def test_cli_resolver_delegates(self, tmp_path: Path) -> None:
+        # Bug caught: the CLI keeps its own copy and the two drift.
+        from kinoforge.cli._commands import _resolve_input_as_artifact
+        from kinoforge.core.media import local_artifact
+
+        p = tmp_path / "in.mp4"
+        p.write_bytes(b"mp4")
+        assert _resolve_input_as_artifact(str(p), "video") == local_artifact(p, "video")

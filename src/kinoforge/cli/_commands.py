@@ -50,7 +50,7 @@ from kinoforge.core.launch_phase import (
 )
 from kinoforge.core.lifecycle import destroy_confirmed
 from kinoforge.core.lora import LoraEntry, resolve_active_lora_stack
-from kinoforge.core.media import IMAGE_SUFFIXES, MEDIA_KEY
+from kinoforge.core.media import IMAGE_SUFFIXES, MEDIA_KEY, local_artifact
 from kinoforge.core.orchestrator import generate
 from kinoforge.core.reaper import Verdict
 from kinoforge.core.reaper_actor import sweep
@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from kinoforge.core.batch_models import BatchManifest
     from kinoforge.core.cost import CostSnapshot
     from kinoforge.core.grid.executor import GridResult
+    from kinoforge.core.image_dir import ImageDirPlan
     from kinoforge.core.interfaces import Lifecycle
     from kinoforge.core.media import Media
     from kinoforge.core.reaper_actor import SweepReport
@@ -1152,10 +1153,15 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
             print(f"error: invalid cfg.upscale.scale: {exc}", file=sys.stderr)
             return 2
 
-    # --video | --image is a required argparse mutex group, so exactly one
-    # is set. The kind travels as DATA from here on (core/media.py).
-    media: Media = "image" if getattr(args, "image", None) is not None else "video"
-    source: str = args.image if media == "image" else args.video
+    # --video | --image | --image-dir is a required argparse mutex group, so
+    # exactly one is set. The kind travels as DATA from here on (core/media.py).
+    image_dir: str | None = getattr(args, "image_dir", None)
+    media: Media = "video" if getattr(args, "video", None) is not None else "image"
+    source: str = (
+        args.video
+        if media == "video"
+        else (image_dir if image_dir is not None else args.image)
+    )
 
     # Config-fact refusals fire BEFORE --dry-run prints so a dry run surfaces
     # them too, and long before any pod work.
@@ -1165,9 +1171,13 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     # An empty ``--image ""`` is a path fault, not an absent flag. Refuse it
     # before the dry-run block so a dry run cannot exit 0 on an empty path.
-    if media == "image" and not source:
+    # The directory path's own empty check lives in _cmd_upscale_image_dir.
+    if media == "image" and image_dir is None and not source:
         print(_image_arg_error(source), file=sys.stderr)
         return 2
+
+    if image_dir is not None:
+        return _cmd_upscale_image_dir(args, ctx, cfg, scale, raw_scale, image_dir)
 
     if getattr(args, "dry_run", False):
         print("upscale plan:")
@@ -1187,6 +1197,9 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
     if media == "image":
         if (img_err := _image_arg_error(source)) is not None:
             print(img_err, file=sys.stderr)
+            return 2
+        if (mp_err := _image_megapixel_error(source, cfg, scale)) is not None:
+            print(mp_err, file=sys.stderr)
             return 2
     elif (video_err := _video_arg_error(source)) is not None:
         print(video_err, file=sys.stderr)
@@ -1239,17 +1252,9 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
         on_instance_created=_ephemeral_row_upgrade_hook(ctx, cfg, launch),
     )
 
-    # T11 — symmetric ledger stamp with _cmd_generate (resolves T7 deferral).
-    if returned_instance is not None and instance is None and not args.no_reuse:
-        _stamp_cold_created_instance(
-            ctx,
-            cfg,
-            returned_instance,
-            created_at_local=launch.created_at_local if launch else None,
-            supersedes=launch.id if launch else None,
-        )
-    else:
-        _settle_unused_launch_row(ctx, cfg, launch, returned_instance)
+    _finish_launch_row(
+        ctx, cfg, launch, instance, returned_instance, no_reuse=bool(args.no_reuse)
+    )
 
     print(f"upscaled: uri={artifact.uri!r}")
     return 0
@@ -1425,10 +1430,14 @@ def _image_arg_error(image: str) -> str | None:
 def _image_preflight_error(cfg: Config, scale: ScaleTarget) -> str | None:
     """Return the exit-2 message for an ``--image`` run this config cannot serve.
 
-    Spec §2.1 items 2-4, in order: a height-target scale, an engine without
+    Spec §2.1 items 2-4, in order: a height-target scale, a non-integral
+    factor scale (spandrel tiles at whole-number factors; a fractional
+    factor like ``1.5x`` would also disagree between the directory plan's
+    arithmetic and the guard that computed it), an engine without
     ``supports_image_input``, then ``chunk_frames`` / ``tile_grid``. All are
     config facts, so they fire before ``--dry-run`` prints and before any
-    pod work.
+    pod work. Shared by both ``--image`` and ``--image-dir`` (both resolve
+    to ``media == "image"``).
 
     Args:
         cfg: Loaded config; ``cfg.upscale`` must be present (caller checked).
@@ -1446,6 +1455,11 @@ def _image_preflight_error(cfg: Config, scale: ScaleTarget) -> str | None:
             f"error: --image cannot use a height-target scale "
             f"({int(scale.value)}p); use --scale Nx (height targets for stills "
             "are deferred)"
+        )
+    if scale.value != int(scale.value):
+        return (
+            f"error: --image/--image-dir need an integer factor scale "
+            f"(got {scale.value}x); spandrel tiles at whole-number factors"
         )
     try:
         factory = registry.get_upscaler(block.engine)
@@ -1474,6 +1488,293 @@ def _image_preflight_error(cfg: Config, scale: ScaleTarget) -> str | None:
     return None
 
 
+def _finish_launch_row(
+    ctx: SessionContext,
+    cfg: Config,
+    launch: _LaunchRow | None,
+    instance: Instance | None,
+    returned_instance: Instance | None,
+    *,
+    no_reuse: bool,
+) -> None:
+    """Stamp a cold-created pod into the ledger, or settle the launch row.
+
+    The one copy of the block ``--video``, ``--image`` and ``--image-dir``
+    share. A cold create that will be warm-reused is recorded so the next
+    invocation can find it; every other outcome (attach, ``--no-reuse``, no
+    pod) releases the pre-create row when that is actually safe
+    (:func:`_settle_unused_launch_row`). Never called on a raise — ruling C1
+    keeps the row because the pod may still be alive.
+
+    Args:
+        ctx: Session context (ledger access).
+        cfg: Loaded config.
+        launch: The reserved launch row, or ``None`` when a pod was supplied.
+        instance: The pre-resolved instance the run was handed, if any.
+        returned_instance: The instance the run reports it used.
+        no_reuse: ``--no-reuse`` — the pod was destroyed, never stamp it.
+    """
+    if returned_instance is not None and instance is None and not no_reuse:
+        _stamp_cold_created_instance(
+            ctx,
+            cfg,
+            returned_instance,
+            created_at_local=launch.created_at_local if launch else None,
+            supersedes=launch.id if launch else None,
+        )
+    else:
+        _settle_unused_launch_row(ctx, cfg, launch, returned_instance)
+
+
+def _image_megapixel_error(source: str, cfg: Config, scale: ScaleTarget) -> str | None:
+    """Return the exit-2 message when a ``--image`` output would exceed the cap.
+
+    Args:
+        source: The ``--image`` path (already known to exist).
+        cfg: Loaded config; ``cfg.upscale`` present.
+        scale: The effective factor scale.
+
+    Returns:
+        An ``error: ...`` line naming the file, its size and the cap, or
+        ``None``.
+    """
+    from kinoforge.core.image_dir import output_megapixels, read_image_header
+
+    block = cfg.upscale
+    assert block is not None  # noqa: S101 — _cmd_upscale checked before calling
+    try:
+        hdr = read_image_header(Path(source))
+    except Exception as exc:  # noqa: BLE001 — any Pillow failure is "unreadable"
+        return f"error: --image cannot be read: {source}: {type(exc).__name__}: {exc}"
+    factor = int(scale.value)
+    mp = output_megapixels(hdr.width, hdr.height, factor)
+    if mp > block.max_output_megapixels:
+        return (
+            f"error: --image {source} is {hdr.width}x{hdr.height}; at {factor}x the "
+            f"output is {mp:.1f} MP, over upscale.max_output_megapixels="
+            f"{block.max_output_megapixels}"
+        )
+    return None
+
+
+def _print_image_dir_plan(
+    plan: ImageDirPlan,
+    cfg: Config,
+    raw_scale: str | None,
+    args: argparse.Namespace,
+    *,
+    dry_run: bool,
+) -> None:
+    """Print the plan header and counts; per-item lines on a dry run.
+
+    Args:
+        plan: The finished plan from :func:`kinoforge.core.image_dir.plan_image_dir`.
+        cfg: Loaded config; ``cfg.upscale`` present.
+        raw_scale: The raw ``--scale`` token, or ``None`` to fall back to cfg.
+        args: Parsed CLI arguments (for ``no_reuse`` / ``attach_pod``).
+        dry_run: Whether this is a ``--dry-run`` invocation; only a dry run
+            prints every item, otherwise only the plan-time failures print.
+    """
+    assert cfg.upscale is not None  # noqa: S101 — caller checked
+    print("upscale plan:")
+    print(f"  source_dir: {plan.source_dir}")
+    print(f"  output_dir: {plan.output_dir}")
+    print("  media: image")
+    print(f"  scale: {raw_scale or cfg.upscale.scale}")
+    print(f"  engine: {cfg.upscale.engine}")
+    print(f"  no_reuse: {bool(getattr(args, 'no_reuse', False))}")
+    print(f"  attach_pod: {getattr(args, 'attach_pod', None)}")
+    for item in plan.items:
+        if not dry_run and item.disposition not in ("oversize", "unreadable"):
+            continue
+        tag = item.disposition + (" renamed" if item.renamed else "")
+        line = (
+            f"  {item.source.relative_to(plan.source_dir).as_posix()} -> "
+            f"{item.output.relative_to(plan.output_dir).as_posix()} [{tag}]"
+        )
+        print(line + (f": {item.reason}" if item.reason else ""))
+    n_over = sum(1 for i in plan.items if i.disposition == "oversize")
+    n_unr = sum(1 for i in plan.items if i.disposition == "unreadable")
+    print(
+        f"  found {len(plan.items)}: pending {len(plan.pending)}, exists {len(plan.exists)}, "
+        f"oversize {n_over}, unreadable {n_unr}; non-image skipped {plan.skipped_non_image}"
+    )
+
+
+def _print_image_dir_summary(
+    plan: ImageDirPlan, seen: Mapping[Path, tuple[str, str | None]]
+) -> bool:
+    """Print the closing summary; return ``True`` when anything failed or aborted.
+
+    Args:
+        plan: The finished plan.
+        seen: ``source path -> (outcome, reason)`` for every item the
+            runner reported (via ``on_item``) before returning or raising.
+
+    Returns:
+        ``True`` when any item failed at plan time, failed during the run,
+        or was aborted; ``False`` when the run was entirely clean.
+    """
+    written = sum(1 for o, _ in seen.values() if o == "written")
+    run_failed = [(p, r) for p, (o, r) in seen.items() if o == "failed"]
+    aborted = [(p, r) for p, (o, r) in seen.items() if o == "aborted"]
+    plan_failed = [(i.source, i.reason) for i in plan.failed_at_plan]
+    print(
+        f"upscaled {written}, skipped {len(plan.exists)} existing, "
+        f"failed {len(run_failed) + len(plan_failed)}, aborted {len(aborted)} -> {plan.output_dir}"
+    )
+    for p, r in [*plan_failed, *run_failed]:
+        print(f"  failed: {p.relative_to(plan.source_dir).as_posix()}: {r}")
+    for p, r in aborted:
+        print(f"  aborted: {p.relative_to(plan.source_dir).as_posix()}: {r}")
+    return bool(run_failed or plan_failed or aborted)
+
+
+def _cmd_upscale_image_dir(
+    args: argparse.Namespace,
+    ctx: SessionContext,
+    cfg: Config,
+    scale: ScaleTarget,
+    raw_scale: str | None,
+    image_dir: str,
+) -> int:
+    """Handle ``upscale --image-dir`` after the shared preflight has passed.
+
+    Args:
+        args: Parsed CLI arguments.
+        ctx: Session context.
+        cfg: Loaded config with an ``upscale:`` block the engine can serve.
+        scale: Effective factor scale.
+        raw_scale: The ``--scale`` token, for the plan header.
+        image_dir: The ``--image-dir`` value.
+
+    Returns:
+        Exit code: 2 precondition, 1 any failure or abort, 0 otherwise.
+    """
+    from kinoforge.cli.pod_health import probe_pod_health
+    from kinoforge.core.errors import Cancelled, KinoforgeError
+    from kinoforge.core.image_dir import ImageDirItem, plan_image_dir
+    from kinoforge.core.upscale_dir import upscale_image_dir
+
+    assert cfg.upscale is not None  # noqa: S101 — _cmd_upscale checked
+    if not image_dir:
+        print("error: --image-dir is empty (no input path)", file=sys.stderr)
+        return 2
+    src = Path(image_dir)
+    if not src.exists():
+        print(f"error: --image-dir path does not exist: {image_dir}", file=sys.stderr)
+        return 2
+    if not src.is_dir():
+        print(f"error: --image-dir is not a directory: {image_dir}", file=sys.stderr)
+        return 2
+    factor = int(scale.value)
+    try:
+        plan = plan_image_dir(
+            src, scale=factor, max_output_megapixels=cfg.upscale.max_output_megapixels
+        )
+    except ValueError as exc:
+        print(f"error: --image-dir: {exc}", file=sys.stderr)
+        return 2
+    if not plan.items:
+        print(
+            f"error: --image-dir contains no images: {plan.source_dir} "
+            f"({plan.skipped_non_image} non-image file(s) skipped)",
+            file=sys.stderr,
+        )
+        return 2
+
+    dry_run = bool(getattr(args, "dry_run", False))
+    _print_image_dir_plan(plan, cfg, raw_scale, args, dry_run=dry_run)
+    if dry_run:
+        return 0
+    if getattr(args, "output_dir", None) is not None or getattr(
+        args, "no_output_dir", False
+    ):
+        print(
+            "note: --output-dir / --no-output-dir are ignored with --image-dir; "
+            f"outputs go to {plan.output_dir}",
+            file=sys.stderr,
+        )
+
+    seen: dict[Path, tuple[str, str | None]] = {}
+    pending = plan.pending
+    if not pending:
+        print(
+            f"nothing to do: every image already has an output under {plan.output_dir}"
+        )
+        return 1 if _print_image_dir_summary(plan, seen) else 0
+
+    store = ctx.store()
+    run_id = _resolve_run_id(args, "upscale")
+    instance: Instance | None = None
+    attach_pod_id = getattr(args, "attach_pod", None)
+    if attach_pod_id:
+        instance, rc = _resolve_attach_pod(ctx, cfg, attach_pod_id)
+        if rc is not None:
+            return rc
+    elif not args.no_reuse:
+        instance, report = _scan_warm_candidates(ctx, cfg)
+        logger.info(report.summarize())
+    launch = (
+        _ephemeral_launch_row_reserve(ctx, cfg, run_id) if instance is None else None
+    )
+
+    total = len(pending)
+
+    def _on_item(item: ImageDirItem, outcome: str, reason: str | None) -> None:
+        seen[item.source] = (outcome, reason)
+        n = len(seen)
+        rel_in = item.source.relative_to(plan.source_dir).as_posix()
+        if outcome == "written":
+            rel_out = item.output.relative_to(plan.output_dir).as_posix()
+            print(
+                f"[{n}/{total}] {rel_in} -> {rel_out} "
+                f"({item.width}x{item.height} -> {item.width * factor}x{item.height * factor})"
+            )
+        else:
+            print(f"[{n}/{total}] {rel_in} {outcome.upper()}: {reason}")
+
+    returned_instance: Instance | None = None
+    try:
+        _result, returned_instance = upscale_image_dir(
+            cfg,
+            plan,
+            store=store,
+            run_id=run_id,
+            state_dir=ctx.state_dir,
+            instance=instance,
+            cancel_token=ctx.cancel_token,
+            single=bool(args.no_reuse),
+            on_instance_created=_ephemeral_row_upgrade_hook(ctx, cfg, launch),
+            on_item=_on_item,
+            # core never imports an adapter namespace, so the runner takes
+            # the probe as a seam; the CLI is the one place that may import
+            # kinoforge.engines, so it injects the concrete RunPod-proxy probe.
+            health_probe=probe_pod_health,
+            # The same effective ScaleTarget the plan used for its arithmetic
+            # (CLI --scale override or cfg.upscale.scale) — otherwise the
+            # stage would re-derive cfg.upscale.scale and disagree with the
+            # plan on a --scale override.
+            scale=scale,
+        )
+    # None of these rungs settle the launch row — a raise keeps it (ruling C1):
+    # the pod may still be alive and billing, and the row is its only handle.
+    except Cancelled:
+        _print_image_dir_summary(plan, seen)
+        print("upscale: cancelled", file=sys.stderr)
+        return 1
+    except KinoforgeError as exc:
+        _print_image_dir_summary(plan, seen)
+        print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    any_failed = _print_image_dir_summary(plan, seen)
+    _finish_launch_row(
+        ctx, cfg, launch, instance, returned_instance, no_reuse=bool(args.no_reuse)
+    )
+    return 1 if any_failed else 0
+
+
 def _resolve_input_as_artifact(path_or_url: str, media: Media) -> Artifact:
     """Materialise a ``--video`` / ``--image`` arg as a kinoforge Artifact.
 
@@ -1490,19 +1791,9 @@ def _resolve_input_as_artifact(path_or_url: str, media: Media) -> Artifact:
     Returns:
         The input artifact seeded into ``state.artifacts["clip"]``.
     """
-    import hashlib as _hashlib
-
-    meta = {MEDIA_KEY: media}
     if path_or_url.startswith(("http://", "https://")):
-        return Artifact(uri=path_or_url, sha256="", size=0, meta=meta)
-    p = Path(path_or_url).resolve()
-    h = _hashlib.sha256()
-    with p.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return Artifact(
-        uri=f"file://{p}", sha256=h.hexdigest(), size=p.stat().st_size, meta=meta
-    )
+        return Artifact(uri=path_or_url, sha256="", size=0, meta={MEDIA_KEY: media})
+    return local_artifact(Path(path_or_url), media)
 
 
 def _upscaler_precision_tag(cfg: Config) -> str:

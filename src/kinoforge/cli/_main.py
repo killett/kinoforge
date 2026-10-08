@@ -723,11 +723,42 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
             "support image input (spandrel); output is always PNG."
         ),
     )
+    p_upscale_src.add_argument(
+        "--image-dir",
+        metavar="DIR",
+        dest="image_dir",
+        help=(
+            "upscale every image under DIR (recursive; any format Pillow opens) "
+            "on one pod into a sibling DIR_upscaled that mirrors the tree. Output "
+            "is always PNG; existing outputs are skipped. Engine must support "
+            "image input (spandrel)."
+        ),
+    )
     p_upscale.add_argument(
         "--scale",
         default=None,
         metavar="TARGET",
         help="scale target (e.g. '2x', '4x'); overrides cfg.upscale.scale",
+    )
+    p_upscale_output = p_upscale.add_mutually_exclusive_group()
+    p_upscale_output.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="PATH",
+        help=(
+            "user-facing output directory (overrides cfg.output.dir). Ignored "
+            "with --image-dir, whose outputs always go to the sibling "
+            "DIR_upscaled tree."
+        ),
+    )
+    p_upscale_output.add_argument(
+        "--no-output-dir",
+        action="store_true",
+        dest="no_output_dir",
+        help=(
+            "disable user-facing publish; clips/images remain only in the "
+            "store. Ignored with --image-dir."
+        ),
     )
     p_upscale.add_argument(
         "--no-reuse",

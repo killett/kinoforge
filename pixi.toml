@@ -80,6 +80,8 @@ typer = ">=0.26.8,<0.27"
 rich = ">=15.0.0,<16"
 stamina = ">=26.1.0,<27"
 vermin = ">=1.8.0,<2"
+pillow = "*"
+pillow-heif = "*"
 
 [pypi-dependencies]
 # Group-derived PyPI-only packages are inserted on the line below.
