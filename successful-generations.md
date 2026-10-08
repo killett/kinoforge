@@ -4437,7 +4437,8 @@ Four large outputs (5344×3008 RGB PNG, ~18.8 MB each) and two small ones:
 
 The four large outputs are **not** committed (~18.8 MB each, over the pre-commit 500 KB hook
 limit); the full fixture plus all outputs are kept for the operator at
-`output/20261006-234439_image-dir-upscale/` (gitignored).
+`output/20261006-234439_image-dir-upscale/` (gitignored). The two small outputs ARE committed
+(see Evidence below).
 
 ### Visual QA — PASS (6/6), one soft flag
 
@@ -4483,10 +4484,15 @@ instances.` and `No instances recorded in ledger.`
 
 ### Evidence
 
-`tests/live/evidence/2026-10-06-image-dir-upscale/` holds `stdout.txt`, `stderr.txt`,
-`list.txt`, `util.txt`, the two small outputs (`sub__alpha.png`, `sub__anim.png`), six contact
-sheets (`qa-*.jpg` for the four large outputs, `qa-*.png` for the two small ones), and the
-three attempt-1 files (`attempt1-creds-bug-stdout.txt`, `attempt1-creds-bug-stderr.txt`,
-`attempt1-creds-bug-util.txt`). The four large outputs are not committed (see Output above).
+`tests/live/evidence/2026-10-06-image-dir-upscale/` holds, **committed**: the text evidence
+(`stdout.txt`, `stderr.txt`, `list.txt`, `util.txt`, and the three attempt-1 files
+`attempt1-creds-bug-stdout.txt`, `attempt1-creds-bug-stderr.txt`,
+`attempt1-creds-bug-util.txt`), the two small outputs (`sub__alpha.png`, `sub__anim.png`), and
+all six contact sheets (`qa-luma.jpg`, `qa-luma-webp.jpg`, `qa-luma-avif.jpg`, `qa-rotated.jpg`
+for the four large outputs; `qa-sub__alpha.png`, `qa-sub__anim.png` for the two small ones).
+`.gitignore`'s blanket `*.png` rule carries a `!tests/live/evidence/**/*.png` negation so these
+PNGs are tracked rather than silently dropped. **Not committed**: the four 5344×3008 large
+outputs themselves (~18.8 MB each, over the pre-commit 500 KB `check-added-large-files` limit)
+— those live only at `output/20261006-234439_image-dir-upscale/` (gitignored, operator-local).
 
 ---
