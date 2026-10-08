@@ -3245,7 +3245,25 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-10-06 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-10-07 — read this, then STOP; below is history)
+
+### SESSION 2026-10-07 — merge landed (`f21e9daa`), CI red on both runners, fixed in `81d99514`
+
+The merge's CI run failed on ubuntu + macOS: conda-forge Pillow 12.3.0 is built WITHOUT
+libavif, so `.avif` in `DIR_IMAGE_SUFFIXES` had no opener (`unknown file extension: .avif`).
+It passed locally only because an orphaned `PIL/_avif.*.so` + `pillow.libs/` from a June PyPI
+wheel survived in `.pixi/envs/default` (removed; conda's file list never owned them). Fix:
+`pillow-avif-plugin` (conda-forge) + `register_openers()` (HEIF + AVIF) at both Pillow call
+sites in `core/image_dir.py`; `test_avif_is_readable_in_a_fresh_interpreter` guards the call
+sites (mutation-verified). macOS additionally flaked the fixed-sleep poller test; both
+`PodStatPoller` tests now wait on the log with a 5 s deadline.
+
+**Gotcha:** a green local suite does not prove the lockfile env is sufficient — the local
+`.pixi` env can carry orphaned files. When CI disagrees with local, diff `conda-meta/*.json`
+file lists against `site-packages` before blaming the runner.
+
+**Single next action:** pick up the review follow-ups listed under the 2026-10-06 session
+below (the merge is done; `--scale` on the single-input upscale path is the first).
 
 ### SESSION 2026-10-06 — directory image upscaling, Tasks 1-9 done, live-proven
 
