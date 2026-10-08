@@ -144,6 +144,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pango-1.56.4-hda50119_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pcre2-10.47-haa7fec5_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-12.3.0-py313h3b26573_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-avif-plugin-1.6.0-py313h8e51bd1_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-heif-1.3.0-py313hda2787d_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pixman-0.46.4-h54a6638_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/propcache-0.3.1-py313h8060acc_0.conda
@@ -522,6 +523,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pango-1.56.4-hf280016_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pcre2-10.47-h13923f0_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pillow-12.3.0-py313h44588eb_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-64/pillow-avif-plugin-1.6.0-py313h335c9b4_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pillow-heif-1.3.0-py313hf542e20_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pixman-0.46.4-ha059160_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/propcache-0.3.1-py313h717bdf5_0.conda
@@ -775,6 +777,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pango-1.56.4-hf80efc4_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pcre2-10.47-h30297fc_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-12.3.0-py313h4ede67f_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-avif-plugin-1.6.0-py313hae1e4de_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-heif-1.3.0-py313he881929_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pixman-0.46.4-h81086ad_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/propcache-0.3.1-py313ha9b7d5b_0.conda
@@ -961,6 +964,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pango-1.56.4-hda50119_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pcre2-10.47-haa7fec5_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-12.3.0-py313h3b26573_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-avif-plugin-1.6.0-py313h8e51bd1_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-heif-1.3.0-py313hda2787d_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pixman-0.46.4-h54a6638_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/propcache-0.5.2-py313h3dea7bd_0.conda
@@ -1349,6 +1353,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pango-1.56.4-hf280016_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pcre2-10.47-h13923f0_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pillow-12.3.0-py313h44588eb_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-64/pillow-avif-plugin-1.6.0-py313h335c9b4_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pillow-heif-1.3.0-py313hf542e20_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pixman-0.46.4-ha059160_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/propcache-0.5.2-py313h035b7d0_0.conda
@@ -1612,6 +1617,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pango-1.56.4-hf80efc4_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pcre2-10.47-h30297fc_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-12.3.0-py313h4ede67f_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-avif-plugin-1.6.0-py313hae1e4de_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-heif-1.3.0-py313he881929_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pixman-0.46.4-h81086ad_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/propcache-0.5.2-py313h65a2061_0.conda
@@ -1813,6 +1819,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pango-1.56.4-hda50119_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pcre2-10.47-haa7fec5_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-12.3.0-py313h3b26573_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-avif-plugin-1.6.0-py313h8e51bd1_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-heif-1.8.0-py313h5ba67c2_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pixman-0.46.4-h54a6638_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/propcache-0.5.2-py313h3dea7bd_0.conda
@@ -2209,6 +2216,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pango-1.56.4-hf280016_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pcre2-10.47-h13923f0_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pillow-12.3.0-py313h44588eb_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-64/pillow-avif-plugin-1.6.0-py313h335c9b4_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pillow-heif-1.8.0-py313h1e88f75_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pixman-0.46.4-ha059160_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/propcache-0.5.2-py313h035b7d0_0.conda
@@ -2477,6 +2485,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pango-1.56.4-hf80efc4_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pcre2-10.47-h30297fc_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-12.3.0-py313h4ede67f_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-avif-plugin-1.6.0-py313hae1e4de_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-heif-1.8.0-py313hc7e5079_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pixman-0.46.4-h81086ad_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/propcache-0.5.2-py313h65a2061_0.conda
@@ -2690,6 +2699,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pango-1.56.4-hda50119_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pcre2-10.47-haa7fec5_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-12.3.0-py312h38079b3_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-avif-plugin-1.6.0-py312hff3cd56_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-heif-1.3.0-py312hac751b7_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pixman-0.46.4-h54a6638_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/popt-1.19-h3b78370_0.conda
@@ -3162,6 +3172,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pango-1.56.4-hf280016_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pcre2-10.47-h13923f0_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pillow-12.3.0-py313h44588eb_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-64/pillow-avif-plugin-1.6.0-py313h335c9b4_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pillow-heif-1.3.0-py313hf542e20_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pixman-0.46.4-ha059160_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/popt-1.19-h2d2823b_0.conda
@@ -3506,6 +3517,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pango-1.56.4-hf80efc4_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pcre2-10.47-h30297fc_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-12.3.0-py313h4ede67f_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-avif-plugin-1.6.0-py313hae1e4de_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-heif-1.3.0-py313he881929_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pixman-0.46.4-h81086ad_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/popt-1.19-h284ff78_0.conda
@@ -7201,6 +7213,40 @@ packages:
   run_exports: {}
   size: 1072896
   timestamp: 1789122647267
+- conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-avif-plugin-1.6.0-py312hff3cd56_2.conda
+  sha256: f5e30925abc748084d95199927f584039199dd336338fa446c42fe554e7f52f8
+  md5: d452733d906157769f6c843f88588eba
+  depends:
+  - pillow
+  - python
+  - __glibc >=2.17,<3.0.a0
+  - libgcc >=15
+  - libavif16 >=1.4.2,<2.0a0
+  - python_abi 3.12.* *_cp312
+  license: BSD-2-Clause
+  license_family: BSD
+  purls:
+  - pkg:pypi/pillow-avif-plugin?source=hash-mapping
+  run_exports: {}
+  size: 32941
+  timestamp: 1788793150794
+- conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-avif-plugin-1.6.0-py313h8e51bd1_2.conda
+  sha256: 8fa7705eea427b2e196518ce2389bd18d8d53fa7cdebdb0cb8c6ceebfb68ef5f
+  md5: a62bd532f9d33a7b79cc675b5dabf91d
+  depends:
+  - pillow
+  - python
+  - libgcc >=15
+  - __glibc >=2.17,<3.0.a0
+  - python_abi 3.13.* *_cp313
+  - libavif16 >=1.4.2,<2.0a0
+  license: BSD-2-Clause
+  license_family: BSD
+  purls:
+  - pkg:pypi/pillow-avif-plugin?source=hash-mapping
+  run_exports: {}
+  size: 32855
+  timestamp: 1788793153135
 - conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-heif-1.3.0-py312hac751b7_2.conda
   sha256: 3f189922cfb7482dd3fd7af517a9d5c99fad285b328fd786321bd6cf59054084
   md5: f36514595ec781b9e0b7064933e52f15
@@ -13257,6 +13303,22 @@ packages:
   run_exports: {}
   size: 1001194
   timestamp: 1789122814028
+- conda: https://conda.anaconda.org/conda-forge/osx-64/pillow-avif-plugin-1.6.0-py313h335c9b4_2.conda
+  sha256: 7d4014b5dbb19bb49bb66b897b1d5bc73ea309da7c826b154a13bf518026d5d3
+  md5: f3dd157687fd7ba78e9d6a86198ca317
+  depends:
+  - pillow
+  - python
+  - __osx >=11.0
+  - libavif16 >=1.4.2,<2.0a0
+  - python_abi 3.13.* *_cp313
+  license: BSD-2-Clause
+  license_family: BSD
+  purls:
+  - pkg:pypi/pillow-avif-plugin?source=hash-mapping
+  run_exports: {}
+  size: 32151
+  timestamp: 1788793279797
 - conda: https://conda.anaconda.org/conda-forge/osx-64/pillow-heif-1.3.0-py313hf542e20_2.conda
   sha256: d66d08fcb8c8152f3339b6c31b63449c9b8a6c5cfebc45f8824e4871655096a7
   md5: 294e5e45417388f860c1d519fd244f84
@@ -16504,6 +16566,22 @@ packages:
   run_exports: {}
   size: 996740
   timestamp: 1789122697364
+- conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-avif-plugin-1.6.0-py313hae1e4de_2.conda
+  sha256: fa31711bd68a28d7adea79dd1d4f67192dc6b86019bbdd63de7623ecb5d6d7eb
+  md5: cf7250831f74862ab25f8f312445a996
+  depends:
+  - pillow
+  - python
+  - __osx >=11.0
+  - python_abi 3.13.* *_cp313
+  - libavif16 >=1.4.2,<2.0a0
+  license: BSD-2-Clause
+  license_family: BSD
+  purls:
+  - pkg:pypi/pillow-avif-plugin?source=hash-mapping
+  run_exports: {}
+  size: 32229
+  timestamp: 1788793162815
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-heif-1.3.0-py313he881929_2.conda
   sha256: 61f0adc2dcdfa75c7c3ecb61a8edcad425f1bec94ed4090962796c7ec5264cee
   md5: db80c47c6c06ceccf910100e2e48f180

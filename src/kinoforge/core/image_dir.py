@@ -145,6 +145,31 @@ def register_heif() -> bool:
     return True
 
 
+def register_avif() -> bool:
+    """Register the AVIF opener if ``pillow-avif-plugin`` is importable.
+
+    conda-forge's Pillow is built without libavif, so Pillow's bundled
+    ``AvifImagePlugin`` registers nothing there; the plugin package carries
+    its own codec. Importing it is the registration.
+
+    Returns:
+        ``True`` when registered, ``False`` when the package is absent (the
+        ``.avif`` suffix stays recognised and such files become
+        ``unreadable`` items).
+    """
+    try:
+        import pillow_avif  # noqa: F401 — import side effect registers
+    except ImportError:
+        return False
+    return True
+
+
+def register_openers() -> None:
+    """Register every optional Pillow opener a ``DIR_IMAGE_SUFFIXES`` entry needs."""
+    register_heif()
+    register_avif()
+
+
 def read_image_header(path: Path) -> ImageHeader:
     """Read size, mode, format and EXIF orientation without decoding pixels.
 
@@ -160,7 +185,7 @@ def read_image_header(path: Path) -> ImageHeader:
     """
     from PIL import Image
 
-    register_heif()
+    register_openers()
     with Image.open(path) as im:
         orientation = int(im.getexif().get(_ORIENTATION_TAG, 1) or 1)
         width, height = im.size
@@ -339,7 +364,7 @@ def prepare_upload(item: ImageDirItem, scratch: Path) -> Path:
     """
     from PIL import Image, ImageOps
 
-    register_heif()
+    register_openers()
     with Image.open(item.source) as im:
         orientation = int(im.getexif().get(_ORIENTATION_TAG, 1) or 1)
         if (

@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import hashlib
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 from PIL import Image, ImageOps
 
-from kinoforge.core.image_dir import ImageDirItem, prepare_upload
+from kinoforge.core.image_dir import ImageDirItem, prepare_upload, register_openers
+
+
+@pytest.fixture(autouse=True)
+def _openers() -> None:
+    # The .avif / .heic fixtures are SAVED before prepare_upload registers.
+    register_openers()
 
 
 def _item(src: Path) -> ImageDirItem:
@@ -82,6 +90,35 @@ class TestReencode:
         build().save(src)  # type: ignore[operator]
         out = prepare_upload(_item(src), scratch)
         assert out.parent == scratch and out.suffix == ".png"
+        with Image.open(out) as got:
+            assert got.format == "PNG" and got.mode == "RGB" and got.size == (6, 4)
+
+    def test_avif_is_readable_in_a_fresh_interpreter(
+        self, tmp_path: Path, scratch: Path
+    ) -> None:
+        # Bug caught: read_image_header or prepare_upload drops its
+        # register_openers() call — hidden in-process by the autouse fixture
+        # above, fatal in the real CLI where nothing else registers AVIF.
+        src = tmp_path / "x.avif"
+        _rgb().save(src)
+        code = (
+            "import sys; from pathlib import Path\n"
+            "from kinoforge.core.image_dir import ImageDirItem, prepare_upload\n"
+            "from kinoforge.core.image_dir import read_image_header\n"
+            "src = Path(sys.argv[1]); scratch = Path(sys.argv[2])\n"
+            "h = read_image_header(src)\n"
+            "item = ImageDirItem(src, src.parent / 'out.png', 1, 1, 'pending')\n"
+            "print(h.width, h.height, prepare_upload(item, scratch))\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code, str(src), str(scratch)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+        width, height, out = proc.stdout.split()
+        assert (width, height) == ("6", "4")
         with Image.open(out) as got:
             assert got.format == "PNG" and got.mode == "RGB" and got.size == (6, 4)
 

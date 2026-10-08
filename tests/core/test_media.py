@@ -118,13 +118,15 @@ class TestSupportsImageInput:
 class TestDirImageSuffixes:
     def test_every_suffix_has_a_pillow_opener(self) -> None:
         # Bug caught: a typo'd suffix (".jpge") that no file ever matches,
-        # or a suffix Pillow cannot open, silently never reaches the pod.
-        import pillow_heif
+        # or a suffix Pillow cannot open, silently never reaches the pod —
+        # including one whose plugin the product forgot to register (.avif
+        # on conda-forge Pillow, which ships no AVIF codec; CI 2026-10-07).
         from PIL import Image
 
+        from kinoforge.core.image_dir import register_openers
         from kinoforge.core.media import DIR_IMAGE_SUFFIXES
 
-        pillow_heif.register_heif_opener()
+        register_openers()
         registered = Image.registered_extensions()
         openable = {ext for ext, fmt in registered.items() if fmt in Image.OPEN}
         missing = sorted(s for s in DIR_IMAGE_SUFFIXES if s not in openable)

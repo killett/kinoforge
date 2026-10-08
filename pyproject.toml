@@ -65,8 +65,8 @@ ignore_missing_imports = true
 module = ["replicate.*", "runwayml.*"]
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]  # pillow_heif: no py.typed marker.
-module = ["pillow_heif", "pillow_heif.*"]
+[[tool.mypy.overrides]]  # pillow_heif / pillow_avif: no py.typed marker.
+module = ["pillow_heif", "pillow_heif.*", "pillow_avif", "pillow_avif.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]  # Wan 2.2 server: torch + diffusers loaded on-pod only, no local stubs.

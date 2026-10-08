@@ -283,6 +283,17 @@ def test_teardown_pod_or_raise_skips_fallback_when_sweep_reaped_pod(
     assert fallback_calls == []
 
 
+def _wait_for_log(log: Path, needle: str, *, deadline_s: float = 5.0) -> str:
+    """Return the log body once ``needle`` appears, or after ``deadline_s``."""
+    end = time.monotonic() + deadline_s
+    while time.monotonic() < end:
+        body = log.read_text() if log.exists() else ""
+        if needle in body:
+            return body
+        time.sleep(0.02)
+    return log.read_text() if log.exists() else ""
+
+
 def test_stat_poller_writes_per_tick(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -303,10 +314,9 @@ def test_stat_poller_writes_per_tick(
     log = tmp_path / "stats.log"
     poller = runpod_lifecycle.PodStatPoller("pod-x", log, interval_s=0.05)
     poller.start()
-    time.sleep(0.2)
+    body = _wait_for_log(log, "cpu=11.0")
     poller.stop()
     poller.join(timeout=1.0)
-    body = log.read_text()
     assert "gpu_util=42.0" in body
     assert "cpu=11.0" in body
 
@@ -326,7 +336,7 @@ def test_stat_poller_handles_none_snapshot_gracefully(
     log = tmp_path / "stats.log"
     poller = runpod_lifecycle.PodStatPoller("pod-x", log, interval_s=0.05)
     poller.start()
-    time.sleep(0.15)
+    body = _wait_for_log(log, "runtime not yet visible")
     poller.stop()
     poller.join(timeout=1.0)
-    assert "runtime not yet visible" in log.read_text()
+    assert "runtime not yet visible" in body

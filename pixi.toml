@@ -82,6 +82,7 @@ stamina = ">=26.1.0,<27"
 vermin = ">=1.8.0,<2"
 pillow = "*"
 pillow-heif = "*"
+pillow-avif-plugin = "*"
 
 [pypi-dependencies]
 # Group-derived PyPI-only packages are inserted on the line below.
