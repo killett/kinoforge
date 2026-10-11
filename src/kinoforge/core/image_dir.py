@@ -472,20 +472,24 @@ def _has_alpha(im: _PILImage.Image) -> bool:
     return "A" in im.getbands() or "transparency" in im.info
 
 
-def read_loop(path: Path) -> int:
-    """Return the animation's loop count (``0`` = forever; ``0`` when absent).
+def read_loop(path: Path) -> int | None:
+    """Return the animation's loop count, or ``None`` when the container carries none.
+
+    ``None`` when the container carries no loop count (a GIF without the
+    Netscape extension plays once; a multi-page TIFF has none).
 
     Args:
         path: An animated input.
 
     Returns:
-        Pillow's ``info["loop"]`` as an int, ``0`` when the container has none.
+        Pillow's ``info["loop"]`` as an int, or ``None`` when absent.
     """
     from PIL import Image
 
     register_openers()
     with Image.open(path) as im:
-        return int(im.info.get("loop") or 0)
+        v = im.info.get("loop")
+        return None if v is None else int(v)
 
 
 def prepare_frames(item: ImageDirItem, scratch: Path) -> Generator[Frame, None, None]:

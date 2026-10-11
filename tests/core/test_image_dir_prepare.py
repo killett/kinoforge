@@ -264,13 +264,16 @@ class TestPrepareFrames:
             ("l.webp", {"duration": [100] * 2, "loop": 0}, 0),
             ("l.gif", {"duration": [100] * 2, "loop": 2}, 2),
             ("l.png", {"duration": [100] * 2, "loop": 3}, 3),
-            ("l.tif", {}, 0),
+            ("l.tif", {}, None),
+            ("m.gif", {"duration": [100] * 2}, None),
         ],
     )
     def test_read_loop(
-        self, tmp_path: Path, name: str, kw: dict[str, object], expected: int
+        self, tmp_path: Path, name: str, kw: dict[str, object], expected: int | None
     ) -> None:
-        # Bug caught: loop count dropped (a looping sticker plays once).
+        # Bug caught: loop count dropped (a looping sticker plays once) —
+        # and, for the no-`loop=` cases, a play-once GIF/TIFF is reported as
+        # loop-forever (0) instead of "no loop count at all" (None).
         from kinoforge.core.image_dir import read_loop
 
         frames = _rgba_frames(2)

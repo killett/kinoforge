@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
+import kinoforge.core.animation as animation
+import kinoforge.core.image_dir as image_dir
 from kinoforge.core.animation import assemble_animation
 
 DUR = [100, 200, 100, 300]
@@ -163,6 +165,21 @@ class TestGif:
         _n, durs, loop, _pix = _read(body)
         assert durs == DUR and loop == 0
 
+    def test_absent_loop_writes_no_extension(self, tmp_path: Path) -> None:
+        # Bug caught: a play-once input (loop=None, no Netscape extension)
+        # ships as an infinite loop because the writer always receives a
+        # `loop=` keyword.
+        frames = _flat_frames(2)
+        body = assemble_animation(
+            _write(tmp_path, frames),
+            durations_ms=[100, 100],
+            loop=None,
+            alphas=[None, None],
+            output_suffix=".gif",
+        )
+        with Image.open(io.BytesIO(body)) as im:
+            assert im.info.get("loop") is None
+
 
 class TestApng:
     def test_lossless_round_trip(self, tmp_path: Path) -> None:
@@ -289,3 +306,15 @@ class TestLaziness:
             paths, durations_ms=[1] * 4, loop=0, alphas=[None] * 4, output_suffix=suffix
         )
         assert peak[0] == 1
+
+
+class TestParity:
+    def test_animated_suffixes_have_writers(self) -> None:
+        # Bug caught: a suffix added to the planner's _ANIMATED_SUFFIXES
+        # without a matching assembler writer raises `ValueError: no
+        # animated writer` only AFTER every frame has been paid for on the
+        # GPU — the two sets must be kept in lockstep.
+        assert set(animation._WRITERS) == image_dir._ANIMATED_SUFFIXES
+        # Guard the guard: a sweep matching nothing (both sets empty) would
+        # pass the equality check above for free.
+        assert len(image_dir._ANIMATED_SUFFIXES) >= 5

@@ -3285,6 +3285,11 @@ Branch `feat/animated-image-dir`. Spec:
   (RealESRGAN texture on a synthetic flat field + GIF 256-colour
   quantisation), not a pipeline defect. See `successful-generations.md` §39
   "See also" and `tests/live/evidence/2026-10-11-animated-image-dir/`.
+  **Post-live fix note:** the final whole-branch review caught `read_loop`
+  collapsing an absent loop count to `0` (forever) instead of `None`
+  (play-once); fixed in the review's fix-wave commit, after this live run —
+  the committed `sub/anim.gif` evidence above predates the fix and still
+  reads back `loop 0`.
 
 **Task 8 gotchas worth keeping:**
 - `tests/live/build_image_dir_fixture.py` was a THIRD Pillow call site the

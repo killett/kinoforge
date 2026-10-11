@@ -178,8 +178,13 @@ order, one `Frame(path, duration_ms, alpha)`:
 - `alpha` — the frame's alpha channel as an 8-bit `L` image kept in memory,
   or `None` when the source has no alpha.
 
-The generator also exposes `loop` (0 = forever, Pillow's convention) once
-the file is open. `prepare_upload` is unchanged for stills.
+`read_loop` returns the container's loop count, or `None` when it carries
+none — a GIF without the Netscape extension plays once and must NOT be
+rewritten as `0` (forever); the assembler omits the loop field for `None`
+(GIF) or falls back to the writer default where the container always has
+one (WebP, APNG). Amended 2026-10-11 after the final review: the original
+text said `0` when absent, which conflated play-once with forever.
+`prepare_upload` is unchanged for stills.
 
 ### 4.2 Alpha
 
@@ -283,6 +288,10 @@ verify step — the directory plan omitted them and paid for it in
 `tests/live/test_image_dir_upscale_smoke.py` fires once on RunPod spandrel
 x2 with `--no-reuse`, utilisation polled by the harness thread (never
 `est_spend`). Expected dry run: `pending 8 (2 animated, 7 frames)`.
+Superseded: the live fixture already carried a two-frame GIF, so the real
+counts are `found 9: pending 7 (2 animated, 6 frames), exists 1, oversize 1,
+unreadable 0; non-image skipped 1` — see the plan header's planning-time
+findings.
 Frame QA on both outputs before reporting green: a contact sheet of every
 output frame, durations and loop read back and compared to the fixture,
 alpha checked on the WebP. Expected spend: a few cents; the RED scaffold is

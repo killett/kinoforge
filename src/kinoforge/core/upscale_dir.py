@@ -141,6 +141,11 @@ def _write_atomic(path: Path, body: bytes) -> None:
     tmp = path.with_name(path.name + ".part")
     # kinoforge:public-write — the operator named <dir>_upscaled as the
     # destination (plan_image_dir's output_dir_for); nothing prompt-derived.
+    # Also covers the per-frame scratch PNGs this function writes for an
+    # animated item's upscaled frames (`-uNNNN.png` under the run's
+    # TemporaryDirectory): that path is run-private scratch, not an
+    # operator-named destination, but it goes through the same atomic
+    # writer, so the justification is recorded once here for both cases.
     tmp.write_bytes(body)  # kinoforge:public-write
     os.replace(tmp, path)
 
@@ -176,8 +181,8 @@ def _upscale_animated(
     upscaled: list[Path] = []
     durations: list[int] = []
     alphas: list[_PILImage.Image | None] = []
+    gen = prepare_frames(item, scratch)
     try:
-        gen = prepare_frames(item, scratch)
         i = 0
         while True:
             i += 1
@@ -228,6 +233,7 @@ def _upscale_animated(
             output_suffix=item.output.suffix,
         )
     finally:
+        gen.close()
         for p in upscaled:
             p.unlink(missing_ok=True)
             p.with_name(p.name + ".part").unlink(missing_ok=True)

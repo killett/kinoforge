@@ -18,6 +18,11 @@ Per-container writers, all Pillow ``save_all``:
   accept a generator for ``append_images`` (it yields a one-frame file), so
   this is the one container whose frames are materialised in memory.
 * TIFF — multi-page, lossless, no timing.
+
+A GIF with ``loop=None`` is written WITHOUT the Netscape extension (plays
+once, as the input did); the WebP and APNG containers always carry a loop
+field, so for them "absent" falls back to the writer default (0 = forever)
+— the input's own loop value is always preserved when present.
 """
 
 from __future__ import annotations
@@ -88,7 +93,7 @@ def assemble_animation(
     frame_paths: Sequence[Path],
     *,
     durations_ms: Sequence[int],
-    loop: int,
+    loop: int | None,
     alphas: Sequence[_PILImage.Image | None],
     output_suffix: str,
 ) -> bytes:
@@ -97,7 +102,11 @@ def assemble_animation(
     Args:
         frame_paths: Upscaled RGB PNGs in frame order.
         durations_ms: One duration per frame (ignored for TIFF).
-        loop: Loop count, ``0`` = forever.
+        loop: Loop count, ``0`` = forever, ``None`` = the source container
+            carried no loop count (a play-once GIF). The loop keyword is
+            passed to the writer only when this is not ``None``; WebP and
+            APNG always carry a loop field, so for them an absent value
+            falls back to the writer default (0 = forever).
         alphas: One ``L`` mask per frame (any size; resized to the frame), or
             ``None`` for an opaque frame.
         output_suffix: ``.webp`` / ``.gif`` / ``.png`` / ``.tif`` / ``.tiff``.
@@ -122,6 +131,7 @@ def assemble_animation(
 
     frames = _composed(frame_paths, alphas)
     durations = [int(d) for d in durations_ms]
+    loop_kwargs: dict[str, Any] = {} if loop is None else {"loop": loop}
     buf = io.BytesIO()
     if fmt == "WEBP":
         first = next(frames)
@@ -131,10 +141,10 @@ def assemble_animation(
             save_all=True,
             append_images=frames,
             duration=durations,
-            loop=loop,
             lossless=False,
             quality=WEBP_QUALITY,
             method=4,
+            **loop_kwargs,
         )
     elif fmt == "GIF":
         has_alpha = any(a is not None for a in alphas)
@@ -150,9 +160,9 @@ def assemble_animation(
             save_all=True,
             append_images=frames,
             duration=durations,
-            loop=loop,
             disposal=2,
             **extra,
+            **loop_kwargs,
         )
     elif fmt == "PNG":
         materialised = list(frames)  # the PNG writer cannot stream a generator
@@ -162,7 +172,7 @@ def assemble_animation(
             save_all=True,
             append_images=materialised[1:],
             duration=durations,
-            loop=loop,
+            **loop_kwargs,
         )
     else:  # TIFF
         first = next(frames)
