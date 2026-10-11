@@ -4,14 +4,14 @@
     {
       "id": 1,
       "subject": "Task 1: `upscale.max_animation_frames`",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "description": "**Goal:** `UpscaleConfig` gains `max_animation_frames: int = 300`, refused below 1, documented beside `max_output_megapixels`.\n\n**Files:**\n- Modify: `src/kinoforge/core/config.py` (the `UpscaleConfig` attributes docstring, the field list after `max_output_megapixels: int = 256`, and a validator after `_validate_megapixels`)\n- Modify: `docs/configuration.md` (the `upscale:` table row after `max_output_megapixels`)\n- Test: `tests/core/test_config_upscale_animation_frames.py`\n\n**Acceptance Criteria:**\n- [ ] A config without the key loads with `max_animation_frames == 300`.\n- [ ] `max_animation_frames: 12` round-trips as `12`.\n- [ ] `0` and `-3` raise `ConfigError` whose message contains `upscale.max_animation_frames`.\n- [ ] `docs/configuration.md` has the row.\n- [ ] Whole-tree invariants and `tests/providers` green; no golden moved.\n\n**Verify:** `pixi run python -m pytest -q tests/core/test_config_upscale_animation_frames.py tests/core/test_config_upscale_megapixels.py tests/test_core_invariant.py tests/test_no_unredacted_writes.py tests/test_source_audit.py tests/providers` \u2192 all passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"docs/configuration.md\", \"tests/core/test_config_upscale_animation_frames.py\"], \"verifyCommand\": \"pixi run python -m pytest -q tests/core/test_config_upscale_animation_frames.py tests/core/test_config_upscale_megapixels.py tests/test_core_invariant.py tests/test_no_unredacted_writes.py tests/test_source_audit.py tests/providers\", \"acceptanceCriteria\": [\"A config without the key loads with `max_animation_frames == 300`.\", \"`max_animation_frames: 12` round-trips as `12`.\", \"`0` and `-3` raise `ConfigError` whose message contains `upscale.max_animation_frames`.\", \"`docs/configuration.md` has the row.\", \"Whole-tree invariants and `tests/providers` green; no golden moved.\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: Planner \u2014 `frames`, the cap, container-keeping names",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         1
       ],
@@ -20,7 +20,7 @@
     {
       "id": 3,
       "subject": "Task 3: `prepare_frames` and `read_loop`",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         2
       ],
@@ -29,7 +29,7 @@
     {
       "id": 4,
       "subject": "Task 4: `core/animation.py` \u2014 the assembler",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         3
       ],
@@ -38,7 +38,7 @@
     {
       "id": 5,
       "subject": "Task 5: Runner \u2014 the animated branch",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         4
       ],
@@ -47,7 +47,7 @@
     {
       "id": 6,
       "subject": "Task 6: CLI \u2014 cap wiring, plan line, progress line, summary",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         5
       ],
@@ -72,5 +72,5 @@
       "description": "**Goal:** The \u00a739 live smoke proves an animated WebP with alpha and the existing animated GIF come back as animations with the right frame count, durations, loop and alpha, on one pod, with `--no-reuse` and utilisation polled.\n\n**USER-ORDERED GATE \u2014 NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it \"verified inline\", or by substituting a cheaper check. Close only after every item in `acceptanceCriteria` has been re-validated independently, with output captured.\n\n**Files:**\n- Modify: `tests/live/build_image_dir_fixture.py` (add `sub/sticker.webp`)\n- Modify: `tests/live/test_image_dir_upscale_smoke.py` (`_EVIDENCE`, the progress regex, `expected`, animated assertions, the png rglob list)\n- Create: `tests/live/evidence/2026-10-11-animated-image-dir/` (stdout, stderr, list, util, the two animated outputs, contact sheets)\n- Modify: `successful-generations.md` (\"See also\" line under \u00a739), `PROGRESS.md`\n\n**Acceptance Criteria:**\n- [ ] RED scaffold (fixture + test edits) committed BEFORE `pixi run preflight`; offline, `kinoforge upscale --dry-run` on the fixture prints `found 9: pending 7 (2 animated, 6 frames), exists 1, oversize 1, unreadable 0; non-image skipped 1`.\n- [ ] `pixi run preflight` exits 0 immediately before the live run.\n- [ ] Live run with `--no-reuse` exits 1 (the designed-in `huge.webp` oversize), seven `[n/7]` progress lines, `sub/anim.gif` and `sub/sticker.webp` written.\n- [ ] `sub/sticker.webp`: 4 frames, 320\u00d7240, durations `[100, 200, 100, 300]` after `load()`, loop 0, frame 0 alpha at (0,0) \u2264 8 and at (319,239) \u2265 247.\n- [ ] `sub/anim.gif`: 2 frames, 640\u00d7400, both durations 200.\n- [ ] `util.txt` shows at least one probe with `gpu_util` > 0 during the run (never only `est_spend`).\n- [ ] After exit, `pixi run kinoforge list` prints both `No running instances.` and `No instances recorded in ledger.`.\n- [ ] Frame QA: a contact sheet per animated output read by Claude; verdict recorded in `successful-generations.md` \"See also\" and in `PROGRESS.md`. Anything not clearly clean gets a \u26a0\ufe0f.\n- [ ] Evidence files committed; the two animated outputs committed (both well under the 500 KB hook limit; check with `ls -l`).\n\n**Verify:** `KINOFORGE_LIVE_TESTS=1 pixi run python -m pytest -q tests/live/test_image_dir_upscale_smoke.py -p no:cacheprovider` \u2192 `1 passed`; then `pixi run kinoforge list` \u2192 both clean lines.\n\n```json:metadata\n{\"files\": [\"tests/live/build_image_dir_fixture.py\", \"tests/live/test_image_dir_upscale_smoke.py\", \"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 pixi run python -m pytest -q tests/live/test_image_dir_upscale_smoke.py -p no:cacheprovider && pixi run kinoforge list\", \"acceptanceCriteria\": [\"RED scaffold committed before preflight; dry run prints found 9: pending 7 (2 animated, 6 frames)\", \"pixi run preflight exit 0 immediately before the run\", \"live run --no-reuse: seven [n/7] lines, sub/anim.gif and sub/sticker.webp written\", \"sticker.webp: 4 frames 320x240 durations [100,200,100,300] loop 0 alpha(0,0)<=8 alpha(319,239)>=247\", \"anim.gif: 2 frames 640x400 duration 200\", \"util.txt shows gpu_util > 0 during the run\", \"kinoforge list: No running instances. AND No instances recorded in ledger.\", \"contact sheets read; verdict recorded in successful-generations.md and PROGRESS.md\", \"evidence + both animated outputs committed, each under 500 KB\"], \"modelTier\": \"frontier\", \"userGate\": true, \"tags\": [\"user-gate\", \"live-spend\"], \"gateScope\": \"task\", \"failurePolicy\": \"capture-logs-destroy-pod-fail-fast\", \"requireEvidenceTokens\": [[\"dry-run\", \"pending 7 (2 animated, 6 frames)\"], [\"live\", \"[7/7]\", \"gpu_util\"]]}\n```"
     }
   ],
-  "lastUpdated": "2026-10-11T00:51:04"
+  "lastUpdated": "2026-10-11T02:43:43"
 }

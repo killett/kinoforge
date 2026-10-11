@@ -187,6 +187,15 @@ and a dead pod aborts the remainder), 2 for a precondition. Each output
 stays on the pod's disk until the pod dies; the example config's
 `disk_gb: 40` is roughly 1,000 4-MP 2x outputs per pod lifetime.
 `--no-reuse` destroys the pod once, after the last image.
+Animated inputs (animated WebP, GIF, APNG, multi-page TIFF) are upscaled frame
+by frame on the same pod and written back in their own container with the
+original durations, loop count and alpha — the pod returns RGB, so alpha is
+resized on the controller (edges interpolated, not model-upscaled); a GIF is
+re-quantised to 256 colours on write; an APNG's upscaled frames are held in
+memory while encoding (every other container streams one frame at a time).
+`max_animation_frames` (default 300) refuses larger animations at plan time;
+the dry run's `(N animated, F frames)` is the spend preview. `--image` on a
+single animated file keeps today's frame-0 behaviour.
 
 **`flashvsr`** — streaming diffusion VSR (Wan 2.1 1.3B backbone), native 4x, 80 GB tier.
 

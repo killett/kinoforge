@@ -3245,7 +3245,52 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-10-07 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-10-11 — read this, then STOP; below is history)
+
+### SESSION 2026-10-11 — animated --image-dir inputs, Tasks 1-7 done
+
+Branch `feat/animated-image-dir`. Spec:
+`docs/superpowers/specs/2026-10-11-animated-image-dir-upscale-design.md`. Plan:
+`docs/superpowers/plans/2026-10-11-animated-image-dir-upscale.md`.
+
+**Tasks 1-7 done:**
+- Task 1 (`92263378`) — `feat(config): upscale.max_animation_frames`.
+- Task 2 (`f76235fe`) — `feat(image-dir): planner reads frames, caps animations,
+  keeps the input container on output`.
+- Task 3 (`e888f8e4`) — `feat(image-dir): prepare_frames + read_loop`.
+- Task 4 (`57bd5723` + `84a3fb97`) — `feat/test(animation): assembler +
+  review-round test tightening`.
+- Task 5 (`58c9c3fe` + `235d41f0`) — `feat/fix(upscale-dir): animated branch +
+  stray-.part drain / decode-failure frame naming`.
+- Task 6 (`5fe69322` + `a4653a6d`) — `feat/fix(cli): animated counts in
+  plan/progress/summary, wires the cap; megapixel-oversize tag fix +
+  `_animated_suffix` helper.
+- Task 7 (this commit) — docs (spec §3.4 pointer, README `upscale` row,
+  `docs/configuration.md` "Directories." paragraph), the no-golden-moved guard
+  (`tools/snapshot_launch_payloads.py` + `git status --porcelain` — clean, no
+  golden/baseline/`_golden_provision.json` path moved), full offline suite
+  (`6835 passed, 182 skipped, 25 deselected, 6 xfailed` — 0 failed), and this
+  snapshot update.
+
+**Planning-time findings (from the plan's header):** WebP fills a frame's
+`duration` only after `im.load()` following `seek`; the APNG writer does not
+accept a generator for `append_images` (one-frame file) so only the PNG
+container materialises its frames; saving RGBA straight to GIF drops
+transparency — the assembler quantises to 255 colours and reserves index 255
+with `disposal=2`; Pillow's `n_frames` is consulted only for
+`.webp/.gif/.png/.tif/.tiff` (PSD reports layers, ICO sizes).
+
+**Single next action:** Task 8 live fire — RED scaffold commit, `pixi run
+preflight` (exit 0), then
+
+    KINOFORGE_LIVE_TESTS=1 pixi run python -m pytest -q \
+      tests/live/test_image_dir_upscale_smoke.py -p no:cacheprovider
+
+then `pixi run kinoforge list` must show `No running instances.` and `No
+instances recorded in ledger.`. The live fixture already contains a
+two-frame `sub/anim.gif`; Task 8 adds one animated WebP, and the expected
+dry-run counts are `found 9: pending 7 (2 animated, 6 frames), exists 1,
+oversize 1, unreadable 0; non-image skipped 1`.
 
 ### SESSION 2026-10-07 — merge landed (`f21e9daa`), CI red on both runners, fixed in `81d99514`
 
