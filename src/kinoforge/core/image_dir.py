@@ -15,11 +15,15 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from kinoforge.core.media import DIR_IMAGE_SUFFIXES
+
+if TYPE_CHECKING:
+    from PIL import Image as _PILImage
 
 _log = logging.getLogger("kinoforge.core.image_dir")
 
@@ -441,3 +445,81 @@ def prepare_upload(item: ImageDirItem, scratch: Path) -> Path:
         "%s: re-encoded to %s (%s -> RGB PNG)", item.source.name, out.name, src_mode
     )
     return out
+
+
+@dataclass(frozen=True)
+class Frame:
+    """One decoded frame of an animated input, ready to upload.
+
+    Attributes:
+        index: 0-based frame index.
+        path: 8-bit RGB PNG under the run's scratch directory
+            (``<sha8>-f0001.png`` …); the caller unlinks it after upload.
+        duration_ms: The frame's own duration; ``0`` when the container has
+            no timing (multi-page TIFF).
+        alpha: The frame's alpha channel as an 8-bit ``L`` image, or
+            ``None`` when the frame has none.
+    """
+
+    index: int
+    path: Path
+    duration_ms: int
+    alpha: _PILImage.Image | None
+
+
+def _has_alpha(im: _PILImage.Image) -> bool:
+    """True when the current frame carries alpha or palette transparency."""
+    return "A" in im.getbands() or "transparency" in im.info
+
+
+def read_loop(path: Path) -> int:
+    """Return the animation's loop count (``0`` = forever; ``0`` when absent).
+
+    Args:
+        path: An animated input.
+
+    Returns:
+        Pillow's ``info["loop"]`` as an int, ``0`` when the container has none.
+    """
+    from PIL import Image
+
+    register_openers()
+    with Image.open(path) as im:
+        return int(im.info.get("loop") or 0)
+
+
+def prepare_frames(item: ImageDirItem, scratch: Path) -> Generator[Frame, None, None]:
+    """Yield every frame of an animated *item* as an RGB PNG under *scratch*.
+
+    One frame is decoded at a time: the generator writes frame *i* only when
+    the consumer asks for it, so scratch holds at most one decoded frame plus
+    whatever the consumer has not yet unlinked. Each frame is EXIF-transposed
+    like :func:`prepare_upload`. WebP fills a frame's ``duration`` only on
+    ``load()``, so every frame is loaded after ``seek``.
+
+    Args:
+        item: A planned animated item (``frames > 1``).
+        scratch: Per-run scratch directory; the consumer unlinks each path.
+
+    Yields:
+        :class:`Frame` in frame order.
+    """
+    from PIL import Image, ImageOps
+
+    register_openers()
+    tag = _sha8(item.source)
+    with Image.open(item.source) as im:
+        n = max(1, int(getattr(im, "n_frames", 1)))
+        for i in range(n):
+            im.seek(i)
+            im.load()
+            duration = int(round(float(im.info.get("duration") or 0)))
+            alpha: _PILImage.Image | None = None
+            rgba = im.convert("RGBA")
+            transposed = ImageOps.exif_transpose(rgba)
+            frame = transposed if transposed is not None else rgba
+            if _has_alpha(im):
+                alpha = frame.getchannel("A")
+            path = scratch / f"{tag}-f{i + 1:04d}.png"
+            frame.convert("RGB").save(path, format="PNG")
+            yield Frame(i, path, duration, alpha)

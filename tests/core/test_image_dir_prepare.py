@@ -6,6 +6,7 @@ import hashlib
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -140,3 +141,139 @@ class TestReencode:
         _rgb().save(src)
         out = prepare_upload(_item(src), scratch)
         assert out.name == hashlib.sha256(src.read_bytes()).hexdigest()[:8] + ".png"
+
+
+def _rgba_frames(n: int = 4, size: tuple[int, int] = (6, 4)) -> list[Image.Image]:
+    rng = np.random.default_rng(1)
+    out = []
+    for i in range(n):
+        arr = rng.integers(0, 255, (size[1], size[0], 4), dtype=np.uint8)
+        arr[..., 3] = 40 * i + 15  # distinct alpha per frame
+        out.append(Image.fromarray(arr, "RGBA"))
+    return out
+
+
+def _save_anim(path: Path, frames: list[Image.Image], **kw: Any) -> Path:
+    frames[0].save(path, save_all=True, append_images=frames[1:], **kw)
+    return path
+
+
+class TestPrepareFrames:
+    def test_webp_frames_in_order_with_durations_and_alpha(
+        self, tmp_path: Path, scratch: Path
+    ) -> None:
+        # Bug caught: WebP durations read as None (Pillow fills them only
+        # after load()), frames yielded out of order, or alpha dropped.
+        from kinoforge.core.image_dir import prepare_frames
+
+        frames = _rgba_frames()
+        src = _save_anim(
+            tmp_path / "a.webp",
+            frames,
+            duration=[100, 200, 100, 300],
+            loop=0,
+            lossless=True,
+        )
+        got = list(prepare_frames(_item(src), scratch))
+        assert [f.index for f in got] == [0, 1, 2, 3]
+        assert [f.duration_ms for f in got] == [100, 200, 100, 300]
+        sha8 = hashlib.sha256(src.read_bytes()).hexdigest()[:8]
+        assert [f.path.name for f in got] == [
+            f"{sha8}-f{i:04d}.png" for i in (1, 2, 3, 4)
+        ]
+        for f, orig in zip(got, frames, strict=True):
+            with Image.open(f.path) as im:
+                assert im.format == "PNG" and im.mode == "RGB" and im.size == (6, 4)
+                assert np.array_equal(np.asarray(im), np.asarray(orig.convert("RGB")))
+            assert (
+                f.alpha is not None and f.alpha.mode == "L" and f.alpha.size == (6, 4)
+            )
+            assert np.array_equal(np.asarray(f.alpha), np.asarray(orig.getchannel("A")))
+
+    def test_gif_without_alpha_yields_none_masks(
+        self, tmp_path: Path, scratch: Path
+    ) -> None:
+        # Bug caught: an opaque GIF gets a synthetic all-255 mask and the
+        # assembler takes the transparency path for nothing.
+        from kinoforge.core.image_dir import prepare_frames
+
+        frames = [f.convert("RGB") for f in _rgba_frames(3)]
+        src = _save_anim(tmp_path / "a.gif", frames, duration=[50, 60, 70], loop=0)
+        got = list(prepare_frames(_item(src), scratch))
+        assert [f.alpha for f in got] == [None, None, None]
+        assert [f.duration_ms for f in got] == [50, 60, 70]
+
+    def test_apng_durations_are_ints(self, tmp_path: Path, scratch: Path) -> None:
+        # Bug caught: Pillow reports APNG durations as floats; a float
+        # leaks into the WebP writer's duration list and raises.
+        from kinoforge.core.image_dir import prepare_frames
+
+        src = _save_anim(
+            tmp_path / "a.png", _rgba_frames(), duration=[100, 200, 100, 300], loop=3
+        )
+        got = list(prepare_frames(_item(src), scratch))
+        assert [f.duration_ms for f in got] == [100, 200, 100, 300]
+        assert all(isinstance(f.duration_ms, int) for f in got)
+        assert all(f.alpha is not None for f in got)
+
+    def test_tiff_pages_have_no_duration(self, tmp_path: Path, scratch: Path) -> None:
+        # Bug caught: a missing duration becomes None and the writer raises.
+        from kinoforge.core.image_dir import prepare_frames
+
+        frames = [f.convert("RGB") for f in _rgba_frames(2)]
+        src = _save_anim(tmp_path / "p.tif", frames)
+        got = list(prepare_frames(_item(src), scratch))
+        assert [f.duration_ms for f in got] == [0, 0]
+        assert [f.alpha for f in got] == [None, None]
+
+    def test_exif_orientation_applies_to_every_frame(
+        self, tmp_path: Path, scratch: Path
+    ) -> None:
+        # Bug caught: frame 0 is transposed and the rest lie on their side.
+        from kinoforge.core.image_dir import prepare_frames
+
+        frames = [Image.new("RGB", (40, 20), (i * 60, 0, 0)) for i in range(3)]
+        exif = frames[0].getexif()
+        exif[0x0112] = 6
+        src = _save_anim(
+            tmp_path / "o.webp", frames, duration=[100] * 3, loop=0, exif=exif
+        )
+        sizes = []
+        for f in prepare_frames(_item(src), scratch):
+            with Image.open(f.path) as im:
+                sizes.append(im.size)
+        assert sizes == [(20, 40)] * 3
+
+    def test_frames_are_yielded_lazily(self, tmp_path: Path, scratch: Path) -> None:
+        # Bug caught: all frames decoded to scratch up front — the
+        # one-decoded-frame-at-a-time memory/disk promise is broken.
+        from kinoforge.core.image_dir import prepare_frames
+
+        src = _save_anim(
+            tmp_path / "a.webp", _rgba_frames(4), duration=[100] * 4, loop=0
+        )
+        gen = prepare_frames(_item(src), scratch)
+        first = next(gen)
+        assert first.path.exists()
+        assert len(list(scratch.glob("*-f*.png"))) == 1
+        gen.close()
+
+    @pytest.mark.parametrize(
+        ("name", "kw", "expected"),
+        [
+            ("l.webp", {"duration": [100] * 2, "loop": 0}, 0),
+            ("l.gif", {"duration": [100] * 2, "loop": 2}, 2),
+            ("l.png", {"duration": [100] * 2, "loop": 3}, 3),
+            ("l.tif", {}, 0),
+        ],
+    )
+    def test_read_loop(
+        self, tmp_path: Path, name: str, kw: dict[str, object], expected: int
+    ) -> None:
+        # Bug caught: loop count dropped (a looping sticker plays once).
+        from kinoforge.core.image_dir import read_loop
+
+        frames = _rgba_frames(2)
+        if name.endswith("tif"):
+            frames = [f.convert("RGB") for f in frames]
+        assert read_loop(_save_anim(tmp_path / name, frames, **kw)) == expected
