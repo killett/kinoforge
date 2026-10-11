@@ -1,0 +1,4 @@
+[instance overview] No running instances.
+No instances recorded in ledger.
+Pixi task (kinoforge in default): python -m kinoforge list
+2026-10-11 03:08:35,427 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (39 keys)

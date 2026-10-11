@@ -6,9 +6,16 @@ files, every branch of the feature — including the two animated inputs
 ``tests/live/evidence/2026-10-11-animated-image-dir/`` BEFORE any assertion.
 
 Per CLAUDE.md's "Live smoke monitoring" rule, a background thread polls the
-RunPod GraphQL utilisation probe every 60 s for the duration of the
-subprocess run and appends snapshots to ``evidence/util.txt`` — never trust
-``est_spend`` alone to prove the pod is actually working.
+RunPod GraphQL utilisation probe for the duration of the subprocess run and
+appends snapshots to ``evidence/util.txt`` — never trust ``est_spend`` alone
+to prove the pod is actually working.
+
+The cadence is :data:`_POLL_S` = 15 s, not the rule's 60-90 s floor: these are
+seven small stills whose GPU-busy window is tens of seconds inside a ~3-minute
+run, and the RunPod probe itself caches for ~15-30 s. A 60 s cadence sampled
+``gpu=0.0`` twice on 2026-10-11 across a run that demonstrably did the work
+(see ``attempt1-poll60-util.txt``) — too coarse to tell a busy pod from a dead
+one, which is the one thing this poller exists to do.
 """
 
 from __future__ import annotations
@@ -35,6 +42,8 @@ _ROOT = Path(__file__).parent.parent.parent
 _CFG = _ROOT / "examples" / "configs" / "runpod-diffusers-spandrel-x2-upscale.yaml"
 _EVIDENCE = Path(__file__).parent / "evidence" / "2026-10-11-animated-image-dir"
 _LEDGER_PATH = _ROOT / ".kinoforge" / "_lifecycle" / "ledger.json"
+_POLL_S = 15
+"""Seconds between utilisation probes; see the module docstring for why 15."""
 
 
 def _sha(p: Path) -> str:
@@ -47,7 +56,7 @@ def _size(p: Path) -> tuple[int, int]:
 
 
 def _poll_utilisation(stop: threading.Event) -> None:
-    """Append a GPU/CPU/memory snapshot to ``evidence/util.txt`` every 60 s.
+    """Append a GPU/CPU/memory snapshot to ``evidence/util.txt`` every ``_POLL_S``.
 
     Runs as a daemon thread for the lifetime of the live subprocess. Never
     raises — any failure (missing ledger, no runpod entry, API error) is
@@ -88,7 +97,7 @@ def _poll_utilisation(stop: threading.Event) -> None:
             line = f"{ts} probe-error: {type(exc).__name__}: {exc}\n"
         with util_path.open("a") as fh:
             fh.write(line)
-        stop.wait(60)
+        stop.wait(_POLL_S)
 
 
 @pytest.mark.live

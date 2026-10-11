@@ -1,0 +1,29 @@
+Pixi task (kinoforge in default): python -m kinoforge upscale -c /workspace/examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml --image-dir /tmp/pytest-of-claudeuser/pytest-1407/test_directory_upscale_on_one_0/dir-smoke --no-reuse
+2026-10-11 03:05:47,337 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (39 keys)
+2026-10-11 03:05:47,357 WARNING kinoforge.validation provider_capabilities: runpod guardrail gaps:
+  [WARN] compute.lifecycle.idle_timeout: runpod cannot enforce IDLE_AUTOSTOP (the instance is alive but doing nothing) — provider-side autostop does not fire at workload shape server; bounded instead by ON_INSTANCE_DEADLINE at min(2*idle_timeout, max_lifetime-time_buffer)=3420.0s, further shortened at create by budget=1.0 USD divided by the booked offer's rate (not knowable at load)
+2026-10-11 03:05:47,357 WARNING kinoforge.validation unsupported_fields: runpod field-support gaps:
+  [WARN] compute.placement.disk_gb=40: runpod does not read it (the run runs out of disk mid-download) — bounded instead by the create-pod mutation's hardcoded containerDiskInGb=250 GB, above the 40 GB you asked for
+2026-10-11 03:05:47,905 WARNING kinoforge.orchestrator [capabilities] compute.lifecycle.idle_timeout: provider-side autostop does not fire at workload shape server; bounded instead by ON_INSTANCE_DEADLINE at min(2*idle_timeout, max_lifetime-time_buffer)=3420.0s, further shortened at create by budget=1.0 USD divided by the booked offer's rate (not knowable at load)
+2026-10-11 03:05:52,496 INFO kinoforge.orchestrator running provisioner.provision for instance ogduwarial3s5h (engine=diffusers key=b36f749a5703)
+2026-10-11 03:07:06,366 INFO kinoforge.core.image_dir luma-avif.avif: re-encoded to 9f55202d.png (RGB -> RGB PNG)
+2026-10-11 03:07:19,125 INFO kinoforge.orchestrator materializing artifact from https://ogduwarial3s5h-8000.proxy.runpod.net/artifacts/58607cb8.upscaled.png
+2026-10-11 03:07:23,970 INFO kinoforge.core.image_dir luma-webp.webp: re-encoded to 6685c2b0.png (RGB -> RGB PNG)
+2026-10-11 03:07:36,124 INFO kinoforge.orchestrator materializing artifact from https://ogduwarial3s5h-8000.proxy.runpod.net/artifacts/27b47f6c.upscaled.png
+2026-10-11 03:07:52,824 INFO kinoforge.orchestrator materializing artifact from https://ogduwarial3s5h-8000.proxy.runpod.net/artifacts/49dd264b.upscaled.png
+2026-10-11 03:07:57,413 INFO kinoforge.core.image_dir rotated.jpg: re-encoded to 3c6b70e8.png (RGB -> RGB PNG)
+2026-10-11 03:08:10,107 INFO kinoforge.orchestrator materializing artifact from https://ogduwarial3s5h-8000.proxy.runpod.net/artifacts/2082ecce.upscaled.png
+2026-10-11 03:08:16,471 INFO kinoforge.orchestrator materializing artifact from https://ogduwarial3s5h-8000.proxy.runpod.net/artifacts/920f492c.upscaled.png
+2026-10-11 03:08:17,229 INFO kinoforge.core.upscale_dir anim.gif: frame 1/2
+2026-10-11 03:08:19,242 INFO kinoforge.orchestrator materializing artifact from https://ogduwarial3s5h-8000.proxy.runpod.net/artifacts/78737a13.upscaled.png
+2026-10-11 03:08:19,791 INFO kinoforge.core.upscale_dir anim.gif: frame 2/2
+2026-10-11 03:08:22,435 INFO kinoforge.orchestrator materializing artifact from https://ogduwarial3s5h-8000.proxy.runpod.net/artifacts/bb274354.upscaled.png
+2026-10-11 03:08:23,319 INFO kinoforge.core.upscale_dir sticker.webp: frame 1/4
+2026-10-11 03:08:24,970 INFO kinoforge.orchestrator materializing artifact from https://ogduwarial3s5h-8000.proxy.runpod.net/artifacts/b023f868.upscaled.png
+2026-10-11 03:08:25,895 INFO kinoforge.core.upscale_dir sticker.webp: frame 2/4
+2026-10-11 03:08:27,578 INFO kinoforge.orchestrator materializing artifact from https://ogduwarial3s5h-8000.proxy.runpod.net/artifacts/3425b295.upscaled.png
+2026-10-11 03:08:28,147 INFO kinoforge.core.upscale_dir sticker.webp: frame 3/4
+2026-10-11 03:08:30,098 INFO kinoforge.orchestrator materializing artifact from https://ogduwarial3s5h-8000.proxy.runpod.net/artifacts/a11fa060.upscaled.png
+2026-10-11 03:08:30,553 INFO kinoforge.core.upscale_dir sticker.webp: frame 4/4
+2026-10-11 03:08:31,906 INFO kinoforge.orchestrator materializing artifact from https://ogduwarial3s5h-8000.proxy.runpod.net/artifacts/db3daa31.upscaled.png
+2026-10-11 03:08:34,415 INFO kinoforge.orchestrator --no-reuse: destroyed + forgot pod ogduwarial3s5h
