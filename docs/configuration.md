@@ -163,6 +163,7 @@ stderr, for `--image-dir`).
 | `tile_grid` | `[cols, rows]` \| null | `null` | Crop each frame into a grid, upscale the tiles, feather-stitch them back. Combines with `chunk_frames`. |
 | `tile_overlap` | int | `32` | Minimum overlap between neighbouring tiles, in source pixels. |
 | `max_output_megapixels` | int | `256` | Still images only (`--image` / `--image-dir`): refuses an output larger than `width × height × scale²` megapixels before any upload. Bounds the pod's host-RAM output canvas, which the pod-side tiler does not. |
+| `max_animation_frames` | int | `300` | `--image-dir` only: an animated input (animated WebP, GIF, APNG, multi-page TIFF) with more frames than this is refused as `oversize` at plan time. Every frame is one upscale request, so this is the spend cap for animations; the dry run's `(N animated, F frames)` count is the preview. |
 
 **Directories.** `kinoforge upscale --image-dir photos/` upscales every image
 under `photos/` (recursive) on ONE pod and writes lossless PNGs into a sibling

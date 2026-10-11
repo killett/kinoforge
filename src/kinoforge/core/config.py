@@ -840,6 +840,10 @@ class UpscaleConfig(BaseModel):
             pod's host-RAM output canvas and PNG encode — a 50 MP photo at 4x
             is an 800 MP canvas, ~2.4 GB raw — which the pod-side tiler does
             not bound. Ignored for video.
+        max_animation_frames: Plan-time cap on frames per animated input
+            under ``--image-dir`` (animated WebP, GIF, APNG, multi-page
+            TIFF). An animation of F frames costs F stage calls; a file
+            above the cap is refused as ``oversize`` before any pod work.
     """
 
     engine: str
@@ -852,6 +856,7 @@ class UpscaleConfig(BaseModel):
     tile_grid: tuple[int, int] | None = None
     tile_overlap: int = 32
     max_output_megapixels: int = 256
+    max_animation_frames: int = 300
 
     @model_validator(mode="after")
     def _validate_tiling(self) -> Self:
@@ -892,6 +897,16 @@ class UpscaleConfig(BaseModel):
             raise ConfigError(
                 "upscale.max_output_megapixels must be positive, "
                 f"got {self.max_output_megapixels}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_animation_frames(self) -> Self:
+        """Validate max_animation_frames is at least 1."""
+        if self.max_animation_frames < 1:
+            raise ConfigError(
+                "upscale.max_animation_frames must be at least 1, "
+                f"got {self.max_animation_frames}"
             )
         return self
 
