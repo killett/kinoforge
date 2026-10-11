@@ -1,0 +1,12 @@
+2026-10-11T03:10:50 pod=none found=False gpu=- cpu=- mem=-
+2026-10-11T03:11:05 pod=l37cytlh6qpc4f found=True gpu=- cpu=- mem=-
+2026-10-11T03:11:21 pod=l37cytlh6qpc4f found=True gpu=0.0 cpu=8.0 mem=0.0
+2026-10-11T03:11:37 pod=l37cytlh6qpc4f found=True gpu=0.0 cpu=20.0 mem=0.0
+2026-10-11T03:11:53 pod=l37cytlh6qpc4f found=True gpu=0.0 cpu=20.0 mem=0.0
+2026-10-11T03:12:08 pod=l37cytlh6qpc4f found=True gpu=0.0 cpu=8.0 mem=0.0
+2026-10-11T03:12:24 pod=l37cytlh6qpc4f found=True gpu=0.0 cpu=8.0 mem=0.0
+2026-10-11T03:12:40 pod=l37cytlh6qpc4f found=True gpu=0.0 cpu=0.0 mem=1.0
+2026-10-11T03:12:55 pod=l37cytlh6qpc4f found=True gpu=0.0 cpu=0.0 mem=1.0
+2026-10-11T03:13:11 pod=l37cytlh6qpc4f found=True gpu=0.0 cpu=0.0 mem=1.0
+2026-10-11T03:13:27 pod=l37cytlh6qpc4f found=True gpu=0.0 cpu=0.0 mem=1.0
+2026-10-11T03:13:42 pod=l37cytlh6qpc4f found=False gpu=- cpu=- mem=-

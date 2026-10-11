@@ -10,12 +10,20 @@ RunPod GraphQL utilisation probe for the duration of the subprocess run and
 appends snapshots to ``evidence/util.txt`` — never trust ``est_spend`` alone
 to prove the pod is actually working.
 
-The cadence is :data:`_POLL_S` = 15 s, not the rule's 60-90 s floor: these are
-seven small stills whose GPU-busy window is tens of seconds inside a ~3-minute
-run, and the RunPod probe itself caches for ~15-30 s. A 60 s cadence sampled
-``gpu=0.0`` twice on 2026-10-11 across a run that demonstrably did the work
-(see ``attempt1-poll60-util.txt``) — too coarse to tell a busy pod from a dead
-one, which is the one thing this poller exists to do.
+The cadence is :data:`_POLL_S` = 5 s, far under the rule's 60-90 s floor, and
+every line carries ``runtime.uptimeInSeconds``. Both are because of what
+2026-10-11 measured: each item here is a ~2 s GPU burst inside a ~13 s
+upload/run/download cycle, so ``runtime.gpus[].gpuUtilPercent`` — an
+instantaneous read, not an average — samples the idle gaps. A 60 s cadence saw
+``gpu=0.0`` twice and a 15 s cadence saw it eleven times, both across runs
+that demonstrably produced all seven outputs (``attempt1-poll60-util.txt``,
+``attempt2-poll15-util.txt``). ``up=`` is the discriminator the earlier lines
+lacked: an advancing uptime proves the runtime block is being refreshed, so a
+0 really is a 0 and not a stale snapshot.
+
+Read the CPU trace, not the GPU one, to tell a busy short-burst image pod from
+a dead one: CLAUDE.md's "GPU 0% for three consecutive probes == dead" heuristic
+is calibrated for video work and misclassifies this workload.
 """
 
 from __future__ import annotations
@@ -42,8 +50,8 @@ _ROOT = Path(__file__).parent.parent.parent
 _CFG = _ROOT / "examples" / "configs" / "runpod-diffusers-spandrel-x2-upscale.yaml"
 _EVIDENCE = Path(__file__).parent / "evidence" / "2026-10-11-animated-image-dir"
 _LEDGER_PATH = _ROOT / ".kinoforge" / "_lifecycle" / "ledger.json"
-_POLL_S = 15
-"""Seconds between utilisation probes; see the module docstring for why 15."""
+_POLL_S = 5
+"""Seconds between utilisation probes; see the module docstring for why 5."""
 
 
 def _sha(p: Path) -> str:
@@ -89,7 +97,7 @@ def _poll_utilisation(stop: threading.Event) -> None:
                     line = (
                         f"{ts} pod={pod_id} found={found} "
                         f"gpu={snap.gpu_util_percent} cpu={snap.cpu_percent} "
-                        f"mem={snap.memory_percent}\n"
+                        f"mem={snap.memory_percent} up={snap.uptime_seconds}\n"
                     )
                 else:
                     line = f"{ts} pod={pod_id} found={found} gpu=- cpu=- mem=-\n"
