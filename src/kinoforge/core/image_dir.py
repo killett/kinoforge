@@ -3,8 +3,10 @@
 Pure planning: walk the tree, name every output, read image HEADERS (size,
 mode, EXIF orientation — never pixels), apply the output-megapixel guard, and
 hand the CLI and the session runner one finished :class:`ImageDirPlan` so
-neither re-derives a rule. :func:`prepare_upload` (same module) converts one
-planned input into the PNG/JPEG bytes the pod accepts.
+neither re-derives a rule. An animated input (``frames > 1``) keeps its own
+container on output and is refused above ``max_animation_frames``.
+:func:`prepare_upload` (same module) converts one planned input into the
+PNG/JPEG bytes the pod accepts.
 
 Controller-side only. Pillow is imported lazily inside functions.
 """
@@ -28,6 +30,13 @@ _ORIENTATION_TAG = 0x0112
 _ROTATED_ORIENTATIONS = frozenset({5, 6, 7, 8})
 """EXIF orientations that swap width and height as viewed."""
 
+_ANIMATED_SUFFIXES = frozenset({".webp", ".gif", ".png", ".tif", ".tiff"})
+"""Containers whose Pillow ``n_frames`` means frames (or pages) of ONE image.
+
+Deliberately not every container that reports ``n_frames``: a PSD reports
+its layer count and an ICO its size count. Anything else is a still.
+"""
+
 Disposition = Literal["pending", "exists", "oversize", "unreadable"]
 
 
@@ -41,6 +50,8 @@ class ImageHeader:
         mode: Pillow mode string (``"RGB"``, ``"I;16"``, ``"P"``, ...).
         format: Pillow format name (``"PNG"``, ``"JPEG"``, ``"WEBP"``, ...).
         orientation: EXIF orientation 1-8; 1 is the identity.
+        frames: Frame count; ``1`` for a still. Read only for
+            :data:`_ANIMATED_SUFFIXES`; other containers always report ``1``.
     """
 
     width: int
@@ -48,6 +59,7 @@ class ImageHeader:
     mode: str
     format: str | None
     orientation: int
+    frames: int = 1
 
 
 @dataclass(frozen=True)
@@ -56,13 +68,16 @@ class ImageDirItem:
 
     Attributes:
         source: Absolute input path.
-        output: Absolute output path, always ``.png``.
+        output: Absolute output path — ``.png`` for a still, the input's own
+            suffix for an animation.
         width: Viewed width (0 when ``unreadable``).
         height: Viewed height (0 when ``unreadable``).
         disposition: ``pending`` (will run), ``exists`` (output present,
             skipped), ``oversize`` / ``unreadable`` (plan-time failures).
         reason: Set for the two failure dispositions.
         renamed: The same-folder stem-collision rule applied (§3.2).
+        frames: Frame count from the header; ``> 1`` takes the animated path
+            and keeps the input container's suffix on ``output``.
     """
 
     source: Path
@@ -72,6 +87,7 @@ class ImageDirItem:
     disposition: Disposition
     reason: str | None = None
     renamed: bool = False
+    frames: int = 1
 
 
 @dataclass(frozen=True)
@@ -171,7 +187,7 @@ def register_openers() -> None:
 
 
 def read_image_header(path: Path) -> ImageHeader:
-    """Read size, mode, format and EXIF orientation without decoding pixels.
+    """Read size, mode, format, EXIF orientation and frame count without decoding pixels.
 
     Args:
         path: An image file.
@@ -191,12 +207,16 @@ def read_image_header(path: Path) -> ImageHeader:
         width, height = im.size
         if orientation in _ROTATED_ORIENTATIONS:
             width, height = height, width
+        frames = 1
+        if path.suffix.lower() in _ANIMATED_SUFFIXES:
+            frames = max(1, int(getattr(im, "n_frames", 1)))
         return ImageHeader(
             width=width,
             height=height,
             mode=im.mode,
             format=im.format,
             orientation=orientation,
+            frames=frames,
         )
 
 
@@ -246,32 +266,52 @@ def walk_images(source_dir: Path) -> tuple[list[Path], int]:
     return images, skipped
 
 
-def _output_names(paths: list[Path]) -> dict[Path, tuple[str, bool]]:
-    """Map each source to ``(output filename, renamed)`` per the §3.2 rule."""
+def _output_suffix(path: Path, frames: int) -> str:
+    """``.png`` for a still; the input's own (lower-cased) suffix for an animation."""
+    return ".png" if frames <= 1 else path.suffix.lower()
+
+
+def _output_names(
+    paths: list[Path], frames: dict[Path, int]
+) -> dict[Path, tuple[str, bool]]:
+    """Map each source to ``(output filename, renamed)`` per the §3.2 rule.
+
+    Stems are compared within one folder regardless of suffix: an animated
+    ``a.webp`` and a still ``a.png`` collide even though their outputs would
+    not share a name — predictability beats a special case.
+    """
     by_folder: dict[Path, Counter[str]] = {}
     for p in paths:
         by_folder.setdefault(p.parent, Counter())[p.stem] += 1
     names: dict[Path, tuple[str, bool]] = {}
     for p in paths:
+        suffix = _output_suffix(p, frames.get(p, 1))
         if by_folder[p.parent][p.stem] > 1:
-            names[p] = (f"{p.name}.png", True)
+            names[p] = (f"{p.name}{suffix}", True)
         else:
-            names[p] = (f"{p.stem}.png", False)
+            names[p] = (f"{p.stem}{suffix}", False)
     return names
 
 
 def plan_image_dir(
-    source_dir: Path, *, scale: int, max_output_megapixels: int
+    source_dir: Path,
+    *,
+    scale: int,
+    max_output_megapixels: int,
+    max_animation_frames: int = 300,
 ) -> ImageDirPlan:
     """Build the plan for *source_dir*.
 
     Per file, in order: header read (``unreadable`` on failure), existing
-    output (``exists``), the megapixel guard (``oversize``), else ``pending``.
+    output (``exists``), the frame cap (``oversize``), the megapixel guard
+    (``oversize``), else ``pending``.
 
     Args:
         source_dir: The input directory.
         scale: Integer upscale factor (the guard bounds OUTPUT pixels).
         max_output_megapixels: ``cfg.upscale.max_output_megapixels``.
+        max_animation_frames: ``cfg.upscale.max_animation_frames``; an
+            animation with more frames is refused before any pod work.
 
     Returns:
         The plan.
@@ -285,7 +325,14 @@ def plan_image_dir(
         raise NotADirectoryError(str(src))
     out_dir = output_dir_for(src)
     paths, skipped = walk_images(src)
-    names = _output_names(paths)
+    headers: dict[Path, ImageHeader] = {}
+    errors: dict[Path, str] = {}
+    for p in paths:
+        try:
+            headers[p] = read_image_header(p)
+        except Exception as exc:  # noqa: BLE001 — any Pillow failure is "unreadable"
+            errors[p] = f"{type(exc).__name__}: {exc}"
+    names = _output_names(paths, {p: h.frames for p, h in headers.items()})
     renamed_folders: set[Path] = set()
     items: list[ImageDirItem] = []
     for p in paths:
@@ -293,28 +340,25 @@ def plan_image_dir(
         if renamed and p.parent not in renamed_folders:
             renamed_folders.add(p.parent)
             _log.warning(
-                "%s: stem collision; colliding files keep their full name + .png",
+                "%s: stem collision; colliding files keep their full name + suffix",
                 p.parent,
             )
         output = out_dir / p.parent.relative_to(src) / name
-        try:
-            hdr = read_image_header(p)
-        except Exception as exc:  # noqa: BLE001 — any Pillow failure is "unreadable"
+        if p in errors:
             items.append(
-                ImageDirItem(
-                    p,
-                    output,
-                    0,
-                    0,
-                    "unreadable",
-                    f"{type(exc).__name__}: {exc}",
-                    renamed,
-                )
+                ImageDirItem(p, output, 0, 0, "unreadable", errors[p], renamed)
             )
             continue
+        hdr = headers[p]
         if output.exists():
             disposition: Disposition = "exists"
             reason: str | None = None
+        elif hdr.frames > max_animation_frames:
+            disposition = "oversize"
+            reason = (
+                f"{hdr.frames} frames exceeds "
+                f"upscale.max_animation_frames={max_animation_frames}"
+            )
         elif output_megapixels(hdr.width, hdr.height, scale) > max_output_megapixels:
             disposition = "oversize"
             reason = (
@@ -325,7 +369,16 @@ def plan_image_dir(
         else:
             disposition, reason = "pending", None
         items.append(
-            ImageDirItem(p, output, hdr.width, hdr.height, disposition, reason, renamed)
+            ImageDirItem(
+                p,
+                output,
+                hdr.width,
+                hdr.height,
+                disposition,
+                reason,
+                renamed,
+                hdr.frames,
+            )
         )
     return ImageDirPlan(src, out_dir, tuple(items), skipped)
 

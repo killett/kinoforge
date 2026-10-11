@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 from PIL import Image
@@ -199,3 +200,149 @@ class TestHeader:
         plan = _plan(src, cap=1000)
         assert plan.items[0].height == 60000
         assert time.perf_counter() - t0 < 1.0
+
+
+def _anim(
+    path: Path, n: int = 4, size: tuple[int, int] = (8, 6), mode: str = "RGBA"
+) -> Path:
+    """Write an n-frame animation (or multi-page TIFF) in the container of *path*."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frames = [Image.new(mode, size, (10 * i, 0, 0, 255)[: len(mode)]) for i in range(n)]
+    kw: dict[str, Any] = {}
+    if path.suffix.lower() in (".webp", ".gif", ".png"):
+        kw = {"duration": [100] * n, "loop": 0}
+    frames[0].save(path, save_all=True, append_images=frames[1:], **kw)
+    return path
+
+
+class TestFrames:
+    @pytest.mark.parametrize(
+        ("name", "n"),
+        [("a.webp", 4), ("a.gif", 4), ("a.png", 4), ("a.tif", 3), ("a.tiff", 3)],
+    )
+    def test_header_reports_frames(self, tmp_path: Path, name: str, n: int) -> None:
+        # Bug caught: a two-frame APNG reports one frame and passes through
+        # byte for byte; a multi-page TIFF is treated as its first page.
+        mode = "RGB" if name.endswith(("tif", "tiff")) else "RGBA"
+        hdr = read_image_header(_anim(tmp_path / name, n, mode=mode))
+        assert hdr.frames == n
+
+    @pytest.mark.parametrize("name", ["s.png", "s.jpg", "s.webp"])
+    def test_still_reports_one_frame(self, tmp_path: Path, name: str) -> None:
+        # Bug caught: a still is routed through the animated branch.
+        assert read_image_header(_png(tmp_path / name)).frames == 1
+
+    def test_frames_only_consulted_for_animated_containers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Bug caught: a PSD (n_frames == layer count) or ICO (n_frames ==
+        # size count) is classified as an animation and fed frame by frame.
+        from PIL import Image as _Image
+
+        # Bug caught (fixture note): Pillow can READ many containers it cannot
+        # WRITE — plain `_png(path)` infers the save format from `.psd` and
+        # KeyErrors since Pillow has no PSD encoder. Saving with an explicit
+        # `format="PNG"` still produces real PNG bytes under the `.psd` name,
+        # which is exactly "a PNG under a .psd name" the brief calls for.
+        src = tmp_path / "layers.psd"
+        src.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (8, 6), 0).save(src, format="PNG")
+        real_open = _Image.open
+
+        class _Multi:
+            def __init__(self, im: object) -> None:
+                self._im = im
+                self.n_frames = 7
+
+            def __getattr__(self, name: str) -> object:
+                return getattr(self._im, name)
+
+            def __enter__(self) -> _Multi:
+                return self
+
+            def __exit__(self, *a: object) -> None:
+                self._im.close()  # type: ignore[attr-defined]
+
+        monkeypatch.setattr(_Image, "open", lambda p, *a, **k: _Multi(real_open(p)))
+        assert read_image_header(src).frames == 1
+
+    def test_above_cap_is_oversize_naming_the_cap(self, tmp_path: Path) -> None:
+        # Bug caught: a 2,000-frame file enters the pod loop; or the reason
+        # does not say which knob to raise.
+        src = tmp_path / "photos"
+        _anim(src / "big.webp", 4)
+        _anim(src / "ok.webp", 3)
+        plan = plan_image_dir(
+            src, scale=2, max_output_megapixels=256, max_animation_frames=3
+        )
+        by = {i.source.name: i for i in plan.items}
+        assert by["big.webp"].disposition == "oversize"
+        assert (
+            by["big.webp"].reason == "4 frames exceeds upscale.max_animation_frames=3"
+        )
+        assert by["ok.webp"].disposition == "pending"
+        assert by["ok.webp"].frames == 3
+
+    def test_default_cap_is_300(self, tmp_path: Path) -> None:
+        # Bug caught: the keyword default drifts from the config default.
+        src = tmp_path / "photos"
+        _anim(src / "a.gif", 4, mode="RGB")
+        plan = plan_image_dir(src, scale=2, max_output_megapixels=256)
+        assert plan.items[0].disposition == "pending"
+
+    def test_megapixel_guard_applies_per_frame(self, tmp_path: Path) -> None:
+        # Bug caught: the guard multiplies by the frame count and refuses
+        # a 4-frame 8x6 animation at 2x as "oversize" on pixels.
+        src = tmp_path / "photos"
+        _anim(src / "a.webp", 4, size=(100, 100))
+        # 100x100 at 2x = 0.04 MP per frame; a cap of 1 MP must pass
+        plan = plan_image_dir(src, scale=2, max_output_megapixels=1)
+        assert plan.items[0].disposition == "pending"
+
+
+class TestAnimatedNaming:
+    @pytest.mark.parametrize(
+        ("name", "out"),
+        [
+            ("anim.webp", "anim.webp"),
+            ("anim.gif", "anim.gif"),
+            ("anim.png", "anim.png"),
+            ("pages.tif", "pages.tif"),
+            ("pages.tiff", "pages.tiff"),
+        ],
+    )
+    def test_animated_keeps_its_container(
+        self, tmp_path: Path, name: str, out: str
+    ) -> None:
+        # Bug caught: an animated WebP is written as a still <stem>.png.
+        src = tmp_path / "photos"
+        mode = "RGB" if name.endswith(("tif", "tiff")) else "RGBA"
+        _anim(src / name, 3, mode=mode)
+        plan = _plan(src)
+        assert plan.items[0].output == plan.output_dir / out
+
+    def test_still_webp_still_becomes_png(self, tmp_path: Path) -> None:
+        # Bug caught: the suffix rule keys on the container, not on frames.
+        src = tmp_path / "photos"
+        _png(src / "b.webp")
+        assert _plan(src).items[0].output.name == "b.png"
+
+    def test_collision_between_animated_and_still_keeps_full_names(
+        self, tmp_path: Path
+    ) -> None:
+        # Bug caught: different output suffixes exempt the pair from the rule,
+        # so a later-added `a.webp` still silently shadows `a.png`'s output.
+        src = tmp_path / "photos"
+        _anim(src / "a.webp", 3)
+        _png(src / "a.png")
+        plan = _plan(src)
+        names = {i.source.name: (i.output.name, i.renamed) for i in plan.items}
+        assert names == {"a.webp": ("a.webp.webp", True), "a.png": ("a.png.png", True)}
+
+    def test_existing_animated_output_is_exists(self, tmp_path: Path) -> None:
+        # Bug caught: a finished animation is paid for again on rerun.
+        src = tmp_path / "photos"
+        _anim(src / "anim.webp", 3)
+        out = tmp_path / "photos_upscaled"
+        _anim(out / "anim.webp", 3)
+        assert _plan(src).items[0].disposition == "exists"
