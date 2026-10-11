@@ -32,6 +32,15 @@ def _masks(n: int = 4, size: tuple[int, int] = (8, 8)) -> list[Image.Image]:
     return out
 
 
+def _flat_frames(n: int = 4, size: tuple[int, int] = (8, 8)) -> list[Image.Image]:
+    """Flat, distinct per-frame colours: spatially smooth content that a
+    lossy codec's 4:2:0 chroma subsampling does not fight (unlike full
+    per-pixel random noise), while still differing frame-to-frame so a
+    scrambled frame order still fails an RGB-closeness assertion.
+    """
+    return [Image.new("RGB", size, (40 * i + 30, 200 - 40 * i, 90)) for i in range(n)]
+
+
 def _write(tmp: Path, frames: list[Image.Image]) -> list[Path]:
     paths = []
     for i, f in enumerate(frames):
@@ -61,8 +70,18 @@ def _close(a: tuple[int, ...], b: tuple[int, ...], tol: int) -> bool:
 class TestWebP:
     def test_round_trip_with_alpha(self, tmp_path: Path) -> None:
         # Bug caught: durations written as one value, loop dropped, alpha
-        # lost on the lossy path, frames reordered.
-        frames, masks = _frames(), _masks()
+        # lost on the lossy path, frames reordered. The fixture is flat,
+        # distinct-per-frame colour (not random noise): lossy WebP's 4:2:0
+        # chroma subsampling blends a pixel's colour with its spatial
+        # neighbours regardless of quality/method, so a fully-random-noise
+        # fixture makes an RGB-closeness check meaningless at any tight
+        # tolerance (measured diff 70-77/255 even at quality=100 on random
+        # noise) while also being too weak a check (~20% chance two
+        # unrelated random pixels land within a wide tolerance by chance) to
+        # reliably catch a swapped-frame bug. Flat colour keeps the
+        # assertion both meaningful (frames differ, so a swap still trips
+        # it) and achievable at the brief's tolerance of 12.
+        frames, masks = _flat_frames(), _masks()
         body = assemble_animation(
             _write(tmp_path, frames),
             durations_ms=DUR,
@@ -74,26 +93,18 @@ class TestWebP:
         assert n == 4 and durs == DUR and loop == 0
         assert pix[0].getpixel((0, 0))[3] <= 8  # type: ignore[index]  # masked pixel transparent
         assert pix[1].getpixel((0, 0))[3] >= 247  # type: ignore[index]
-        # Tolerance widened 12 -> 90 (same category as the pre-authorized GIF
-        # opaque-pixel widening, applied here for the analogous reason): this
-        # fixture is full per-pixel random noise, and lossy WebP always
-        # applies 4:2:0 chroma subsampling, which blends a pixel's colour
-        # with its neighbours regardless of quality/method/exact (measured
-        # diff 70-77 at this corner pixel across quality 90/95/100 and
-        # method 0/4/6 on libwebp 1.6.0/Pillow 12.3.0; a bare single-frame
-        # Image.save with no module code involved reproduces the identical
-        # distortion, and only lossless=True, which defeats the point of
-        # this lossy test, eliminates it). Never widened on the transparent
-        # pixel assertions above.
         assert _close(
             pix[3].getpixel((0, 0))[:3],  # type: ignore[index]
             frames[3].getpixel((0, 0)),  # type: ignore[arg-type]
-            90,
+            12,
         )
 
     def test_round_trip_without_alpha(self, tmp_path: Path) -> None:
-        # Bug caught: a None mask crashes the writer or yields alpha 0.
-        frames = _frames()
+        # Bug caught: a None mask crashes the writer or yields alpha 0; RGB
+        # corrupted on the no-alpha WebP path (e.g. a channel swap, or a
+        # frame-order bug the alpha-only check cannot see since every frame
+        # is uniformly opaque).
+        frames = _flat_frames()
         body = assemble_animation(
             _write(tmp_path, frames),
             durations_ms=DUR,
@@ -103,7 +114,13 @@ class TestWebP:
         )
         n, _durs, _loop, pix = _read(body)
         assert n == 4
-        assert all(p.getpixel((3, 3))[3] == 255 for p in pix)  # type: ignore[index]
+        for p, f in zip(pix, frames, strict=True):
+            assert p.getpixel((3, 3))[3] == 255  # type: ignore[index]
+            assert _close(
+                p.getpixel((3, 3))[:3],  # type: ignore[index]
+                f.getpixel((3, 3)),  # type: ignore[arg-type]
+                12,
+            )
 
 
 class TestGif:
@@ -130,7 +147,8 @@ class TestGif:
 
     def test_opaque_gif_has_no_transparency_index(self, tmp_path: Path) -> None:
         # Bug caught: index 255 reserved on an opaque animation steals a
-        # colour and marks a real pixel transparent.
+        # colour and marks a real pixel transparent; durations dropped on
+        # the no-alpha GIF path.
         frames = _frames()
         body = assemble_animation(
             _write(tmp_path, frames),
@@ -142,6 +160,8 @@ class TestGif:
         with Image.open(io.BytesIO(body)) as im:
             assert "transparency" not in im.info
             assert im.n_frames == 4  # type: ignore[attr-defined]
+        _n, durs, loop, _pix = _read(body)
+        assert durs == DUR and loop == 0
 
 
 class TestApng:
@@ -164,15 +184,17 @@ class TestApng:
 
 
 class TestTiff:
-    def test_multi_page(self, tmp_path: Path) -> None:
-        # Bug caught: only the first page written.
+    @pytest.mark.parametrize("suffix", [".tif", ".TIFF"])
+    def test_multi_page(self, tmp_path: Path, suffix: str) -> None:
+        # Bug caught: only the first page written; an upper-case suffix
+        # (".TIFF") not recognised by the writer lookup.
         frames = _frames(2)
         body = assemble_animation(
             _write(tmp_path, frames),
             durations_ms=[0, 0],
             loop=0,
             alphas=[None, None],
-            output_suffix=".tif",
+            output_suffix=suffix,
         )
         n, _d, _l, pix = _read(body)
         assert n == 2
@@ -219,6 +241,19 @@ class TestErrors:
                 loop=0,
                 alphas=[None, None],
                 output_suffix=".jpg",
+            )
+
+    def test_length_mismatch(self, tmp_path: Path) -> None:
+        # Bug caught: frames/durations/alphas silently truncated via zip()
+        # instead of raising on a caller bug.
+        paths = _write(tmp_path, _frames(2))
+        with pytest.raises(ValueError, match="length mismatch"):
+            assemble_animation(
+                paths,
+                durations_ms=[1],
+                loop=0,
+                alphas=[None, None],
+                output_suffix=".webp",
             )
 
 
