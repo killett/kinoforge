@@ -467,3 +467,141 @@ def test_no_probe_means_no_abort(
         "no health probe injected; a dead pod will surface as per-item "
         "failures, not an abort"
     ]
+
+
+def _anim_src(tmp_path: Path, extra_stills: tuple[str, ...] = ()) -> Path:
+    """`photos/anim.webp` (3 RGBA frames, mixed durations) plus optional stills."""
+    src = tmp_path / "photos"
+    src.mkdir(parents=True, exist_ok=True)
+    frames = [Image.new("RGBA", (4, 4), (60 * i, 0, 0, 255)) for i in range(3)]
+    frames[0].save(
+        src / "anim.webp",
+        save_all=True,
+        append_images=frames[1:],
+        duration=[100, 200, 300],
+        loop=0,
+    )
+    for n in extra_stills:
+        Image.new("RGB", (4, 4), 0).save(src / n)
+    return src
+
+
+class _FrameUpscaler(_Upscaler):
+    """Returns a real 8x8 RGB PNG per call so the assembler can read it."""
+
+    def upscale(
+        self, instance: Any, job: Any, cfg: Any, *, cancel_token: Any = None
+    ) -> Any:
+        self.calls.append(job)
+        n = len(self.calls)
+        if n in self.fail_on:
+            raise self.raise_cls(f"boom on call {n}")
+        out = self.tmp / f"result{n}.png"
+        Image.new("RGB", (8, 8), (n * 30, 0, 0)).save(out)
+        from kinoforge.core.interfaces import Artifact, UpscaleResult
+
+        return UpscaleResult(
+            artifact=Artifact(uri=f"file://{out}", meta={"media": "image"}),
+            input_resolution=(4, 4),
+            output_resolution=(8, 8),
+            elapsed_s=0.0,
+        )
+
+
+def test_animated_item_runs_one_call_per_frame_and_writes_one_animation(
+    tmp_path: Path, session: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    # Bug caught: the runner uploads the source file once (frame 0 only), or
+    # writes one PNG per frame into the mirrored tree.
+    import logging
+
+    caplog.set_level(logging.INFO, logger="kinoforge.core.upscale_dir")
+    src = _anim_src(tmp_path)
+    up = _FrameUpscaler(tmp_path)
+    _result, seen = _run(tmp_path, src, up)
+    assert len(up.calls) == 3
+    assert seen == [("anim.webp", "written", None)]
+    out = tmp_path / "photos_upscaled" / "anim.webp"
+    assert out.exists() and not list((tmp_path / "photos_upscaled").glob("*.png"))
+    with Image.open(out) as im:
+        assert im.n_frames == 3  # type: ignore[attr-defined]
+        im.seek(2)
+        im.load()
+        assert im.info["duration"] == 300
+        assert im.size == (8, 8)
+    assert "anim.webp: frame 2/3" in caplog.text
+
+
+def test_animated_scratch_is_drained_before_the_next_item(
+    tmp_path: Path, session: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug caught: decoded or upscaled frame files accumulate across items
+    # (300 frames × N items of controller /tmp).
+    from kinoforge.core import upscale_dir as mod
+
+    src = _anim_src(tmp_path, ("z.png",))
+    real = mod.prepare_frames  # type: ignore[attr-defined]
+    scratch_seen: list[Path] = []
+
+    def spy(item: Any, scratch: Path) -> Any:
+        scratch_seen.append(scratch)
+        return real(item, scratch)
+
+    monkeypatch.setattr(mod, "prepare_frames", spy)
+    leftovers: list[list[str]] = []
+
+    def on_item(item: Any, outcome: str, reason: str | None) -> None:
+        if scratch_seen:
+            leftovers.append(sorted(p.name for p in scratch_seen[0].iterdir()))
+
+    plan = plan_image_dir(src, scale=2, max_output_megapixels=256)
+    upscale_image_dir(
+        _cfg(),
+        plan,
+        store=MagicMock(),
+        run_id="r",
+        state_dir=tmp_path / ".kf",
+        upscaler=_FrameUpscaler(tmp_path),  # type: ignore[arg-type]
+        on_item=on_item,
+        health_probe=lambda url, cancel_token: {"ok": True},
+    )
+    assert leftovers and all(names == [] for names in leftovers)
+
+
+def test_frame_failure_fails_the_item_names_the_frame_and_continues(
+    tmp_path: Path, session: dict[str, Any]
+) -> None:
+    # Bug caught: a partial animation lands in the tree; the reason hides
+    # which frame died; one bad animation ends the run.
+    src = _anim_src(tmp_path, ("z.png",))
+    probes: list[str] = []
+
+    def probe(url: str, cancel_token: Any) -> dict[str, bool]:
+        probes.append(url)
+        return {"ok": True}
+
+    up = _FrameUpscaler(tmp_path, fail_on={2})
+    _result, seen = _run(tmp_path, src, up, probe=probe)
+    assert seen[0][:2] == ("anim.webp", "failed")
+    assert seen[0][2] is not None and seen[0][2].startswith(
+        "frame 2/3: RuntimeError: boom on call 2"
+    )
+    assert seen[1] == ("z.png", "written", None)
+    out_dir = tmp_path / "photos_upscaled"
+    assert not (out_dir / "anim.webp").exists()
+    assert not list(out_dir.glob("*.part"))
+    assert len(probes) == 1
+    assert len(up.calls) == 3  # 2 for anim (second failed), 1 for z.png
+
+
+def test_fatal_on_a_frame_aborts_the_rest_unwrapped(
+    tmp_path: Path, session: dict[str, Any]
+) -> None:
+    # Bug caught: Cancelled wrapped into FrameFailed becomes a per-item
+    # failure and the run keeps spending.
+    src = _anim_src(tmp_path, ("z.png",))
+    up = _FrameUpscaler(tmp_path, fail_on={2}, raise_cls=Cancelled)
+    with pytest.raises(Cancelled):
+        _run(tmp_path, src, up)
+    assert len(up.calls) == 2
+    assert not (tmp_path / "photos_upscaled" / "anim.webp").exists()

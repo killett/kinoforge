@@ -26,7 +26,13 @@ from kinoforge.core.errors import (
     KinoforgeError,
     TeardownError,
 )
-from kinoforge.core.image_dir import ImageDirItem, ImageDirPlan, prepare_upload
+from kinoforge.core.image_dir import (
+    ImageDirItem,
+    ImageDirPlan,
+    prepare_frames,
+    prepare_upload,
+    read_loop,
+)
 from kinoforge.core.interfaces import (
     ComputeProvider,
     CredentialProvider,
@@ -40,7 +46,11 @@ from kinoforge.core.media import local_artifact
 from kinoforge.stores.base import ArtifactStore
 
 if TYPE_CHECKING:
+    from PIL import Image as _PILImage
+
+    from kinoforge.core.interfaces import Artifact
     from kinoforge.core.scale_target import ScaleTarget
+    from kinoforge.pipeline.upscale import UpscaleStage
 
 _log = logging.getLogger("kinoforge.core.upscale_dir")
 
@@ -64,6 +74,27 @@ _FATAL: tuple[type[BaseException], ...] = (
 
 class PodDead(KinoforgeError):
     """The pod stopped answering ``/health`` after an item failed; the rest were aborted."""
+
+
+class FrameFailed(KinoforgeError):
+    """One frame of an animated item failed; the item fails as a whole.
+
+    ``str()`` is the per-item reason: ``frame 37/100: RuntimeError: ...``.
+    Never raised for :data:`_FATAL` exceptions, which propagate unwrapped.
+    """
+
+    def __init__(self, index: int, total: int, cause: BaseException) -> None:
+        """Build the per-item reason from the 1-based frame *index* and its *cause*.
+
+        Args:
+            index: 1-based frame number that failed.
+            total: Total frame count of the item.
+            cause: The exception the frame's stage/fetch call raised.
+        """
+        self.index = index
+        self.total = total
+        self.cause = cause
+        super().__init__(f"frame {index}/{total}: {type(cause).__name__}: {cause}")
 
 
 @dataclass(frozen=True)
@@ -112,6 +143,67 @@ def _write_atomic(path: Path, body: bytes) -> None:
     # destination (plan_image_dir's output_dir_for); nothing prompt-derived.
     tmp.write_bytes(body)  # kinoforge:public-write
     os.replace(tmp, path)
+
+
+def _upscale_animated(
+    item: ImageDirItem,
+    stage: UpscaleStage,
+    scratch: Path,
+    fetch: Callable[[Artifact], bytes],
+) -> bytes:
+    """Upscale every frame of *item* through *stage* and return the encoded animation.
+
+    Decoded frames are unlinked right after their upload; upscaled frames
+    are unlinked once the animation is encoded (or on failure). A frame
+    failure raises :class:`FrameFailed`; :data:`_FATAL` exceptions pass
+    through unwrapped.
+
+    Args:
+        item: A planned animated item (``frames > 1``).
+        stage: The run's ``UpscaleStage``.
+        scratch: The run's scratch directory.
+        fetch: ``fetch_artifact_bytes`` (injected so the orchestrator import
+            stays lazy in the caller).
+
+    Returns:
+        The encoded animation bytes for :func:`_write_atomic`.
+    """
+    from kinoforge.core.animation import assemble_animation
+
+    upscaled: list[Path] = []
+    durations: list[int] = []
+    alphas: list[_PILImage.Image | None] = []
+    try:
+        for frame in prepare_frames(item, scratch):
+            _log.info("%s: frame %d/%d", item.source.name, frame.index + 1, item.frames)
+            try:
+                state = PipelineState(
+                    request=GenerationRequest(prompt="", mode="upscale"),
+                    artifacts={"clip": local_artifact(frame.path, "image")},
+                )
+                state = stage.run(state)
+                body = fetch(state.artifacts["upscaled"])
+            except _FATAL:
+                raise
+            except Exception as exc:
+                raise FrameFailed(frame.index + 1, item.frames, exc) from exc
+            finally:
+                frame.path.unlink(missing_ok=True)
+            up = frame.path.with_name(frame.path.name.replace("-f", "-u", 1))
+            _write_atomic(up, body)
+            upscaled.append(up)
+            durations.append(frame.duration_ms)
+            alphas.append(frame.alpha)
+        return assemble_animation(
+            upscaled,
+            durations_ms=durations,
+            loop=read_loop(item.source),
+            alphas=alphas,
+            output_suffix=item.output.suffix,
+        )
+    finally:
+        for p in upscaled:
+            p.unlink(missing_ok=True)
 
 
 def upscale_image_dir(
@@ -256,13 +348,20 @@ def upscale_image_dir(
                 upload: Path | None = None
                 try:
                     try:
-                        upload = prepare_upload(item, scratch)
-                        state = PipelineState(
-                            request=GenerationRequest(prompt="", mode="upscale"),
-                            artifacts={"clip": local_artifact(upload, "image")},
-                        )
-                        state = stage.run(state)
-                        body = _orch.fetch_artifact_bytes(state.artifacts["upscaled"])
+                        if item.frames > 1:
+                            body = _upscale_animated(
+                                item, stage, scratch, _orch.fetch_artifact_bytes
+                            )
+                        else:
+                            upload = prepare_upload(item, scratch)
+                            state = PipelineState(
+                                request=GenerationRequest(prompt="", mode="upscale"),
+                                artifacts={"clip": local_artifact(upload, "image")},
+                            )
+                            state = stage.run(state)
+                            body = _orch.fetch_artifact_bytes(
+                                state.artifacts["upscaled"]
+                            )
                         _write_atomic(item.output, body)
                     finally:
                         # Unlink the converted scratch PNG the moment this item
@@ -271,14 +370,20 @@ def upscale_image_dir(
                         # for the whole run is multiple GB of controller /tmp.
                         # The passthrough source (upload is item.source) is
                         # never touched; TemporaryDirectory stays the backstop
-                        # for the run as a whole.
+                        # for the run as a whole. An animated item never sets
+                        # `upload` — its own frame files are drained inside
+                        # _upscale_animated's own finally.
                         if upload is not None and upload != item.source:
                             upload.unlink(missing_ok=True)
                 except _FATAL as exc:
                     _abort_rest(pending[idx:], type(exc).__name__)
                     raise
                 except Exception as exc:  # noqa: BLE001 — one bad file must not end the run
-                    reason = f"{type(exc).__name__}: {exc}"
+                    reason = (
+                        str(exc)
+                        if isinstance(exc, FrameFailed)
+                        else f"{type(exc).__name__}: {exc}"
+                    )
                     _log.warning("%s failed: %s", item.source, reason)
                     _emit(item, "failed", reason)
                     if health_probe is None:
