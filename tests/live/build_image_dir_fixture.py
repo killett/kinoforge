@@ -14,6 +14,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from kinoforge.core.image_dir import register_openers
+
 _ROOT = Path(__file__).parent.parent.parent
 _LUMA = (
     _ROOT
@@ -28,6 +30,10 @@ def build(dest: Path) -> None:
         raise SystemExit(
             f"missing §35 input {_LUMA.name}; regenerate with kinoforge image"
         )
+    # conda-forge's Pillow is built without libavif (``features.check("avif")``
+    # is False), so writing ``luma-avif.avif`` needs pillow-avif-plugin
+    # registered first — the same call ``read_image_header`` makes to read it.
+    register_openers()
     shutil.rmtree(dest, ignore_errors=True)
     shutil.rmtree(dest.parent / f"{dest.name}_upscaled", ignore_errors=True)
     (dest / "sub").mkdir(parents=True)
@@ -45,6 +51,21 @@ def build(dest: Path) -> None:
     f0 = Image.new("RGB", (320, 200), (200, 30, 30))
     f1 = Image.new("RGB", (320, 200), (30, 200, 30))
     f0.save(dest / "sub" / "anim.gif", save_all=True, append_images=[f1], duration=200)
+    # 4-frame RGBA sticker, mixed durations, loop forever: the animated-WebP
+    # branch with alpha (resized on the controller, not model-upscaled).
+    sticker = []
+    for colour in ((220, 40, 40), (40, 220, 40), (40, 40, 220), (220, 220, 40)):
+        fr = Image.new("RGBA", (160, 120), (*colour, 255))
+        fr.putalpha(Image.linear_gradient("L").resize((160, 120)))  # top transparent
+        sticker.append(fr)
+    sticker[0].save(
+        dest / "sub" / "sticker.webp",
+        save_all=True,
+        append_images=sticker[1:],
+        duration=[100, 200, 100, 300],
+        loop=0,
+        lossless=True,
+    )
     alpha = Image.new("RGBA", (300, 180), (40, 120, 220, 255))
     alpha.putalpha(Image.linear_gradient("L").resize((300, 180)))
     alpha.save(dest / "sub" / "alpha.png")

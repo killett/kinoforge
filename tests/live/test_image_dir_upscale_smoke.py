@@ -1,8 +1,9 @@
 """Live smoke — `kinoforge upscale --image-dir` on the spandrel x2 config (design §6.1).
 
-RED scaffold committed BEFORE the live spend per CLAUDE.md. One pod, eight
-files, every branch of the feature. Evidence lands under
-``tests/live/evidence/2026-10-06-image-dir-upscale/`` BEFORE any assertion.
+RED scaffold committed BEFORE the live spend per CLAUDE.md. One pod, nine
+files, every branch of the feature — including the two animated inputs
+(``sub/anim.gif``, ``sub/sticker.webp``). Evidence lands under
+``tests/live/evidence/2026-10-11-animated-image-dir/`` BEFORE any assertion.
 
 Per CLAUDE.md's "Live smoke monitoring" rule, a background thread polls the
 RunPod GraphQL utilisation probe every 60 s for the duration of the
@@ -32,7 +33,7 @@ pytestmark = pytest.mark.skipif(
 
 _ROOT = Path(__file__).parent.parent.parent
 _CFG = _ROOT / "examples" / "configs" / "runpod-diffusers-spandrel-x2-upscale.yaml"
-_EVIDENCE = Path(__file__).parent / "evidence" / "2026-10-06-image-dir-upscale"
+_EVIDENCE = Path(__file__).parent / "evidence" / "2026-10-11-animated-image-dir"
 _LEDGER_PATH = _ROOT / ".kinoforge" / "_lifecycle" / "ledger.json"
 
 
@@ -141,16 +142,20 @@ def test_directory_upscale_on_one_pod(tmp_path: Path) -> None:
 
     # One plan-time failure (huge.webp) is designed in → exit 1, not 0.
     assert proc.returncode == 1, proc.stderr
-    assert "upscaled 6, skipped 1 existing, failed 1, aborted 0" in proc.stdout
+    assert (
+        "upscaled 7 (2 animated, 6 frames), skipped 1 existing, failed 1, aborted 0"
+        in proc.stdout
+    )
     assert re.search(r"failed: huge\.webp: .*max_output_megapixels=256", proc.stdout)
-    assert len(re.findall(r"^\[\d/6\] .* -> ", proc.stdout, flags=re.M)) == 6
+    assert len(re.findall(r"^\[\d/7\] .* -> ", proc.stdout, flags=re.M)) == 7
 
     expected = {
         "luma.png": (5344, 3008),
         "luma-webp.png": (5344, 3008),
         "luma-avif.png": (5344, 3008),
         "rotated.png": (5344, 3008),
-        "sub/anim.png": (640, 400),
+        "sub/anim.gif": (640, 400),
+        "sub/sticker.webp": (320, 240),
         "sub/alpha.png": (600, 360),
     }
     for rel, size in expected.items():
@@ -160,9 +165,30 @@ def test_directory_upscale_on_one_pod(tmp_path: Path) -> None:
         shutil.copy2(p, _EVIDENCE / rel.replace("/", "__"))
     assert not (out / "huge.png").exists()
     assert _sha(out / "existing.png") == existing_before
-    assert sorted(p.relative_to(out).as_posix() for p in out.rglob("*.png")) == sorted(
-        [*expected, "existing.png"]
-    )
+    assert sorted(
+        p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()
+    ) == sorted([*expected, "existing.png"])
+
+    # The animated branch must round-trip frame count, per-frame duration,
+    # loop and alpha — not just the upscaled canvas size.
+    with Image.open(out / "sub" / "sticker.webp") as im:
+        assert getattr(im, "n_frames", 1) == 4
+        durs = []
+        for i in range(4):
+            im.seek(i)
+            im.load()
+            durs.append(im.info["duration"])
+        assert durs == [100, 200, 100, 300]
+        assert im.info.get("loop", 0) == 0
+        im.seek(0)
+        rgba = im.convert("RGBA")
+        assert rgba.getpixel((0, 0))[3] <= 8  # type: ignore[index]  # top transparent
+        assert rgba.getpixel((319, 239))[3] >= 247  # type: ignore[index]  # bottom opaque
+    with Image.open(out / "sub" / "anim.gif") as im:
+        assert getattr(im, "n_frames", 1) == 2
+        im.seek(1)
+        assert im.info["duration"] == 200
+    assert "pending 7 (2 animated, 6 frames)" in proc.stdout
 
     assert "No running instances." in ledger.stdout
     assert "No instances recorded in ledger." in ledger.stdout
