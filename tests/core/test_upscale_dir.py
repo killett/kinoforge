@@ -605,3 +605,107 @@ def test_fatal_on_a_frame_aborts_the_rest_unwrapped(
         _run(tmp_path, src, up)
     assert len(up.calls) == 2
     assert not (tmp_path / "photos_upscaled" / "anim.webp").exists()
+
+
+def test_write_failure_mid_animation_drains_the_part_file(
+    tmp_path: Path, session: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug caught: a half-written scratch frame survives a write failure.
+    from kinoforge.core import upscale_dir as mod
+
+    src = _anim_src(tmp_path)
+    real_prepare_frames = mod.prepare_frames  # type: ignore[attr-defined]
+    real_write_atomic = mod._write_atomic
+    scratch_seen: list[Path] = []
+
+    def spy(item: Any, scratch: Path) -> Any:
+        scratch_seen.append(scratch)
+        return real_prepare_frames(item, scratch)
+
+    def flaky_write(path: Path, body: bytes) -> None:
+        if "-u0002" in path.name:
+            path.with_name(path.name + ".part").write_bytes(body)
+            raise OSError("disk full")
+        real_write_atomic(path, body)
+
+    monkeypatch.setattr(mod, "prepare_frames", spy)
+    monkeypatch.setattr(mod, "_write_atomic", flaky_write)
+
+    seen: list[tuple[str, str, str | None]] = []
+    leftovers: list[list[str]] = []
+
+    def on_item(item: Any, outcome: str, reason: str | None) -> None:
+        # Captured synchronously, scratch's TemporaryDirectory still open —
+        # same pattern as test_animated_scratch_is_drained_before_the_next_item.
+        seen.append((item.source.name, outcome, reason))
+        if scratch_seen:
+            leftovers.append(sorted(p.name for p in scratch_seen[0].iterdir()))
+
+    plan = plan_image_dir(src, scale=2, max_output_megapixels=256)
+    upscale_image_dir(
+        _cfg(),
+        plan,
+        store=MagicMock(),
+        run_id="r",
+        state_dir=tmp_path / ".kf",
+        upscaler=_FrameUpscaler(tmp_path),  # type: ignore[arg-type]
+        on_item=on_item,
+        health_probe=lambda url, cancel_token: {"ok": True},
+    )
+    assert seen[0][:2] == ("anim.webp", "failed")
+    assert seen[0][2] is not None and "frame 2/3" in seen[0][2]
+    assert not (tmp_path / "photos_upscaled" / "anim.webp").exists()
+    assert leftovers and all(
+        not any("-u" in n or n.endswith(".part") for n in names) for names in leftovers
+    )
+
+
+def test_frame_decode_failure_names_the_frame_and_continues(
+    tmp_path: Path, session: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug caught: a decode failure mid-animation reports a bare OSError
+    # with no frame number.
+    from kinoforge.core import upscale_dir as mod
+
+    src = _anim_src(tmp_path, ("z.png",))
+    real_prepare_frames = mod.prepare_frames  # type: ignore[attr-defined]
+    scratch_seen: list[Path] = []
+
+    def flaky_prepare_frames(item: Any, scratch: Path) -> Any:
+        scratch_seen.append(scratch)
+        real_gen = real_prepare_frames(item, scratch)
+        first = next(real_gen)
+        yield first
+        raise OSError("truncated")
+
+    monkeypatch.setattr(mod, "prepare_frames", flaky_prepare_frames)
+
+    seen: list[tuple[str, str, str | None]] = []
+    leftovers: list[list[str]] = []
+
+    def on_item(item: Any, outcome: str, reason: str | None) -> None:
+        seen.append((item.source.name, outcome, reason))
+        if scratch_seen:
+            leftovers.append(sorted(p.name for p in scratch_seen[0].iterdir()))
+
+    plan = plan_image_dir(src, scale=2, max_output_megapixels=256)
+    upscale_image_dir(
+        _cfg(),
+        plan,
+        store=MagicMock(),
+        run_id="r",
+        state_dir=tmp_path / ".kf",
+        upscaler=_FrameUpscaler(tmp_path),  # type: ignore[arg-type]
+        on_item=on_item,
+        health_probe=lambda url, cancel_token: {"ok": True},
+    )
+    assert seen[0][:2] == ("anim.webp", "failed")
+    assert seen[0][2] is not None and seen[0][2].startswith(
+        "frame 2/3: OSError: truncated"
+    )
+    assert seen[1] == ("z.png", "written", None)
+    out_dir = tmp_path / "photos_upscaled"
+    assert not (out_dir / "anim.webp").exists()
+    assert leftovers and all(
+        not any("-u" in n or "-f" in n for n in names) for names in leftovers
+    )

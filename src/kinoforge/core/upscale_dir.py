@@ -154,9 +154,12 @@ def _upscale_animated(
     """Upscale every frame of *item* through *stage* and return the encoded animation.
 
     Decoded frames are unlinked right after their upload; upscaled frames
-    are unlinked once the animation is encoded (or on failure). A frame
-    failure raises :class:`FrameFailed`; :data:`_FATAL` exceptions pass
-    through unwrapped.
+    (and a stray ``.part`` left by an aborted atomic write) are unlinked
+    once the animation is encoded, or on failure. A frame failure — whether
+    raised by the frame decoder itself while iterating
+    :func:`prepare_frames`, by the stage/fetch call, or by the scratch-frame
+    write — raises :class:`FrameFailed` named with that frame's 1-based
+    index; :data:`_FATAL` exceptions pass through unwrapped.
 
     Args:
         item: A planned animated item (``frames > 1``).
@@ -174,7 +177,21 @@ def _upscale_animated(
     durations: list[int] = []
     alphas: list[_PILImage.Image | None] = []
     try:
-        for frame in prepare_frames(item, scratch):
+        gen = prepare_frames(item, scratch)
+        i = 0
+        while True:
+            i += 1
+            try:
+                frame = next(gen)
+            except StopIteration:
+                break
+            except _FATAL:
+                raise
+            except Exception as exc:
+                # The decoder itself failed (a corrupt frame's seek/load),
+                # not the stage/fetch call below — still named by frame
+                # number per spec §5.
+                raise FrameFailed(i, item.frames, exc) from exc
             _log.info("%s: frame %d/%d", item.source.name, frame.index + 1, item.frames)
             try:
                 state = PipelineState(
@@ -190,8 +207,17 @@ def _upscale_animated(
             finally:
                 frame.path.unlink(missing_ok=True)
             up = frame.path.with_name(frame.path.name.replace("-f", "-u", 1))
-            _write_atomic(up, body)
+            # Registered before the write so a write failure (disk full,
+            # permission, a dying os.replace) still gets its stray `.part`
+            # drained below instead of orphaned in scratch until the run's
+            # TemporaryDirectory exits.
             upscaled.append(up)
+            try:
+                _write_atomic(up, body)
+            except _FATAL:
+                raise
+            except Exception as exc:
+                raise FrameFailed(frame.index + 1, item.frames, exc) from exc
             durations.append(frame.duration_ms)
             alphas.append(frame.alpha)
         return assemble_animation(
@@ -204,6 +230,7 @@ def _upscale_animated(
     finally:
         for p in upscaled:
             p.unlink(missing_ok=True)
+            p.with_name(p.name + ".part").unlink(missing_ok=True)
 
 
 def upscale_image_dir(
