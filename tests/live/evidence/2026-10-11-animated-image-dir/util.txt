@@ -1,0 +1,30 @@
+2026-10-11T03:15:56 pod=none found=False gpu=- cpu=- mem=-
+2026-10-11T03:16:01 pod=lyly6vukkt98l0 found=True gpu=- cpu=- mem=-
+2026-10-11T03:16:07 pod=lyly6vukkt98l0 found=True gpu=- cpu=- mem=-
+2026-10-11T03:16:13 pod=lyly6vukkt98l0 found=True gpu=- cpu=- mem=-
+2026-10-11T03:16:18 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=12.0 mem=0.0 up=8
+2026-10-11T03:16:24 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=12.0 mem=0.0 up=8
+2026-10-11T03:16:30 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=12.0 mem=0.0 up=8
+2026-10-11T03:16:36 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=12.0 mem=0.0 up=8
+2026-10-11T03:16:41 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=9.0 mem=0.0 up=33
+2026-10-11T03:16:47 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=9.0 mem=0.0 up=33
+2026-10-11T03:16:53 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=9.0 mem=0.0 up=33
+2026-10-11T03:16:59 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=9.0 mem=0.0 up=33
+2026-10-11T03:17:04 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=9.0 mem=0.0 up=33
+2026-10-11T03:17:10 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=6.0 mem=0.0 up=64
+2026-10-11T03:17:16 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=6.0 mem=0.0 up=64
+2026-10-11T03:17:21 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=6.0 mem=0.0 up=64
+2026-10-11T03:17:27 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=6.0 mem=0.0 up=64
+2026-10-11T03:17:33 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=6.0 mem=0.0 up=64
+2026-10-11T03:17:39 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=0.0 mem=1.0 up=94
+2026-10-11T03:17:44 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=0.0 mem=1.0 up=94
+2026-10-11T03:17:50 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=0.0 mem=1.0 up=94
+2026-10-11T03:17:56 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=0.0 mem=1.0 up=94
+2026-10-11T03:18:01 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=0.0 mem=1.0 up=94
+2026-10-11T03:18:07 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=0.0 mem=1.0 up=94
+2026-10-11T03:18:13 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=0.0 mem=1.0 up=123
+2026-10-11T03:18:18 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=0.0 mem=1.0 up=123
+2026-10-11T03:18:24 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=0.0 mem=1.0 up=123
+2026-10-11T03:18:30 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=0.0 mem=1.0 up=123
+2026-10-11T03:18:35 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=0.0 mem=1.0 up=123
+2026-10-11T03:18:41 pod=lyly6vukkt98l0 found=True gpu=0.0 cpu=0.0 mem=1.0 up=151

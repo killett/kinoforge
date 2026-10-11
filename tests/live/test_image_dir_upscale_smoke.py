@@ -10,20 +10,25 @@ RunPod GraphQL utilisation probe for the duration of the subprocess run and
 appends snapshots to ``evidence/util.txt`` — never trust ``est_spend`` alone
 to prove the pod is actually working.
 
-The cadence is :data:`_POLL_S` = 5 s, far under the rule's 60-90 s floor, and
-every line carries ``runtime.uptimeInSeconds``. Both are because of what
-2026-10-11 measured: each item here is a ~2 s GPU burst inside a ~13 s
-upload/run/download cycle, so ``runtime.gpus[].gpuUtilPercent`` — an
-instantaneous read, not an average — samples the idle gaps. A 60 s cadence saw
-``gpu=0.0`` twice and a 15 s cadence saw it eleven times, both across runs
-that demonstrably produced all seven outputs (``attempt1-poll60-util.txt``,
-``attempt2-poll15-util.txt``). ``up=`` is the discriminator the earlier lines
-lacked: an advancing uptime proves the runtime block is being refreshed, so a
-0 really is a 0 and not a stale snapshot.
+The cadence is :data:`_POLL_S` = 5 s, under the rule's 60-90 s floor, and every
+line carries ``runtime.uptimeInSeconds`` — and that ``up=`` field is what makes
+the file readable. 2026-10-11 ran this smoke three times, at 60 s, 15 s and
+5 s, and read ``gpu=0.0`` on every probe of all three, across runs that each
+produced all seven outputs. The 5 s run explains why: ``up=`` advanced
+8, 33, 64, 94, 123, 151 — five or six consecutive probes return the SAME
+cached snapshot, so RunPod refreshes the whole ``runtime`` block only about
+every 30 s. No cadence can beat that, and a ~2 s GPU burst per item inside a
+~13 s upload/run/download cycle will essentially never land in one of the ~6
+independent samples a three-minute run affords.
 
-Read the CPU trace, not the GPU one, to tell a busy short-burst image pod from
-a dead one: CLAUDE.md's "GPU 0% for three consecutive probes == dead" heuristic
-is calibrated for video work and misclassifies this workload.
+So on a short-burst image workload ``gpuUtilPercent`` is not a liveness
+signal, and CLAUDE.md's "GPU 0% for three consecutive probes == dead pod"
+heuristic — calibrated on video work, where the GPU is pinned for minutes —
+misclassifies this run. What does carry signal here: ``found`` (a terminated
+pod flips it to False within one probe), ``up`` advancing, and the ``cpu``
+trace, which tracked boot and work at 6-20% and fell to 0 when the pod went
+idle. Keep 5 s anyway: duplicated lines are cheap and the duplication itself
+is what exposes the refresh period.
 """
 
 from __future__ import annotations
