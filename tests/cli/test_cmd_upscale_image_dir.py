@@ -521,3 +521,124 @@ class TestLaunchRow:
             ]
         )
         assert rc == 0 and len(calls) == 1 and calls[0][1]["no_reuse"] is True
+
+
+def _photos_with_anim(tmp_path: Path) -> Path:
+    src = _photos(tmp_path, ("a.png",))
+    (src / "sub").mkdir(exist_ok=True)
+    frames = [Image.new("RGBA", (4, 4), (50 * i, 0, 0, 255)) for i in range(4)]
+    frames[0].save(
+        src / "sub" / "anim.webp",
+        save_all=True,
+        append_images=frames[1:],
+        duration=[100] * 4,
+        loop=0,
+    )
+    return src
+
+
+def _photos_with_big_anim(tmp_path: Path) -> Path:
+    src = _photos(tmp_path, ("a.png",))
+    (src / "sub").mkdir(exist_ok=True)
+    frames = [Image.new("RGBA", (800, 800), (50 * i, 0, 0, 255)) for i in range(4)]
+    frames[0].save(
+        src / "sub" / "anim.webp",
+        save_all=True,
+        append_images=frames[1:],
+        duration=[100] * 4,
+        loop=0,
+    )
+    return src
+
+
+class TestAnimated:
+    def test_dry_run_shows_frames_and_the_parenthetical(
+        self, tmp_path: Path, no_runner: None, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Bug caught: the spend preview is silent on animations.
+        src = _photos_with_anim(tmp_path)
+        rc = main(_argv(tmp_path, src, "--dry-run"))
+        o = capsys.readouterr().out
+        assert rc == 0
+        assert "a.png -> a.png [pending]" in o
+        assert "sub/anim.webp -> sub/anim.webp [pending 4 frames]" in o
+        assert (
+            "found 2: pending 2 (1 animated, 4 frames), exists 0, oversize 0, "
+            "unreadable 0; non-image skipped 0"
+        ) in o
+
+    def test_cap_from_config_reaches_the_planner(
+        self, tmp_path: Path, no_runner: None, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Bug caught: the CLI never passes max_animation_frames, so the
+        # config knob is dead and the planner's default of 300 always wins.
+        src = _photos_with_anim(tmp_path)
+        cfg = _cfg(tmp_path, extra="  max_animation_frames: 3\n")
+        rc = main(
+            [
+                "upscale",
+                "--image-dir",
+                str(src),
+                "-c",
+                str(cfg),
+                "--state-dir",
+                str(tmp_path / ".kf"),
+                "--dry-run",
+            ]
+        )
+        o = capsys.readouterr().out
+        assert rc == 0
+        assert (
+            "sub/anim.webp -> sub/anim.webp [oversize]: "
+            "4 frames exceeds upscale.max_animation_frames=3"
+        ) in o
+        assert "found 2: pending 1, exists 0, oversize 1" in o
+
+    def test_megapixel_oversize_keeps_the_frame_count(
+        self, tmp_path: Path, no_runner: None, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Bug caught: an animation refused on pixels (not on the frame cap)
+        # lost its frame count from the spend preview entirely, because the
+        # megapixel-cap reason never contains the string "frames exceeds" —
+        # suppressing the tag's frame annotation on *any* non-None reason
+        # silently drops it for this disposition.
+        src = _photos_with_big_anim(tmp_path)
+        cfg = _cfg(tmp_path, extra="  max_output_megapixels: 1\n")
+        rc = main(
+            [
+                "upscale",
+                "--image-dir",
+                str(src),
+                "-c",
+                str(cfg),
+                "--state-dir",
+                str(tmp_path / ".kf"),
+                "--dry-run",
+            ]
+        )
+        o = capsys.readouterr().out
+        assert rc == 0
+        assert (
+            "sub/anim.webp -> sub/anim.webp [oversize 4 frames]: "
+            "800x800 at 2x -> 2.6 MP exceeds upscale.max_output_megapixels=1"
+        ) in o
+
+    def test_progress_and_summary_show_frames(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Bug caught: a 300-frame item runs for minutes with a line that
+        # looks like a still; the summary counts it as one plain file.
+        src = _photos_with_anim(tmp_path)
+        _fake_runner(monkeypatch)
+        rc = main(_argv(tmp_path, src))
+        o = capsys.readouterr().out
+        assert rc == 0
+        assert "[2/2] sub/anim.webp -> sub/anim.webp (4x4 -> 8x8) (4 frames)" in o
+        assert "[1/2] a.png -> a.png (8x6 -> 16x12)\n" in o
+        assert (
+            "upscaled 2 (1 animated, 4 frames), skipped 0 existing, failed 0, aborted 0 ->"
+            in o
+        )

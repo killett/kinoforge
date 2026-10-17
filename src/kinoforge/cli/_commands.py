@@ -17,7 +17,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -64,7 +64,7 @@ if TYPE_CHECKING:
     from kinoforge.core.batch_models import BatchManifest
     from kinoforge.core.cost import CostSnapshot
     from kinoforge.core.grid.executor import GridResult
-    from kinoforge.core.image_dir import ImageDirPlan
+    from kinoforge.core.image_dir import ImageDirItem, ImageDirPlan
     from kinoforge.core.interfaces import Lifecycle
     from kinoforge.core.media import Media
     from kinoforge.core.reaper_actor import SweepReport
@@ -1557,6 +1557,23 @@ def _image_megapixel_error(source: str, cfg: Config, scale: ScaleTarget) -> str 
     return None
 
 
+def _animated_suffix(items: Sequence[ImageDirItem]) -> str:
+    """Build the `` (N animated, M frames)`` suffix for a plan/summary count.
+
+    Args:
+        items: Items to scan for animated inputs (``frames > 1``).
+
+    Returns:
+        ``""`` when no item in *items* is animated, else
+        `` (N animated, M frames)`` where ``N`` is the number of animated
+        items and ``M`` is their combined frame count.
+    """
+    anim = [i for i in items if i.frames > 1]
+    if not anim:
+        return ""
+    return f" ({len(anim)} animated, {sum(i.frames for i in anim)} frames)"
+
+
 def _print_image_dir_plan(
     plan: ImageDirPlan,
     cfg: Config,
@@ -1587,7 +1604,19 @@ def _print_image_dir_plan(
     for item in plan.items:
         if not dry_run and item.disposition not in ("oversize", "unreadable"):
             continue
-        tag = item.disposition + (" renamed" if item.renamed else "")
+        # Annotate the tag with the frame count whenever the item is
+        # animated, except when the reason already states it — the
+        # frames-cap oversize reason reads "N frames exceeds
+        # upscale.max_animation_frames=...", so repeating the count in the
+        # tag would read as "[oversize 4 frames]: 4 frames exceeds...". A
+        # megapixel-cap oversize reason never mentions frames, so an
+        # animated item refused on pixels still gets the tag annotation.
+        tag = item.disposition + (
+            f" {item.frames} frames"
+            if item.frames > 1 and "frames exceeds" not in (item.reason or "")
+            else ""
+        )
+        tag += " renamed" if item.renamed else ""
         line = (
             f"  {item.source.relative_to(plan.source_dir).as_posix()} -> "
             f"{item.output.relative_to(plan.output_dir).as_posix()} [{tag}]"
@@ -1595,8 +1624,9 @@ def _print_image_dir_plan(
         print(line + (f": {item.reason}" if item.reason else ""))
     n_over = sum(1 for i in plan.items if i.disposition == "oversize")
     n_unr = sum(1 for i in plan.items if i.disposition == "unreadable")
+    pending = f"pending {len(plan.pending)}{_animated_suffix(plan.pending)}"
     print(
-        f"  found {len(plan.items)}: pending {len(plan.pending)}, exists {len(plan.exists)}, "
+        f"  found {len(plan.items)}: {pending}, exists {len(plan.exists)}, "
         f"oversize {n_over}, unreadable {n_unr}; non-image skipped {plan.skipped_non_image}"
     )
 
@@ -1615,12 +1645,15 @@ def _print_image_dir_summary(
         ``True`` when any item failed at plan time, failed during the run,
         or was aborted; ``False`` when the run was entirely clean.
     """
-    written = sum(1 for o, _ in seen.values() if o == "written")
     run_failed = [(p, r) for p, (o, r) in seen.items() if o == "failed"]
     aborted = [(p, r) for p, (o, r) in seen.items() if o == "aborted"]
     plan_failed = [(i.source, i.reason) for i in plan.failed_at_plan]
+    by_source = {i.source: i for i in plan.items}
+    written_items = [by_source[p] for p, (o, _) in seen.items() if o == "written"]
+    written = len(written_items)
+    head = f"upscaled {written}{_animated_suffix(written_items)}"
     print(
-        f"upscaled {written}, skipped {len(plan.exists)} existing, "
+        f"{head}, skipped {len(plan.exists)} existing, "
         f"failed {len(run_failed) + len(plan_failed)}, aborted {len(aborted)} -> {plan.output_dir}"
     )
     for p, r in [*plan_failed, *run_failed]:
@@ -1653,7 +1686,7 @@ def _cmd_upscale_image_dir(
     """
     from kinoforge.cli.pod_health import probe_pod_health
     from kinoforge.core.errors import Cancelled, KinoforgeError
-    from kinoforge.core.image_dir import ImageDirItem, plan_image_dir
+    from kinoforge.core.image_dir import plan_image_dir
     from kinoforge.core.upscale_dir import upscale_image_dir
 
     assert cfg.upscale is not None  # noqa: S101 — _cmd_upscale checked
@@ -1670,7 +1703,10 @@ def _cmd_upscale_image_dir(
     factor = int(scale.value)
     try:
         plan = plan_image_dir(
-            src, scale=factor, max_output_megapixels=cfg.upscale.max_output_megapixels
+            src,
+            scale=factor,
+            max_output_megapixels=cfg.upscale.max_output_megapixels,
+            max_animation_frames=cfg.upscale.max_animation_frames,
         )
     except ValueError as exc:
         print(f"error: --image-dir: {exc}", file=sys.stderr)
@@ -1727,9 +1763,11 @@ def _cmd_upscale_image_dir(
         rel_in = item.source.relative_to(plan.source_dir).as_posix()
         if outcome == "written":
             rel_out = item.output.relative_to(plan.output_dir).as_posix()
+            frames = f" ({item.frames} frames)" if item.frames > 1 else ""
             print(
                 f"[{n}/{total}] {rel_in} -> {rel_out} "
                 f"({item.width}x{item.height} -> {item.width * factor}x{item.height * factor})"
+                f"{frames}"
             )
         else:
             print(f"[{n}/{total}] {rel_in} {outcome.upper()}: {reason}")

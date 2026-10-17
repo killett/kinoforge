@@ -163,6 +163,7 @@ stderr, for `--image-dir`).
 | `tile_grid` | `[cols, rows]` \| null | `null` | Crop each frame into a grid, upscale the tiles, feather-stitch them back. Combines with `chunk_frames`. |
 | `tile_overlap` | int | `32` | Minimum overlap between neighbouring tiles, in source pixels. |
 | `max_output_megapixels` | int | `256` | Still images only (`--image` / `--image-dir`): refuses an output larger than `width × height × scale²` megapixels before any upload. Bounds the pod's host-RAM output canvas, which the pod-side tiler does not. |
+| `max_animation_frames` | int | `300` | `--image-dir` only: an animated input (animated WebP, GIF, APNG, multi-page TIFF) with more frames than this is refused as `oversize` at plan time. Every frame is one upscale request, so this is the spend cap for animations; the dry run's `(N animated, F frames)` count is the preview. |
 
 **Directories.** `kinoforge upscale --image-dir photos/` upscales every image
 under `photos/` (recursive) on ONE pod and writes lossless PNGs into a sibling
@@ -186,6 +187,15 @@ and a dead pod aborts the remainder), 2 for a precondition. Each output
 stays on the pod's disk until the pod dies; the example config's
 `disk_gb: 40` is roughly 1,000 4-MP 2x outputs per pod lifetime.
 `--no-reuse` destroys the pod once, after the last image.
+Animated inputs (animated WebP, GIF, APNG, multi-page TIFF) are upscaled frame
+by frame on the same pod and written back in their own container with the
+original durations, loop count and alpha — the pod returns RGB, so alpha is
+resized on the controller (edges interpolated, not model-upscaled); a GIF is
+re-quantised to 256 colours on write; an APNG's upscaled frames are held in
+memory while encoding (every other container streams one frame at a time).
+`max_animation_frames` (default 300) refuses larger animations at plan time;
+the dry run's `(N animated, F frames)` is the spend preview. `--image` on a
+single animated file keeps today's frame-0 behaviour.
 
 **`flashvsr`** — streaming diffusion VSR (Wan 2.1 1.3B backbone), native 4x, 80 GB tier.
 

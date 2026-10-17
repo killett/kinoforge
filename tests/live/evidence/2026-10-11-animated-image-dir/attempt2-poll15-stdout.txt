@@ -1,0 +1,20 @@
+[instance overview] No running instances.
+upscale plan:
+  source_dir: /tmp/pytest-of-claudeuser/pytest-1408/test_directory_upscale_on_one_0/dir-smoke
+  output_dir: /tmp/pytest-of-claudeuser/pytest-1408/test_directory_upscale_on_one_0/dir-smoke_upscaled
+  media: image
+  scale: 2x
+  engine: spandrel
+  no_reuse: True
+  attach_pod: None
+  huge.webp -> huge.png [oversize]: 9000x9000 at 2x -> 324.0 MP exceeds upscale.max_output_megapixels=256
+  found 9: pending 7 (2 animated, 6 frames), exists 1, oversize 1, unreadable 0; non-image skipped 1
+[1/7] luma-avif.avif -> luma-avif.png (2672x1504 -> 5344x3008)
+[2/7] luma-webp.webp -> luma-webp.png (2672x1504 -> 5344x3008)
+[3/7] luma.png -> luma.png (2672x1504 -> 5344x3008)
+[4/7] rotated.jpg -> rotated.png (2672x1504 -> 5344x3008)
+[5/7] sub/alpha.png -> sub/alpha.png (300x180 -> 600x360)
+[6/7] sub/anim.gif -> sub/anim.gif (320x200 -> 640x400) (2 frames)
+[7/7] sub/sticker.webp -> sub/sticker.webp (160x120 -> 320x240) (4 frames)
+upscaled 7 (2 animated, 6 frames), skipped 1 existing, failed 1, aborted 0 -> /tmp/pytest-of-claudeuser/pytest-1408/test_directory_upscale_on_one_0/dir-smoke_upscaled
+  failed: huge.webp: 9000x9000 at 2x -> 324.0 MP exceeds upscale.max_output_megapixels=256

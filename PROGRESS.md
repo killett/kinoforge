@@ -3245,7 +3245,79 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-10-07 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-10-11 — read this, then STOP; below is history)
+
+### SESSION 2026-10-11 — animated --image-dir inputs, plan 8/8 DONE, live-proven
+
+Branch `feat/animated-image-dir`. Spec:
+`docs/superpowers/specs/2026-10-11-animated-image-dir-upscale-design.md`. Plan:
+`docs/superpowers/plans/2026-10-11-animated-image-dir-upscale.md`.
+
+**All 8 tasks done:**
+- Task 1 (`92263378`) — `feat(config): upscale.max_animation_frames`.
+- Task 2 (`f76235fe`) — `feat(image-dir): planner reads frames, caps animations,
+  keeps the input container on output`.
+- Task 3 (`e888f8e4`) — `feat(image-dir): prepare_frames + read_loop`.
+- Task 4 (`57bd5723` + `84a3fb97`) — `feat/test(animation): assembler +
+  review-round test tightening`.
+- Task 5 (`58c9c3fe` + `235d41f0`) — `feat/fix(upscale-dir): animated branch +
+  stray-.part drain / decode-failure frame naming`.
+- Task 6 (`5fe69322` + `a4653a6d`) — `feat/fix(cli): animated counts in
+  plan/progress/summary, wires the cap; megapixel-oversize tag fix +
+  `_animated_suffix` helper.
+- Task 7 (this commit) — docs (spec §3.4 pointer, README `upscale` row,
+  `docs/configuration.md` "Directories." paragraph), the no-golden-moved guard
+  (`tools/snapshot_launch_payloads.py` + `git status --porcelain` — clean, no
+  golden/baseline/`_golden_provision.json` path moved), full offline suite
+  (`6835 passed, 182 skipped, 25 deselected, 6 xfailed` — 0 failed), and this
+  snapshot update.
+- Task 8 (`686ffc65`, `1774891b`, `d542d8dd` + this commit) — **live fire on
+  RunPod, green.** RED scaffold (4-frame RGBA `sub/sticker.webp` with mixed
+  durations and a vertical alpha ramp; smoke raised to nine inputs / seven
+  pending) committed before any spend; `pixi run preflight` exit 0 before each
+  run. Final pod `lyly6vukkt98l0`, `--no-reuse`, 2 min 57 s, `1 passed`;
+  teardown verified clean after the process exited. Plan line came back
+  verbatim: `found 9: pending 7 (2 animated, 6 frames), exists 1, oversize 1,
+  unreadable 0; non-image skipped 1`. `sub/anim.gif` 640x400 / 2 frames /
+  `[200, 200]`; `sub/sticker.webp` 320x240 / 4 frames / `[100, 200, 100,
+  300]` / loop 0 / alpha 1 at (0,0) and 254 at (319,239). **Frame QA** (both
+  contact sheets read): sticker clean; GIF ⚠️ faint mottling on the flat fills
+  (RealESRGAN texture on a synthetic flat field + GIF 256-colour
+  quantisation), not a pipeline defect. See `successful-generations.md` §39
+  "See also" and `tests/live/evidence/2026-10-11-animated-image-dir/`.
+  **Post-live fix note:** the final whole-branch review caught `read_loop`
+  collapsing an absent loop count to `0` (forever) instead of `None`
+  (play-once); fixed in the review's fix-wave commit, after this live run —
+  the committed `sub/anim.gif` evidence above predates the fix and still
+  reads back `loop 0`.
+
+**Task 8 gotchas worth keeping:**
+- `tests/live/build_image_dir_fixture.py` was a THIRD Pillow call site the
+  2026-10-07 AVIF fix missed — it saves `luma-avif.avif` and died with
+  `unknown file extension: .avif` until `register_openers()` was added to it
+  (`686ffc65`). If you add a fourth, register there too.
+- **RunPod's `gpuUtilPercent` is useless as a liveness signal on short-burst
+  image work.** Three attempts (`ogduwarial3s5h` 60 s poll, `l37cytlh6qpc4f`
+  15 s, `lyly6vukkt98l0` 5 s) read `gpu=0.0` on EVERY probe while all three
+  produced all seven outputs. The `up=` field added in `d542d8dd` proves why:
+  `uptimeInSeconds` advanced 8 → 33 → 64 → 94 → 123 → 151, so RunPod refreshes
+  the whole `runtime` block only ~every 30 s — about 6 independent samples in
+  a 3-minute run, and each item is a ~2 s GPU burst in a ~13 s
+  upload/run/download cycle. CLAUDE.md's "GPU 0% for 3 consecutive probes ==
+  dead pod" is calibrated on video work and misclassifies this shape; read
+  `found`, `up` and `cpu` instead. The harness keeps the 5 s + `up=` polling.
+
+**Planning-time findings (from the plan's header):** WebP fills a frame's
+`duration` only after `im.load()` following `seek`; the APNG writer does not
+accept a generator for `append_images` (one-frame file) so only the PNG
+container materialises its frames; saving RGBA straight to GIF drops
+transparency — the assembler quantises to 255 colours and reserves index 255
+with `disposal=2`; Pillow's `n_frames` is consulted only for
+`.webp/.gif/.png/.tif/.tiff` (PSD reports layers, ICO sizes).
+
+**Single next action:** the plan is 8/8 and live-proven — run the final
+whole-branch review over `feat/animated-image-dir`, then merge it to `main`.
+Nothing on the branch is uncommitted and no pod is running.
 
 ### SESSION 2026-10-07 — merge landed (`f21e9daa`), CI red on both runners, fixed in `81d99514`
 

@@ -3,8 +3,10 @@
 Pure planning: walk the tree, name every output, read image HEADERS (size,
 mode, EXIF orientation — never pixels), apply the output-megapixel guard, and
 hand the CLI and the session runner one finished :class:`ImageDirPlan` so
-neither re-derives a rule. :func:`prepare_upload` (same module) converts one
-planned input into the PNG/JPEG bytes the pod accepts.
+neither re-derives a rule. An animated input (``frames > 1``) keeps its own
+container on output and is refused above ``max_animation_frames``.
+:func:`prepare_upload` (same module) converts one planned input into the
+PNG/JPEG bytes the pod accepts.
 
 Controller-side only. Pillow is imported lazily inside functions.
 """
@@ -13,11 +15,15 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from kinoforge.core.media import DIR_IMAGE_SUFFIXES
+
+if TYPE_CHECKING:
+    from PIL import Image as _PILImage
 
 _log = logging.getLogger("kinoforge.core.image_dir")
 
@@ -27,6 +33,13 @@ OUTPUT_DIR_SUFFIX = "_upscaled"
 _ORIENTATION_TAG = 0x0112
 _ROTATED_ORIENTATIONS = frozenset({5, 6, 7, 8})
 """EXIF orientations that swap width and height as viewed."""
+
+_ANIMATED_SUFFIXES = frozenset({".webp", ".gif", ".png", ".tif", ".tiff"})
+"""Containers whose Pillow ``n_frames`` means frames (or pages) of ONE image.
+
+Deliberately not every container that reports ``n_frames``: a PSD reports
+its layer count and an ICO its size count. Anything else is a still.
+"""
 
 Disposition = Literal["pending", "exists", "oversize", "unreadable"]
 
@@ -41,6 +54,8 @@ class ImageHeader:
         mode: Pillow mode string (``"RGB"``, ``"I;16"``, ``"P"``, ...).
         format: Pillow format name (``"PNG"``, ``"JPEG"``, ``"WEBP"``, ...).
         orientation: EXIF orientation 1-8; 1 is the identity.
+        frames: Frame count; ``1`` for a still. Read only for
+            :data:`_ANIMATED_SUFFIXES`; other containers always report ``1``.
     """
 
     width: int
@@ -48,6 +63,7 @@ class ImageHeader:
     mode: str
     format: str | None
     orientation: int
+    frames: int = 1
 
 
 @dataclass(frozen=True)
@@ -56,13 +72,16 @@ class ImageDirItem:
 
     Attributes:
         source: Absolute input path.
-        output: Absolute output path, always ``.png``.
+        output: Absolute output path — ``.png`` for a still, the input's own
+            suffix for an animation.
         width: Viewed width (0 when ``unreadable``).
         height: Viewed height (0 when ``unreadable``).
         disposition: ``pending`` (will run), ``exists`` (output present,
             skipped), ``oversize`` / ``unreadable`` (plan-time failures).
         reason: Set for the two failure dispositions.
         renamed: The same-folder stem-collision rule applied (§3.2).
+        frames: Frame count from the header; ``> 1`` takes the animated path
+            and keeps the input container's suffix on ``output``.
     """
 
     source: Path
@@ -72,6 +91,7 @@ class ImageDirItem:
     disposition: Disposition
     reason: str | None = None
     renamed: bool = False
+    frames: int = 1
 
 
 @dataclass(frozen=True)
@@ -171,7 +191,7 @@ def register_openers() -> None:
 
 
 def read_image_header(path: Path) -> ImageHeader:
-    """Read size, mode, format and EXIF orientation without decoding pixels.
+    """Read size, mode, format, EXIF orientation and frame count without decoding pixels.
 
     Args:
         path: An image file.
@@ -191,12 +211,16 @@ def read_image_header(path: Path) -> ImageHeader:
         width, height = im.size
         if orientation in _ROTATED_ORIENTATIONS:
             width, height = height, width
+        frames = 1
+        if path.suffix.lower() in _ANIMATED_SUFFIXES:
+            frames = max(1, int(getattr(im, "n_frames", 1)))
         return ImageHeader(
             width=width,
             height=height,
             mode=im.mode,
             format=im.format,
             orientation=orientation,
+            frames=frames,
         )
 
 
@@ -246,32 +270,52 @@ def walk_images(source_dir: Path) -> tuple[list[Path], int]:
     return images, skipped
 
 
-def _output_names(paths: list[Path]) -> dict[Path, tuple[str, bool]]:
-    """Map each source to ``(output filename, renamed)`` per the §3.2 rule."""
+def _output_suffix(path: Path, frames: int) -> str:
+    """``.png`` for a still; the input's own (lower-cased) suffix for an animation."""
+    return ".png" if frames <= 1 else path.suffix.lower()
+
+
+def _output_names(
+    paths: list[Path], frames: dict[Path, int]
+) -> dict[Path, tuple[str, bool]]:
+    """Map each source to ``(output filename, renamed)`` per the §3.2 rule.
+
+    Stems are compared within one folder regardless of suffix: an animated
+    ``a.webp`` and a still ``a.png`` collide even though their outputs would
+    not share a name — predictability beats a special case.
+    """
     by_folder: dict[Path, Counter[str]] = {}
     for p in paths:
         by_folder.setdefault(p.parent, Counter())[p.stem] += 1
     names: dict[Path, tuple[str, bool]] = {}
     for p in paths:
+        suffix = _output_suffix(p, frames.get(p, 1))
         if by_folder[p.parent][p.stem] > 1:
-            names[p] = (f"{p.name}.png", True)
+            names[p] = (f"{p.name}{suffix}", True)
         else:
-            names[p] = (f"{p.stem}.png", False)
+            names[p] = (f"{p.stem}{suffix}", False)
     return names
 
 
 def plan_image_dir(
-    source_dir: Path, *, scale: int, max_output_megapixels: int
+    source_dir: Path,
+    *,
+    scale: int,
+    max_output_megapixels: int,
+    max_animation_frames: int = 300,
 ) -> ImageDirPlan:
     """Build the plan for *source_dir*.
 
     Per file, in order: header read (``unreadable`` on failure), existing
-    output (``exists``), the megapixel guard (``oversize``), else ``pending``.
+    output (``exists``), the frame cap (``oversize``), the megapixel guard
+    (``oversize``), else ``pending``.
 
     Args:
         source_dir: The input directory.
         scale: Integer upscale factor (the guard bounds OUTPUT pixels).
         max_output_megapixels: ``cfg.upscale.max_output_megapixels``.
+        max_animation_frames: ``cfg.upscale.max_animation_frames``; an
+            animation with more frames is refused before any pod work.
 
     Returns:
         The plan.
@@ -285,7 +329,14 @@ def plan_image_dir(
         raise NotADirectoryError(str(src))
     out_dir = output_dir_for(src)
     paths, skipped = walk_images(src)
-    names = _output_names(paths)
+    headers: dict[Path, ImageHeader] = {}
+    errors: dict[Path, str] = {}
+    for p in paths:
+        try:
+            headers[p] = read_image_header(p)
+        except Exception as exc:  # noqa: BLE001 — any Pillow failure is "unreadable"
+            errors[p] = f"{type(exc).__name__}: {exc}"
+    names = _output_names(paths, {p: h.frames for p, h in headers.items()})
     renamed_folders: set[Path] = set()
     items: list[ImageDirItem] = []
     for p in paths:
@@ -293,28 +344,25 @@ def plan_image_dir(
         if renamed and p.parent not in renamed_folders:
             renamed_folders.add(p.parent)
             _log.warning(
-                "%s: stem collision; colliding files keep their full name + .png",
+                "%s: stem collision; colliding files keep their full name + suffix",
                 p.parent,
             )
         output = out_dir / p.parent.relative_to(src) / name
-        try:
-            hdr = read_image_header(p)
-        except Exception as exc:  # noqa: BLE001 — any Pillow failure is "unreadable"
+        if p in errors:
             items.append(
-                ImageDirItem(
-                    p,
-                    output,
-                    0,
-                    0,
-                    "unreadable",
-                    f"{type(exc).__name__}: {exc}",
-                    renamed,
-                )
+                ImageDirItem(p, output, 0, 0, "unreadable", errors[p], renamed)
             )
             continue
+        hdr = headers[p]
         if output.exists():
             disposition: Disposition = "exists"
             reason: str | None = None
+        elif hdr.frames > max_animation_frames:
+            disposition = "oversize"
+            reason = (
+                f"{hdr.frames} frames exceeds "
+                f"upscale.max_animation_frames={max_animation_frames}"
+            )
         elif output_megapixels(hdr.width, hdr.height, scale) > max_output_megapixels:
             disposition = "oversize"
             reason = (
@@ -325,7 +373,16 @@ def plan_image_dir(
         else:
             disposition, reason = "pending", None
         items.append(
-            ImageDirItem(p, output, hdr.width, hdr.height, disposition, reason, renamed)
+            ImageDirItem(
+                p,
+                output,
+                hdr.width,
+                hdr.height,
+                disposition,
+                reason,
+                renamed,
+                hdr.frames,
+            )
         )
     return ImageDirPlan(src, out_dir, tuple(items), skipped)
 
@@ -388,3 +445,85 @@ def prepare_upload(item: ImageDirItem, scratch: Path) -> Path:
         "%s: re-encoded to %s (%s -> RGB PNG)", item.source.name, out.name, src_mode
     )
     return out
+
+
+@dataclass(frozen=True)
+class Frame:
+    """One decoded frame of an animated input, ready to upload.
+
+    Attributes:
+        index: 0-based frame index.
+        path: 8-bit RGB PNG under the run's scratch directory
+            (``<sha8>-f0001.png`` …); the caller unlinks it after upload.
+        duration_ms: The frame's own duration; ``0`` when the container has
+            no timing (multi-page TIFF).
+        alpha: The frame's alpha channel as an 8-bit ``L`` image, or
+            ``None`` when the frame has none.
+    """
+
+    index: int
+    path: Path
+    duration_ms: int
+    alpha: _PILImage.Image | None
+
+
+def _has_alpha(im: _PILImage.Image) -> bool:
+    """True when the current frame carries alpha or palette transparency."""
+    return "A" in im.getbands() or "transparency" in im.info
+
+
+def read_loop(path: Path) -> int | None:
+    """Return the animation's loop count, or ``None`` when the container carries none.
+
+    ``None`` when the container carries no loop count (a GIF without the
+    Netscape extension plays once; a multi-page TIFF has none).
+
+    Args:
+        path: An animated input.
+
+    Returns:
+        Pillow's ``info["loop"]`` as an int, or ``None`` when absent.
+    """
+    from PIL import Image
+
+    register_openers()
+    with Image.open(path) as im:
+        v = im.info.get("loop")
+        return None if v is None else int(v)
+
+
+def prepare_frames(item: ImageDirItem, scratch: Path) -> Generator[Frame, None, None]:
+    """Yield every frame of an animated *item* as an RGB PNG under *scratch*.
+
+    One frame is decoded at a time: the generator writes frame *i* only when
+    the consumer asks for it, so scratch holds at most one decoded frame plus
+    whatever the consumer has not yet unlinked. Each frame is EXIF-transposed
+    like :func:`prepare_upload`. WebP fills a frame's ``duration`` only on
+    ``load()``, so every frame is loaded after ``seek``.
+
+    Args:
+        item: A planned animated item (``frames > 1``).
+        scratch: Per-run scratch directory; the consumer unlinks each path.
+
+    Yields:
+        :class:`Frame` in frame order.
+    """
+    from PIL import Image, ImageOps
+
+    register_openers()
+    tag = _sha8(item.source)
+    with Image.open(item.source) as im:
+        n = max(1, int(getattr(im, "n_frames", 1)))
+        for i in range(n):
+            im.seek(i)
+            im.load()
+            duration = int(round(float(im.info.get("duration") or 0)))
+            alpha: _PILImage.Image | None = None
+            rgba = im.convert("RGBA")
+            transposed = ImageOps.exif_transpose(rgba)
+            frame = transposed if transposed is not None else rgba
+            if _has_alpha(im):
+                alpha = frame.getchannel("A")
+            path = scratch / f"{tag}-f{i + 1:04d}.png"
+            frame.convert("RGB").save(path, format="PNG")
+            yield Frame(i, path, duration, alpha)

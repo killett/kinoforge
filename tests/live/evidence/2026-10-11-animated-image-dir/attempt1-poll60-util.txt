@@ -1,0 +1,3 @@
+2026-10-11T03:05:46 pod=none found=False gpu=- cpu=- mem=-
+2026-10-11T03:06:46 pod=ogduwarial3s5h found=True gpu=0.0 cpu=4.0 mem=0.0
+2026-10-11T03:07:47 pod=ogduwarial3s5h found=True gpu=0.0 cpu=0.0 mem=1.0

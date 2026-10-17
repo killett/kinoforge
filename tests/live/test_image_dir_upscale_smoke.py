@@ -1,13 +1,34 @@
 """Live smoke — `kinoforge upscale --image-dir` on the spandrel x2 config (design §6.1).
 
-RED scaffold committed BEFORE the live spend per CLAUDE.md. One pod, eight
-files, every branch of the feature. Evidence lands under
-``tests/live/evidence/2026-10-06-image-dir-upscale/`` BEFORE any assertion.
+RED scaffold committed BEFORE the live spend per CLAUDE.md. One pod, nine
+files, every branch of the feature — including the two animated inputs
+(``sub/anim.gif``, ``sub/sticker.webp``). Evidence lands under
+``tests/live/evidence/2026-10-11-animated-image-dir/`` BEFORE any assertion.
 
 Per CLAUDE.md's "Live smoke monitoring" rule, a background thread polls the
-RunPod GraphQL utilisation probe every 60 s for the duration of the
-subprocess run and appends snapshots to ``evidence/util.txt`` — never trust
-``est_spend`` alone to prove the pod is actually working.
+RunPod GraphQL utilisation probe for the duration of the subprocess run and
+appends snapshots to ``evidence/util.txt`` — never trust ``est_spend`` alone
+to prove the pod is actually working.
+
+The cadence is :data:`_POLL_S` = 5 s, under the rule's 60-90 s floor, and every
+line carries ``runtime.uptimeInSeconds`` — and that ``up=`` field is what makes
+the file readable. 2026-10-11 ran this smoke three times, at 60 s, 15 s and
+5 s, and read ``gpu=0.0`` on every probe of all three, across runs that each
+produced all seven outputs. The 5 s run explains why: ``up=`` advanced
+8, 33, 64, 94, 123, 151 — five or six consecutive probes return the SAME
+cached snapshot, so RunPod refreshes the whole ``runtime`` block only about
+every 30 s. No cadence can beat that, and a ~2 s GPU burst per item inside a
+~13 s upload/run/download cycle will essentially never land in one of the ~6
+independent samples a three-minute run affords.
+
+So on a short-burst image workload ``gpuUtilPercent`` is not a liveness
+signal, and CLAUDE.md's "GPU 0% for three consecutive probes == dead pod"
+heuristic — calibrated on video work, where the GPU is pinned for minutes —
+misclassifies this run. What does carry signal here: ``found`` (a terminated
+pod flips it to False within one probe), ``up`` advancing, and the ``cpu``
+trace, which tracked boot and work at 6-20% and fell to 0 when the pod went
+idle. Keep 5 s anyway: duplicated lines are cheap and the duplication itself
+is what exposes the refresh period.
 """
 
 from __future__ import annotations
@@ -32,8 +53,10 @@ pytestmark = pytest.mark.skipif(
 
 _ROOT = Path(__file__).parent.parent.parent
 _CFG = _ROOT / "examples" / "configs" / "runpod-diffusers-spandrel-x2-upscale.yaml"
-_EVIDENCE = Path(__file__).parent / "evidence" / "2026-10-06-image-dir-upscale"
+_EVIDENCE = Path(__file__).parent / "evidence" / "2026-10-11-animated-image-dir"
 _LEDGER_PATH = _ROOT / ".kinoforge" / "_lifecycle" / "ledger.json"
+_POLL_S = 5
+"""Seconds between utilisation probes; see the module docstring for why 5."""
 
 
 def _sha(p: Path) -> str:
@@ -46,7 +69,7 @@ def _size(p: Path) -> tuple[int, int]:
 
 
 def _poll_utilisation(stop: threading.Event) -> None:
-    """Append a GPU/CPU/memory snapshot to ``evidence/util.txt`` every 60 s.
+    """Append a GPU/CPU/memory snapshot to ``evidence/util.txt`` every ``_POLL_S``.
 
     Runs as a daemon thread for the lifetime of the live subprocess. Never
     raises — any failure (missing ledger, no runpod entry, API error) is
@@ -79,7 +102,7 @@ def _poll_utilisation(stop: threading.Event) -> None:
                     line = (
                         f"{ts} pod={pod_id} found={found} "
                         f"gpu={snap.gpu_util_percent} cpu={snap.cpu_percent} "
-                        f"mem={snap.memory_percent}\n"
+                        f"mem={snap.memory_percent} up={snap.uptime_seconds}\n"
                     )
                 else:
                     line = f"{ts} pod={pod_id} found={found} gpu=- cpu=- mem=-\n"
@@ -87,7 +110,7 @@ def _poll_utilisation(stop: threading.Event) -> None:
             line = f"{ts} probe-error: {type(exc).__name__}: {exc}\n"
         with util_path.open("a") as fh:
             fh.write(line)
-        stop.wait(60)
+        stop.wait(_POLL_S)
 
 
 @pytest.mark.live
@@ -141,16 +164,20 @@ def test_directory_upscale_on_one_pod(tmp_path: Path) -> None:
 
     # One plan-time failure (huge.webp) is designed in → exit 1, not 0.
     assert proc.returncode == 1, proc.stderr
-    assert "upscaled 6, skipped 1 existing, failed 1, aborted 0" in proc.stdout
+    assert (
+        "upscaled 7 (2 animated, 6 frames), skipped 1 existing, failed 1, aborted 0"
+        in proc.stdout
+    )
     assert re.search(r"failed: huge\.webp: .*max_output_megapixels=256", proc.stdout)
-    assert len(re.findall(r"^\[\d/6\] .* -> ", proc.stdout, flags=re.M)) == 6
+    assert len(re.findall(r"^\[\d/7\] .* -> ", proc.stdout, flags=re.M)) == 7
 
     expected = {
         "luma.png": (5344, 3008),
         "luma-webp.png": (5344, 3008),
         "luma-avif.png": (5344, 3008),
         "rotated.png": (5344, 3008),
-        "sub/anim.png": (640, 400),
+        "sub/anim.gif": (640, 400),
+        "sub/sticker.webp": (320, 240),
         "sub/alpha.png": (600, 360),
     }
     for rel, size in expected.items():
@@ -160,9 +187,30 @@ def test_directory_upscale_on_one_pod(tmp_path: Path) -> None:
         shutil.copy2(p, _EVIDENCE / rel.replace("/", "__"))
     assert not (out / "huge.png").exists()
     assert _sha(out / "existing.png") == existing_before
-    assert sorted(p.relative_to(out).as_posix() for p in out.rglob("*.png")) == sorted(
-        [*expected, "existing.png"]
-    )
+    assert sorted(
+        p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()
+    ) == sorted([*expected, "existing.png"])
+
+    # The animated branch must round-trip frame count, per-frame duration,
+    # loop and alpha — not just the upscaled canvas size.
+    with Image.open(out / "sub" / "sticker.webp") as im:
+        assert getattr(im, "n_frames", 1) == 4
+        durs = []
+        for i in range(4):
+            im.seek(i)
+            im.load()
+            durs.append(im.info["duration"])
+        assert durs == [100, 200, 100, 300]
+        assert im.info.get("loop", 0) == 0
+        im.seek(0)
+        rgba = im.convert("RGBA")
+        assert rgba.getpixel((0, 0))[3] <= 8  # type: ignore[index]  # top transparent
+        assert rgba.getpixel((319, 239))[3] >= 247  # type: ignore[index]  # bottom opaque
+    with Image.open(out / "sub" / "anim.gif") as im:
+        assert getattr(im, "n_frames", 1) == 2
+        im.seek(1)
+        assert im.info["duration"] == 200
+    assert "pending 7 (2 animated, 6 frames)" in proc.stdout
 
     assert "No running instances." in ledger.stdout
     assert "No instances recorded in ledger." in ledger.stdout

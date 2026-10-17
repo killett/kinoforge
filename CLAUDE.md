@@ -267,6 +267,16 @@ Concrete cadence:
   job status endpoint at the SDK-recommended cadence; surface the
   `status` field every poll.
 
+**Calibration for short-burst image work (2026-10-11):** RunPod refreshes
+the pod's `runtime` block only every ~30 s, so a job whose GPU work totals a
+few seconds (still-image or per-frame upscales) can read `gpuUtilPercent=0`
+on every probe while healthy. For such runs the "GPU 0% for ≥3 probes =
+dead" rule does NOT apply; use `found=True` with rising `uptime`, CPU
+activity, and the written outputs as the liveness signal (the
+`--image-dir` live harness logs `up=` for this reason). The 0%-for-3-probes
+rule stays in force for video and model-load phases that run tens of
+seconds or longer.
+
 What "take action" looks like when the probe shows the pod is idle
 when it should be busy:
 

@@ -235,7 +235,10 @@ rule:
   `RGB`, and written as `<sha8>.png` (the first 8 hex digits of the
   source's sha256) under the per-run scratch directory,
   which the runner removes at the end.
-- Animated GIFs and multi-page TIFFs contribute frame 0, logged.
+- Animated inputs (WebP, GIF, APNG, multi-page TIFF) are upscaled frame by
+  frame and written back in their own container — see
+  `2026-10-11-animated-image-dir-upscale-design.md`. Other multi-frame
+  containers contribute frame 0, logged.
 - Alpha is dropped on the controller for converted files and on the pod
   (its existing `_to_rgb`) for passthrough RGBA PNGs; both yield RGB.
 
