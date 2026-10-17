@@ -3315,9 +3315,20 @@ transparency — the assembler quantises to 255 colours and reserves index 255
 with `disposal=2`; Pillow's `n_frames` is consulted only for
 `.webp/.gif/.png/.tif/.tiff` (PSD reports layers, ICO sizes).
 
-**Single next action:** the plan is 8/8 and live-proven — run the final
-whole-branch review over `feat/animated-image-dir`, then merge it to `main`.
-Nothing on the branch is uncommitted and no pod is running.
+**MERGED to `main` as `53523d1d`** (2026-10-16). The final whole-branch review returned
+two Important findings, both fixed in `1f9460e7` and re-reviewed clean: (1) `read_loop`
+collapsed Pillow's absent loop count (`None`) into `0` = forever, so a play-once GIF shipped
+as an infinite loop — the committed §39 GIF evidence predates that fix; (2) the planner's
+`_ANIMATED_SUFFIXES` and the assembler's `_WRITERS` had no parity guard, so a suffix added
+without a writer would raise only AFTER a full animation's GPU spend. Full offline suite on
+the merged tree: 6838 passed, 0 failed. Branch deleted; working tree clean; no pod running.
+
+**Single next action:** nothing is in flight. The open follow-ups from the 2026-10-06 session
+below are still the backlog — `kinoforge upscale --scale` on the single `--video`/`--image`
+path has never taken effect at runtime is the first. Two known limits of the animated work,
+both deliberate: animated AVIF/HEIF still flatten to frame 0 (logged at INFO), and
+`max_animation_frames` is per FILE, not per run — fifty 300-frame GIFs pass planning at
+15,000 stage calls, visible only in the dry run's `(N animated, F frames)`.
 
 ### SESSION 2026-10-07 — merge landed (`f21e9daa`), CI red on both runners, fixed in `81d99514`
 
