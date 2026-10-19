@@ -3245,7 +3245,38 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-10-11 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-10-18 — read this, then STOP; below is history)
+
+### SESSION 2026-10-18 — whole-repo hygiene audit (AUDIT-ONLY, no code changed)
+
+Report: `docs/hygiene-audit-2026-10-18.md`; new intentional keeps appended to
+`docs/hygiene-notes.md`. Baseline green at `5f8a52a0` (pre-commit all-files; 6838 passed /
+0 failed; smoke-local 58 passed).
+
+**URGENT — Finding #0, verified from GitHub Actions job logs:** the `smoke-leak-sweep` cron
+(`tools/smoke_leak_sweep.py`) destroys EVERY RunPod pod it lists — `_pod_to_instance` sets
+`created_at=0.0`, so every pod reads ~497k h old, past the 4 h untagged ceiling. It reaped
+`i5mvj3oxljkyaa` (2026-09-12) and `ag0ntjnovabxqt` (2026-09-13): **the exact pair U42 blamed on
+"RunPod's community pool reclaims pods minutes after create"** — the `POD_NOT_FOUND`-on-terminate
+symptom U42 recorded is our own cron having destroyed the pod first. Both reap notifications
+failed silently (`leaked-smoke-pod` label does not exist). **Cron DISABLED 2026-10-18**
+(`gh workflow disable smoke-leak-sweep`, operator-approved; reversible). The tool is NOT fixed —
+do not re-enable or dispatch `smoke-wan21-weekly` (its always-run sweep step has the same bug)
+until it is. U65's pod `178qwug7mlvifd` is not in the sweep logs (different cause; its secure
+pinning stays). U42's root cause and U36's "community-pool artifact" reasoning should be
+re-examined.
+
+Other P1s found (all verified against HEAD, none fixed): `deploy()`/`_cmd_provision` never call
+`_enforce_rate_cap` (Modal over-cap GPU booked); a pod-side LoRA swap rolled back on `ValueError`
+returns as success (`swap_rejected.reason="set_adapters_value_error"` has no consumer); Wan stores
+LoRAs flat by vendor filename so same-basename refs overwrite each other; ComfyUI `result()` keeps
+polling for up to 1800 s after `/history` reports `status=error`. 21 P2 + ~15 P3 in the report.
+
+**Single next action:** operator picks from the audit's NEEDS DISCUSSION list. Suggested order:
+fix the leak sweep's age source (+ a test using the real `_pod_to_instance`) → B2 rate cap (unify
+the three guarded-launch copies) → B3/B4 silent-LoRA → B5 ComfyUI error-polling → B8/B9 timeouts →
+docs FIX NOW batch. The 2026-10-06 backlog (a)-(f) below is folded into the audit (a = B12,
+f = the launch-row stamp copies, now ×3).
 
 ### SESSION 2026-10-11 — animated --image-dir inputs, plan 8/8 DONE, live-proven
 
