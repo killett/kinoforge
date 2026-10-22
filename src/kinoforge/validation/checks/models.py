@@ -26,9 +26,6 @@ from kinoforge.validation.registry import register
 
 _log = logging.getLogger(__name__)
 
-_PASS_CODES = PASS_CODES_AUTH_OK
-_default_http_head = default_http_head
-
 
 def _resolve_ref_to_url(ref: str) -> str:
     """Translate a kinoforge model ref into an HTTP-able URL.
@@ -64,7 +61,7 @@ class ModelRefReachableCheck:
         full: bool = False,
     ) -> None:
         """Wire injectable seam. ``full=True`` doctors every model entry."""
-        self._http_head = http_head or _default_http_head
+        self._http_head = http_head or default_http_head
         self._full = full
 
     _NON_FETCHING_ENGINES: frozenset[str] = frozenset(
@@ -105,7 +102,7 @@ class ModelRefReachableCheck:
                     exc,
                 )
                 continue
-            if code not in _PASS_CODES:
+            if code not in PASS_CODES_AUTH_OK:
                 failures.append(f"{model.ref} -> HEAD {code}")
         if failures:
             return CheckResult(

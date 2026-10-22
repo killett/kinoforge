@@ -22,8 +22,6 @@ _log = logging.getLogger(__name__)
 # commit URL means a bad ref, not an auth-gated-but-existing resource.
 _PASS_CODES = frozenset({200, 301, 302})
 
-_default_http_head = default_http_head
-
 
 def _commit_url(git_url: str, ref: str) -> str:
     """Build the GitHub commit URL for a custom-node entry.
@@ -45,7 +43,7 @@ class CustomNodeSHAReachableCheck:
 
     def __init__(self, *, http_head: Callable[[str], int] | None = None) -> None:
         """Wire an injectable HEAD seam."""
-        self._http_head = http_head or _default_http_head
+        self._http_head = http_head or default_http_head
 
     def applies_to(self, cfg: Config) -> bool:
         """Apply iff engine is ComfyUI and custom_nodes is non-empty."""

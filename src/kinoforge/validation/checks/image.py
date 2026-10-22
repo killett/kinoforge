@@ -23,7 +23,6 @@ from kinoforge.validation.registry import register
 
 _log = logging.getLogger(__name__)
 
-_PASS_CODES = PASS_CODES_AUTH_OK
 
 _DOCKER_HUB_HEAD_URL = "https://registry-1.docker.io/v2/{image}/manifests/{tag}"
 
@@ -43,9 +42,6 @@ def _parse_image_ref(image: str) -> tuple[str, str]:
     return ref, tag
 
 
-_default_http_head = default_http_head
-
-
 class ImageReachableCheck:
     """NETWORK ERROR — compute.image must HEAD-resolve on its registry."""
 
@@ -55,7 +51,7 @@ class ImageReachableCheck:
 
     def __init__(self, *, http_head: Callable[[str], int] | None = None) -> None:
         """Wire an injectable HEAD seam (defaults to stdlib urllib)."""
-        self._http_head = http_head or _default_http_head
+        self._http_head = http_head or default_http_head
 
     def applies_to(self, cfg: Config) -> bool:
         """Apply iff compute.image is non-empty."""
@@ -79,7 +75,7 @@ class ImageReachableCheck:
                     f"network probe inconclusive for {image}: {exc}; not blocking"
                 ),
             )
-        if code in _PASS_CODES:
+        if code in PASS_CODES_AUTH_OK:
             return CheckResult(
                 name=self.name,
                 passed=True,
