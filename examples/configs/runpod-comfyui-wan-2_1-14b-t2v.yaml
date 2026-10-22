@@ -17,7 +17,7 @@
 #
 # Cost guards (quadruple-locked):
 #   - max_usd_per_hr: 0.50  (filters expensive GPUs upstream)
-#   - budget: 4.00                    (BudgetTracker tears down mid-run; 2× i2v for 2 generations)
+#   - budget: 4.00                    (shortens the pod's selfterm cap to budget ÷ hourly rate at create; 2× i2v for 2 generations)
 #   - idle_timeout: 25m + selfterm    (pod self-destructs after 25 min idle; covers cold weight DL)
 #   - finally: in test always destroys (unless KEEP_POD=1)
 
@@ -86,8 +86,8 @@ compute:
     boot_timeout: 30m
     # Budget doubled vs i2v (2.0 → 4.0) to cover 2 generations on the
     # same pod. At RTX A5000 $0.16/hr the realistic spend is ~$0.10
-    # per generation; the cap is the BudgetTracker's mid-run circuit
-    # breaker, not an estimate.
+    # per generation; the cap bounds the pod's selfterm lifetime
+    # (budget ÷ hourly rate), not an estimate.
     budget: 4.0
     # REQUIRED for cross-CLI warm-reuse — without it `HeartbeatLoop`
     # never starts, no `heartbeat_thread_tick` lands in the ledger

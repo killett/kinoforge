@@ -25,7 +25,7 @@ instance of this, not a special case: `.aws/policies/skypilot-minimal.
 template.json` also scopes IAM role/instance-profile actions and S3 bucket
 actions to specific ARNs, and those need the same treatment or they read as
 falsely denied against `*` (mirrors, and generalizes, the KMS-only split
-documented at `tools/cloud_perms_probe.py:201-241`).
+documented at `tools/cloud_perms_probe.py` (`_AWS_KMS_ACTIONS` + the two-pass simulation in `probe_aws`)).
 
 Both cloud paths mutate/query a real API under ambient credentials and
 require `--confirm-live` (or `KINOFORGE_VALIDATE_SCOPED_LIVE=1`) before
@@ -91,7 +91,7 @@ from typing import Any
 # module's own docstring documents) puts only tools/ on sys.path, not the
 # repo root -- so the `tools.cloud_perms_probe` import below would otherwise
 # raise ModuleNotFoundError before argparse ever runs. Mirrors the bootstrap
-# in `tools/cloud_perms_probe.py:33-35`.
+# in `tools/cloud_perms_probe.py` (its `_REPO_ROOT` sys.path insert).
 _REPO_ROOT_PATH: Path = Path(__file__).resolve().parent.parent
 _REPO_ROOT: str = str(_REPO_ROOT_PATH)
 if _REPO_ROOT not in sys.path:
@@ -493,7 +493,7 @@ def validate_gcp(
     regardless of what the runner SA actually holds. *caller_identity* is
     carried through into the result precisely so that mismatch is visible
     rather than silent, mirroring the identity capture at
-    `tools/cloud_perms_probe.py:209-215`.
+    `tools/cloud_perms_probe.py` (`probe_aws`'s `sts.get_caller_identity()`).
 
     Args:
         projects_client: resourcemanager ProjectsClient (injected).

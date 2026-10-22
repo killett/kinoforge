@@ -4,13 +4,14 @@ name: smoke-wan21-weekly
 # requires (no authorisation in conversation, no utilisation polling, no frame
 # QA), and it had been red for ten consecutive weeks without anyone reading the
 # result. Live spend is authorised by user statement, so it runs on request.
-# The independent leak-sweep cron remains the standing money guard.
+# The leak-sweep cron was disabled 2026-10-18 (Finding #0, docs/hygiene-audit-2026-10-18.md);
+# the always() sweep step below runs the same tool — fix its age source before dispatching.
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
-  issues: write   # post issue on test failure
+  issues: write   # the always() sweep step files one GitHub issue per reaped pod
 
 jobs:
   smoke:

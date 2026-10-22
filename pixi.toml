@@ -125,10 +125,10 @@ AZURE_CONFIG_DIR = "$PIXI_PROJECT_ROOT/.azure"
 kinoforge = "python -m kinoforge"
 test = "python -m pytest -m 'not live'"
 test-cov = "python -m pytest -m 'not live' --cov"  # Later on, consider adding --cov-fail-under=80
-# Opt-in live tests that hit real provider APIs. Requires KINOFORGE_LIVE_TESTS=1
-# (set by the task itself) plus provider credentials (e.g. FAL_KEY).  The
-# tests/live/ directory is created in Layer I Task 13; until then this task
-# reports "no tests collected", which is the expected default.
+# Opt-in live tests that hit real provider APIs. This task sets KINOFORGE_LIVE_TESTS=1
+# ITSELF, so one command books RunPod/Modal/SkyPilot/hosted jobs across the ~85 modules
+# under tests/live/ with no preflight — run `pixi run preflight` first and prefer a single
+# module (`pixi run pytest tests/live/<file> -m live`).
 test-live = { cmd = "python -m pytest tests/live/ -v -m live", env = { KINOFORGE_LIVE_TESTS = "1" } }
 # SkyPilot live smoke (Phase 31). Lives in a separate feature env so the
 # default env stays lean — skypilot pulls ~500MB of transitive deps.

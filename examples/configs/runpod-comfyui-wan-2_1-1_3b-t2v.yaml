@@ -26,7 +26,7 @@
 #
 # Cost guards (quadruple-locked):
 #   - max_usd_per_hr: 0.50  (filters expensive GPUs upstream)
-#   - budget: 2.00                    (BudgetTracker tears down mid-run)
+#   - budget: 2.00                    (shortens the pod's selfterm cap to budget ÷ hourly rate at create)
 #   - idle_timeout: 15m + selfterm    (pod self-destructs after 15 min idle)
 #   - kinoforge destroy --id <id>     (operator-side cleanup post-smoke)
 
@@ -98,8 +98,8 @@ compute:
     max_lifetime: 60m
     boot_timeout: 20m
     # Budget cap sized for two generations on the cheapest A5000
-    # offer (~$0.16/hr × 30m = $0.08); the $2 cap is the
-    # BudgetTracker's mid-run circuit breaker, not an estimate.
+    # offer (~$0.16/hr × 30m = $0.08); the $2 cap bounds the pod's
+    # selfterm lifetime (budget ÷ hourly rate), not an estimate.
     budget: 2.0
     # REQUIRED for cross-CLI warm-reuse — without it `HeartbeatLoop`
     # never starts, no `heartbeat_thread_tick` lands in the ledger

@@ -213,7 +213,7 @@ def resolve_kms_key_id(arn_file: Path = _KMS_ARN_FILE) -> str:
     Args:
         arn_file: Path to the file holding the full KMS key ARN. Defaults
             to `.aws/kms-test-key.arn`, the same file
-            `tools/cloud_perms_probe.py:68` reads.
+            `tools/cloud_perms_probe.py` (`_AWS_KMS_KEY_ARN_FILE`) reads.
 
     Returns:
         The bare key UUID.
