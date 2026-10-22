@@ -1,9 +1,10 @@
 """Group cells by capability_key for warm-reuse-aware scheduling.
 
-A group is a set of cells that can share one warm pod (same
-``CapabilityKey``). Sequential execution within a group rides the
-existing matcher's warm-reuse; groups run in parallel up to the
-caller's concurrency cap.
+A group is a set of cells that share one grouping key — ``CapabilityKey``
+for ``generate:`` cells, ``WarmAttachKey`` for ``lora_swap:`` cells.
+``generate:`` groups run their cells sequentially, each under
+``--no-reuse``; ``lora_swap:`` groups share one warm pod. Groups run in
+parallel up to the caller's concurrency cap.
 
 ``path:`` cells are degenerate — no compute, no provisioning — and
 land under one shared sentinel key so the executor's iteration loop

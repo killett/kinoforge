@@ -1,4 +1,4 @@
-"""Upscale every planned still in a directory on ONE pod.
+"""Upscale every planned image (still or animated) in a directory on ONE pod.
 
 The shape is :mod:`kinoforge.core.batch`: open :func:`deploy_session` once
 and do per-item work inside it, so the boot, the profile verify and the

@@ -166,7 +166,7 @@ stderr, for `--image-dir`).
 | `max_animation_frames` | int | `300` | `--image-dir` only: an animated input (animated WebP, GIF, APNG, multi-page TIFF) with more frames than this is refused as `oversize` at plan time. Every frame is one upscale request, so this is the spend cap for animations; the dry run's `(N animated, F frames)` count is the preview. |
 
 **Directories.** `kinoforge upscale --image-dir photos/` upscales every image
-under `photos/` (recursive) on ONE pod and writes lossless PNGs into a sibling
+under `photos/` (recursive) on ONE pod and writes lossless PNGs (stills; animations keep their own container, see below) into a sibling
 `photos_upscaled/` that mirrors the tree: `photos/sub/b.webp` →
 `photos_upscaled/sub/b.png`. Two files in the same folder with the same stem
 (`a.webp` + `a.png`) keep their full name plus `.png` (`a.webp.png`,
@@ -177,7 +177,7 @@ j2k psd ico pcx pbm pgm ppm pnm qoi dds; other files are counted and
 skipped, dot-files and symlinks ignored. An 8-bit RGB/RGBA/greyscale PNG or
 JPEG with no EXIF rotation is uploaded unchanged; anything else is converted
 on the controller to an 8-bit RGB PNG with EXIF orientation applied
-(animated GIFs and multi-page TIFFs contribute their first frame).
+(animated inputs take the frame-wise path described below).
 `--output-dir` / `--no-output-dir` are ignored for a directory run. One line
 per image is printed as it finishes; the closing line is
 `upscaled N, skipped N existing, failed N, aborted N -> <dir>`. Exit 0 when

@@ -59,7 +59,8 @@ def _urllib_delete(url: str, headers: dict[str, str]) -> int:
     """Default stdlib HTTP DELETE returning the response status code.
 
     Shared default for every ``RemoteSubmitPollBackend`` ``http_delete``
-    seam (replicate, runway) — timeout/UA policy is one decision here.
+    seam (replicate, runway). Sets no timeout and no User-Agent today; a
+    future timeout/UA policy belongs here so both seams change together.
     """
     req = urllib.request.Request(  # noqa: S310 — schemes hardcoded by caller
         url, method="DELETE", headers=headers
@@ -249,8 +250,9 @@ class RemoteSubmitPollBackend(GenerationBackend):
         wait (``cancel_token.wait`` in place of ``time.sleep`` so a
         sibling thread's ``token.set()`` interrupts the wait promptly).
         This closes the Ctrl-C path for every Bearer-API hosted provider
-        in one shot (Replicate / Runway / Luma / Fal all subclass this
-        backend).
+        built on this base (the Replicate / Runway video backends and the
+        Replicate / Luma image backends subclass it; fal and the hosted
+        shim hand-roll their own poll loops).
 
         Under an active ``EphemeralSession`` with
         ``policy.delete_on_completion=True``, fires
@@ -481,7 +483,7 @@ class RemoteSubmitPollEngine(GenerationEngine):
             raise ValidationError(f"{type(self).__name__}: job.spec is missing 'model'")
 
     def model_identity(self, cfg: dict[str, object]) -> str:
-        """Remote-submit-poll engines (Replicate, Runway, Luma) read ``spec.model``.
+        """Remote-submit-poll engines (Replicate, Runway) read ``spec.model``.
 
         Subclasses may override if their identity surface diverges.
         """

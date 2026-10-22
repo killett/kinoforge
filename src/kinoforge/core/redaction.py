@@ -2,8 +2,11 @@
 
 The registry is the single source of truth for tokens that must be
 substituted on every persistent surface (logs, JSON files, stdout, error
-blocks). The vault loader is the only writer; sinks (Ledger, profile cache,
-batch summary, OutputSink.publish, _save_fixture, etc.) are readers.
+blocks). Writers: the vault loader, the grid-spec loader (title, captions,
+swap-stack refs), ``--loras`` parsing, observed pod inventories
+(``warm_reuse/redaction.py``) and opaque LoRA downloads. Sinks (Ledger,
+profile cache, batch summary, OutputSink.publish, _save_fixture, etc.) are
+readers.
 
 Empty registry == public-by-design passthrough (the standard test prompt
 path).

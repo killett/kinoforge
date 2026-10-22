@@ -399,8 +399,9 @@ def _record_inventory(
             loras_dir_free_bytes_observed_at_local=datetime.now().isoformat(),
         )
     except Exception as touch_exc:  # noqa: BLE001 — bookkeeping, not the apply
-        # The ONLY ``except`` in this module, and deliberately not in the
-        # apply path: by the time it can fire the pod has already
+        # One of two ``except``s in this module (the other guards the
+        # ``_engine_lora_support`` bookkeeping read) and deliberately not
+        # in the apply path: by the time it can fire the pod has already
         # accepted the stack, so the generation about to run is correct.
         # Killing that run — after paying for the boot and the download —
         # because a ledger write failed would be disproportionate; the

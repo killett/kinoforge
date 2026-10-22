@@ -1,10 +1,13 @@
 """Grid executor: subprocess-per-cell, group-parallel, partial-failure-tolerant.
 
 Each cell launches ``pixi run kinoforge generate`` as a subprocess. Same-
-group cells run sequentially; EVERY cell passes ``--no-reuse`` (cold-boot,
-generate, destroy) — see ``_run_group``'s docstring for the 2026-06-25
-matcher-race rationale that retired the reuse-cells-0..N-2 design this
-docstring used to describe.
+group cells run sequentially; every ``generate:`` cell passes ``--no-reuse``
+(cold-boot, generate, destroy) — see ``_run_group``'s docstring for the
+2026-06-25 matcher-race rationale that retired the reuse-cells-0..N-2
+design this docstring used to describe. ``lora_swap:`` cells are the
+exception: one pod per group, cold-booted by cell-1, attached by cells
+2..N and destroyed by ``_run_swap_group``'s ``finally`` (never
+``--no-reuse``).
 
 Cross-group cells run in parallel under a semaphore. A cell failure
 ABORTS the rest of its group (pod state is unknown) but does NOT touch
@@ -278,7 +281,7 @@ def _build_generate_cmd(
     """Construct the ``pixi run kinoforge generate ...`` argv for one cell.
 
     ``kinoforge generate`` requires ``--prompt`` at argparse level
-    (``cli/_main.py:413``). Read the prompt from the effective cfg's
+    (``cli/_main.py``'s ``generate`` subparser). Read the prompt from the effective cfg's
     top-level ``prompt:`` field. Raises if the cfg doesn't carry one.
 
     Each cell gets its OWN ``--output-dir`` (a unique subdir under the
@@ -1063,10 +1066,9 @@ async def run_grid(
             token-minting dict to begin with; the per-cell unique
             ``run_id`` (``f"{grid_id}__cell{cell.idx}"``) only guarantees
             that IF a dict were ever shared, its per-``run_id`` memo entry
-            still wouldn't collide. Lora-swap cells are REFUSED when
-            ``ephemeral`` is true (see the raise right after
-            ``swap_groups_present`` is computed) rather than silently
-            defaulted to non-ephemeral — filed as U24 in PROGRESS.md.
+            still wouldn't collide. Lora-swap cells accept ``ephemeral``
+            too since 2026-09-11 (U24) — see ``_run_swap_group``'s
+            docstring for why the earlier refusal was lifted.
 
     Returns:
         A :class:`GridResult` whose ``status`` tells the caller which
@@ -1133,9 +1135,8 @@ async def run_grid(
                         # work_parent, not output_dir: per-cell dirs belong to
                         # the working tree, which is private + removed under an
                         # ephemeral policy and identical to output_dir
-                        # otherwise. (Unreachable while ephemeral, per U24's
-                        # refusal — kept aligned so a future lift of that
-                        # refusal does not silently re-open U25.)
+                        # otherwise (U25). Reachable under --ephemeral since
+                        # the U24 refusal was lifted on 2026-09-11.
                         output_dir=work_parent,
                         grid_id=grid_id,
                         sidecar=sidecar,

@@ -1,8 +1,7 @@
 """Grid spec pydantic models + outside-repo loader.
 
-This module owns the spec-file surface. The loader (``GridSpec.load``)
-ships in Task 4; this initial cut is models-only so downstream tests
-have a parseable schema target.
+This module owns the spec-file surface: the pydantic models and the
+outside-repo loader (``GridSpec.load``).
 
 The schema discipline mirrors existing kinoforge cfg models:
 ``extra="forbid"`` everywhere to catch typos, no implicit defaults

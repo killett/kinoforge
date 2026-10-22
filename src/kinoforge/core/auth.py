@@ -136,9 +136,8 @@ class AuthStrategy(ABC):
 class Bearer(AuthStrategy):
     """Bearer-token auth from a named env var.
 
-    Used by the existing :class:`HostedAPIEngine` for fal.ai today; future
-    Replicate / Runway / Luma integrations reuse this class with different
-    ``env_var`` values.
+    Used by :class:`HostedAPIEngine`, the Replicate / Runway video engines
+    and the Replicate / Luma image engines, each with its own ``env_var``.
     """
 
     def __init__(
@@ -269,9 +268,10 @@ class Bearer(AuthStrategy):
 class GCPServiceAccount(AuthStrategy):
     """GCP auth via the ``google.auth`` default credential chain.
 
-    Used by VeoEngine (Layer 2) and any future Vertex AI integrations
-    (Imagen, Lyria, Gemini-Vision). The ``google.auth`` SDK is lazy-imported
-    inside method bodies to preserve the core-import-ban invariant.
+    Registered as ``gcp_service_account``; no shipped engine constructs it
+    today (reserved for Vertex AI integrations). The ``google.auth`` SDK is
+    lazy-imported inside method bodies to preserve the core-import-ban
+    invariant.
     """
 
     # GCP access-token shape: ya29.<base64-ish>
@@ -387,7 +387,7 @@ class GCPServiceAccount(AuthStrategy):
 class AWSSigV4(AuthStrategy):
     """AWS request signing via the ``boto3`` Session credential chain.
 
-    Used by NovaReelEngine (Layer 3) and any future Bedrock integrations.
+    Used by :class:`BedrockVideoEngine` and any future Bedrock integrations.
     The ``boto3`` SDK is lazy-imported inside method bodies to preserve
     the core-import-ban invariant. SigV4 signing is performed directly
     with stdlib ``hashlib`` + ``hmac`` so the seam stays SDK-version-
