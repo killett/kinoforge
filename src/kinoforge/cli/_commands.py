@@ -519,8 +519,6 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
         # CapacityError with its own message when nothing satisfies it. The
         # pre-check this replaces could only ever produce a vaguer version of
         # that error, and on skypilot it could not run at all.
-        import dataclasses as _dc
-
         from kinoforge.core.orchestrator import _cfg_dict
         from kinoforge.core.spec_builder import build_instance_spec
 
@@ -531,11 +529,11 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
         # no endpoints` AFTER money was committed (pod forewgeluuy9qh,
         # 2026-07-03).
         cfg_dict = _cfg_dict(cfg)
-        cfg_dict["lifecycle"] = _dc.asdict(lifecycle)
+        cfg_dict["lifecycle"] = dataclasses.asdict(lifecycle)
         rendered = engine.render_provision(cfg_dict)
-        from kinoforge.core.credentials import EnvCredentialProvider as _ECP
+        from kinoforge.core.credentials import EnvCredentialProvider
 
-        _creds = _ECP()
+        _creds = EnvCredentialProvider()
         rendered_env = {
             var: value
             for var in rendered.env_required
@@ -616,7 +614,6 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
         # ``deploy()`` polls with — deadline-checked, sleep-seamed, and
         # already covered for its own bound/interval behaviour in
         # tests/core/test_ready_poll_bounds.py.
-        from kinoforge.core.credentials import EnvCredentialProvider
         from kinoforge.core.orchestrator import _wait_for_provider_ready
         from kinoforge.core.provisioner import provision
 
@@ -1876,7 +1873,6 @@ def _cmd_image(args: argparse.Namespace, ctx: SessionContext) -> int:
     from kinoforge.core.errors import (
         Cancelled,
         KinoforgeError,
-        UnknownAdapter,
         ValidationError,
     )
     from kinoforge.core.image_run import _resolve_prompt, generate_image
@@ -2157,8 +2153,6 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
           * ``2`` — batch-fatal exception mid-run
             (``BudgetExceeded`` / ``CapabilityMismatch`` / ``TeardownError``).
     """
-    from datetime import datetime
-
     from pydantic import ValidationError as PydanticValidationError
 
     from kinoforge.cli.batch_formatters import build_formatter
@@ -2168,7 +2162,6 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
         CapabilityMismatch,
         ConfigError,
         KinoforgeError,
-        TeardownError,
     )
 
     if ctx.cfg is None:
@@ -3471,7 +3464,6 @@ def _resolve_attach_pod(
       3. ``provider.get_instance(pod_id).status == "ready"`` (live probe).
     """
     from kinoforge.core import registry
-    from kinoforge.core.errors import UnknownAdapter
 
     ledger = ctx.ledger()
     entry = ledger.read(pod_id)
@@ -3627,8 +3619,6 @@ def _write_provision_record(
     - provision_ts (local TZ ISO-8601)
     - cost_per_hr_usd (from instance.cost_rate_usd_per_hr)
     """
-    from datetime import datetime
-
     endpoint_url = instance.endpoints.get("http") or next(
         iter(instance.endpoints.values()), ""
     )
@@ -3671,7 +3661,6 @@ def _resolve_warm_instance(
       7. provider.get_instance(instance_id) → (None, 2) on KeyError.
     """
     from kinoforge.core import registry
-    from kinoforge.core.errors import UnknownAdapter
     from kinoforge.core.interfaces import Lifecycle
     from kinoforge.core.reaper import classify
 
@@ -4255,9 +4244,6 @@ def _http_get_json(url: str) -> dict[str, Any]:
         ConnectionError / urllib.error.URLError: Transport-level failure.
         json.JSONDecodeError: Response body not valid JSON.
     """
-    import json
-    import urllib.request
-
     req = urllib.request.Request(  # noqa: S310 — operator-supplied pod URL
         url, headers={"Accept": "application/json"}
     )
@@ -5202,8 +5188,6 @@ def _cmd_cost(args: argparse.Namespace, ctx: SessionContext) -> int:
 
 def _render_cost_human(snap: CostSnapshot, *, threshold_set: bool) -> str:
     """Human-readable cost table per spec §5."""
-    from kinoforge.core.reaper import Verdict
-
     lines: list[str] = []
     lines.append(f"As of {snap.as_of.isoformat(timespec='seconds')}")
     lines.append(f"Burn rate: ${snap.burn_rate_usd_per_hr:.2f}/hr")
@@ -5248,8 +5232,6 @@ def _render_cost_human(snap: CostSnapshot, *, threshold_set: bool) -> str:
 
 def _render_cost_json(snap: CostSnapshot) -> str:
     """Render the stable §10 JSON schema."""
-    from kinoforge.core.reaper import Verdict
-
     out: dict[str, Any] = {
         "as_of": snap.as_of.isoformat(),
         "burn_rate_usd_per_hr": snap.burn_rate_usd_per_hr,
@@ -5288,8 +5270,6 @@ def _render_cost_json(snap: CostSnapshot) -> str:
 
 def _render_cost_prom(snap: CostSnapshot, balance_errors: dict[str, str]) -> str:
     """Render Prometheus text exposition per spec §9. LF-only."""
-    from kinoforge.core.reaper import Verdict
-
     lines: list[str] = []
 
     def emit_help(metric: str, help_text: str, type_: str) -> None:

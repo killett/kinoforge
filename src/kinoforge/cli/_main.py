@@ -189,8 +189,6 @@ def _install_redacting_filter(*, bypass: bool) -> None:
     Python process (as the test suite does) install at most one filter
     per logger and one factory override.
     """
-    import logging
-
     flt = RedactingLogFilter(RedactionRegistry.instance(), bypass=bypass)
     for logger in (logging.getLogger("kinoforge"), logging.getLogger()):
         existing = [f for f in logger.filters if isinstance(f, RedactingLogFilter)]
