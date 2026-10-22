@@ -173,7 +173,7 @@ def _resolve_engine(cfg: Config, engine: GenerationEngine | None) -> GenerationE
     """
     if engine is not None:
         return engine
-    # Both call sites (`deploy_session`, `generate`) call `cfg.capability_key()`
+    # All three call sites (`deploy`, `deploy_session`, `generate`) call `cfg.capability_key()`
     # BEFORE `_resolve_engine`, and `capability_key()` raises `ConfigError` for
     # any cfg with an `image:` block — so an image cfg can never reach this
     # line; it is rejected with a named error one call earlier.
@@ -359,10 +359,11 @@ def _provision_compute_once(
 ) -> None:
     """Run ``provisioner.provision`` exactly once per ``(instance, capability_key)``.
 
-    Layer I UX A compute-path preflight.  Uses an artifact-store lock keyed on
-    the instance id to serialise concurrent ``generate()`` callers, and reads
-    a per-instance marker to skip the (potentially expensive) provision when
-    the same instance was already provisioned for the same capability key.
+    Layer I UX A compute-path preflight.  Serialisation is owned by the
+    ``provision:<id>`` lock that ``deploy_session`` holds around this call
+    (B7 ``hold_until_first_tick``); this helper only reads a per-instance
+    marker to skip the (potentially expensive) provision when the same
+    instance was already provisioned for the same capability key.
 
     Stale-key rule: when the user edits cfg (e.g. precision / model set) the
     derived capability_key changes and the marker becomes stale, forcing a
@@ -376,8 +377,8 @@ def _provision_compute_once(
         instance: The ready compute instance to provision against.
         creds: Optional credential provider.  Defaults to
             ``EnvCredentialProvider()`` when ``None``.
-        store: Artifact store providing ``acquire_lock`` for cross-process
-            mutual exclusion.
+        store: Unused since the lock moved to ``deploy_session``
+            (``d6932465``); retained for call-site compatibility.
         state_dir: Root state directory under which the marker is written
             (``<state_dir>/instances/<instance.id>/.provisioned``) and into
             whose ``weights/`` subdirectory downloads are placed.
@@ -586,7 +587,7 @@ def _strip_reserved_tags(
 ) -> dict[str, str]:
     """Drop kinoforge-reserved keys from caller-supplied *tags*.
 
-    compute-seam S5. Only :data:`~kinoforge.core.lifecycle.LAUNCH_PHASE_TAG` is
+    compute-seam S5. Only :data:`~kinoforge.core.launch_phase.LAUNCH_PHASE_TAG` is
     reserved today, and it is reserved because the ledger's same-key collapse
     reads it as ground truth: a real row carrying ``kf_launch_phase=launching``
     is indistinguishable from a provisional one, and the collapse would refuse
@@ -635,9 +636,8 @@ def _record_provisional_row(
 
     The row is keyed by the CLIENT-side id (``run_id``), which is not the
     provider's id anywhere but SkyPilot — on RunPod it is the pod NAME, on
-    Modal the app run id. Task 6 teaches ``cli/_reconcile`` to adopt a
-    ``launching`` row by name before it is allowed to forget one; until then
-    the row is durable but the reconciler cannot yet act on it.
+    Modal the app run id. ``cli/_reconcile._adopt_or_age_out`` adopts a
+    ``launching`` row by name before it is allowed to forget one.
 
     Never raises: bookkeeping must not be able to fail a launch that would
     otherwise succeed. A fault forfeits F12 protection for this launch only,
@@ -1165,9 +1165,10 @@ def _build_start_heartbeat_closure(
 
     Captures every HeartbeatLoop kwarg except ``instance_id``. The closure is
     passed into :func:`_provision_instance_and_build_backend` and invoked
-    right after the RunPod-status poll succeeds, so the loop ticks throughout
-    ``engine.provision`` / ``wait_for_ready`` rather than waiting until
-    ``deploy_session`` resumes after provision returns. Steady-state lifetime
+    AFTER ``engine.provision`` returns (C33-m, 2026-06-17: the C29
+    before-provision order was reverted because the RunPod heartbeat write
+    restarted the container mid-boot), so the loop covers the steady state
+    only. Steady-state lifetime
     and the matching ``stop()`` remain owned by ``deploy_session``'s finally
     block.
 
@@ -1308,9 +1309,10 @@ def _provision_instance_and_build_backend(
         creds: Optional credential provider, forwarded to the provisioner.
         store: Artifact store (forwarded to the provisioner for marker reads).
         state_dir: Operator state root.
-        for_discovery: When True, the CapacityError message reads
-            'no offers available for discovery from provider ...' to
-            distinguish the cold-start failure from a steady-state one.
+        for_discovery: Currently unread — the CapacityError message it used
+            to select was removed with the S4 provider-side selection
+            (``4fe46014``). Kept so both ``deploy_session`` call sites keep
+            their keyword; see hygiene-notes "Duplicated provision branch".
         tags: Optional caller-supplied tags merged onto the orchestrator's
             built-in ``{kinoforge_engine, kinoforge_key}``. Caller wins on
             key collision, EXCEPT for kinoforge-reserved keys, which are
@@ -1328,14 +1330,13 @@ def _provision_instance_and_build_backend(
             ``Ledger.record`` appends.
         cancel_token: C29 cooperative cancellation. Forwarded into
             ``_provision_compute_once`` so a boot-phase reap raises
-            ``Cancelled`` from inside ``engine.wait_for_ready``. Task 5 adds
-            the matching ``except Cancelled`` clause that destroys the pod.
+            ``Cancelled`` from inside ``engine.wait_for_ready``; the matching
+            ``except Cancelled`` clause below destroys the pod.
             Default ``None`` preserves pre-C29 behaviour.
         start_heartbeat: C29 closure that constructs + starts a
             ``HeartbeatLoop`` given the just-readied ``Instance``. Invoked
-            right after the RunPod status poll succeeds and BEFORE
-            ``engine.provision`` runs, so STALL_REAP / RESTART_LOOP_REAP
-            predicates tick throughout the boot phase. ``None`` skips the
+            AFTER ``engine.provision`` returns (C33-m), so STALL_REAP /
+            RESTART_LOOP_REAP predicates tick post-boot only. ``None`` skips the
             invocation and the returned ``hb_loop`` is also ``None``; a
             closure that raises also falls through to ``hb_loop=None``
             (logged) — the late-start path in ``deploy_session`` handles the
@@ -1705,9 +1706,9 @@ class DeploySession:
     engine + provider.
 
     Lifetime is bounded by the ``with deploy_session(...) as s:`` block.
-    On clean exit the pool is closed but the instance is left alive for
-    warm reuse — destruction is the sweeper / budget tracker's job,
-    matching the behaviour of the pre-refactor :func:`generate`.
+    On clean exit the pool is closed and, unless ``single=True`` destroyed
+    it in the ``finally``, the instance is left alive for warm reuse —
+    destruction is then the sweeper's / ``kinoforge reap``'s job.
 
     Attributes:
         backend: The live backend wired through ``session.pool``.
@@ -1779,9 +1780,9 @@ def deploy_session(
 
     * Always closes the pool (in a ``finally`` block — propagates any
       body exception unchanged).
-    * Does NOT call ``provider.destroy_instance`` — the instance is left
-      alive for warm reuse by the next session or for the
-      sweeper / budget tracker to reap.
+    * Does NOT call ``provider.destroy_instance`` unless ``single=True``
+      (``--no-reuse``) — otherwise the instance is left alive for warm
+      reuse by the next session or for the sweeper / ``kinoforge reap``.
 
     Args:
         cfg: The loaded kinoforge configuration.
@@ -1997,9 +1998,9 @@ def deploy_session(
     # C29 — build the start_heartbeat closure ONCE per deploy_session.
     #
     # The closure is invoked from inside _provision_instance_and_build_backend
-    # right after the RunPod-status poll succeeds (cold-start branches), so
-    # the HeartbeatLoop ticks throughout engine.provision / wait_for_ready
-    # instead of waiting until deploy_session resumes after provision returns.
+    # AFTER engine.provision returns (cold-start branches; C33-m reverted the
+    # C29 before-provision order), so the HeartbeatLoop covers the steady
+    # state only.
     # ``None`` for any of the following short-circuits the closure and the
     # post-Step-8.5 fallback also stays inert:
     #
@@ -2208,10 +2209,9 @@ def deploy_session(
             # C29 — late-start HeartbeatLoop for the caller-supplied warm-pod
             # branch. Cold-start branches above already populated ``hb_loop``
             # by invoking ``_start_heartbeat`` inside
-            # ``_provision_instance_and_build_backend`` (right after the
-            # RunPod-status poll succeeded). Caller-supplied pods skipped that
-            # path — they have no boot phase to protect — so the loop is
-            # constructed here at the original pre-C29 location.
+            # ``_provision_instance_and_build_backend`` (after provision
+            # returned, C33-m). Caller-supplied pods skipped that path, so the
+            # loop is constructed here at the original pre-C29 location.
             if (
                 hb_loop is None
                 and _start_heartbeat is not None
@@ -2654,7 +2654,9 @@ def generate(
     3. Validate the request against the video profile.
     4. Split the validated prompt into ordered segments.
     5. Build ``stages: list[Stage]`` — ``[KeyframeStage, GenerateClipStage]`` when
-       ``cfg.keyframe`` is set, else ``[GenerateClipStage]``.
+       ``cfg.keyframe`` is set, else ``[GenerateClipStage]``; ``UpscaleStage`` /
+       ``TextStage`` / ``InterpolateStage`` are appended when their cfg blocks
+       are set (``skip_clip_stage=True`` drops the clip stage).
     6. Walk the stage list with a shared ``PipelineState``; extract
        ``state.artifacts["clip"]`` as the return artifact.
     7. On ``ValidationError`` from any stage: tear down the compute instance (if the
@@ -2749,8 +2751,8 @@ def generate(
     # AuthError on the first env_required var even when os.environ holds
     # the value. CLI callers and ad-hoc harnesses routinely forget the
     # kwarg; default it here so the public API matches operator
-    # expectations. Mirrors the precedent at _provision_compute_once
-    # (line 209). Drift-locked by
+    # expectations. Mirrors the precedent in _provision_compute_once.
+    # Drift-locked by
     # tests/core/test_orchestrator_creds_default.py.
     if creds is None:
         creds = EnvCredentialProvider()
@@ -2832,7 +2834,7 @@ def generate(
             # LumaAgentsImageEngine) get a real slug instead of "unknown".
             # resolved_image_engine and kf_cfg_dict are guaranteed non-None here:
             # both were assigned in the matching `if cfg.keyframe is not None:`
-            # block above (line ~1008). Narrow so mypy can resolve attribute
+            # block above. Narrow so mypy can resolve attribute
             # access / the dict-typed arg below.
             _kf_eng: ImageEngine = resolved_image_engine  # type: ignore[assignment]
             _kf_cfg_dict: dict[str, object] = kf_cfg_dict  # type: ignore[assignment]
