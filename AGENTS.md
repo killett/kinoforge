@@ -21,7 +21,8 @@ layered redaction passes before any fixture lands on disk or any logger emission
    arrays where `NAME` ends in `_KEY` / `_TOKEN` / `_SECRET` / `_PASSWORD` / `_PASSPHRASE`.
 2. **Key-name walker** (`_redact`) — Layer N behaviour, unchanged. Redacts values at any dict key
    whose name matches `{token, key, secret, password}`.
-3. **Value-pattern matcher** (`_redact_credential_patterns`) — recursive sweep that catches:
+3. **Value-pattern matcher** (`_redact_credential_patterns`) — recursive sweep over
+   `CREDENTIAL_PATTERNS` (16 patterns today; the table shows the original seven):
 
    | Pattern | Example | Source |
    |---|---|---|
@@ -42,8 +43,8 @@ pattern still matches.
 It signals a **redactor gap, not a test failure**. The error message names the pattern + JSON
 pointer + match snippet. Fix the redactor:
 
-- New credential format → add a regex to `_CREDENTIAL_PATTERNS` in
-  `tests/providers/conftest_runpod.py`, then add a parametrised unit test in
+- New credential format → add a `CredentialPattern` to `CREDENTIAL_PATTERNS` in
+  `src/kinoforge/core/credential_patterns.py` (the conftest imports it), then add a parametrised unit test in
   `tests/providers/test_runpod_conftest.py`.
 - New container shape → extend `_redact_kv_shape` or add a new pass.
 
@@ -52,8 +53,9 @@ test in `tests/providers/test_fixtures_audit.py` confirm cleanliness across the 
 
 ### Adding a new credential pattern
 
-1. Add the regex to `_CREDENTIAL_PATTERNS` in `tests/providers/conftest_runpod.py` (canonical
-   snake_case name + compiled `re.Pattern`).
+1. Add the `CredentialPattern` to `CREDENTIAL_PATTERNS` in `src/kinoforge/core/credential_patterns.py`
+   (canonical snake_case name, compiled `re.Pattern`, strict flag) and mirror it in
+   `.claude/hooks/redact_secrets.py` — `tests/test_redact_hook_parity.py` enforces the two stay identical.
 2. Add a parametrised case to the credential-format unit test in
    `tests/providers/test_runpod_conftest.py`.
 3. Run `pixi run pytest tests/providers/ -v` and confirm both the unit test and the cross-tree
@@ -62,7 +64,7 @@ test in `tests/providers/test_fixtures_audit.py` confirm cleanliness across the 
 
 ### Env vars used by live smokes
 
-All five MUST live in `.env` (gitignored). See `.env.example` for the canonical list:
+All of these MUST live in `.env` (gitignored). See `.env.example` for the canonical list:
 
 - `RUNPOD_API_KEY` / `RUNPOD_TERMINATE_KEY` — RunPod provider (paired; terminate key reuses the main key via `${RUNPOD_API_KEY}` interpolation)
 - `HF_TOKEN` — HuggingFace weight downloads
@@ -73,5 +75,5 @@ All five MUST live in `.env` (gitignored). See `.env.example` for the canonical 
 
 - Process env scrubbing — a test that prints `os.environ['RUNPOD_API_KEY']` to stdout bypasses
   the seam. Don't write that test.
-- Git history scrub — the project has never committed a real credential per PROGRESS:213.
+- Git history scrub — the project has never committed a real credential (standing guard: `tests/test_source_audit.py`).
 - Encryption-at-rest of fixtures — fixtures are public test data; redaction IS the protection.

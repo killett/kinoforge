@@ -166,8 +166,8 @@ the `default` env. Common failure mode (avoid):
 
 ```
 $ pixi run -- gcloud config get-value project
-# wrong — pixi run is the task runner; without a matching task name
-# it just prints the task list. No error, just confusing output.
+# wrong — `pixi run -- <cmd>` runs <cmd> in the DEFAULT env, where gcloud
+# is not installed: "gcloud: command not found".
 
 $ gcloud config get-value project
 # wrong — gcloud not on PATH in the bare shell.
@@ -358,7 +358,7 @@ confirmed against the provider that nothing is running.
   other row shares the id.
 * To confirm against the provider directly, list what is actually running
   rather than trusting the ledger — for RunPod, the GraphQL `myself { pods
-  { id } }` probe named in the "Known infra gotchas" section above.
+  { id } }` probe named in the "Known infra gotchas" section below.
 
 The failure mode this rule exists to prevent: 2026-06-22 Phase-P1
 live validation ran without `--no-reuse`; the operator read a
@@ -372,7 +372,7 @@ ledger state AFTER it.
 daemon at session begin:
 
 ```bash
-pixi run kinoforge sweeper start &
+pixi run kinoforge sweeper start -c <cfg> &
 ```
 
 It classifies idle pods and reaps them per `Lifecycle()` defaults.
@@ -413,7 +413,7 @@ on the request body. Root-caused 2026-07-05: the base64 provision script
 alone was 98,848 B → total env 101,971 B → every create 500'd.
 
 - The provider **gzips the provision script before base64**
-  (`_create_pod`, commit `5418c35`): `dockerArgs` decodes with
+  (`_create_pod`, commit `90404cc5`): `dockerArgs` decodes with
   `base64 -d | gzip -d`. **Measured 2026-09-23: that outer gzip saves 26.2%**
   (168,920 B plain base64 → 124,588 B gzipped, on the then-worst config).
   **Do NOT drop it** — base64 packs 64 symbols into 8-bit bytes, so gzip
@@ -456,7 +456,7 @@ read it. Over `pipe:0` (stdin) that seek is impossible, so large inputs fail
 with `partial file` / `unspecified pixel format` / `Invalid data` → **exit
 183**. Small clips buffer through and hide it. `downscale_video_bytes` writes
 bytes to a **seekable temp file** and runs `ffmpeg -i <file>` (commit
-`8438a8b`); output stays on `pipe:1` (fragmented flags need no seek).
+`70cd3992`); output stays on `pipe:1` (fragmented flags need no seek).
 **Test ffmpeg/video seams with REALISTIC file sizes** — a 256² fixture hid
 this bug that a 1920² FlashVSR output trips.
 
