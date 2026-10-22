@@ -447,11 +447,6 @@ def _collapse_status(raw: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Status conversion
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
 # Provider-internal SSH tunnel (HTTP-over-sky seam)
 # ---------------------------------------------------------------------------
 
@@ -506,6 +501,11 @@ def _spawn_ssh_tunnel(cluster_name: str, local_port: int, remote_port: int) -> A
             cluster_name,
         ]
     )
+
+
+# ---------------------------------------------------------------------------
+# Status conversion
+# ---------------------------------------------------------------------------
 
 
 _SKY_STATUS_MAP: dict[str, str] = {
@@ -752,8 +752,10 @@ class SkyPilotProvider(ComputeProvider):
           only the accelerator NAME — sky's optimizer then picks cloud,
           region and SKU on its own, and has been observed booking a $1.99
           Lambda A100 under a $1.00 ceiling (2026-07-07). Read-and-then-
-          overridden is not honoured; this is verification finding F4 and it
-          stays UNSUPPORTED until S4 wires the realized-rate check.
+          overridden is not honoured (verification finding F4). S4's
+          post-launch ``realized_rate`` readback and the pre-launch estimate
+          enforce the cap controller-side; the row stays UNSUPPORTED because
+          the optimizer itself never sees it.
         * ``disk_gb`` is UNSUPPORTED: ``resources`` never receives the
           operator's value, so the ``setdefault("disk_size", 60 if gpu else
           30)`` below always wins. Shipped skypilot configs DO set

@@ -47,7 +47,7 @@ MODAL_GPU_CATALOG: tuple[Offer, ...] = tuple(
 
 
 def modal_offers(placement: Placement) -> list[Offer]:
-    """Return catalog offers filtered/ordered per ``reqs``.
+    """Return catalog offers filtered/ordered per ``placement``.
 
     Args:
         placement: The portable resource block from the resolved config.

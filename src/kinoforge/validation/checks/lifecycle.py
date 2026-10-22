@@ -13,7 +13,7 @@
   operator-typing-pace window between two `kinoforge generate`
   invocations. Caught 2026-06-18 Wan 14B smoke (300-s default + 5-min
   operator gap → ORPHAN_REAP → cold create). Default already bumped
-  to 1800 in interfaces.py:94.
+  to 1800 in ``core/interfaces.py`` (``Lifecycle.grace_after_session_s``).
 """
 
 from __future__ import annotations

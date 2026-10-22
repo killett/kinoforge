@@ -52,7 +52,8 @@ def _urllib_fetch_html(url: str, headers: dict[str, str]) -> str:
 
     Raises:
         AuthError: The server returned HTTP 401.
-        KinoforgeError: Any other non-2xx HTTP error or network failure.
+        KinoforgeError: Any other non-2xx HTTP error. A transport failure
+            (``urllib.error.URLError``) propagates unwrapped — audit B21.
     """
     # CivArchive is Cloudflare-fronted (same gating as civitai); the default
     # Python-urllib UA gets a 403. Mirror the civitai source pattern.

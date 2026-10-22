@@ -9,11 +9,11 @@ Pod mode:
     and injects a scoped terminate-only credential.
   - Polls until the pod is gone on :meth:`destroy_instance`.
 
-Serverless mode:
-  - Creates a serverless endpoint via the RunPod GraphQL API.
-  - Sets concurrency caps (``max_workers``, ``max_in_flight``) and a
-    per-request deadline from the ``Lifecycle``.
-  - Reports ``status="ready"`` immediately (serverless is ready on creation).
+Serverless mode (NOT runnable — refused at preflight, U46):
+  - ``_create_serverless`` is retained only so ``runpod-diffusers-serverless.yaml``
+    stays covered by the launch goldens. Its mutation is invalid GraphQL, and
+    ``validation/checks/unimplemented_mode.py`` refuses ``compute.mode: serverless``
+    before any create is attempted.
 
 Mode dispatch:
   Determined by ``spec.tags.get("mode", "pod")`` at :meth:`create_instance`
@@ -349,8 +349,9 @@ def _budget_bounded_lifetime(lifecycle: Lifecycle, offer: Offer | None) -> float
     capability rather than an accident: RunPod is ``RATE_DETERMINISTIC``, so
     the booked offer's ``cost_rate_usd_per_hr`` IS the billed rate and is known
     here, at create. SkyPilot is ``RATE_READBACK`` — its rate is knowable only
-    after launch, which is why its watchdog does this arithmetic on the
-    instance instead.
+    after launch, so its provider computes the deadline controller-side at
+    create with ``placement.max_usd_per_hr`` as the stand-in rate and arms the
+    instance watchdog with the resulting epoch.
 
     Folded in with ``min``, never assigned: the budget is a ceiling, and a
     generous one must not silently raise the cfg's own time ceiling.
@@ -454,7 +455,7 @@ class RunPodProvider(ComputeProvider):
     ) -> frozenset[Capability]:
         """Richest provider. Deliberately NOT IDLE_AUTOSTOP.
 
-        ``selfterm.py`` is a boot-relative money cap (audit B4, 67627cd0), not
+        ``selfterm.py`` is a boot-relative money cap (audit B4, cfcd552c), not
         idle detection — RunPod idle reaping is controller-side only, which the
         design doc rules out as risk coverage.
 
@@ -517,7 +518,8 @@ class RunPodProvider(ComputeProvider):
         ``heartbeat_mode`` is CONSUMED and RunPod is the only provider where
         that is true: ``_adapters.build_heartbeat_endpoint_for`` maps
         ``'graphql-tag'`` onto :class:`RunPodGraphQLHeartbeatEndpoint`, which
-        reads the pod's own tags off the GraphQL API. Every other value, and
+        reads a ``# _kinoforge_hb:<ISO>`` marker off the pod's ``dockerArgs``
+        (its write path is a no-op since C33-m). Every other value, and
         every other provider, raises or returns None there.
 
         ``warm_reuse_auto_attach`` is UNSUPPORTED on every provider including
@@ -711,9 +713,9 @@ class RunPodProvider(ComputeProvider):
         - ``"pod"``: Creates a on-demand pod via GraphQL.  Injects the
           ``RUNPOD_TERMINATE_KEY`` and the rendered self-terminator script
           into the pod environment.  Returns ``status="starting"``.
-        - ``"serverless"``: Creates a serverless template/endpoint via GraphQL.
-          Sets concurrency caps from ``spec.lifecycle``.  No self-terminator
-          script is injected.  Returns ``status="ready"``.
+        - ``"serverless"``: retained for golden coverage only; refused at
+          preflight (U46, ``unimplemented_mode.py``) so ``kinoforge generate``
+          never reaches it.
 
         Cred safety: ``RUNPOD_API_KEY`` is NEVER placed in the pod environment
         or on the returned ``Instance``.

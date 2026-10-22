@@ -142,7 +142,7 @@ class GCSCloudLock(_LeaseLockBase):
                 if_generation_match=self._held_generation
             )
         except self._precondition_failed:
-            # Stolen after TTL — best-effort: log in production.
+            # Stolen after TTL — silent by contract (nothing left to release).
             pass
         except self._store._not_found_exc:
             # Already gone (e.g. external delete); silent per spec.

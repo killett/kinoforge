@@ -537,7 +537,8 @@ def infer_shape(cfg: Config) -> WorkloadShape:
     * The launch-less renders in ``upscalers/*/_engine.py`` and
       ``interpolators/rife/_engine.py`` belong to pipeline STAGES, which the
       orchestrator constructs with ``instance=session.instance``
-      (``core/orchestrator.py:2008-2022`` and ``:2031-2035``) — an
+      (``core/orchestrator.py``, the ``instance=session.instance`` stage
+      constructors) — an
       already-provisioned instance. They never provision a pod.
 
     So guessing BATCH from ``upscale_only`` or an interpolate block reports a

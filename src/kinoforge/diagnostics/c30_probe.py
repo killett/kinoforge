@@ -197,8 +197,8 @@ def append_spend_entry(path: Path, entry: dict[str, Any]) -> None:
     )
 
 
-# Inlined verbatim from src/kinoforge/engines/comfyui/__init__.py lines
-# 1285-1330 (the diagnostic_mode trap_preamble in ComfyUIEngine.render_provision).
+# Inlined verbatim from src/kinoforge/engines/comfyui/__init__.py (the
+# ``_kinoforge_diag_capture`` trap preamble in ComfyUIEngine.render_provision).
 # Inlined rather than imported because C30 must not touch production code
 # (spec §2 non-goal). If the source diverges, sync this constant.
 _C28_TRAP_PREAMBLE_LINES: list[str] = [
@@ -450,7 +450,7 @@ def destroy_with_retry(
     return n
 
 
-# Inlined verbatim from src/kinoforge/engines/comfyui/__init__.py:1226-1274
+# Inlined verbatim from src/kinoforge/engines/comfyui/__init__.py
 # (ComfyUIEngine.render_provision kinoforge_download_helper). C30 must not
 # touch production code (spec §2). If the source diverges, sync this constant.
 _KINOFORGE_DOWNLOAD_HELPER_LINES: list[str] = [
@@ -547,7 +547,7 @@ _C28_PHASE_A_MODELS: tuple[tuple[str, str, str], ...] = (
 
 
 def _custom_node_lines(url: str, ref: str) -> list[str]:
-    """Mirror engines/comfyui/__init__.py:1376-1389 for a single pinned node."""
+    """Mirror the custom-node clone lines in engines/comfyui/__init__.py."""
     name = url.rstrip("/").rsplit("/", 1)[-1]
     if name.endswith(".git"):
         name = name[: -len(".git")]
@@ -561,7 +561,7 @@ def _custom_node_lines(url: str, ref: str) -> list[str]:
 
 
 def _model_download_lines(url: str, subdir: str, filename: str) -> list[str]:
-    """Mirror engines/comfyui/__init__.py:1421-1427 for a single model entry.
+    """Mirror the ``_kinoforge_download`` model line in engines/comfyui/__init__.py.
 
     No sha256 verification (HF redirects make it brittle); token env is
     always ``HF_TOKEN`` for this repo. Empty third argument signals
@@ -581,7 +581,7 @@ PROVISION_A2_LINES: list[str] = [
 ]
 
 
-# A3: A2 + ComfyUI clone (mirrors engines/comfyui/__init__.py:1358-1361).
+# A3: A2 + ComfyUI clone (mirrors the ComfyUI clone line in engines/comfyui/__init__.py).
 PROVISION_A3_LINES: list[str] = [
     "cd /workspace",
     "[ ! -d ComfyUI ] && git clone --depth 1 --branch master "
@@ -590,7 +590,7 @@ PROVISION_A3_LINES: list[str] = [
 ]
 
 
-# A4: A3 + ComfyUI requirements pip install (line 1362).
+# A4: A3 + ComfyUI requirements pip install (the requirements.txt line).
 PROVISION_A4_LINES: list[str] = [
     "cd /workspace",
     "[ ! -d ComfyUI ] && git clone --depth 1 --branch master "

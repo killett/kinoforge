@@ -9,10 +9,10 @@ Empirically caught seven stale RunPod rows during the 2026-06-18
 session (~$73 phantom estimated spend before the operator swept
 them).
 
-Both the ledger loader and provider factory are injectable so the
-production wiring lives in the CLI layer (Task 10/11) rather than
-imported here — keeps the check independent of SessionContext
-construction details.
+Both the ledger loader and provider factory are injectable. NOTE: no
+production wiring exists — the instance registered at the bottom of this
+module uses the inert defaults, so ``kinoforge doctor`` always reports
+"ledger empty" (hygiene audit 2026-10-18, P3).
 """
 
 from __future__ import annotations
@@ -31,8 +31,7 @@ _log = logging.getLogger(__name__)
 def _empty_ledger_loader() -> list[dict[str, Any]]:
     """Default loader — returns empty.
 
-    Production callers (the CLI wiring in Task 10/11) inject a real
-    loader bound to the current SessionContext's ledger.
+    Nothing injects a real loader today (see the module docstring).
     """
     return []
 

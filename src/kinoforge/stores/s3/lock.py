@@ -152,6 +152,6 @@ class S3CloudLock(_LeaseLockBase):
             code = e.response.get("Error", {}).get("Code", "")
             if code != "PreconditionFailed":
                 raise
-            # Stolen after TTL — best-effort: log via stdlib in production.
+            # Stolen after TTL — silent by contract (nothing left to release).
         self._held_token = None
         self._held_etag = None

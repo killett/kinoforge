@@ -82,7 +82,9 @@ class ModalProvider(ComputeProvider):
     ) -> frozenset[Capability]:
         """Container-level idle scaledown + a function timeout deadline.
 
-        IDLE_AUTOSTOP is ``_app.py`` ``scaledown_window`` (default 300 s);
+        IDLE_AUTOSTOP is ``_app.py`` ``scaledown_window``, set from
+        ``lifecycle.idle_timeout_s`` at create (the dataclass default of 300 s
+        never applies in production);
         ON_INSTANCE_DEADLINE is the ``@app.function(timeout=...)`` cap. Modal
         does NOT honour cfg's ``lifecycle.job_timeout``, so JOB_TIMEOUT is
         absent, and there is no wire-level heartbeat read.
@@ -224,7 +226,7 @@ class ModalProvider(ComputeProvider):
 
     # -- offers -------------------------------------------------------------
     def find_offers(self, placement: Placement) -> list[Offer]:
-        """Return Modal catalog offers meeting ``reqs``."""
+        """Return Modal catalog offers meeting ``placement``."""
         return modal_offers(placement)
 
     # -- lifecycle ----------------------------------------------------------
@@ -232,13 +234,14 @@ class ModalProvider(ComputeProvider):
         """Build + deploy a Modal App and return its HTTP endpoint.
 
         Args:
-            spec: The instance spec (image, offer, setup_steps, launch, env).
+            spec: The instance spec (image, placement, setup_steps, launch, env).
 
         Returns:
             An ``Instance`` in ``starting`` state with ``endpoints["8000"]`` set.
 
         Raises:
-            ValueError: If ``setup_steps``/``launch`` or ``offer`` is missing.
+            ValueError: If ``setup_steps``/``launch`` is missing.
+            CapacityError: No catalog GPU class satisfies ``spec.placement``.
         """
         # A Modal container is a server or it is nothing: the app's web
         # endpoint IS the instance, so a spec with no launch would deploy an

@@ -223,7 +223,7 @@ class LocalProvider(ComputeProvider):
     # ------------------------------------------------------------------
 
     def find_offers(self, placement: Placement) -> list[Offer]:
-        """Return synthetic local offers that satisfy ``reqs``.
+        """Return synthetic local offers that satisfy ``placement``.
 
         Delegates filtering to ``filter_offers`` so callers' hardware
         overrides are fully respected.

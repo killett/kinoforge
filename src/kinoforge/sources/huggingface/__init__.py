@@ -93,7 +93,8 @@ def _urllib_fetch_json(
 
     Raises:
         AuthError: The server returned HTTP 401.
-        KinoforgeError: Any other non-2xx HTTP error or network failure.
+        KinoforgeError: Any other non-2xx HTTP error. A transport failure
+            (``urllib.error.URLError``) propagates unwrapped — audit B21.
     """
     req = Request(url, headers=headers)  # noqa: S310
     try:

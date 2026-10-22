@@ -17,8 +17,9 @@ defaults, 4 h.
 **The second cap is NOT a dead-man's switch** (audit B4, 2026-07-28). It was
 documented as one from ``1be572d`` until 2026-07-28, but nothing inside the
 pod has ever written a liveness signal: the template's ``heartbeat()`` helper
-was never called, and the orchestrator's heartbeat writes to RunPod pod tags
-(:mod:`kinoforge.providers.runpod.heartbeat`) which this script never reads.
+was never called, and the orchestrator's RunPod heartbeat endpoint
+(:mod:`kinoforge.providers.runpod.heartbeat`, a ``dockerArgs`` marker whose
+write path is disabled) is nothing this script ever reads.
 So the timer always measured pod age, never idleness. It is kept — renamed and
 documented for what it is — as a pod-side money backstop that survives the
 controller dying; the unreachable ``job_timeout`` branch was deleted.

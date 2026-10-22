@@ -1,11 +1,14 @@
 """Cfg validation Check Registry — public API.
 
-Two entry points:
+Three entry points:
 
   - validate_for_generate(cfg) runs STATIC + PREFLIGHT + NETWORK-subset.
     Auto-fixes STATIC failures with a single retry. Raises
     kinoforge.core.errors.ValidationError if any ERROR-severity check
     still fails after auto-fix.
+
+  - validate_for_load(cfg) runs STATIC only (the load_config context),
+    with the same auto-fix + raise policy as validate_for_generate.
 
   - validate_for_doctor(cfg) runs all categories, all checks. Never
     raises. Returns the full ValidationReport for the CLI to format.

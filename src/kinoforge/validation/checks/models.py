@@ -2,8 +2,8 @@
 
 HEAD-checks each ``cfg.models[]`` ref. Two scheme paths:
 
-  - ``hf:<repo>:<file>``  -> resolved to
-    ``https://huggingface.co/<repo>/resolve/main/<file>``
+  - ``hf:<repo>[@<rev>]:<file>``  -> resolved to
+    ``https://huggingface.co/<repo>/resolve/<rev or main>/<file>``
   - ``https://...``       -> HEAD'd as-is
 
 Generate mode checks only ``kind: base`` (the diffusion checkpoint

@@ -43,7 +43,8 @@ def _urllib_fetch_json(url: str, headers: dict[str, str]) -> dict[str, Any]:
 
     Raises:
         AuthError: The server returned HTTP 401.
-        KinoforgeError: Any other non-2xx HTTP error or network failure.
+        KinoforgeError: Any other non-2xx HTTP error. A transport failure
+            (``urllib.error.URLError``) propagates unwrapped — audit B21.
     """
     # Civitai is Cloudflare-fronted; the default Python-urllib UA gets a 403.
     # Mirror the kinoforge-smoke pattern from tests/_smoke_harness/http.py.
