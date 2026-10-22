@@ -1121,38 +1121,37 @@ class SkyPilotProvider(ComputeProvider):
             "name": spec.run_id or "kinoforge-skypilot",
             "envs": dict(spec.env),
         }
-        if resources:
-            # Default disk_size conservatively to stay under GCP's default
-            # ``SSD_TOTAL_GB=250`` quota. SkyPilot's own default is 256 GB,
-            # which exceeds that quota on a fresh project.
-            # GPU images (e.g. ``skypilot-gcp-gpu-ubuntu-241030``) ship with a
-            # 50 GB base OS layer; GCP rejects disk_size < image size with a
-            # ``400 Invalid`` error. GPU offers therefore default to 60 GB (a
-            # small head-room above the 50 GB floor). CPU smokes use 30 GB
-            # (the CPU base images are ~20 GB).
-            is_gpu = accelerator is not None
-            default_disk_gb = 60 if is_gpu else 30
-            resources.setdefault("disk_size", default_disk_gb)
-            # Spot/preemptible: maps spec.placement.spot → SkyPilot's
-            # ``use_spot``. Preemptible T4 quota (``PREEMPTIBLE_NVIDIA_T4_GPUS``)
-            # is granted separately from the on-demand GPU quota
-            # (``GPUS_ALL_REGIONS``).
-            if spec.placement.spot:
-                resources["use_spot"] = True
-            if self._region:
-                resources["region"] = self._region
-            # Pin the LAUNCH cloud to the operator's clouds set. The
-            # _clouds filter only narrows find_offers' CATALOG enumeration; sky's
-            # optimizer otherwise still launches on the globally-cheapest cloud
-            # for the accelerator (observed 2026-07-07: a clouds=["vast"]
-            # config provisioned a Lambda A100 at $1.99, defeating the vast pin
-            # and the price cap). One cloud → ``cloud``; several → ``any_of``.
-            if self._clouds:
-                if len(self._clouds) == 1:
-                    resources["cloud"] = self._clouds[0]
-                else:
-                    resources["any_of"] = [{"cloud": c} for c in self._clouds]
-            task_config["resources"] = resources
+        # Default disk_size conservatively to stay under GCP's default
+        # ``SSD_TOTAL_GB=250`` quota. SkyPilot's own default is 256 GB,
+        # which exceeds that quota on a fresh project.
+        # GPU images (e.g. ``skypilot-gcp-gpu-ubuntu-241030``) ship with a
+        # 50 GB base OS layer; GCP rejects disk_size < image size with a
+        # ``400 Invalid`` error. GPU offers therefore default to 60 GB (a
+        # small head-room above the 50 GB floor). CPU smokes use 30 GB
+        # (the CPU base images are ~20 GB).
+        is_gpu = accelerator is not None
+        default_disk_gb = 60 if is_gpu else 30
+        resources.setdefault("disk_size", default_disk_gb)
+        # Spot/preemptible: maps spec.placement.spot → SkyPilot's
+        # ``use_spot``. Preemptible T4 quota (``PREEMPTIBLE_NVIDIA_T4_GPUS``)
+        # is granted separately from the on-demand GPU quota
+        # (``GPUS_ALL_REGIONS``).
+        if spec.placement.spot:
+            resources["use_spot"] = True
+        if self._region:
+            resources["region"] = self._region
+        # Pin the LAUNCH cloud to the operator's clouds set. The
+        # _clouds filter only narrows find_offers' CATALOG enumeration; sky's
+        # optimizer otherwise still launches on the globally-cheapest cloud
+        # for the accelerator (observed 2026-07-07: a clouds=["vast"]
+        # config provisioned a Lambda A100 at $1.99, defeating the vast pin
+        # and the price cap). One cloud → ``cloud``; several → ``any_of``.
+        if self._clouds:
+            if len(self._clouds) == 1:
+                resources["cloud"] = self._clouds[0]
+            else:
+                resources["any_of"] = [{"cloud": c} for c in self._clouds]
+        task_config["resources"] = resources
         # Layer Q's dual-exec hazard is resolved at the source as of S3: the
         # engine emits setup and launch as separate values, so Task.setup
         # terminates because it contains no server, not because this provider
