@@ -1385,8 +1385,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
 
     # Phase 50 — install the graceful-interrupt SIGINT handler ONLY for
-    # the long-running orchestration subcommands. Read-only operations
-    # (list / status / stop / destroy / forget / reap / gc) keep the
+    # the long-running orchestration subcommands. Every other subcommand
+    # (anything outside _INTERRUPTIBLE_CMDS) keeps the
     # default Ctrl-C semantics so the operator doesn't have to press
     # twice to escape a hung ledger read.
     if args.cmd in _INTERRUPTIBLE_CMDS:

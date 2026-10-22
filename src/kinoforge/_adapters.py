@@ -14,19 +14,19 @@ Usage::
     import kinoforge._adapters  # noqa: F401
 
 Importing this module is side-effect-only for self-registration; this
-module also exposes a small set of cross-provider dispatch helpers
-(:func:`build_heartbeat_endpoint_for`) that need to import concrete
-providers and therefore cannot live in core.
+module also exposes the cross-provider dispatch helpers
+(:func:`build_provider_for`, :func:`build_capacity_wait_for`,
+:func:`build_heartbeat_endpoint_for`, :func:`build_balance_endpoint_for`,
+:func:`build_util_endpoint_for`) that need to import concrete providers and
+therefore cannot live in core.
 """
 
 from typing import TYPE_CHECKING
 
-# Providers
+# Engines
 import kinoforge.engines.bedrock_video  # noqa: F401  # self-registers under "bedrock_video"
 import kinoforge.engines.comfyui  # noqa: F401
 import kinoforge.engines.diffusers  # noqa: F401
-
-# Engines
 import kinoforge.engines.fake  # noqa: F401
 import kinoforge.engines.fal  # noqa: F401
 import kinoforge.engines.hosted  # noqa: F401
@@ -44,14 +44,16 @@ import kinoforge.interpolators.rife  # noqa: F401  # self-registers under "rife"
 
 # Output sinks
 import kinoforge.outputs.local  # noqa: F401  side-effect: register "local" OutputSink
+
+# Providers
 import kinoforge.providers.local  # noqa: F401
 import kinoforge.providers.modal  # noqa: F401
 import kinoforge.providers.runpod  # noqa: F401
 import kinoforge.providers.skypilot  # noqa: F401
-import kinoforge.sources.civarchive  # noqa: F401
-import kinoforge.sources.civitai  # noqa: F401
 
 # Sources
+import kinoforge.sources.civarchive  # noqa: F401
+import kinoforge.sources.civitai  # noqa: F401
 import kinoforge.sources.http  # noqa: F401
 import kinoforge.sources.huggingface  # noqa: F401
 

@@ -1,7 +1,7 @@
 """LocalOutputSink — default local-filesystem publish sink.
 
-Writes bytes to ``<dir>/<namespace>/<ts>_<slug><ext>`` with atomic
-rename semantics and ``_2.._99`` then sha256-hash collision suffixes.
+Writes bytes to ``<dir>/<namespace?>/<ts>_[<kind>_]<provider>_<model>_<slug><ext>``
+with atomic rename semantics and ``_2.._99`` then sha256-hash collision suffixes.
 Self-registers under ``"local"`` on import.
 
 Layer P deferred: hardlink optimization via

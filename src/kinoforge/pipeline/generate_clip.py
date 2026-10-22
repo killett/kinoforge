@@ -3,7 +3,7 @@
 Dispatches through a BackendPool, persists the resulting clip Artifact into an
 ArtifactStore, and returns an updated PipelineState.
 
-``segments`` is now a constructor field — the orchestrator (and batch) populate
+``segments`` is a constructor field — the orchestrator (and batch) populate
 it from the splitter output before constructing the stage. Validation runs
 upstream (orchestrator.validate_request); the stage body assumes
 ``state.request`` is already validated.
@@ -72,7 +72,7 @@ class GenerateClipStage:
     base_params: dict  # type: ignore[type-arg]
     base_spec: dict  # type: ignore[type-arg]
     engine: GenerationEngine
-    segments: list[Segment]  # NEW — always populated by orchestrator
+    segments: list[Segment]  # always populated by the orchestrator
     http_get_bytes: Callable[[str, dict[str, str]], bytes] | None = None
     sink: OutputSink | None = None
     namespace: str | None = None

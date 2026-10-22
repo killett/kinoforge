@@ -1,7 +1,8 @@
 """Shared ledger reconciliation — forget rows the provider confirms gone.
 
-Used by both ``kinoforge list`` (`_cmd_list`) and the top-of-command
-instance overview (`_print_instance_overview`). One implementation, two
+Used by ``kinoforge list`` (`_cmd_list`), the top-of-command instance
+overview (`_print_instance_overview`) and ``kinoforge provision``'s
+duplicate-key check (`_cmd_provision`). One implementation, three
 callers — a dead pod's ``est_spend`` (age×rate) must not inflate forever.
 """
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 # compute-seam S5. The tag the orchestrator writes on the pre-launch
 # provisional row, duplicated as a literal rather than imported from
-# ``kinoforge.core.lifecycle``: this module is imported on every CLI command,
+# ``kinoforge.core.launch_phase``: this module is imported on every CLI command,
 # and the value is already a wire-format constant (it is persisted in the
 # ledger JSON, so it can never be renamed without a migration anyway).
 _LAUNCH_PHASE_TAG: str = "kf_launch_phase"

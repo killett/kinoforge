@@ -47,7 +47,7 @@ class SessionContext:
     sidecar: SidecarRecord | None
     clock: Clock = field(default_factory=RealClock)
     # Phase 50 — per-invocation cooperative-cancellation token. The CLI's
-    # SIGINT handler (installed for ``generate`` / ``batch``) sets this
+    # SIGINT handler (installed for ``_main._INTERRUPTIBLE_CMDS``) sets this
     # token on first Ctrl-C; the orchestrator + every backend poll loop
     # observe it and unwind cooperatively. ``default_factory=CancelToken``
     # so each SessionContext gets a *fresh* token — sharing one across
