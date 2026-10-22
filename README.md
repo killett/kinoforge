@@ -80,7 +80,7 @@ Use `examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml` as the starting point
 **Prerequisites:** git, [pixi](https://pixi.sh), POSIX shell.
 
 ```bash
-git clone https://github.com/emmykillett/kinoforge.git
+git clone https://github.com/killett/kinoforge.git
 cd kinoforge
 pixi install
 ```
@@ -113,6 +113,8 @@ pixi run test
 | `provision` | Provision an existing instance | `pixi run kinoforge provision --config cfg.yaml` |
 | `doctor` | Validate config and credentials | `pixi run kinoforge doctor --config cfg.yaml` |
 | `generate` | Run a generation job | `pixi run kinoforge generate --config cfg.yaml --prompt "…" --mode t2v` |
+| `image` | Generate a single image from a prompt (no compute) | `pixi run kinoforge image -c cfg.yaml --prompt "…"` |
+| `text` | Generate text with an open-weight LLM on a reserved pod | `pixi run kinoforge text -c cfg.yaml --prompt "…"` |
 | `upscale` | Upscale a video clip (FlashVSR default; spandrel 2x), a still image (`--image`, spandrel), or a directory of images (`--image-dir`, one pod, mirrored `<dir>_upscaled`; animations frame by frame, same container out); `--output-dir`/`--no-output-dir` apply to `--video`/`--image` | `pixi run kinoforge upscale --config cfg.yaml --video clip.mp4 --no-reuse` |
 | `interpolate` | Raise a video's frame rate (RIFE) | `pixi run kinoforge interpolate --config cfg.yaml --video clip.mp4 --fps 60 --no-reuse` |
 | `list` | List running instances from ledger | `pixi run kinoforge list` |
@@ -122,13 +124,13 @@ pixi run test
 | `logs` | Fetch a file from a running pod's sidecar | `pixi run kinoforge logs --id <id> --file bootstrap.log` |
 | `forget` | Remove a stale ledger entry | `pixi run kinoforge forget --id <id>` |
 | `reap` | Reap instances matching policy | `pixi run kinoforge reap` |
-| `gc` | Garbage-collect stored artifacts | `pixi run kinoforge gc` |
-| `cost` | Show cost report | `pixi run kinoforge cost` |
-| `pod lora ls` | List LoRA inventory on a live pod | `pixi run kinoforge pod lora ls --id <id>` |
-| `sweeper start` | Start the reap daemon | `pixi run kinoforge sweeper start` |
-| `sweeper stop` | Stop the reap daemon | `pixi run kinoforge sweeper stop` |
-| `sweeper status` | Read sweeper liveness | `pixi run kinoforge sweeper status` |
-| `sweeper metrics` | Fetch sweeper metrics | `pixi run kinoforge sweeper metrics` |
+| `gc` | Garbage-collect stored artifacts | `pixi run kinoforge gc --config cfg.yaml` |
+| `cost` | Show cost report | `pixi run kinoforge cost -c cfg.yaml` |
+| `pod lora ls` | List LoRA inventory on a live pod | `pixi run kinoforge pod lora ls <pod-id>` |
+| `sweeper start` | Start the reap daemon | `pixi run kinoforge sweeper start -c cfg.yaml` |
+| `sweeper stop` | Stop the reap daemon | `pixi run kinoforge sweeper stop -c cfg.yaml` |
+| `sweeper status` | Read sweeper liveness | `pixi run kinoforge sweeper status -c cfg.yaml` |
+| `sweeper metrics` | Fetch sweeper metrics | `pixi run kinoforge sweeper metrics -c cfg.yaml --prom` |
 | `batch` | Run a batch of generation jobs | `pixi run kinoforge batch --config cfg.yaml --manifest m.yaml` |
 | `grid` | Run a parameter grid of jobs | `pixi run kinoforge grid --spec spec.grid.yaml --out out.mp4` |
 
@@ -144,7 +146,7 @@ never be logged in `successful-generations.md`), and `--debug-show-secrets`.
 | `pixi run kinoforge` | Run the CLI (`python -m kinoforge` shim) | The invocation used throughout this README |
 | `pixi run test` | Run unit tests | Fast; no cloud creds required |
 | `pixi run test-cov` | Run tests with coverage report | Adds `--cov` flag |
-| `pixi run test-live` | Run live integration tests | Needs `KINOFORGE_LIVE_TESTS=1` + cloud creds |
+| `pixi run test-live` | Run ALL live integration tests (books real pods) | Sets `KINOFORGE_LIVE_TESTS=1` itself — run `pixi run preflight` first and prefer one module via `pixi run pytest tests/live/<file> -m live` |
 | `pixi run test-live-skypilot` | Run SkyPilot live tests | Requires `live-skypilot` env |
 | `pixi run probe-hosted` | Probe hosted provider endpoints | Requires `live-hosted` env |
 | `pixi run preflight` | Check creds + zero active pods | Run before any live spend |
@@ -157,9 +159,9 @@ never be logged in `successful-generations.md`), and `--debug-show-secrets`.
 | `pixi run pre-commit-all` | Run pre-commit on all files | |
 | `pixi run pre-commit-install` | Install git pre-commit hook | Run once per checkout |
 | `pixi run smoke-local` | Local CPU smoke suite | No cloud required |
-| `pixi run smoke-21b-live` | Live smoke: Wan 2.1 21B | Costs ~$0.10–0.30 |
-| `pixi run smoke-wan22-live` | Live smoke: Wan 2.2 14B | Costs ~$0.10–0.30 |
-| `pixi run smoke-leak-sweep` | Sweep for cost/resource leaks | Runs leak-detection checks |
+| `pixi run smoke-21b-live` | Live smoke: Wan 2.1 1.3B (`tests/smoke/live_wan21/`) | $0.30 cap per module |
+| `pixi run smoke-wan22-live` | Live smoke: Wan 2.2 14B (`tests/smoke/release_wan22/`) | Per-module caps $1.50–$4.00; expect $1–2 |
+| `pixi run smoke-leak-sweep` | Destroy RunPod pods past the per-tier age ceiling | DANGER: ages pods from a `created_at` sentinel, so it reaps every pod (Finding #0 in `docs/hygiene-audit-2026-10-18.md`); fix before use |
 | `pixi run build-image-wan-comfyui` | Build + push the pre-baked Wan + ComfyUI image | Needs `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` |
 | `pixi run cloud:bootstrap-kms` | Provision AWS + GCP KMS keys | Idempotent; ~$0.04/day once live |
 | `pixi run cloud:perms-probe` | Probe cloud IAM permissions | Diagnostics only |
@@ -458,7 +460,7 @@ Canonical example configs in `examples/configs/`:
 | `fal-t2v.yaml` | Hosted inference via fal.ai; `FAL_KEY` only |
 | `runpod-comfyui-wan-2_2-14b-t2v.yaml` | RunPod + ComfyUI + Wan 2.2 14B t2v (recommended production config) |
 | `runpod-diffusers-wan-2_2-14b-t2v.yaml` | RunPod + Diffusers + Wan 2.2 14B t2v |
-| `hosted.yaml` | Multi-provider hosted comparison (Replicate / Runway / Luma) |
+| `hosted.yaml` | `HostedAPIEngine` against a user-deployed inference shim (synthetic submit/poll contract; no public provider implements it) |
 | `bedrock-nova-reel-t2v.yaml` | AWS Nova Reel hosted engine |
 | `bedrock-luma-ray-t2v.yaml` | Luma Ray hosted engine |
 | `skypilot-lambda-comfyui.yaml` | SkyPilot on Lambda Labs GPU |
@@ -557,7 +559,7 @@ for upcoming releases.
 | `kinoforge list` shows pod that no longer exists | Provider destroyed it out-of-band | `pixi run kinoforge forget --id <id>` |
 | Pod still alive after `generate` completes | Default is warm-reuse | Pass `--no-reuse` for one-shots, or `pixi run kinoforge destroy --id <id>` post-hoc |
 | `ProxyWarmupTimeout` on first POST | RunPod proxy 502 race during pod warmup | Auto-retried; if persistent, `pixi run kinoforge status --id <id>` then `destroy` |
-| ComfyUI poll timeout (~10 min default) | Wan 14B t2v can take ~6 min/step | Raise `engine.comfyui.poll_timeout_s` in YAML |
+| ComfyUI poll timeout (30 min default) | Wan 14B t2v can take ~6 min/step | Raise `engine.comfyui.poll_timeout_s` in YAML |
 | `cli-loras-bypass-vault` WARNING | `--loras` override fired while `vault.loras` was non-empty | Intentional; vault file on disk is unchanged |
 | `error: cfg.store ({…}) differs from sidecar` | Switched to/from cloud ledger backend | See [docs/cloud-stores.md](docs/cloud-stores.md) |
 | `gcp_status: export-not-ready` from `tools/quota_burn.py snapshot` | <24 h since BigQuery billing export was enabled | Wait for the first table (6–24 h). `kinoforge cost` is unaffected — it never reads BigQuery |
