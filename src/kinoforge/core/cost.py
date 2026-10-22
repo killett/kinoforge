@@ -48,7 +48,7 @@ class ProviderBreakdown:
             entries with a verdict in :data:`_BURNING_VERDICTS`.
         spend_usd_total: Sum of ``rate * hours_up`` across the same set.
             ``hours_up = max(0, (now - created_at) / 3600)``.
-        pod_counts_by_verdict: All 8 Verdict keys; zeros included for
+        pod_counts_by_verdict: Every Verdict member; zeros included for
             verdicts not seen on this provider.
     """
 

@@ -1,4 +1,4 @@
-"""Pure offer-filtering helper applied by ComputeProvider.find_offers."""
+"""Pure offer-filtering helper the enumerating providers apply inside their own catalog reads (compute-seam S4: ``find_offers`` is no longer on the ABC)."""
 
 from __future__ import annotations
 

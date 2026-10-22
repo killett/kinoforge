@@ -249,9 +249,9 @@ class HeartbeatLoop:
             # source of truth for "this pod is being actively driven";
             # ``self._clock.now()`` at tick time is therefore the correct
             # ``last_heartbeat`` value. Without this fallback, ``Ledger.touch``
-            # SKIPS writing the field (lifecycle.py:651), the row stays
-            # without ``last_heartbeat``, and ``reaper.classify``
-            # (reaper.py:334) returns ``HEARTBEAT_UNKNOWN`` — defeating
+            # SKIPS writing the field (``Ledger.touch`` drops ``None``
+            # values), the row stays without ``last_heartbeat``, and
+            # ``reaper.classify`` returns ``HEARTBEAT_UNKNOWN`` — defeating
             # cross-CLI warm-reuse. Empirically caught 2026-06-18 against
             # Wan 1.3B on RunPod.
             if last_hb is None:

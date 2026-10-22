@@ -77,8 +77,11 @@ class ActionResult:
         action: One of:
 
             * ``"destroyed_and_forgot"`` — IDLE_REAP / OVERAGE_REAP /
-              ORPHAN_REAP destroyed + ledger entry forgotten.
+              ORPHAN_REAP / STALL_REAP destroyed + ledger entry forgotten.
             * ``"forgot"`` — STALE_LEDGER: entry forgotten, no destroy.
+            * ``"gc_404_removed"`` — GC_404: ephemeral index row removed,
+              no destroy, no ledger write.
+            * ``"probe_failed"`` — PROBE_FAILED: WARN-once, retried next tick.
             * ``"forgot_unroutable"`` — sweep-level: provider routing
               failed; the entry was forgotten without contacting any
               provider.

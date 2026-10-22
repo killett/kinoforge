@@ -1,10 +1,10 @@
 """BackendPool implementations.
 
 The orchestrator depends only on the BackendPool ABC + Stage + ModelProfile,
-never on a concrete engine. SequentialPool is the trivial impl: it runs jobs
-through the single registered backend inline and wraps the result in an
-already-resolved Future so the contract is identical to what a future concurrent
-pool exposes.
+never on a concrete engine. ConcurrentPool is what deploy_session builds;
+SequentialPool is the trivial reference impl: it runs jobs through the single
+registered backend inline and wraps the result in an already-resolved Future
+so the contract is identical to ConcurrentPool's.
 """
 
 from __future__ import annotations
@@ -121,8 +121,8 @@ class SequentialPool(BackendPool):
     registered backend. The returned ``Future`` is already resolved when
     ``submit`` returns, so callers can call ``.result()`` without blocking.
 
-    This is the reference implementation of :class:`BackendPool`; concurrent
-    and multi-backend variants are DEFERRED.
+    This is the reference implementation of :class:`BackendPool`;
+    :class:`ConcurrentPool` below is the production pool.
 
     Attributes:
         _backends: Ordered list of registered backends. Submission always

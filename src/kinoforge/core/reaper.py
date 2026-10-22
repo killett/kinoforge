@@ -455,7 +455,7 @@ def _ephemeral_stall_predicate(
 
 #: How long a ``not_found`` ephemeral row is presumed to be a launch still in
 #: flight rather than a dead pod. Same value and the same asymmetry as
-#: ``cli/_reconcile._LAUNCHING_GRACE_S``: acting too early deletes the handle on
+#: :data:`kinoforge.core.launch_phase.LAUNCHING_GRACE_S`: acting too early deletes the handle on
 #: a pod that is booting AND BILLING, while acting too late only prolongs a
 #: $0.00 ghost row that removes no resource when it finally goes.
 _EPHEMERAL_GC_404_GRACE_S: float = 1800.0
@@ -482,7 +482,7 @@ def _ephemeral_pre_create_grace(entry: Mapping[str, Any], now: float) -> bool:
     adding one here for a window whose only job is to outlast a cold boot would
     grow the config surface (and a migration) for a knob no operator has a
     reason to move. The module constant is the same shape, and the same value,
-    as ``cli/_reconcile._LAUNCHING_GRACE_S``.
+    as :data:`kinoforge.core.launch_phase.LAUNCHING_GRACE_S`.
 
     Args:
         entry: Synthesised ephemeral entry.
@@ -659,9 +659,9 @@ def classify(
             ``kinoforge reap`` one-shot mode.
 
     Returns:
-        One of the seven non-UNROUTABLE Verdict values:
-        LIVE, IDLE_REAP, ORPHAN_REAP, OVERAGE_REAP, STALE_LEDGER,
-        HEARTBEAT_UNKNOWN, or HEARTBEAT_SUBSTRATE_MISSING. UNROUTABLE
+        Any :class:`Verdict` except UNROUTABLE and POD_GONE (the latter is
+        only ever produced by ``HeartbeatLoop``); the ephemeral branch adds
+        GC_404 / SKIP_NO_PROBE / PROBE_FAILED. UNROUTABLE
         is assigned by :func:`kinoforge.core.reaper_actor.sweep` when
         provider lookup fails, never by classify itself. Callers may
         rely on this exclusion when partitioning.
@@ -735,7 +735,7 @@ def classify(
     # has no wire-level HeartbeatEndpoint shipped yet (e.g. SkyPilot
     # pre-B5b), emit HEARTBEAT_SUBSTRATE_MISSING so consumers do not
     # treat the absence as actionable. Layer S Ledger.record writes the
-    # provider kind under the key ``"provider"`` (lifecycle.py:504);
+    # provider kind under the key ``"provider"`` (``Ledger.record``);
     # earlier B5a iterations of this gate read ``"provider_kind"`` which
     # the ledger never writes, making the new verdict unreachable on
     # real production entries. Read both for forward compatibility:
@@ -783,7 +783,7 @@ def classify(
 
     # Rows 5 & 6 — sentinel stale. Measure grace from the last driver detach
     # (``session_end``), not pod creation: ``grace_after_session_s`` is named
-    # and documented (interfaces.py:65) as the POST-SESSION warm-reuse window.
+    # and documented (``Lifecycle.grace_after_session_s``) as the POST-SESSION warm-reuse window.
     # Between CLI invocations the in-process HeartbeatLoop is dead, so the
     # sentinel necessarily goes stale — that is normal, not orphan. As long
     # as the last detach is within grace the pod is still inside the

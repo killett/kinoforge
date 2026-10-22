@@ -862,8 +862,8 @@ class Ledger:
             :meth:`record` and :meth:`forget`.  When all kwargs are
             ``None`` the lock is not acquired (cheap fast-path).
 
-        Sentinel-gate contract (forward-compat — no reaper consumes it
-        today): code that consults ``last_heartbeat`` for a reaping or
+        Sentinel-gate contract (consumed by ``reaper.classify``):
+        code that consults ``last_heartbeat`` for a reaping or
         destructive decision MUST first check the sentinel field
         ``heartbeat_thread_tick``.  If
         ``now - heartbeat_thread_tick > 3 * heartbeat_interval_s``,

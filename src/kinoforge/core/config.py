@@ -2235,9 +2235,8 @@ def _parse_cfg_raw(text: str, *, yaml_path: Path | None = None) -> Config:
 def sweeper_policy_from_cfg(cfg: Config, *, include_orphans: bool = False) -> Policy:
     """Build the Layer W daemon's Policy from cfg.sweeper.
 
-    Starts with Layer V :data:`DEFAULT_APPLY_POLICY` (IDLE_REAP,
-    OVERAGE_REAP, STALE_LEDGER) and unions the two opt-in verdicts based
-    on YAML flags.
+    Starts with Layer V :data:`DEFAULT_APPLY_POLICY` and unions the two
+    opt-in verdicts (ORPHAN_REAP, UNROUTABLE) based on YAML flags.
 
     Args:
         cfg: Loaded :class:`Config`; ``cfg.sweeper`` is consulted.
