@@ -3250,7 +3250,8 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 ### SESSION 2026-10-21 — whole-repo hygiene pass WITH FIXES (43 behaviour-preserving commits)
 
 Report: `docs/hygiene-audit-2026-10-21.md`; keep revisions + new keeps appended to
-`docs/hygiene-notes.md`. Re-ran the 10-18 audit with eight parallel auditors on a stronger model,
+`docs/hygiene-notes.md`. The eight raw auditor reports (incl. unapplied edit recipes for the
+NEEDS DISCUSSION items) are committed verbatim under `docs/hygiene-audit-2026-10-21-auditors/`. Re-ran the 10-18 audit with eight parallel auditors on a stronger model,
 re-verifying every prior row before a fresh file-by-file pass. **No prior P1/P2 was refuted**;
 corrections are tabled in the report (one prior "dead re-import" was a legitimate lazy import;
 `core/scale_target.py` is embedded, not "no golden moves"; B18's cited lines are dead code — no

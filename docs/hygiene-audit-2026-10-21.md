@@ -8,6 +8,10 @@ file-by-file pass. The controller spot-verified every new P2 claim and the one p
 turned out to be overstated (see "Corrections"). Everything rated FIX NOW, low risk and strictly
 behaviour-preserving was then applied as 43 single-purpose commits (`b4366e32..d64eaacf`).
 
+The eight auditors' full reports (prior-claim verification tables, every proposed edit including
+the ones NOT applied, and the per-area NEEDS DISCUSSION detail) are preserved verbatim under
+`docs/hygiene-audit-2026-10-21-auditors/` (`brief.md` is the shared instructions they were given).
+
 Baseline at `f89eff2b` (code byte-identical to the 10-18 audit's `5f8a52a0`; tree clean):
 
 - `pixi run pre-commit run --all-files` — green.
