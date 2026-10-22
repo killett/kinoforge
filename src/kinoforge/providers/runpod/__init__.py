@@ -820,10 +820,13 @@ class RunPodProvider(ComputeProvider):
         Returns:
             A (possibly empty) list of :class:`~kinoforge.core.interfaces.Instance`.
         """
+        return [_pod_to_instance(p) for p in self._list_pods()]
+
+    def _list_pods(self) -> list[dict[str, Any]]:
+        """Return the raw ``myself.pods`` rows from one GraphQL read."""
         resp = self._http_post(self._base_url, {"query": _LIST_PODS_QUERY})
         data = _unwrap_graphql_response(resp, context="list pods")
-        pods: list[dict[str, Any]] = (data.get("myself") or {}).get("pods") or []
-        return [_pod_to_instance(p) for p in pods]
+        return (data.get("myself") or {}).get("pods") or []
 
     def realized_rate(self, instance: Instance) -> float | None:
         """Return the pod's own ``costPerHr``, or None when it is unreadable.
@@ -846,11 +849,9 @@ class RunPodProvider(ComputeProvider):
             the transport fails. Never raises.
         """
         try:
-            resp = self._http_post(self._base_url, {"query": _LIST_PODS_QUERY})
-            data = _unwrap_graphql_response(resp, context="list pods")
+            pods = self._list_pods()
         except Exception:  # noqa: BLE001 — an unreadable rate is not a crash
             return None
-        pods: list[dict[str, Any]] = (data.get("myself") or {}).get("pods") or []
         for pod in pods:
             if str(pod.get("id", "")) != instance.id:
                 continue
@@ -955,11 +956,9 @@ class RunPodProvider(ComputeProvider):
             like a typo, and callers must keep treating it as today).
         """
         try:
-            resp = self._http_post(self._base_url, {"query": _LIST_PODS_QUERY})
-            data = _unwrap_graphql_response(resp, context="list pods")
+            pods = self._list_pods()
         except Exception:  # noqa: BLE001 — an unreadable listing is not a fault here
             return [identifier]
-        pods: list[dict[str, Any]] = (data.get("myself") or {}).get("pods") or []
         by_name: list[str] = []
         for pod in pods:
             pod_id = str(pod.get("id") or "")
