@@ -382,14 +382,7 @@ async def _run_one_cell(
         # the per-cell tmp cfg under `_grid_<id>/cell_<idx>.stderr.txt`
         # and is the only durable record of the failure for the
         # operator's diff.
-        if cell.cfg_path is not None:
-            stderr_log = cell.cfg_path.with_suffix(".stderr.txt")
-            try:
-                stderr_log.write_text(  # kinoforge:public-write
-                    proc.stderr or proc.stdout or "<no output>",
-                )
-            except OSError:
-                pass
+        _persist_cell_stderr(cell, proc)
         err = GridCellFailure(
             idx=cell.idx,
             cfg_repr=f"cfg={cell.cfg_path}",
@@ -496,15 +489,29 @@ async def _run_swap_cell_once(
         text=True,
         check=False,
     )
-    if proc.returncode != 0 and cell.cfg_path is not None:
-        stderr_log = cell.cfg_path.with_suffix(".stderr.txt")
-        try:
-            stderr_log.write_text(  # kinoforge:public-write
-                proc.stderr or proc.stdout or "<no output>",
-            )
-        except OSError:
-            pass
+    if proc.returncode != 0:
+        _persist_cell_stderr(cell, proc)
     return proc.returncode, proc.stdout or "", proc.stderr or ""
+
+
+def _persist_cell_stderr(
+    cell: _ResolvedCell, proc: subprocess.CompletedProcess[str]
+) -> None:
+    """Write the subprocess's FULL stderr next to the cell's tmp cfg (best effort).
+
+    The in-memory breadcrumb keeps only a 500-char tail; the sidecar file
+    under ``_grid_<id>/cell_<idx>.stderr.txt`` is the operator's durable
+    record of the failure. A cell with no tmp cfg has nowhere to write.
+    """
+    if cell.cfg_path is None:
+        return
+    stderr_log = cell.cfg_path.with_suffix(".stderr.txt")
+    try:
+        stderr_log.write_text(  # kinoforge:public-write
+            proc.stderr or proc.stdout or "<no output>",
+        )
+    except OSError:
+        pass
 
 
 def _cell_result(
