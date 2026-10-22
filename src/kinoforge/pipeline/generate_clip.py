@@ -174,7 +174,6 @@ class GenerateClipStage:
         # that publishes anything meaningful, so this is also correct
         # for it.
         if self.sink is not None:
-            ext = Path(last.filename).suffix or ".bin"
             self.sink.publish(
                 payload,
                 prompt=self.segments[-1].prompt,
