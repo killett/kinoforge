@@ -4,7 +4,7 @@ Wipes the singleton RedactionRegistry between tests so refs registered
 by an earlier test don't leak into later assertions (same pattern as
 ``tests/integration/conftest.py``).
 
-Also flips pytest's ``log_cli`` ON at ``WARNING`` for any test collected
+Also sets pytest's ``log_cli_level`` to ``WARNING`` for any test collected
 under ``tests/smoke/``.  Pre-2026-06-24 the destroy-on-teardown sweep
 logged failed reaps at ``_log.warning(...)`` and pytest's default
 ``log_cli=False`` swallowed every one of them — the operator saw the
@@ -28,7 +28,6 @@ def pytest_configure(config: pytest.Config) -> None:
     ``teardown_pod_or_raise``'s post-condition probe regresses, a
     WARNING log on the failed reap will still hit the terminal.
     """
-    config.option.log_cli = True
     if not getattr(config.option, "log_cli_level", None):
         config.option.log_cli_level = "WARNING"
 

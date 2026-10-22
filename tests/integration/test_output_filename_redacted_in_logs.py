@@ -53,7 +53,6 @@ def test_published_basename_redacted_in_subsequent_logs(tmp_path: Path) -> None:
             provider="fake",
             model="x",
         )
-        assert "CANARY-SUBSTRING-PROMPT"[:20].lower() in path_str.lower() or True
         # Now ask the logger to interpolate the path.
         logger.info("wrote artifact to %s", path_str)
         assert captured, "logger did not emit"

@@ -43,10 +43,7 @@ def test_no_loras_arg_resolver_not_called_from_cmd_generate() -> None:
     with patch("kinoforge.cli._commands.resolve_active_lora_stack") as mock_resolve:
         mock_resolve.return_value = []
         with patch("kinoforge.cli._commands.parse_loras_heredoc") as mock_parse:
-            try:
-                _cmd_generate(args, _ctx_with_cfg())
-            except Exception:
-                pass
+            _cmd_generate(args, _ctx_with_cfg())
     assert mock_parse.call_count == 0
     assert mock_resolve.call_count == 0
 
@@ -55,10 +52,7 @@ def test_loras_arg_parsed_and_threaded_to_resolver() -> None:
     args = _make_args(loras="civitai:1234@5678 0.7 h")
     with patch("kinoforge.cli._commands.resolve_active_lora_stack") as mock_resolve:
         mock_resolve.return_value = []
-        try:
-            _cmd_generate(args, _ctx_with_cfg())
-        except Exception:
-            pass
+        _cmd_generate(args, _ctx_with_cfg())
     assert mock_resolve.called
     kwargs = mock_resolve.call_args_list[0].kwargs
     cli_loras = kwargs.get("cli_loras")
@@ -106,10 +100,7 @@ def test_loras_empty_heredoc_threads_empty_list() -> None:
     args = _make_args(loras="")
     with patch("kinoforge.cli._commands.resolve_active_lora_stack") as mock_resolve:
         mock_resolve.return_value = []
-        try:
-            _cmd_generate(args, _ctx_with_cfg())
-        except Exception:
-            pass
+        _cmd_generate(args, _ctx_with_cfg())
     assert mock_resolve.called
     assert mock_resolve.call_args_list[0].kwargs.get("cli_loras") == []
 
@@ -122,10 +113,7 @@ def test_dry_run_swap_with_cli_loras_emits_cli_label(
 
     args = _make_args(loras="civitai:1234@5678", dry_run_swap=True)
     with EphemeralSession(enabled=False):
-        try:
-            _cmd_generate(args, _ctx_with_cfg())
-        except Exception:
-            pass
+        _cmd_generate(args, _ctx_with_cfg())
     out = capsys.readouterr().out
     assert "loras_source: cli" in out
 
@@ -140,10 +128,7 @@ def test_dry_run_swap_with_no_cli_loras_no_vault_empty_cfg_emits_empty_label(
     ctx = _ctx_with_cfg()
     ctx.cfg.loras = []  # explicit empty
     with EphemeralSession(enabled=False):
-        try:
-            _cmd_generate(args, ctx)
-        except Exception:
-            pass
+        _cmd_generate(args, ctx)
     out = capsys.readouterr().out
     assert "loras_source: empty" in out
 
@@ -159,10 +144,7 @@ def test_dry_run_swap_with_cfg_loras_only_emits_cfg_label(
     ctx = _ctx_with_cfg()
     ctx.cfg.loras = [_LE(ref="civitai:cfg@1")]
     with EphemeralSession(enabled=False):
-        try:
-            _cmd_generate(args, ctx)
-        except Exception:
-            pass
+        _cmd_generate(args, ctx)
     out = capsys.readouterr().out
     assert "loras_source: cfg" in out
 
