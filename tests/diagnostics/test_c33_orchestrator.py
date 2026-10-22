@@ -25,11 +25,6 @@ class _FakeClient:
         return self._scripted.pop(0)
 
 
-class _FakeS3:
-    def list_objects_v2(self, **_kw: Any) -> dict[str, Any]:
-        return {"Contents": [], "IsTruncated": False}
-
-
 def test_c33_hard_cap_is_five_dollars() -> None:
     assert _c33_conftest.C33_HARD_CAP_USD == 5.00
 

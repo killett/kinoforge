@@ -10,8 +10,6 @@ default chain (so ``AWS_SHARED_CREDENTIALS_FILE`` is honoured per
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from kinoforge.core.orchestrator import (
@@ -162,15 +160,3 @@ def test_diagnostic_env_value_shape_is_strings_only() -> None:
         assert isinstance(v, str), (
             f"non-string overlay value at {k!r}: {type(v).__name__}"
         )
-
-
-def _make_arg_capture() -> tuple[
-    list[Any],
-    Any,
-]:  # for future orchestrator-level integration test
-    captured: list[Any] = []
-
-    def _capture(arg: Any) -> None:
-        captured.append(arg)
-
-    return captured, _capture

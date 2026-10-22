@@ -8,17 +8,3 @@ fixtures.
 """
 
 from __future__ import annotations
-
-# Re-export the fake classes for use in provider-level tests that import them
-# directly (e.g. type annotations in test helpers).
-from tests.conftest import (
-    FakeRunPodHeartbeatEndpoint,
-    FakeSkyPilotHeartbeatEndpoint,
-    LocalHeartbeatEndpoint,
-)
-
-__all__ = [
-    "FakeRunPodHeartbeatEndpoint",
-    "FakeSkyPilotHeartbeatEndpoint",
-    "LocalHeartbeatEndpoint",
-]

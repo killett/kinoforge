@@ -7,7 +7,6 @@ integration lives at tests/core/test_orchestrator_session_claim_xprocess.py.
 from __future__ import annotations
 
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -28,25 +27,6 @@ def _make_instance(instance_id: str = "i-claim") -> Instance:
         cost_rate_usd_per_hr=0.0,
         tags={},
     )
-
-
-def _record_and_set_tick(ledger: Ledger, instance_id: str, tick: float) -> None:
-    """Helper: record instance + touch with the given heartbeat_thread_tick."""
-    ledger.record(_make_instance(instance_id))
-    ledger.touch(instance_id, heartbeat_thread_tick=tick)
-
-
-class _CountingSleep:
-    """Replace time.sleep in the helper to count poll iterations."""
-
-    def __init__(self, real_sleep: float = 0.0) -> None:
-        self.calls: list[float] = []
-        self._real = real_sleep
-
-    def __call__(self, s: float) -> None:
-        self.calls.append(s)
-        if self._real > 0:
-            time.sleep(self._real)
 
 
 def test_acquires_yields_and_releases_on_first_tick(tmp_path: Path) -> None:

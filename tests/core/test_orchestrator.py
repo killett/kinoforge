@@ -181,51 +181,6 @@ class HostedFakeEngine(FakeEngine):
 
 
 # ---------------------------------------------------------------------------
-# Sequenced backend — returns different profiles on successive calls (AC5)
-# ---------------------------------------------------------------------------
-
-
-class SequencedBackend(FakeBackend):
-    """Backend that pops profiles from a list on each inspect_capabilities call."""
-
-    def __init__(self, probes: list[ModelProfile]) -> None:
-        if not probes:
-            raise ValueError("probes list must not be empty")
-        super().__init__(probe=probes[0])
-        self._probes = list(probes)
-        self._call_index: int = 0
-
-    def inspect_capabilities(self) -> ModelProfile:
-        profile = self._probes[self._call_index % len(self._probes)]
-        self._call_index += 1
-        return profile
-
-
-class SequencedEngine(FakeEngine):
-    """FakeEngine that returns a SequencedBackend for drift tests."""
-
-    def __init__(
-        self,
-        probes: list[ModelProfile],
-        declared_flags_map: dict[str, dict[str, Any]],
-        required_spec_keys: set[str],
-    ) -> None:
-        super().__init__(
-            probe_profile=probes[0],
-            declared_flags_map=declared_flags_map,
-            required_spec_keys=required_spec_keys,
-        )
-        self._probes = probes
-        # shared backend across all backend() calls so the counter persists
-        self._shared_backend = SequencedBackend(probes)
-
-    def backend(
-        self, instance: Instance | None, cfg: dict[str, object]
-    ) -> SequencedBackend:
-        return self._shared_backend
-
-
-# ---------------------------------------------------------------------------
 # Spy provider — counts destroy_instance calls (AC5)
 # ---------------------------------------------------------------------------
 

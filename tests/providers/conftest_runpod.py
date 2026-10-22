@@ -49,14 +49,6 @@ def _redact_query_string(s: str) -> str:
     return _REDACT_QUERY_PARAM_RE.sub(r"\1<REDACTED>", s)
 
 
-_OPERATION_TABLE: list[tuple[str, str]] = [
-    ("gpuTypes {", "gpu_types.json"),
-    ("myself { pods", "list_pods.json"),
-    ("podFindAndDeployOnDemand", "create_pod.json"),
-    ("podTerminate", "terminate_pod.json"),
-    ("pod(input:", "get_pod.json"),
-]
-
 _log = logging.getLogger(__name__)
 
 

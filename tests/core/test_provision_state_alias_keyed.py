@@ -98,15 +98,6 @@ def _make_vault_with_alias(alias: str = "my-vault-alias") -> Any:
     return Vault(positive_prompt="hello", alias=alias)
 
 
-def _make_vault_no_alias() -> Any:
-    """Build a Vault model with no explicit alias — exercises the
-    `cfg-<sha12>` derivation fallback in `compute_profile_alias`.
-    """
-    from kinoforge.core.vault import Vault
-
-    return Vault(positive_prompt="hello")
-
-
 # ---------------------------------------------------------------------------
 # AC1: marker_key_for STRICT + vault returns alias
 # ---------------------------------------------------------------------------

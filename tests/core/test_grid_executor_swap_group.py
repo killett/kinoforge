@@ -358,8 +358,3 @@ def test_swap_group_calls_start_group_on_sidecar(
     assert len(data["groups"]) == 1
     assert data["groups"][0]["pod_id"] == "fake-pod-1"
     assert len(data["groups"][0]["cells"]) == 2
-
-
-def _swap_argv_assertions() -> None:
-    """Module marker so collector finds the file; tests above carry the
-    actual assertions."""

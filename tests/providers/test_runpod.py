@@ -187,20 +187,6 @@ class MultiResponseHttpPostSpy:
         return self._responses.pop(0)
 
 
-class HttpGetSpy:
-    """Returns a different response for each successive call."""
-
-    def __init__(self, responses: list[dict[str, Any]]) -> None:
-        self._responses = list(responses)
-        self.calls: list[str] = []
-
-    def __call__(self, url: str) -> dict[str, Any]:
-        self.calls.append(url)
-        if not self._responses:
-            return {}
-        return self._responses.pop(0)
-
-
 class SleepSpy:
     """Records sleep durations; never actually sleeps."""
 

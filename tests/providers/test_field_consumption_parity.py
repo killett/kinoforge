@@ -729,9 +729,6 @@ def _orders_by_preference() -> _Proof:
 # Observers
 # ---------------------------------------------------------------------------
 
-_PROBE_SCRIPT = "#!/bin/bash\necho kf-probe-provision-marker\n"
-_PROBE_BUILD_SCRIPT = "#!/bin/bash\necho kf-probe-build-marker\n"
-_PROBE_RUNTIME_SCRIPT = "#!/bin/bash\necho kf-probe-runtime-marker\n"
 _PROBE_TAGS = {"kf_probe": "sentinel"}
 
 

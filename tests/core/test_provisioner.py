@@ -105,16 +105,6 @@ class _FakeCfg:
         self.models = models
 
 
-def _spy_downloader(
-    artifacts: list[Artifact], dest: Path, call_log: list[str]
-) -> list[Artifact]:
-    """Record the call, tag each artifact uri, and return them."""
-    call_log.append("download")
-    return [
-        Artifact(**{**a.__dict__, "uri": f"{dest}/{a.filename}"}) for a in artifacts
-    ]
-
-
 def _make_instance() -> Instance:
     return Instance(id="i-test", provider="fake", status="ready", created_at=0.0)
 
