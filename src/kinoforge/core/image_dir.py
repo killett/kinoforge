@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from kinoforge.core.media import DIR_IMAGE_SUFFIXES
+from kinoforge.core.media import DIR_IMAGE_SUFFIXES, IMAGE_SUFFIXES
 
 if TYPE_CHECKING:
     from PIL import Image as _PILImage
@@ -387,7 +387,8 @@ def plan_image_dir(
     return ImageDirPlan(src, out_dir, tuple(items), skipped)
 
 
-_PASSTHROUGH_SUFFIXES = frozenset({".png", ".jpg", ".jpeg"})
+_PASSTHROUGH_SUFFIXES = IMAGE_SUFFIXES
+"""The pod accepts PNG/JPEG byte-for-byte — the same rule as ``--image``."""
 _PASSTHROUGH_MODES = frozenset({"RGB", "RGBA", "L"})
 
 
