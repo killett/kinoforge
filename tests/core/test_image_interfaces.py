@@ -57,9 +57,16 @@ def test_required_image_roles_dispatch() -> None:
     assert required_image_roles("unknown") == []
 
 
-def test_register_and_get_image_engine_round_trip() -> None:
+def test_register_and_get_image_engine_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Bug guard: registry mediation breaks if register/get use different dicts or different key normalisation."""
     from kinoforge.core import registry
+
+    # Work on a copy so the stub never leaks into the process-global registry
+    # (tests/cli/test_cmd_image.py asserts every registered engine has a
+    # capabilities row and fails whenever tests/core runs first).
+    monkeypatch.setattr(registry, "_image_engines", dict(registry._image_engines))
     from kinoforge.core.interfaces import (
         Artifact,
         CapabilityKey,
