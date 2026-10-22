@@ -1799,7 +1799,7 @@ class RunPodBootLivenessProbe:
         instance_id: str,
         util_endpoint: _UtilProbeEndpoint,
         fetch_bootstrap_log: Callable[[str], str | None],
-        grace_s: float = 90.0,
+        grace_s: float = _BOOT_GRACE_MIN_S,
         consecutive_needed: int = 3,
         clock: Clock | None = None,
     ) -> None:
