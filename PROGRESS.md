@@ -3245,7 +3245,44 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-10-18 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-10-21 — read this, then STOP; below is history)
+
+### SESSION 2026-10-21 — whole-repo hygiene pass WITH FIXES (43 behaviour-preserving commits)
+
+Report: `docs/hygiene-audit-2026-10-21.md`; keep revisions + new keeps appended to
+`docs/hygiene-notes.md`. Re-ran the 10-18 audit with eight parallel auditors on a stronger model,
+re-verifying every prior row before a fresh file-by-file pass. **No prior P1/P2 was refuted**;
+corrections are tabled in the report (one prior "dead re-import" was a legitimate lazy import;
+`core/scale_target.py` is embedded, not "no golden moves"; B18's cited lines are dead code — no
+production code ever writes `status="degraded"`; B6 also omits DEGRADED_REAP; B17's ephemeral
+STALL_REAP is UNREACHABLE with the shipped defaults; ND #4's disabled `Lifecycle()` default is
+REACHABLE via `extras/runpod-diffusers-seedvr2-3b-upscale.yaml`).
+
+Applied (`b4366e32..d64eaacf`, 121 files, +640/−904, no embedded file touched, goldens unmoved):
+13 dead-code removals, 9 true-DRY consolidations (`_list_pods`, `_APP_PREFIX`, `hf_resolve_url`,
+`_lease_expired`, `_cell_result`/`_persist_cell_stderr`/`_upscale_one`, `resolve_prompt` hoist,
+stream-hashed pod upload), 6 test-suite commits (12 dead helpers, 6 dead swallow wrappers, a
+vacuous assert, 3 CWD-relative discovery roots that passed vacuously elsewhere, the
+`tests/integration/conftest.py` no-op, and a RED→GREEN isolation fix for a registry stub that made
+the suite order-dependent), 15 docs commits (~140 corrections incl. README clone URL, cheatsheet
+invocations that exit 2 as written, a Project structure section, five broken anchors, adapter
+templates, the rejected `auth:` block, AGENTS/CLAUDE factual drift incl. two unresolvable SHAs).
+
+**New bugs recorded, NOT fixed (operator decisions):** P2 — RunPod `_request` retries 5xx on the
+CREATE mutation (duplicate untracked pod on a 504 after booking); U51's budget lifetime still has
+`time_buffer` subtracted on the pod (`budget: 0.25` on an A40 dies 450 s into boot); animation
+assembly holds EVERY upscaled frame in controller RAM for every container (Pillow 12.3 materialises
+GIF/APNG/WebP); a swap-group cell-1 that boots then fails generation leaks the pod (record written
+only on rc==0); no socket timeout on any controller→pod poll/readiness seam. ~18 P3s in the report.
+
+Final gate at `d64eaacf`: pre-commit all-files green; `pixi run test` 6838 passed / 182 skipped /
+25 deselected / 6 xfailed / 0 failed; `pixi run smoke-local` 58 passed.
+
+**Single next action:** operator works the report's NEEDS DISCUSSION list in order — leak-sweep
+age source (Finding #0, cron still disabled) → RunPod retry-on-mutation + budget/time_buffer →
+one guarded-launch helper (B2/B13/N4) → silent-LoRA B3/B4 → B5/NB4 ComfyUI → timeouts
+(B8/B9/B21/N5) → B6/B7/B17/ND#4 verdict + lifecycle tables → the embedded-file batch (one golden
+regeneration). The 10-18 snapshot below remains accurate for everything it names.
 
 ### SESSION 2026-10-18 — whole-repo hygiene audit (AUDIT-ONLY, no code changed)
 

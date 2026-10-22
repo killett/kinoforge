@@ -222,3 +222,90 @@ Tests / tools / config:
 - `docker/wan-comfyui/Dockerfile:17-20` ComfyUI/KJ/VHS/Kijai pins restated in
   `tools/build_image_wan_comfyui.sh` + the build workflow — low churn,
   Dockerfile ARGs canonical.
+
+---
+
+## 2026-10-21 whole-repo pass (with fixes) — intentional keeps and keep revisions
+
+Full report: `docs/hygiene-audit-2026-10-21.md` (43 behaviour-preserving commits,
+`b4366e32..d64eaacf`). Every keep above was re-verified; three are revised here. Line numbers
+are at `d64eaacf`.
+
+**Revisions to earlier keeps:**
+
+- **wan inline `/upload` beside `servers/_upload.py`** (10-18 section) — the "for no behaviour
+  change" clause is now FALSE: the inline copy lacks the all-dots `X-Filename` guard and runs
+  `os.replace` outside the `try`, the two defects `_upload.py` fixed in `e6041bdd`. The
+  payload-ceiling reason for not migrating still stands. Treat as a bug to batch with the next
+  golden regeneration, not as an equivalence.
+- **Duplicated provision branch in `core/orchestrator.py`** (top of this file) — re-evaluated as
+  the 10-18 notes asked: the two blocks are identical apart from one comment line and the unread
+  `for_discovery` keyword (its docstring now says so, `3043ff95`). Still KEPT pending an operator
+  call on removing the parameter + extracting a 20-line helper (audit ND #19).
+- **`core/reaper.py` `_EPHEMERAL_GC_404_GRACE_S` pointer** — fixed (`fa4c1233`); it now names
+  the owner `launch_phase.LAUNCHING_GRACE_S`. The `cli/_reconcile.py:18-24` literal keep stands
+  (parity-tested), but its stated reason ("not imported on every command") is moot since
+  `_commands.py` imports `core.launch_phase` at module level; its comment now names the right
+  module (`3942e6fe`).
+- The 07-16 keep for `tools/c28_provision_s3_diagnostics.py` cites `core/orchestrator.py:248`;
+  the bucket is read at `:276-280` today. The 07-16 keep for `tools/flashvsr_debug_matrix.py`
+  cites `e82b0d1`, which does not resolve in this repo. Both keeps stand; the pointers are
+  historical.
+
+**New keeps (evaluated and LEFT; do not re-flag without new evidence):**
+
+- `# noqa: F401` on the side-effect imports in `_adapters.py`, `cli/_commands.py:995-996,
+  5624-5625`, `cli/_main.py:22-24`, `core/config.py` (`import kinoforge._adapters`) and
+  `pipeline/stage.py:9` — ruff reports them "unused" only because every `import kinoforge.x`
+  binds the same name, so one use anywhere marks them all used; the directive documents intent
+  (self-registration / re-export) and would re-fire the day that quirk changes.
+- `# noqa: E402` in `engines/diffusers/servers/{wan_t2v_server,minimax_h3_server,text_server}.py`
+  — reported unused, but the files are embedded (any byte moves goldens); batch with ND #8.
+- Unused `# ruff: noqa` codes in `tools/repro_runpod_uptime.py` and
+  `tools/uptime_field_hourly_sweep.py`, and the misplaced `S607` in `tools/smoke_leak_sweep.py`
+  — those files are on the purge / Finding #0 lists; not worth touching ahead of that decision.
+- `core/pool.py` `SequentialPool` — public reference implementation with zero production callers;
+  docstring now says `ConcurrentPool` is production (`fa4c1233`). Deleting it is an operator call.
+- `core/secret.py` — public-looking `Secret` type with zero users (only `tests/core/test_secret.py`);
+  fence `101dc3d9`. Operator call.
+- Private sha256 helpers in `grid/executor.py`, `image_dir.py` (`_sha8`), `media.py` vs
+  `downloader.sha256_file` — same digest, but the private copies read 1 MiB chunks and
+  `downloader._CHUNK` is 8 KiB; consolidating without bumping `_CHUNK` is a perf regression on
+  multi-GB mp4s. Do both in one step or neither.
+- `core/batch.py` `entry.run_id or str(idx)` ×10 — dead-by-contract for CLI manifests
+  (`load_manifest` always sets `run_id`); kept for hand-built manifests.
+- `core/image_dir.py` `register_openers()` before each of four `Image.open` sites — one idempotent
+  call per public entry point, not a duplicated decision.
+- `pipeline/interpolate.py:116-119` decimates (spawns ffmpeg) before checking `publish is None` —
+  reordering changes process-exec order.
+- `pipeline/keyframe.py:49` `image_profile` "reserved for future spec validation" — a constructor
+  field; removal touches callers.
+- `cli/_commands.py` `_human_bytes` `if n is None`, `_cmd_logs` re-default of `file`, `_cmd_grid`
+  `Path("output")`, `_cmd_gc` `except FileNotFoundError: pass` (intent obvious), `_cmd_cost`
+  always-empty `throttle_warnings` — each tied to a NEEDS DISCUSSION item or too small to churn.
+- `engines/bedrock_video/__init__.py:235` `(self._poll_backoff_s[-1],) * 50` — ~7 min unnamed poll
+  budget; naming it is fine, changing it is behaviour.
+- `validation/checks/custom_nodes.py:23` `_PASS_CODES = frozenset({200, 301, 302})` — a distinct,
+  documented stricter set (a GitHub 401 means a bad ref), NOT the alias that was removed from
+  `models.py` / `image.py`.
+- `providers/runpod/__init__.py:98-100` `_RUNPOD_SCHEMA_SIDECAR = Path("tests/live/…")` —
+  production reads a test fixture by a CWD-relative path; inert today (miss and hit both yield
+  "unsupported"). Note only.
+- `sources/civitai` / `civarchive` User-Agent `kinoforge-smoke/0.1` — a wire header; renaming is
+  behaviour.
+- `tests/core/test_orchestrator_no_reuse.py:238-248` (`pass  # no crash`),
+  `tests/core/test_session_claim.py` `test_clock_injection_used_for_start_time`,
+  `tests/test_examples.py:244-247,291-294` — assertion-less "must not raise" tests; covered
+  elsewhere; strengthen when next touched.
+- `tests/engines/test_comfyui_poll_log.py:83` `status_str: "complete"` is not a ComfyUI value
+  (`success`/`error`); harmless, the code never branches on it.
+- `tests/providers/test_runpod.py` `test_pod_status_mapping_covers_real_statuses` (`:1626`, skip at `:1656`) skips when fixtures carry no `desiredStatus` —
+  documented; convert to a hard assert when the fixtures are next regenerated.
+- `tests/live/conftest.py:26,29` make boto3 + the RunPod util a hard dependency of unit-suite
+  COLLECTION — present in the env today; the `.env` load gate is audit ND #17.
+- `tests/stores/test_file_lock.py:205` real 3 s sleep — cross-process lock holder in a subprocess
+  needs wall-clock.
+- `pyproject.toml:55-58` rasterio/netCDF4 override stub and `:123-125` uv note — earth-science
+  scaffold boilerplate, same family as the `pixi.toml` template header (ND #23).
+- `pixi.toml:133-137` `test-live-skypilot` comment (GCP SA, "smallest GCP CPU SKU") — matches the
+  test it describes; stale only relative to the Phase-53 Lambda pivot, a product decision.
