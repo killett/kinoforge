@@ -14,7 +14,6 @@ per engine.
 
 from __future__ import annotations
 
-import hashlib
 import json as _json
 import time
 import urllib.request
@@ -24,6 +23,7 @@ from typing import IO, Any, Literal, cast
 from urllib.error import HTTPError
 
 from kinoforge.core.cancel import CancelToken
+from kinoforge.core.downloader import sha256_file
 from kinoforge.core.errors import UploadIntegrityError
 from kinoforge.core.interfaces import Instance
 from kinoforge.engines._proxy_retry import interpoll_wait, retry_proxy_call
@@ -232,14 +232,14 @@ class PodHTTPClientMixin:
                 )
         else:
             suffix, content_type = ".mp4", "video/mp4"
-        body = local_path.read_bytes()
-        local_sha = hashlib.sha256(body).hexdigest()
+        size = local_path.stat().st_size
+        local_sha = sha256_file(local_path)
         short = local_sha[:8]
         url = f"{self._base_url(instance)}/upload"
         headers = {
             "Content-Type": content_type,
             "X-Filename": f"{short}{suffix}",
-            "Content-Length": str(len(body)),
+            "Content-Length": str(size),
             "User-Agent": self._pod_user_agent,
         }
 
@@ -269,7 +269,7 @@ class PodHTTPClientMixin:
             raise UploadIntegrityError(
                 local_sha256=local_sha,
                 server_sha256=server_sha,
-                bytes_sent=len(body),
+                bytes_sent=size,
             )
         return f"file://{payload['path']}"
 
