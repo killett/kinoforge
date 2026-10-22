@@ -52,6 +52,7 @@ class ModalAppRequest:
 
 
 _VOLUME_NAME = "kinoforge-hf-cache"
+_APP_PREFIX = "kinoforge-"
 
 
 def _boot_payload(req: ModalAppRequest) -> str:
@@ -124,7 +125,7 @@ def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  #
         )
         blob = base64.b64encode(req.image_build_script.encode()).decode()
         image = image.run_commands(f"echo {blob} | base64 -d | bash")
-    app = modal_mod.App(name=f"kinoforge-{req.run_id}", image=image)
+    app = modal_mod.App(name=f"{_APP_PREFIX}{req.run_id}", image=image)
     volume = modal_mod.Volume.from_name(_VOLUME_NAME, create_if_missing=True)
 
     secret = modal_mod.Secret.from_dict(

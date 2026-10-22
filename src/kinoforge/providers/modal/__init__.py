@@ -32,6 +32,7 @@ from kinoforge.core.interfaces import (
 from kinoforge.core.pod_paths import pod_path_env
 from kinoforge.core.runtime_probe import RuntimeProbe
 from kinoforge.providers.modal._app import (
+    _APP_PREFIX,
     ModalAppRequest,
     build_modal_app,
     default_deploy,
@@ -332,7 +333,7 @@ class ModalProvider(ComputeProvider):
         self._deployments[app_run_id] = {
             "app": app,
             "url": url,
-            "name": f"kinoforge-{app_run_id}",
+            "name": f"{_APP_PREFIX}{app_run_id}",
             # compute-seam S4: the booked GPU class is what realized_rate()
             # prices against. The Instance carries no accelerator field, so
             # without this the rate would have to be inferred from a number
@@ -413,7 +414,7 @@ class ModalProvider(ComputeProvider):
 
     def _record_to_instance(self, rec: dict[str, Any]) -> Instance:
         """Map a ``modal app list`` record onto an :class:`Instance`."""
-        run_id = self._rec_name(rec)[len("kinoforge-") :]
+        run_id = self._rec_name(rec)[len(_APP_PREFIX) :]
         return Instance(
             id=run_id,
             provider=self.name,
@@ -434,7 +435,7 @@ class ModalProvider(ComputeProvider):
         return [
             self._record_to_instance(r)
             for r in self._lister()
-            if self._rec_name(r).startswith("kinoforge-") and self._rec_active(r)
+            if self._rec_name(r).startswith(_APP_PREFIX) and self._rec_active(r)
         ]
 
     def get_instance(self, instance_id: str) -> Instance:
@@ -554,7 +555,7 @@ class ModalProvider(ComputeProvider):
                 NOT fatal: the stop falls back to the app name.
         """
         rec = self._deployments.get(instance_id)
-        app_name = rec["name"] if rec else f"kinoforge-{instance_id}"
+        app_name = rec["name"] if rec else f"{_APP_PREFIX}{instance_id}"
         try:
             app_id = self._find_app_id(app_name)
             target = app_id or app_name
@@ -662,7 +663,7 @@ class ModalProvider(ComputeProvider):
                 self._deployments[instance_id] = {
                     "app": None,
                     "url": url,
-                    "name": f"kinoforge-{instance_id}",
+                    "name": f"{_APP_PREFIX}{instance_id}",
                 }
 
     def probe_runtime(self, pod_id: str) -> RuntimeProbe | None:
