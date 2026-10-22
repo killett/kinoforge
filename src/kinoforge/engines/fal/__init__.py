@@ -52,6 +52,7 @@ from kinoforge.core.interfaces import (
     Instance,
     ModelProfile,
 )
+from kinoforge.core.prompt_routing import resolve_prompt
 from kinoforge.engines.fal.wire import (
     FalStatus,
     build_response_url,
@@ -326,10 +327,6 @@ class FalBackend(GenerationBackend):
             The ``request_id`` string returned by the queue.
         """
         del cancel_token  # ABC parity; fal queue submit is synchronous.
-        from kinoforge.core.prompt_routing import (
-            resolve_prompt,  # local — avoid circular at module load
-        )
-
         body = dict(job.spec)
         prompt = resolve_prompt(job)
         if prompt is not None:
@@ -635,10 +632,6 @@ class FalEngine(GenerationEngine):
             ValidationError: Neither ``job.spec["prompt"]`` nor
                 ``job.segments[0].prompt`` is a non-empty string.
         """
-        from kinoforge.core.prompt_routing import (
-            resolve_prompt,  # local — avoid circular at module load
-        )
-
         # Same resolver submit() routes through — validate/submit cannot
         # drift on where the prompt is allowed to live.
         if resolve_prompt(job) is None:

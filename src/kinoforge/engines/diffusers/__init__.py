@@ -48,6 +48,7 @@ from kinoforge.core.interfaces import (
     SetupStep,
 )
 from kinoforge.core.lora import LoraEntry
+from kinoforge.core.prompt_routing import resolve_prompt
 from kinoforge.engines._wait_ready import poll_until_ready
 
 _log = logging.getLogger(__name__)
@@ -503,10 +504,6 @@ class DiffusersBackend(GenerationBackend):
             The ``job_id`` string from the server response.
         """
         del cancel_token  # ABC parity; this backend completes via poll in result().
-        from kinoforge.core.prompt_routing import (
-            resolve_prompt,  # local — avoid circular at module load
-        )
-
         body = dict(job.spec)
         if self._prompt_body_key:
             prompt = resolve_prompt(job)
@@ -1629,8 +1626,6 @@ class DiffusersEngine(GenerationEngine):
                 f"Diffusers job.spec is missing required keys: {sorted(missing)}"
             )
         if self._prompt_body_key:
-            from kinoforge.core.prompt_routing import resolve_prompt
-
             if resolve_prompt(job) is None:
                 raise ValidationError(
                     "diffusers prompt_body_key is configured but no prompt found in "

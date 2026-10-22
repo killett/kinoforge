@@ -61,6 +61,7 @@ from kinoforge.core.interfaces import (
     ModelProfile,
     RenderedProvision,
 )
+from kinoforge.core.prompt_routing import resolve_prompt
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -295,10 +296,6 @@ class HostedAPIBackend(GenerationBackend):
             The ``job_id`` (or task id) string from the API response.
         """
         del cancel_token  # ABC parity; hosted submit is synchronous, nothing to cancel.
-        from kinoforge.core.prompt_routing import (
-            resolve_prompt,  # local — avoid circular at module load
-        )
-
         body = dict(job.spec)
         if self._prompt_body_key:
             prompt = resolve_prompt(job)
@@ -741,8 +738,6 @@ class HostedAPIEngine(GenerationEngine):
                 f"Hosted job.spec is missing required keys: {sorted(missing)}"
             )
         if self._prompt_body_key:
-            from kinoforge.core.prompt_routing import resolve_prompt
-
             if resolve_prompt(job) is None:
                 raise ValidationError(
                     "hosted prompt_body_key is configured but no prompt found in "

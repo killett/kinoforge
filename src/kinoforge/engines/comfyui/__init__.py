@@ -48,6 +48,7 @@ from kinoforge.core.interfaces import (
     RenderedProvision,
     SetupStep,
 )
+from kinoforge.core.prompt_routing import resolve_prompt
 from kinoforge.engines._proxy_retry import (
     RUNPOD_PROXY_POLICY,
     interpoll_wait,
@@ -704,8 +705,6 @@ class ComfyUIBackend(GenerationBackend):
         # ``positive_prompt`` retained kijai's hard-coded value.
         prompt_node_ids: dict[str, str] = job.spec.get("prompt_node_ids", {})
         if prompt_node_ids:
-            from kinoforge.core.prompt_routing import resolve_prompt
-
             prompt = resolve_prompt(job)
             prompt_input_field: str = job.spec.get("prompt_input_field", "text")
             if prompt is not None:
@@ -1598,8 +1597,6 @@ class ComfyUIEngine(GenerationEngine):
 
         prompt_node_ids: dict[str, str] = job.spec.get("prompt_node_ids", {})
         if prompt_node_ids:
-            from kinoforge.core.prompt_routing import resolve_prompt
-
             if resolve_prompt(job) is None:
                 raise ValidationError(
                     "comfyui spec.prompt_node_ids is configured but no "
