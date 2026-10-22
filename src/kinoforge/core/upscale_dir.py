@@ -150,6 +150,18 @@ def _write_atomic(path: Path, body: bytes) -> None:
     os.replace(tmp, path)
 
 
+def _upscale_one(
+    stage: UpscaleStage, path: Path, fetch: Callable[[Artifact], bytes]
+) -> bytes:
+    """Run *stage* on the local image at *path* and return the upscaled bytes."""
+    state = PipelineState(
+        request=GenerationRequest(prompt="", mode="upscale"),
+        artifacts={"clip": local_artifact(path, "image")},
+    )
+    state = stage.run(state)
+    return fetch(state.artifacts["upscaled"])
+
+
 def _upscale_animated(
     item: ImageDirItem,
     stage: UpscaleStage,
@@ -199,12 +211,7 @@ def _upscale_animated(
                 raise FrameFailed(i, item.frames, exc) from exc
             _log.info("%s: frame %d/%d", item.source.name, frame.index + 1, item.frames)
             try:
-                state = PipelineState(
-                    request=GenerationRequest(prompt="", mode="upscale"),
-                    artifacts={"clip": local_artifact(frame.path, "image")},
-                )
-                state = stage.run(state)
-                body = fetch(state.artifacts["upscaled"])
+                body = _upscale_one(stage, frame.path, fetch)
             except _FATAL:
                 raise
             except Exception as exc:
@@ -387,13 +394,8 @@ def upscale_image_dir(
                             )
                         else:
                             upload = prepare_upload(item, scratch)
-                            state = PipelineState(
-                                request=GenerationRequest(prompt="", mode="upscale"),
-                                artifacts={"clip": local_artifact(upload, "image")},
-                            )
-                            state = stage.run(state)
-                            body = _orch.fetch_artifact_bytes(
-                                state.artifacts["upscaled"]
+                            body = _upscale_one(
+                                stage, upload, _orch.fetch_artifact_bytes
                             )
                         _write_atomic(item.output, body)
                     finally:
