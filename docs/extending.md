@@ -12,7 +12,7 @@ kinoforge's registry lets you add a new adapter in a single file without touchin
 # src/kinoforge/providers/myprovider/__init__.py
 from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.interfaces import (
-    ComputeProvider, GpuOffer, InstanceSpec, Instance, Lifecycle,
+    ComputeProvider, InstanceSpec, Instance, Lifecycle,
 )
 from kinoforge.core.registry import register_provider
 
@@ -61,15 +61,15 @@ Set `compute.provider: myprovider` in your YAML — no other changes.
 
 ```python
 # src/kinoforge/sources/mystore/__init__.py
-from kinoforge.core.interfaces import ModelSource, Artifact
+from kinoforge.core.interfaces import Artifact, CredentialProvider, ModelSource
 from kinoforge.core.registry import register_source
 
 class MyStoreSource(ModelSource):
     def handles(self, ref: str) -> bool:
         return ref.startswith("mystore:")
 
-    def resolve(self, ref: str) -> Artifact:
-        # return an Artifact with url + headers
+    def resolve(self, ref: str, creds: CredentialProvider) -> list[Artifact]:
+        # return one Artifact per file, each with url + headers
         ...
 
 register_source(MyStoreSource())
@@ -81,7 +81,9 @@ Use `ref: "mystore:org/model:file.safetensors"` in the `models:` list.
 
 ```python
 # src/kinoforge/engines/myengine/__init__.py
-from kinoforge.core.interfaces import GenerationEngine, GenerationBackend
+from kinoforge.core.interfaces import (
+    CapabilityKey, GenerationBackend, GenerationEngine, GenerationJob, ModelProfile,
+)
 from kinoforge.core.registry import register_engine
 
 class MyEngine(GenerationEngine):
@@ -90,7 +92,10 @@ class MyEngine(GenerationEngine):
 
     def provision(self, instance, cfg) -> None: ...
     def backend(self, instance, cfg) -> GenerationBackend: ...
-    def validate_spec(self, spec: dict) -> None: ...
+    def profile_for(self, key: CapabilityKey) -> ModelProfile: ...
+    def declared_flags(self, key: CapabilityKey) -> dict[str, bool]: ...
+    def validate_spec(self, job: GenerationJob) -> None: ...
+    def model_identity(self, cfg: dict[str, object]) -> str: ...
 
 register_engine("myengine", MyEngine)
 ```
@@ -125,6 +130,7 @@ Three stores ship in-tree: `LocalArtifactStore` (filesystem, default), `S3Artifa
 ```python
 # src/kinoforge/stores/mystore/__init__.py
 from kinoforge.core.interfaces import Artifact
+from kinoforge.core.locks import Lock
 from kinoforge.core.registry import register_store
 from kinoforge.stores.base import ArtifactStore
 
@@ -136,6 +142,10 @@ class MyArtifactStore(ArtifactStore):
     def list(self, run_id: str) -> list[str]: ...
     def delete(self, uri: str) -> None: ...
     def uri_for(self, run_id: str, name: str) -> str: ...
+    def acquire_lock(self, key: str, *, ttl_s: float) -> Lock: ...
+    def delete_run(self, run_id: str) -> None: ...
+    def manual_cleanup_command(self, run_id: str) -> str: ...
+    def signed_url(self, uri: str, *, ttl_s: float) -> str: ...
 
 register_store("mystore", lambda: MyArtifactStore(...))
 ```

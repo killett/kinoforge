@@ -101,19 +101,19 @@ strategies ship in `kinoforge.core.auth`:
 | Name | Used by | Auth shape |
 |---|---|---|
 | `bearer` | `HostedAPIEngine` (fal, Replicate, Runway) | `Authorization: Bearer <env-var>` |
-| `gcp_service_account` | VeoEngine (Layer 2); future Vertex AI integrations | `google.auth` default chain |
-| `aws_sigv4` | NovaReelEngine (Layer 3); future Bedrock integrations | SigV4 request signing |
+| `gcp_service_account` | no shipped engine today; future Vertex AI integrations | `google.auth` default chain |
+| `aws_sigv4` | the `bedrock_video` engine (`BedrockVideoEngine`) | SigV4 request signing |
 
-Each engine config carries a nested `auth:` block with a `strategy:`
-discriminator. Example:
+Hosted configs do **not** carry an `auth:` block — `HostedEngineConfig` is
+`extra="forbid"` (`src/kinoforge/core/config.py`) and rejects one at load. The
+strategy is derived by the engine: `provision()` builds
+`Bearer(env_var=cfg.api_key_env)` from the hosted config's `api_key_env`.
 
 ```yaml
 engine:
   hosted:
-    endpoint: https://fal.run/fal-ai/wan-t2v
-    auth:
-      strategy: bearer
-      env_var: FAL_KEY
+    endpoint: https://your-shim.example.com/generate
+    api_key_env: MY_SHIM_API_KEY
 ```
 
 Backward-compat: when `auth:` is omitted on an existing hosted config,
