@@ -25,14 +25,7 @@ from __future__ import annotations
 
 import sys
 
-from kinoforge.core.credential_patterns import CREDENTIAL_PATTERNS
 from kinoforge.core.credential_patterns import redact_string as _shared_redact
-
-# Backward-compatible alias. The list itself now lives in
-# kinoforge.core.credential_patterns — see that module's docstring for
-# the loose/strict tier split. Callers that imported this name keep
-# working; new code should import from the shared module directly.
-_CREDENTIAL_PATTERNS = CREDENTIAL_PATTERNS
 
 
 def redact_string(s: str) -> str:
