@@ -45,6 +45,11 @@ _REF_RE = re.compile(r"^hf:[^:]+(:.*)?$")
 _HF_BASE = "https://huggingface.co"
 
 
+def hf_resolve_url(repo: str, revision: str, path: str) -> str:
+    """Return the canonical HuggingFace ``resolve`` URL for one file."""
+    return f"{_HF_BASE}/{repo}/resolve/{revision}/{path}"
+
+
 # ---------------------------------------------------------------------------
 # Transport seam
 # ---------------------------------------------------------------------------
@@ -223,7 +228,7 @@ class HuggingFaceSource(ModelSource):
             ``filename`` is the leaf of *path* (existing flatten contract).
         """
         filename = path.rsplit("/", 1)[-1]
-        url = f"{_HF_BASE}/{repo}/resolve/{revision}/{path}"
+        url = hf_resolve_url(repo, revision, path)
         return Artifact(url=url, filename=filename, headers=dict(headers))
 
     def _list_tree_artifacts(
@@ -256,7 +261,7 @@ class HuggingFaceSource(ModelSource):
             if entry.get("type") != "file":
                 continue
             path: str = entry["path"]
-            url = f"{_HF_BASE}/{repo}/resolve/{revision}/{path}"
+            url = hf_resolve_url(repo, revision, path)
             lfs: dict[str, Any] = entry.get("lfs") or {}
             raw_oid = lfs.get("oid") or ""
             sha256: str | None = raw_oid.lower() or None

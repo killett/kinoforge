@@ -19,7 +19,7 @@ import logging
 from collections.abc import Callable
 
 from kinoforge.core.config import Config, ModelEntry
-from kinoforge.sources.huggingface import _parse_hf_ref
+from kinoforge.sources.huggingface import _parse_hf_ref, hf_resolve_url
 from kinoforge.validation.checks._head import PASS_CODES_AUTH_OK, default_http_head
 from kinoforge.validation.protocol import CheckCategory, CheckResult, Severity
 from kinoforge.validation.registry import register
@@ -43,7 +43,7 @@ def _resolve_ref_to_url(ref: str) -> str:
         repo, revision, path = _parse_hf_ref(ref)
         if path is None:
             return f"https://huggingface.co/{repo}"
-        return f"https://huggingface.co/{repo}/resolve/{revision}/{path}"
+        return hf_resolve_url(repo, revision, path)
     return ref
 
 
