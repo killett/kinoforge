@@ -83,7 +83,7 @@ def _git_dirty_default() -> str:
     Returns:
         The porcelain output verbatim. Empty string == clean tree.
     """
-    proc = subprocess.run(  # noqa: S603
+    proc = subprocess.run(
         ["git", "status", "--porcelain"],  # noqa: S607
         cwd=_REPO_ROOT,
         capture_output=True,

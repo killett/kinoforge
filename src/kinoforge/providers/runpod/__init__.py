@@ -1779,8 +1779,7 @@ _CREATE_SERVERLESS_MUTATION: str = (
 class _UtilProbeEndpoint(Protocol):
     """Duck type for the util endpoint's existence+snapshot probe."""
 
-    def probe(self, instance_id: str) -> tuple[bool, UtilSnapshot | None]:  # noqa: D102
-        ...
+    def probe(self, instance_id: str) -> tuple[bool, UtilSnapshot | None]: ...
 
 
 class RunPodBootLivenessProbe:

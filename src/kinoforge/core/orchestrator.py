@@ -423,7 +423,7 @@ def _provision_compute_once(
 
             models = cfg.models
 
-            def model_dump(self) -> dict[str, object]:  # noqa: D102
+            def model_dump(self) -> dict[str, object]:
                 return cfg_dict_override  # type: ignore[return-value]
 
         effective_cfg: object = _EnrichedCfgWrapper()

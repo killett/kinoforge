@@ -58,8 +58,7 @@ class _ReconcileLedger(Protocol):
       preferred over the per-id read.
     """
 
-    def forget(self, instance_id: str) -> None:  # noqa: D102
-        ...
+    def forget(self, instance_id: str) -> None: ...
 
 
 # Providers whose ``get_instance(id)`` is authoritative ACROSS processes — a

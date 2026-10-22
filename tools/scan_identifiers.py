@@ -192,7 +192,7 @@ def scan_all_tracked_identifiers(
     Raises:
         RuntimeError: A tracked file exists but could not be read.
     """
-    listing = subprocess.run(  # noqa: S603
+    listing = subprocess.run(
         ["git", "ls-files", "-z"],  # noqa: S607
         cwd=repo,
         check=True,

@@ -122,7 +122,7 @@ def upload_wheel() -> str:
 
     with open(wheel, "rb") as fh:
         blob = fh.read()
-    up = urllib.request.Request(  # noqa: S310 — https, hardcoded uploads host
+    up = urllib.request.Request(  # https, hardcoded uploads host
         f"https://uploads.github.com/repos/{_GH_OWNER}/{_GH_REPO}"
         f"/releases/{release_id}/assets?name={name}",
         data=blob,

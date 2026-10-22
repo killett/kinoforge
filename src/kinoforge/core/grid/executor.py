@@ -374,7 +374,7 @@ async def _run_one_cell(
         cmd,
         capture_output=True,
         text=True,
-        check=False,  # noqa: S603
+        check=False,
     )
     if proc.returncode != 0:
         # Persist FULL stderr to disk for post-mortem inspection. The
@@ -519,7 +519,7 @@ async def _run_swap_cell_once(
         cmd,
         capture_output=True,
         text=True,
-        check=False,  # noqa: S603
+        check=False,
     )
     if proc.returncode != 0 and cell.cfg_path is not None:
         stderr_log = cell.cfg_path.with_suffix(".stderr.txt")
@@ -890,7 +890,7 @@ async def _run_swap_group(
         if pod_id is not None:
             await asyncio.to_thread(
                 subprocess.run,
-                ["pixi", "run", "kinoforge", "destroy", "--id", pod_id],  # noqa: S603,S607
+                ["pixi", "run", "kinoforge", "destroy", "--id", pod_id],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -1004,7 +1004,7 @@ def _check_no_residual_pods(
 
     raw = ""
     for i in range(attempts):
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             ["pixi", "run", "kinoforge", "list"],  # noqa: S607
             capture_output=True,
             text=True,

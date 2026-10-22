@@ -351,7 +351,7 @@ def main() -> int:
 
     _log("running preflight ...")
     # trusted `pixi` from PATH — kinoforge uses this everywhere
-    r = subprocess.run(  # noqa: S603
+    r = subprocess.run(
         ["pixi", "run", "preflight"],  # noqa: S607
         check=False,
         capture_output=True,

@@ -528,7 +528,7 @@ class ComputeProvider(ABC):
         """
         return None
 
-    def probe_runtime(self, pod_id: str) -> RuntimeProbe | None:  # noqa: B027
+    def probe_runtime(self, pod_id: str) -> RuntimeProbe | None:
         """Live runtime probe for sweeper-ephemeral-reap.
 
         Default returns ``None`` ("substrate missing"). RunPodProvider

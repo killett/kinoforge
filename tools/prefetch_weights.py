@@ -297,7 +297,7 @@ def verify_resident(
     return durable
 
 
-def fetch_snapshot(  # noqa: ANN401 — `volume` is a modal.Volume; modal is pod-side only
+def fetch_snapshot(
     repo_id: str,
     patterns: list[str],
     mount: str,

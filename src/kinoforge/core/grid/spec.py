@@ -232,7 +232,7 @@ def _yaml_opts_in_repo(p: Path) -> bool:
 def _git_repo_root() -> Path | None:
     """Return the active git repo root, or ``None`` if not inside a repo."""
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],  # noqa: S607
             capture_output=True,
             text=True,

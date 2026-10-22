@@ -97,8 +97,8 @@ def _git_repo_root() -> Path | None:
     """
     cmd = ("git", "rev-parse", "--show-toplevel")
     try:
-        out = subprocess.run(  # noqa: S603, S607
-            cmd,  # noqa: S607
+        out = subprocess.run(  # noqa: S603
+            cmd,
             capture_output=True,
             text=True,
             check=False,

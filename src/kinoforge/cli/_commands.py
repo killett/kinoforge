@@ -4594,7 +4594,7 @@ def _cmd_destroy(args: argparse.Namespace, ctx: SessionContext) -> int:
             provider.get_instance(args.id)
         except KeyError:
             continue
-        except Exception as exc:  # noqa: BLE001, S112
+        except Exception as exc:  # noqa: BLE001
             # Probe failed for network / auth / GraphQL reasons.  Be
             # conservative and try the next provider; don't claim
             # ownership of an id we couldn't actually confirm.  Log

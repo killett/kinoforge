@@ -129,7 +129,7 @@ def _sweep_pods_by_name(name_prefix: str) -> int:
     api_key = os.environ.get("RUNPOD_API_KEY", "")
     if not api_key:
         return 0
-    list_req = urllib.request.Request(  # noqa: S310
+    list_req = urllib.request.Request(
         "https://rest.runpod.io/v1/pods",
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -153,7 +153,7 @@ def _sweep_pods_by_name(name_prefix: str) -> int:
         pid = pod.get("id")
         if not isinstance(pid, str):
             continue
-        del_req = urllib.request.Request(  # noqa: S310
+        del_req = urllib.request.Request(
             f"https://rest.runpod.io/v1/pods/{pid}",
             headers={
                 "Authorization": f"Bearer {api_key}",

@@ -123,7 +123,7 @@ def _get_sky() -> Any:  # noqa: ANN401
         KinoforgeError: If skypilot is not installed in this environment.
     """
     try:
-        import sky  # type: ignore[import-not-found, unused-ignore]  # noqa: I001
+        import sky  # type: ignore[import-not-found, unused-ignore]
     except ImportError as exc:
         raise KinoforgeError(
             "skypilot is not installed; install via `pixi add --pypi skypilot`"

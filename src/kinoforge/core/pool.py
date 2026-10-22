@@ -64,7 +64,7 @@ class _DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
     subprocess because the claim is about interpreter exit.
     """
 
-    def _adjust_thread_count(self) -> None:  # noqa: D401, D102
+    def _adjust_thread_count(self) -> None:  # noqa: D401
         # Stdlib's _adjust_thread_count spawns a single Thread per call when
         # the pool has spare capacity. We rebuild the same logic here so we
         # can flip daemon=True before start() -- the only effective moment.

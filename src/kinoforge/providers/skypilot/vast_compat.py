@@ -21,7 +21,7 @@ def apply_vast_sdk_compat() -> bool:
         unnecessary (already resolvable) or ``vastai_sdk`` is unavailable.
     """
     try:
-        from vastai_sdk import (  # type: ignore[import-not-found, unused-ignore]  # noqa: I001
+        from vastai_sdk import (  # type: ignore[import-not-found, unused-ignore]
             VastAI,
         )
     except Exception:  # noqa: BLE001 — sdk absent (default env) → nothing to patch

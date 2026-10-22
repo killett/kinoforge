@@ -172,7 +172,7 @@ def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  #
         # exempt from the store/sink write policy via the trailing marker.
         with open("/tmp/kinoforge_boot.sh", "w") as fh:  # noqa: S108  # kinoforge:public-write
             fh.write(script)
-        subprocess.Popen(["bash", "/tmp/kinoforge_boot.sh"])  # noqa: S603,S607,S108
+        subprocess.Popen(["bash", "/tmp/kinoforge_boot.sh"])  # noqa: S607,S108
 
     return app, server
 
@@ -218,7 +218,7 @@ def default_stop(app_name: str) -> None:
 
 def default_list() -> list[dict[str, Any]]:
     """Return deployed-app records via ``modal app list --json``."""
-    out = subprocess.run(  # noqa: S603 — fixed argv, no untrusted input
+    out = subprocess.run(  # fixed argv, no untrusted input
         ["modal", "app", "list", "--json"],  # noqa: S607 — modal via PATH
         capture_output=True,
         text=True,
