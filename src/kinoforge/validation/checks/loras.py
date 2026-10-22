@@ -397,7 +397,6 @@ class LoraEngineSupportCheck:
     def run(self, cfg: Config) -> CheckResult:
         """Refuse the stack when the engine declares it cannot apply one."""
         from kinoforge.core import registry
-        from kinoforge.core.errors import UnknownAdapter
 
         count = _declared_stack_size(cfg)
         if count == 0:
@@ -431,7 +430,7 @@ class LoraEngineSupportCheck:
         kind = cfg.engine.kind
         try:
             support = registry.get_engine(kind)().lora_support()
-        except (UnknownAdapter, Exception):  # noqa: BLE001 — unknown => not our call
+        except Exception:  # noqa: BLE001 — unknown engine => not our call
             # An engine that will not resolve or construct is somebody else's
             # error to report; refusing here would turn an unrelated failure
             # into a confusing LoRA message.
