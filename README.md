@@ -36,6 +36,7 @@ no branching on provider names in core logic.
   - Modal command matrix → [docs/modal-command-matrix.md](docs/modal-command-matrix.md)
   - Roadmap → [docs/roadmap.md](docs/roadmap.md)
 - [Troubleshooting](#troubleshooting)
+- [Project structure](#project-structure)
 - [Contributing / extending](#contributing--extending)
 - [Releasing](#releasing)
 - [License](#license)
@@ -566,6 +567,36 @@ for upcoming releases.
 | GPU sits 0% during live smoke | Worker died silently | Kill pod immediately; see [docs/troubleshooting.md](docs/troubleshooting.md) deep section |
 
 Full catalogue: [docs/troubleshooting.md](docs/troubleshooting.md).
+
+## Project structure
+
+```
+src/kinoforge/
+  cli/             argparse surface — `_main.py` builds the parser, `_commands.py` holds every subcommand
+  core/            provider-agnostic orchestration: config, orchestrator, lifecycle / reaper / sweeper,
+                   batch, grid, LoRA handling, image-dir planning
+  engines/         video generation engines (comfyui, diffusers + its pod servers, hosted, fal,
+                   replicate, runway, bedrock_video, fake)
+  image_engines/   keyframe / still-image engines (fal, replicate, luma_agents, fake)
+  text_engines/    text generation on a reserved pod (transformers)
+  upscalers/       FlashVSR, spandrel and seedvr2 upscalers (controller engines + pod-side runtimes)
+  interpolators/   RIFE frame interpolation
+  providers/       compute adapters (runpod, modal, skypilot, local)
+  stores/          artifact + ledger stores (local, s3, gcs) and their lease locks
+  sources/         model / LoRA reference resolvers (huggingface, civitai, civarchive, http)
+  pipeline/        run stages: generate_clip, keyframe, upscale, interpolate, text, decimate / downscale
+  outputs/         output sinks (local filesystem naming and collision rules)
+  validation/      the `kinoforge doctor` / preflight check registry
+  diagnostics/     live probe harnesses kept from closed investigations
+tests/             unit + integration suite (`pixi run test`); `tests/live/` and `tests/smoke/` are
+                   opt-in live tiers that spend money
+tools/             operator scripts: preflight, release, secret / identifier scanners, payload
+                   snapshots, probes
+examples/configs/  shipped YAML configs (+ `grids/`, `manifests/`, `extras/`, `comparison/`, `prompts/`)
+docs/              operator docs (lifecycle, warm-reuse, engines, cost, cloud stores, …) and the
+                   hygiene audits
+docker/            build context for the pre-baked Wan + ComfyUI image
+```
 
 ## Contributing / extending
 
