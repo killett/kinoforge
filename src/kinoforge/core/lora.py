@@ -15,15 +15,12 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 from urllib.parse import ParseResult, parse_qs, urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from kinoforge.core.redaction import RedactionRegistry
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
