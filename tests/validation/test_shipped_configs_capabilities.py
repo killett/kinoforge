@@ -14,7 +14,7 @@ from kinoforge.validation.checks.capabilities import (
 )
 from kinoforge.validation.protocol import Severity
 
-CONFIG_DIR = Path("examples/configs")
+CONFIG_DIR = Path(__file__).resolve().parents[2] / "examples" / "configs"
 SERVER_SKY = [
     "skypilot-gpu.yaml",
     "skypilot-cpu.yaml",

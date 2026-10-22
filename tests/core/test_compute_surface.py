@@ -302,7 +302,9 @@ def test_every_shipped_config_still_loads() -> None:
     from pathlib import Path  # noqa: PLC0415
 
     offenders: list[str] = []
-    for path in sorted(Path("examples/configs").rglob("*.y*ml")):
+    for path in sorted(
+        (Path(__file__).resolve().parents[2] / "examples" / "configs").rglob("*.y*ml")
+    ):
         try:
             load_config(str(path))
         except Exception as exc:  # noqa: BLE001 — the message is the assertion

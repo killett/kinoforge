@@ -45,7 +45,7 @@ def _conditional_on_cli_loras(test_node: ast.AST) -> bool:
 
 
 def test_no_precedence_branches_outside_resolver() -> None:
-    src_root = Path("src/kinoforge")
+    src_root = Path(__file__).resolve().parents[1] / "src" / "kinoforge"
     resolver = Path("src/kinoforge/core/lora.py")
     violations: list[str] = []
 
