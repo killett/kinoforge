@@ -11,7 +11,7 @@ Design notes
   ``sha256("|".join(s.prompt for s in job.segments))[:12]`` → ``clip-<hex12>.mp4``.
 * ``FakeBackend.inspect_capabilities()`` returns the probe profile unchanged
   (flags stay False; strategy flags are layered in by ``discover``, not here).
-* ``profile_for`` is deferred until Task 12 wires ``ModelProfileProvider``.
+* ``profile_for`` always raises — profiles come from ``ModelProfileProvider``, never the engine.
 """
 
 from __future__ import annotations
@@ -246,15 +246,13 @@ class FakeEngine(GenerationEngine):
         return FakeBackend(probe=self._probe)
 
     def profile_for(self, key: CapabilityKey) -> ModelProfile:
-        """Raise ``NotImplementedError`` — deferred to Task 12.
-
-        # DEFERRED: profile_for is supplied by ModelProfileProvider.resolve in Task 12.
+        """Raise ``NotImplementedError`` — profiles come from ``ModelProfileProvider``.
 
         Args:
             key: The ``CapabilityKey`` to resolve (unused here).
 
         Raises:
-            NotImplementedError: Always. Task 12 wires the real cache.
+            NotImplementedError: Always.
         """
         raise NotImplementedError(
             "FakeEngine.profile_for is supplied by ModelProfileProvider in Task 12"

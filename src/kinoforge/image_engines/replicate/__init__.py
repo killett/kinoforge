@@ -44,10 +44,9 @@ _IMAGE_PROBE = ImageProfile(
 class _ReplicateImageInnerBackend(RemoteSubmitPollBackend):
     """Inner submit-poll backend for Replicate image predictions.
 
-    Differs from the video backend in two places:
-    - ``_extract_output_url`` unwraps the single-image flux-schnell shape
-      (``output`` is either a list with one URL or a bare URL string).
-    - Asset injection is a no-op — image-from-text only.
+    Differs from the video backend in one place: asset injection is a
+    no-op (image-from-text only). ``_poll_one`` / ``_is_done`` /
+    ``_is_failed`` / ``_extract_output_url`` mirror ``ReplicateBackend``.
     """
 
     def _submit(self, client: object, job: GenerationJob) -> str:
@@ -101,14 +100,14 @@ class _ReplicateImageInnerBackend(RemoteSubmitPollBackend):
         return str(out) if out else ""
 
     def _delete(self, job_id: str) -> None:
-        """Scaffold for the ``_delete`` ABC; concrete impl lands in Task 17."""
+        """Not implemented: no delete path on this adapter; ephemeral is refused at preflight (``core/ephemeral.py``)."""
         raise NotImplementedError(
             "_ReplicateImageInnerBackend._delete is filled in Task 17"
         )
 
     @classmethod
     def manual_cleanup_url(cls, job_id: str) -> str:
-        """Scaffold for the ABC; concrete impl lands in Task 17."""
+        """Browser URL for the prediction; the only cleanup path this adapter offers."""
         return f"https://replicate.com/predictions/{job_id}"
 
 

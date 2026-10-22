@@ -56,9 +56,9 @@ _log = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-#: Maximum poll iterations in :meth:`DiffusersBackend.result`. Each
-#: iteration sleeps 1 s, so this is the total seconds the backend
-#: will wait for a single job to complete. Bumped from 60 (which fit
+#: Belt-and-braces iteration cap in :meth:`DiffusersBackend.result`;
+#: the wall-clock bound is ``poll_timeout_s`` (constructor). At the
+#: default 1 s interval the two coincide. Bumped from 60 (which fit
 #: small image-gen jobs but timed out Task 8 attempt #25's 14B Wan
 #: video at ~30s into the run) to 1800 (30 min) — covers a worst-case
 #: 81-frame, 480x480, 20-step Wan 2.2 generation on an A100 80GB
@@ -140,8 +140,9 @@ def _render_embed_lines(modules: list[str]) -> list[str]:
     """Return bash lines that recreate ``modules``' package trees under /tmp/kfsrv/.
 
     For each dotted package name, walks the package's directory files,
-    base64-encodes each .py file, and emits an ``echo '<b64>' | base64 -d
-    > /tmp/kfsrv/<rel>`` line. Also ensures every ancestor namespace
+    gzip+base64-encodes each .py file, and emits an ``echo '<b64>' | python3 -c
+    "…gzip.decompress(base64.b64decode(…))" > /tmp/kfsrv/<rel>`` line (see the
+    body comment on the ~101 KB env ceiling). Also ensures every ancestor namespace
     has an ``__init__.py`` (touched empty for parents whose source dir
     might not ship one). Designed so the pod can run
     ``python -m <module>`` without kinoforge installed via pip.
@@ -187,7 +188,7 @@ def _render_embed_lines(modules: list[str]) -> list[str]:
             content = resource.read_bytes()
             # gzip+base64 keeps the bootstrap script under RunPod's ~101KB
             # total-env create-mutation ceiling for big embedded modules like
-            # wan_t2v_server.py (~67KB raw → ~16KB gz → ~22KB b64). Pre-gzip
+            # wan_t2v_server.py (~110KB raw → ~34KB gz → ~45KB b64 as of 2026-10). Pre-gzip
             # embeds blew the total env payload past that limit and the
             # create-pod mutation 500ed. An earlier note here said 64KB; that
             # was wrong — the limit is on the total env payload, not any
@@ -1156,8 +1157,9 @@ class DiffusersEngine(GenerationEngine):
     def render_provision(self, cfg: dict[str, Any]) -> RenderedProvision:
         """Render a first-boot bootstrap script for a remote Diffusers pod.
 
-        The script is minimal: pip-install declared deps then ``exec``
-        the server command so it becomes PID 1.  Credentials are not
+        The script is minimal: pip-install declared deps then launch the
+        server command WITHOUT ``exec`` — bash stays PID 1 so the EXIT trap
+        can fire (``Launch(exec_pid1=False)`` below).  Credentials are not
         needed in the script itself — diffusers uses the HuggingFace
         Hub's own token cache (``HUGGINGFACE_HUB_TOKEN``) which the
         orchestrator can lift separately.

@@ -167,10 +167,9 @@ class _LumaAgentsInnerBackend(RemoteSubmitPollBackend):
     def _extract_output_url(self, status: dict[str, Any]) -> str:
         """Return the image URL.
 
-        Documented shape (2026-07-03): ``output`` is an array of
-        ``{"url": ...}``. The earlier dream-machine shape
-        (``assets.image``) is kept as a fallback in case the docs and
-        the wire disagree — the live smoke settles which one is real.
+        Live-confirmed shape (2026-07-04, successful-generations #15):
+        ``output`` is an array of ``{"url": ...}``. The earlier
+        dream-machine shape (``assets.image``) is kept as a fallback only.
         """
         output = status.get("output")
         if isinstance(output, list) and output:

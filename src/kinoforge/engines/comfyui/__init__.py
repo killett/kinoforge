@@ -1534,7 +1534,7 @@ class ComfyUIEngine(GenerationEngine):
         )
 
     def profile_for(self, key: CapabilityKey) -> ModelProfile:
-        """Raise ``NotImplementedError`` — deferred to Task 12.
+        """Raise ``NotImplementedError`` — profiles come from ``ModelProfileProvider``, never the engine.
 
         Args:
             key: Unused.

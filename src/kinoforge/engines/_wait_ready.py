@@ -101,7 +101,7 @@ def poll_until_ready(
         try:
             http_get(ready_url)
             return
-        except Exception:  # noqa: BLE001, S110
+        except Exception:  # noqa: BLE001, S110 — any failure means "not ready yet"
             pass
         try:
             current = get_instance(instance.id)

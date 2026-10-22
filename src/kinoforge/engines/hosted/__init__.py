@@ -1,7 +1,9 @@
 """HostedAPIEngine + HostedAPIBackend — the no-compute path.
 
 Validates credentials and endpoint availability, then delegates generation
-to a remote hosted inference API (e.g. fal.ai).  No GPU instance is ever
+to a user-deployed inference shim speaking the ``/generate`` +
+``/status/{job_id}`` contract below (NOT a vendor API — fal.ai has its own
+engine under ``engines/fal``).  No GPU instance is ever
 created; ``requires_compute=False`` and ``requires_local_weights=False``.
 
 All I/O (HTTP GET/POST, sleep) is routed through injected callables so that
@@ -16,10 +18,10 @@ Cfg shape under ``cfg["engine"]["hosted"]``:
 
     engine:
       hosted:
-        provider: fal                           # e.g. "fal"
-        endpoint: https://fal.run/fal-ai/ltx-video
-        api_key_env: FAL_KEY                    # env-var name for the credential
-        health_url: https://fal.run/health      # pinged by provision()
+        provider: my-shim                       # label only, not a vendor
+        endpoint: https://your-shim.example.com/generate
+        api_key_env: MY_SHIM_API_KEY            # env-var name for the credential
+        health_url: https://your-shim.example.com/health   # pinged by provision()
 
     spec:
       model: ltx-2                              # hosted model id (cache identity + wire body)

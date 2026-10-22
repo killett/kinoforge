@@ -61,7 +61,7 @@ class ReplicateBackend(RemoteSubmitPollBackend):
     """Submit/poll backend for Replicate predictions API.
 
     Threads a per-instance submit-rate floor (``submit_min_interval_s``,
-    default 10 s) to ride out the Replicate throttle-when-credit-< $5
+    default 12 s) to ride out the Replicate throttle-when-credit-< $5
     behaviour without 429s — see module-level constant for context.
     """
 

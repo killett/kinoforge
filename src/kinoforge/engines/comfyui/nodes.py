@@ -26,7 +26,9 @@ def clone_and_install(
     1. Derives a destination directory from the repository URL (the last
        path component, stripped of a ``.git`` suffix).
     2. Issues ``git clone <url> <dest_dir>`` via *run_cmd*.
-    3. Checks whether ``<dest_dir>/requirements.txt`` exists using
+    3. If the entry carries ``"ref"``, runs ``git checkout <ref>`` in
+       ``<dest_dir>`` via *run_cmd*.
+    4. Checks whether ``<dest_dir>/requirements.txt`` exists using
        *file_exists*; if it does, runs ``pip install -r <path>`` via
        *run_cmd*.
 

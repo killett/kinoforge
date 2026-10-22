@@ -282,11 +282,10 @@ class FalBackend(GenerationBackend):
     def _delete(self, job_id: str) -> None:
         """Raise — fal has no public DELETE endpoint for queue requests.
 
-        Pre-flight (Task 18) refuses ephemeral for the fal engine before
-        any submit fires, so this branch is belt-and-suspenders. Surface
-        ``EphemeralDeleteUnsupportedError`` rather than silently no-op so
-        a buggy caller bypassing pre-flight cannot quietly leak the
-        prompt-laden record.
+        Pre-flight refuses ephemeral for the fal engine before any submit
+        fires. Nothing calls this today — ``FalBackend`` does not inherit
+        ``RemoteSubmitPollBackend``, whose ``_delete_with_retries`` is the
+        only ``_delete`` caller — so it documents intent, not a live path.
         """
         from kinoforge.core.errors import EphemeralDeleteUnsupportedError
 
