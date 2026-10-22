@@ -104,10 +104,7 @@ def hold_until_first_tick(
     _sleep = sleep if sleep is not None else _time.sleep
     with store.acquire_lock(f"provision:{instance_id}", ttl_s=ttl_s):
         start = _clock.now()
-        try:
-            yield
-        except BaseException:
-            raise
+        yield
         deadline = start + timeout_s
         while True:
             entry = ledger.read(instance_id)
