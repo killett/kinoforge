@@ -1159,12 +1159,12 @@ def test_normalize_image_id_passes_through_prefixed_names() -> None:
 
 @pytest.mark.skipif(
     not (GPU_FIXTURE_DIR / "list_accelerators.json").exists(),
-    reason="T4 GPU fixtures not captured yet — Layer W+β T4 will land them",
+    reason="SkyPilot GPU fixtures absent — regenerate via the recording proxy",
 )
 def test_t4_fixture_shape() -> None:
     """Lockdown: GPU fixtures must satisfy SkyPilotProvider's dual-shape parse.
 
-    Lands after Layer W+β T4 captures the fixtures. Catches sky SDK shape
+    Runs whenever the captured fixtures are present. Catches sky SDK shape
     drift before the next live run is attempted.
     """
     list_accel = json.loads((GPU_FIXTURE_DIR / "list_accelerators.json").read_text())
@@ -1177,7 +1177,7 @@ def test_t4_fixture_shape() -> None:
     # The launch.json fixture is correctly scrubbed to "<volatile-uuid>" by the
     # recording proxy — sky.launch() returns a volatile cluster-UUID string and
     # the proxy is intentionally conservative about what it preserves in
-    # fixtures committed to git (see tools/_redact.py + tests/conftest_runpod.py).
+    # fixtures committed to git (see tools/_redact.py + tests/providers/conftest_runpod.py).
     # Asserting on content would push the proxy toward preserving more, which
     # is the wrong direction for leak prevention. Instead, assert the shape
     # stays a scrubbed string — catches both SDK return-shape drift AND silent

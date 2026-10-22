@@ -17,9 +17,9 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     """TestClient with a single-transformer pipe (Wan 2.1, arity=1).
 
     Restores ``ready`` and re-clears ``_inventory`` / ``_swap_jobs`` on
-    teardown: pytest-randomly is active, so a test elsewhere that depends
-    on the not-ready state (or on an empty inventory) must not inherit
-    this fixture's leaked module state.
+    teardown so a test elsewhere that depends on the not-ready state (or on
+    an empty inventory) never inherits this fixture's leaked module state,
+    whatever the collection order.
     """
     # Single-transformer pipe (Wan 2.1): arity 1.
     monkeypatch.setattr(srv, "_pipe_arity", 1)

@@ -9,8 +9,7 @@ operator has to ``source .env`` (or otherwise export every key)
 before running ``pixi run pytest tests/live/...``, which is brittle
 and quietly skips tests when forgotten.
 
-Loading is silent if ``.env`` is absent or the kinoforge package isn't
-importable for any reason — tests then fall back to whatever the
+Loading is silent if ``.env`` is absent — tests then fall back to whatever the
 operator has exported in the shell.  ``override`` is left ``False`` so
 explicit exports always beat the file.
 """

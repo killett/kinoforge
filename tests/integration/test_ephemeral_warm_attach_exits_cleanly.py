@@ -13,10 +13,9 @@ capability_key, and drives ``_cmd_generate`` end-to-end inside
 ``deploy_session`` runs verbatim; the bug surfaces in the post-yield
 teardown of ``hold_until_first_tick``.
 
-Pre-fix: hangs ≥30s, faulthandler dumps the stack inside
-``hold_until_first_tick``'s post-yield poll loop, marked XFAIL.
-Post-fix (Task 2): exits in <5s; remove ``@pytest.mark.xfail`` in the
-same commit.
+Pre-fix (``a392deaf``): hung ≥30s, faulthandler dumped the stack inside
+``hold_until_first_tick``'s post-yield poll loop. Fixed in ``4ceb4fdf``;
+the test now asserts a clean exit in <5s.
 """
 
 from __future__ import annotations

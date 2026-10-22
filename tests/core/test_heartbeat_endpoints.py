@@ -2,7 +2,7 @@
 
 Verifies:
 - HeartbeatEndpoint Protocol is runtime_checkable and structurally satisfied
-  by the fake doubles in tests/providers/conftest.py.
+  by the fake doubles in tests/conftest.py.
 - provider_heartbeat_supported returns True for B5a-shipped providers
   (local + runpod) and False otherwise (drift-detector for B5b).
 - TransportError sits under the KinoforgeError hierarchy.

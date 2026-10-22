@@ -28,8 +28,8 @@ EndpointFactory = Callable[[], HeartbeatEndpoint]
 
 
 def _local_factory() -> HeartbeatEndpoint:
-    # Imported lazily so the conftest.py fixtures registered by Task a's
-    # `tests/providers/conftest.py` are guaranteed available.
+    # Imported lazily so the fakes defined in the root `tests/conftest.py`
+    # are guaranteed to be registered before this factory runs.
     from tests.conftest import LocalHeartbeatEndpoint
 
     return LocalHeartbeatEndpoint()
