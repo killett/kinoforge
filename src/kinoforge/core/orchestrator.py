@@ -2944,11 +2944,10 @@ def generate(
         # backend (FlashVSR) needs only its own self-registration; no
         # change to this orchestrator branch.
         if cfg.upscale is not None:
-            from kinoforge.core import registry as _registry
             from kinoforge.core.scale_target import ScaleTarget
             from kinoforge.pipeline.upscale import UpscaleStage
 
-            upscaler_engine = _registry.get_upscaler(cfg.upscale.engine)()
+            upscaler_engine = registry.get_upscaler(cfg.upscale.engine)()
             stages.append(
                 UpscaleStage(
                     engine=upscaler_engine,
@@ -2966,10 +2965,9 @@ def generate(
         # `kinoforge text` — terminal text stage (design §7.2). Exclusive with
         # upscale/interpolate by the config validator, so ordering is moot.
         if cfg.text is not None:
-            from kinoforge.core import registry as _registry
             from kinoforge.pipeline.text import TextStage
 
-            text_engine = _registry.get_text_engine(cfg.text.engine)()
+            text_engine = registry.get_text_engine(cfg.text.engine)()
             stages.append(
                 TextStage(
                     engine=text_engine,
@@ -2990,10 +2988,9 @@ def generate(
         # the sink seam below; the engine branch's pod-proxy artifact is
         # materialized post-walk (mirrors the upscale materialize block).
         if cfg.interpolate is not None:
-            from kinoforge.core import registry as _registry
             from kinoforge.pipeline.interpolate import InterpolateStage
 
-            interp_engine = _registry.get_interpolator(cfg.interpolate.engine)()
+            interp_engine = registry.get_interpolator(cfg.interpolate.engine)()
             _interp_provider = cfg.interpolate.engine
 
             def _interp_publish(body: bytes) -> str:
