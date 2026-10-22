@@ -63,7 +63,6 @@ def parse_duration(s: str) -> float:
 
 VALID_KIND_TARGETS: dict[str, set[str]] = {
     "base": {"diffusion_models", "checkpoints", "unet"},
-    "lora": {"loras"},
     "vae": {"vae"},
     "text_encoder": {"text_encoders", "clip"},
     "clip_vision": {"clip_vision"},
