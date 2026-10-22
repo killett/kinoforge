@@ -115,7 +115,7 @@ class S3CloudLock(_LeaseLockBase):
                 existing = json.loads(got["Body"].read().decode("utf-8"))
             except (ValueError, KeyError):
                 return None
-            if self._clock.now() <= float(existing.get("expires_at", 0.0)):
+            if not self._lease_expired(existing):
                 return None
             # Expired — attempt conditional delete then retry CAS PUT.
             try:

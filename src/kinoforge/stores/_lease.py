@@ -16,6 +16,7 @@ from __future__ import annotations
 import abc
 import time as _time
 from collections.abc import Callable
+from typing import Any
 
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.errors import LockTimeout
@@ -83,6 +84,10 @@ class _LeaseLockBase(abc.ABC):
     # ------------------------------------------------------------------
     # Shared lease policy
     # ------------------------------------------------------------------
+
+    def _lease_expired(self, payload: dict[str, Any]) -> bool:
+        """Return True once the lease recorded in *payload* has passed ``expires_at``."""
+        return self._clock.now() > float(payload.get("expires_at", 0.0))
 
     def acquire(
         self,
