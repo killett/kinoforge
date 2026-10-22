@@ -724,9 +724,7 @@ def _dry_run_swap_preview(ctx: SessionContext) -> int:
     cfg = ctx.cfg
     ledger = ctx.ledger()
     lc = cfg.lifecycle() if cfg is not None else None
-    threshold = float(
-        getattr(lc, "lora_swap_re_probe_after_s", 300.0) if lc is not None else 300.0
-    )
+    threshold = float(lc.lora_swap_re_probe_after_s if lc is not None else 300.0)
 
     # P3 — classify which precedence branch will drive the LoRA stack.
     _session = EphemeralSession.current()
@@ -3661,7 +3659,6 @@ def _resolve_warm_instance(
       7. provider.get_instance(instance_id) → (None, 2) on KeyError.
     """
     from kinoforge.core import registry
-    from kinoforge.core.interfaces import Lifecycle
     from kinoforge.core.reaper import classify
 
     now = time.time()
@@ -3736,7 +3733,7 @@ def _resolve_warm_instance(
         return (None, 2)
 
     # 6. classify verdict gate.
-    lifecycle = cfg.lifecycle() if cfg is not None else Lifecycle()
+    lifecycle = cfg.lifecycle()
     verdict = classify(
         entry,
         live_ids,
