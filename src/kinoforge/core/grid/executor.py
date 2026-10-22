@@ -57,11 +57,6 @@ _log = logging.getLogger(__name__)
 
 _CellStatus = Literal["success", "failed", "aborted", "budget_killed"]
 _GridStatus = Literal["full", "partial", "budget", "ffmpeg", "teardown"]
-_NO_RESIDUAL_RE = re.compile(
-    r"\[instance overview\] No running instances\."
-    r"|No instances recorded in ledger\.",
-    re.IGNORECASE,
-)
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
