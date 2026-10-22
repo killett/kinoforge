@@ -18,6 +18,6 @@ version line, or non-forward bump. On success it leaves one new commit
 (`chore(release): bump version to X.Y.Z`) and one annotated tag
 (`vX.Y.Z`) ready for `git push origin main --follow-tags`.
 
-See `../tools/release.py` for the contract and `../tests/tools/test_release.py`
+See `tools/release.py` for the contract and `tests/tools/test_release.py`
 for the safety guards (multi-line abort, missing-line abort, semver
 shape, forward-only bump).

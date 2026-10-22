@@ -8,7 +8,7 @@
 |---|---|---|
 | `pixi run kinoforge: command not found` | `pixi install` not run yet after clone | Run `pixi install` from the repo root, then retry. |
 | `aria2c: command not found` warning in logs | Optional system accelerator absent — kinoforge falls back to stdlib transport silently | `sudo apt install aria2` (Debian/Ubuntu) or `brew install aria2` (macOS). No config needed. See [credentials.md](credentials.md#faster-downloads-aria2c). |
-| pre-commit hook aborts with `pixi.lock not staged` | Editing `pixi.toml` triggers automatic `pixi.lock` regen; hook stash-conflict fires if only `pixi.toml` was staged | Stage both files: `git add pixi.toml pixi.lock` before committing. See [../CLAUDE.md](../CLAUDE.md#pre-commit-stages-pixilock). |
+| pre-commit hook aborts with `pixi.lock not staged` | Editing `pixi.toml` triggers automatic `pixi.lock` regen; hook stash-conflict fires if only `pixi.toml` was staged | Stage both files: `git add pixi.toml pixi.lock` before committing. See [../CLAUDE.md](../CLAUDE.md). |
 | `ModuleNotFoundError: replicate` (or `runwayml`) when running hosted engines | Replicate / Runway SDKs live only in the `live-hosted` pixi feature env | Use `pixi run -e live-hosted kinoforge ...` for all hosted-provider commands. See [engines.md](engines.md#hosted-bearer-providers-replicate--runway). |
 | `gcloud`/`aws` command not found | Cloud CLI binaries live only in the `live-skypilot` env | Use `pixi run -e live-skypilot gcloud ...` or `pixi run -e live-skypilot aws ...`. See [../CLAUDE.md](../CLAUDE.md#cloud-cli-invocation-gcloud-aws-sky). |
 
@@ -26,7 +26,7 @@
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `kinoforge list` shows a pod that no longer exists on the provider | Provider destroyed the pod out-of-band (OOM kill, billing stop, expiry) while ledger was not updated | `kinoforge forget --id <id>` to clear the stale entry. See [lifecycle.md](lifecycle.md#kinoforge-forget---id-id----clear-a-stale-ledger-entry). |
+| `kinoforge list` shows a pod that no longer exists on the provider | Provider destroyed the pod out-of-band (OOM kill, billing stop, expiry) while ledger was not updated | `kinoforge forget --id <id>` to clear the stale entry. See [lifecycle.md](lifecycle.md#kinoforge-forget---id-id--clear-a-stale-ledger-entry). |
 | Pod still alive and billing after `kinoforge generate` completes | Default behaviour is warm-reuse — pod stays warm for the next call | Pass `--no-reuse` for one-shot runs, or destroy post-hoc: `kinoforge destroy --id <id>`. See [warm-reuse.md](warm-reuse.md#operator-warm-reuse-b4) and [../CLAUDE.md](../CLAUDE.md#live-smoke-teardown-pass---no-reuse-verify-post-run). |
 | GPU utilisation at 0% for ≥3 consecutive probes during a live smoke | Worker process crashed silently — generation is not progressing | Kill the pod immediately: capture last 100 log lines, then `kinoforge destroy --id <id>`. See [../CLAUDE.md](../CLAUDE.md#live-smoke-monitoring-poll-dont-wait). |
 | `kinoforge status` reports `provider_status=unknown (stale ledger)` | Ledger entry is orphaned — provider has no record of the id | Run `kinoforge forget --id <id>`. See [lifecycle.md](lifecycle.md#operator-commands). |
@@ -38,10 +38,10 @@
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `ProxyWarmupTimeout` on first POST to a new pod | RunPod proxy 502 race during the first ~60s after `wait_for_ready` returns | The client auto-retries; if persistent, check pod health with `kinoforge status --id <id>` then `kinoforge destroy --id <id>` and retry cold. See [engines.md](engines.md#real-providers--runpod). |
-| ComfyUI poll times out (default 600s) on Wan 14B t2v | Wan 14B t2v can take ~6 min per step; default ceiling too low | Raise `engine.comfyui.poll_timeout_s` in your YAML. See [lifecycle.md](lifecycle.md#configurable-comfyui-poll-timeout). |
+| ComfyUI poll times out (default 1800 s) on Wan 14B t2v | Wan 14B t2v can take ~6 min per step; a long run can exceed the ceiling | Raise `engine.comfyui.poll_timeout_s` in your YAML. See [lifecycle.md](lifecycle.md#configurable-comfyui-poll-timeout). |
 | `LoraSwapDegradedPodError` | Pod entered half-state mid-swap; ledger marks `status=degraded` | Reaper destroys the pod on the next sweep; matcher routes subsequent jobs elsewhere or cold-boots. Use `kinoforge destroy --id <id>` for immediate cleanup. See [warm-reuse.md](warm-reuse.md#failure-modes-operator-one-liners). |
 | `LoraSwapVramOomError` | LoRA stack exceeds VRAM; pod rolls back to previous adapter set | Pod itself is healthy — try a smaller stack or a different pod. See [warm-reuse.md](warm-reuse.md#failure-modes-operator-one-liners). |
-| `cli-loras-bypass-vault` WARNING on stderr | `--loras` flag fired while `vault.loras` was non-empty | Intentional audit warning — vault on disk is unchanged; the override applied only for this run. See [warm-reuse.md](warm-reuse.md#kinoforge-generate---loras----cli-lora-stack-override). |
+| `cli-loras-bypass-vault` WARNING on stderr | `--loras` flag fired while `vault.loras` was non-empty | Intentional audit warning — vault on disk is unchanged; the override applied only for this run. See [warm-reuse.md](warm-reuse.md#kinoforge-generate---loras--cli-lora-stack-override). |
 | Runway returns HTTP 403 `Model variant not available` | Model variant gated per-account; surfaces as `KinoforgeError`, not raw 403 | Switch to `gen4.5` (generally available) or request access for the gated variant. See [engines.md](engines.md#live-smoke-prompt-size--model-entitlement-caveats). |
 
 ## Cost and spend leaks

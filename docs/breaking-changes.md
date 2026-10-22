@@ -309,7 +309,7 @@ sidecar at `<state-dir>/store.json` records the routing.
 
 Detection: kinoforge hard-blocks the first cloud-routed command if your
 local state directory still has tracked instances. See
-[Migration from a local ledger](#migration-from-a-local-ledger) for the
+[Migration from a local ledger](cloud-stores.md#migration-from-a-local-ledger) for the
 4-step procedure.
 
 Non-breaking for: operators on `store.kind: local` (default), operators

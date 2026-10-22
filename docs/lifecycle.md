@@ -231,10 +231,10 @@ operator sweeps.
 Subcommands:
 
 ```
-kinoforge sweeper start    # foreground; blocks until SIGTERM
-kinoforge sweeper stop     # SIGTERM the daemon owning sweeper:<host>
-kinoforge sweeper status   # human or --json output
-kinoforge sweeper metrics  # --prom textfile-collector target
+kinoforge sweeper start   -c cfg.yaml          # foreground; blocks until SIGTERM
+kinoforge sweeper stop    -c cfg.yaml          # SIGTERM the daemon owning sweeper:<host>
+kinoforge sweeper status  -c cfg.yaml          # human or --json output
+kinoforge sweeper metrics -c cfg.yaml --prom   # textfile-collector target (--prom is required)
 ```
 
 `start` flags:
@@ -362,11 +362,10 @@ to surface silent stalls quickly:
 engine:
   kind: comfyui
   comfyui:
-    poll_interval_s: 2.0
-    poll_timeout_s: 600.0    # raise for known-slow models (Wan 14B t2v ~6 min)
+    poll_timeout_s: 1800.0   # the default; raise for known-slow models (Wan 14B t2v ~6 min/step)
 ```
 
-Default is `600.0` s (10 min). When the timeout fires, `TimeoutError`
+Default is `1800.0` s (30 min). When the timeout fires, `TimeoutError`
 is raised with the last observed `status` and `current_node` baked into
 the message — enough state to diagnose a stall without re-running the
 smoke. Each poll tick also emits a structured INFO line

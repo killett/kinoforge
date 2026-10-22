@@ -8,9 +8,9 @@
 Layer V verdict set, and renders a cost view in one of three modes:
 
 ```bash
-pixi run kinoforge cost -c ../examples/configs/cost.yaml              # human table
-pixi run kinoforge cost -c ../examples/configs/cost.yaml --json       # stable JSON
-pixi run kinoforge cost -c ../examples/configs/cost.yaml --prom       # Prometheus textfile
+pixi run kinoforge cost -c examples/configs/cost.yaml              # human table
+pixi run kinoforge cost -c examples/configs/cost.yaml --json       # stable JSON
+pixi run kinoforge cost -c examples/configs/cost.yaml --prom       # Prometheus textfile
 ```
 
 ### Balance read-out (RunPod only today)

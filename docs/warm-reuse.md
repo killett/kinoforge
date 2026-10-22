@@ -124,7 +124,7 @@ comments are silently dropped.
 **Minimal example** (one LoRA, defaults):
 
 ```bash
-kinoforge generate -c ../examples/configs/wan21-1_3b.yaml \
+kinoforge generate -c examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml \
   --prompt "test" --mode t2v --no-reuse \
   --loras "civitai:1234@5678"
 ```
@@ -132,7 +132,7 @@ kinoforge generate -c ../examples/configs/wan21-1_3b.yaml \
 **Full example** (multi-LoRA with strength + branch):
 
 ```bash
-kinoforge generate -c ../examples/configs/wan22-14b.yaml \
+kinoforge generate -c examples/configs/runpod-diffusers-wan-2_2-14b-t2v.yaml \
   --prompt "test" --mode t2v --no-reuse \
   --loras "$(cat <<'EOF'
 1111:2222 1.0 h
@@ -357,7 +357,7 @@ smoke:
 ```
 
 Both resolve through `CivitAISource`, which requires `CIVITAI_TOKEN` in the
-`.env` file (see [Credentials → Known keys](#known-keys)).
+`.env` file (see [Credentials → Known keys](credentials.md#known-keys)).
 
 ## Default test LoRA (Wan 2.2 T2V)
 
@@ -396,8 +396,8 @@ per the CivitAI page:
   partial-effect render — but that is NOT what this default is designed to
   demonstrate.
 - **Multi-LoRA `CapabilityKey` identity.** Order of `loras:` entries is part
-  of the cache key (see `compute_profile_alias` in `../src/kinoforge/core/vault.py`
-  and `CapabilityKey.derive()` in `../src/kinoforge/core/profiles.py`). Always
+  of the cache key (see `compute_profile_alias` in `src/kinoforge/core/vault.py`
+  and `CapabilityKey.derive()` in `src/kinoforge/core/interfaces.py`). Always
   list high-noise first, then low-noise, for stable cache hits across runs.
 
 ### Not exercised by this default
@@ -429,7 +429,7 @@ in [`../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml`](../examples/confi
 has the canonical refs locally.
 
 Both resolves go through `CivitAISource`, which requires `CIVITAI_TOKEN` in
-the `.env` file (see [Credentials → Known keys](#known-keys)).
+the `.env` file (see [Credentials → Known keys](credentials.md#known-keys)).
 
 > **Status caveat (PROGRESS C23).** Neither of the committed Wan ComfyUI graph
 > JSONs (`runpod-comfyui-wan.graph.json`, `runpod-comfyui-wan-t2v.graph.json`)
@@ -437,7 +437,7 @@ the `.env` file (see [Credentials → Known keys](#known-keys)).
 > `WanVideoSampler.lora`. The refs above are the *specified* default for when
 > the C23 graph-wiring follow-up lands; until then, mounting them via the
 > ComfyUI engine is a no-op at sampler time. The Diffusers engine path
-> (`../src/engines/diffusers/`) follows the same canonical pair when its LoRA-load
+> (`src/kinoforge/engines/diffusers/`) follows the same canonical pair when its LoRA-load
 > hook ships.
 
 ## lora_swap: grid cells

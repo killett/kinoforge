@@ -31,7 +31,7 @@ Browse ready-to-use examples in [`../examples/configs/`](../examples/configs/):
 |------|--------|----------|----------|
 | [`runpod-comfyui-wan-2_2-14b-t2v.yaml`](../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml) | ComfyUI | RunPod pod | Production Wan2.2 + CivitAI LoRA |
 | [`runpod-diffusers-serverless.yaml`](../examples/configs/runpod-diffusers-serverless.yaml) | Diffusers | RunPod serverless | SVD serverless |
-| [`hosted.yaml`](../examples/configs/hosted.yaml) | Hosted API | fal.ai | Zero-infra hosted |
+| [`hosted.yaml`](../examples/configs/hosted.yaml) | Hosted API | user-deployed shim | Synthetic submit/poll contract (not a public provider) |
 | [`local-fake.yaml`](../examples/configs/local-fake.yaml) | Fake | Local | Offline / CI smoke test |
 | [`modal-diffusers-wan-2_2-14b-t2v.yaml`](../examples/configs/modal-diffusers-wan-2_2-14b-t2v.yaml) | Diffusers | Modal | Serverless GPU, Wan 2.2 14B |
 | [`runpod-diffusers-flashvsr-x4-upscale.yaml`](../examples/configs/runpod-diffusers-flashvsr-x4-upscale.yaml) | Diffusers | RunPod pod | Standalone FlashVSR upscale |

@@ -10,7 +10,7 @@ Five registries an operator selects from by config key, all resolved through
 | Registry | Selected by | Resolver | Registered keys |
 |---|---|---|---|
 | Compute providers | `compute.provider` | `get_provider` | `runpod`, `modal`, `skypilot`, `local` |
-| Generation engines | `engine.type` | `get_engine` | `comfyui`, `diffusers`, `fal`, `hosted`, `replicate`, `runway`, `bedrock_video`, `fake` |
+| Generation engines | `engine.kind` | `get_engine` | `comfyui`, `diffusers`, `fal`, `hosted`, `replicate`, `runway`, `bedrock_video`, `fake` |
 | Image engines | `keyframe.engine` / `image.engine` | `get_image_engine` | `fal`, `replicate`, `luma_agents`, `fake` |
 | Upscalers | `upscale.engine` | `get_upscaler` | `flashvsr`, `spandrel`, `seedvr2` (extras-gated) |
 | Interpolators | `interpolate.engine` | `get_interpolator` | `rife` |
@@ -31,11 +31,11 @@ via fal's queue API.
    ```
    FAL_KEY=fal-XXXXXXXX
    ```
-2. Pick a model — `../examples/configs/fal-t2v.yaml` defaults to Wan2.2 T2V.
+2. Pick a model — `examples/configs/fal-t2v.yaml` defaults to Wan2.2 T2V.
 3. Run:
    ```bash
    pixi run python -m kinoforge --env-file .env generate \
-     -c ../examples/configs/fal-t2v.yaml \
+     -c examples/configs/fal-t2v.yaml \
      --prompt "a cat sitting on a fence" --mode t2v
    ```
 4. Artifact lands under `.kinoforge/run/<run-id>/`.
@@ -84,8 +84,8 @@ pixi run preflight --check-hosted
 # 3. Run a single t2v smoke per provider
 pixi run -e live-hosted python -m kinoforge \
     --state-dir /tmp/kf-runway generate \
-    -c ../examples/configs/comparison/runway-t2v.yaml \
-    --prompt "$(cat ../examples/configs/prompts/field-realistic.txt)" \
+    -c examples/configs/comparison/runway-t2v.yaml \
+    --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
     --mode t2v --run-id live-runway
 ```
 
@@ -132,7 +132,7 @@ drop in config-only.
 
 Auth: AWS SigV4 via Layer 1 `AWSSigV4` strategy. No Bearer key.
 
-Live smoke: `KINOFORGE_LIVE_TESTS=1 pixi run pytest ../tests/live/test_luma_ray_live.py -v`
+Live smoke: `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_luma_ray_live.py -v`
 
 NOTE: AWS gates new third-party Bedrock models behind a one-time per-
 account authorization. As of 2026-06 the gate requires an AWS Support
@@ -145,7 +145,7 @@ Open a case via the AWS Support Center for the target model + region.
 Before spending on a live smoke, verify catalog + invocation access in one shot:
 
 ```bash
-pixi run probe-hosted -- --config ../examples/configs/bedrock-luma-ray-t2v.yaml \
+pixi run probe-hosted -- --config examples/configs/bedrock-luma-ray-t2v.yaml \
     --check-bedrock-model-access luma.ray-v2:0
 ```
 
@@ -163,8 +163,8 @@ paths share the same engine registry, the same `ImageConfig` shape (`engine` /
 `spec` / `params`), and the same `ImageProfile` gating described below; they differ
 only in what consumes the resulting image. See [configuration.md](configuration.md#image-optional-standalone-image-generation)
 for the `image:` block's schema and allowlist, and
-[`../examples/configs/luma-uni1-t2i.yaml`](../examples/configs/luma-uni1-t2i.yaml) /
-[`../examples/configs/fal-flux-schnell-t2i.yaml`](../examples/configs/fal-flux-schnell-t2i.yaml)
+[`examples/configs/luma-uni1-t2i.yaml`](../examples/configs/luma-uni1-t2i.yaml) /
+[`examples/configs/fal-flux-schnell-t2i.yaml`](../examples/configs/fal-flux-schnell-t2i.yaml)
 for runnable terminal-image examples.
 
 **What `ImageProfile` actually gates.** `supported_modes` **is** checked before submit
@@ -189,7 +189,7 @@ any config to opt in — configs without the block are unaffected.
 
 | Scenario | Without keyframe | With keyframe |
 |---|---|---|
-| i2v (image-to-video) | Supply your own init image via `--init-image` | Let kinoforge generate the init frame from a tailored prompt |
+| i2v (image-to-video) | Supply your own init image as the cfg's conditioning asset (there is no `--init-image` flag) | Let kinoforge generate the init frame from a tailored prompt |
 | flf2v (first-last-frame-to-video) | Supply both bookend frames manually | Let kinoforge generate each bookend independently, with per-role prompts and seeds |
 | t2v | Not applicable | Not applicable |
 
@@ -220,7 +220,7 @@ keyframe:
 `keyframe.prompt` is the image-generation prompt (usually more precise than the
 video prompt). `keyframe.spec.model` is the image model slug. The generated image
 is injected automatically as the `init_image` conditioning asset — you do not
-supply `--init-image` at the CLI.
+supply an init image yourself (there is no `--init-image` flag).
 
 ### flf2v — differentiated bookend frames
 
@@ -272,8 +272,8 @@ choice; a future layer may promote `validate_request` itself into a Stage to mak
 the ordering explicit.
 
 See ready-to-run examples:
-- [`../examples/configs/fal-keyframe-i2v.yaml`](../examples/configs/fal-keyframe-i2v.yaml)
-- [`../examples/configs/fal-keyframe-flf2v.yaml`](../examples/configs/fal-keyframe-flf2v.yaml)
+- [`examples/configs/fal-keyframe-i2v.yaml`](../examples/configs/fal-keyframe-i2v.yaml)
+- [`examples/configs/fal-keyframe-flf2v.yaml`](../examples/configs/fal-keyframe-flf2v.yaml)
 
 ## Real providers — RunPod
 
@@ -283,10 +283,10 @@ default and never runs in CI.
 
 ```bash
 export RUNPOD_API_KEY=...
-export RUNPOD_TERMINATE_KEY=$RUNPOD_API_KEY    # see ../.env.example
+export RUNPOD_TERMINATE_KEY=$RUNPOD_API_KEY    # see .env.example
 
 KINOFORGE_LIVE_TESTS=1 \
-pixi run pytest ../tests/live/test_runpod_live.py -v
+pixi run pytest tests/live/test_runpod_live.py -v
 ```
 
 To refresh the committed GraphQL response fixtures (e.g. after a RunPod
@@ -294,7 +294,7 @@ schema upgrade), add the capture flag:
 
 ```bash
 KINOFORGE_LIVE_TESTS=1 KINOFORGE_SAVE_FIXTURES=1 \
-pixi run pytest ../tests/live/test_runpod_live.py -v
+pixi run pytest tests/live/test_runpod_live.py -v
 ```
 
 The smoke is intentionally minimal: it creates a
@@ -308,9 +308,9 @@ Cost guards (triple-locked):
 3. Selfterm script + `idle_timeout_s=600` provides a 10-minute fallback if the test process is killed mid-run
 
 Engine-integration smoke (ComfyUI + Wan i2v producing a real MP4) has
-since shipped: `../tests/live/test_comfyui_wan_live.py` deploys ComfyUI on
+since shipped: `tests/live/test_comfyui_wan_live.py` deploys ComfyUI on
 RunPod and generates an i2v MP4 against
-`../examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml`.
+`examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml`.
 
 **Note on RUNPOD_TERMINATE_KEY:** the selfterm.py design predates RunPod's
 scoped-key feature; RunPod's current scoped-key UX is two-level (GraphQL
@@ -328,23 +328,23 @@ End-to-end RunPod → ComfyUI → Wan 2.1 i2v generation. Drives a real RunPod p
 - `HF_TOKEN` — Hugging Face token (for on-pod model downloads)
 
 **Optional env vars (live-test runner only):**
-- `KINOFORGE_LIVE_KEEP_POD=1` — read by `../tests/live/test_comfyui_wan_live.py`; when set, the live test skips the destroy step so re-runs reuse the same pod via tag lookup. Not consumed by the `kinoforge generate` CLI.
+- `KINOFORGE_LIVE_KEEP_POD=1` — read by `tests/live/test_comfyui_wan_live.py`; when set, the live test skips the destroy step so re-runs reuse the same pod via tag lookup. Not consumed by the `kinoforge generate` CLI.
 
 **Quickstart:**
 
 ```bash
 pixi run kinoforge generate \
-  --config ../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml \
-  --prompt "a cat turns into a woman" \
-  --init-image ../tests/providers/fixtures/runpod/sample_init_frame.png
+  --config examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml \
+  --prompt "a cat turns into a woman" --mode i2v
+# the init frame is the cfg's `assets.init_image` entry; `--mode` is required
 ```
 
 **Dev loop via the live test runner:**
 
 ```bash
-KINOFORGE_LIVE_KEEP_POD=1 pixi run pytest ../tests/live/test_comfyui_wan_live.py -v
+KINOFORGE_LIVE_KEEP_POD=1 pixi run pytest tests/live/test_comfyui_wan_live.py -v
 # iterate: tweak graph JSON / fixture / prompt, re-run with the same KINOFORGE_LIVE_KEEP_POD=1
-# pod stays warm and auto-reaps after idle_timeout (configured at 2h in ../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml)
+# pod stays warm and auto-reaps after idle_timeout (configured at 2h in examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml)
 # manual reap:
 pixi run kinoforge destroy <pod_id>
 ```
@@ -356,15 +356,15 @@ pixi run kinoforge destroy <pod_id>
 - Always run `pixi run preflight` before live spend (checks zero active pods, clean tree, creds present)
 
 **Configuration files:**
-- `../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml` — Wan 2.1 i2v engine config (lifecycle, params, model entries)
-- `../examples/configs/runpod-comfyui-wan.graph.json` — kijai WanVideoWrapper API-format graph
+- `examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml` — Wan 2.1 i2v engine config (lifecycle, params, model entries)
+- `examples/configs/runpod-comfyui-wan.graph.json` — kijai WanVideoWrapper API-format graph
 
 ## Real providers — Modal
 
 `ModalProvider` serves the same diffusers server as a Modal `@web_server` on
 serverless GPUs. It needs the `live-modal` pixi environment
 (`pixi install -e live-modal`) plus `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`.
-Eleven example configs ship as `../examples/configs/modal-*.yaml`, covering
+Thirteen example configs ship as `examples/configs/modal-*.yaml`, covering
 t2v, FlashVSR upscale, RIFE interpolation and MiniMax-H3 joint audio.
 
 Shape constraints worth knowing before writing a Modal cfg:
@@ -372,7 +372,7 @@ Shape constraints worth knowing before writing a Modal cfg:
 - The boot payload is gzipped and **chunked across several Secret values** —
   Modal caps one Secret at 32768 bytes.
 - The container-init deadline is `@app.function(startup_timeout=…)`, fed from
-  `lifecycle.boot_timeout_s` (default 1800 s). A serialized function drops a
+  `lifecycle.boot_timeout` (default 900 s; Modal falls back to 1800 s only when it is 0). A serialized function drops a
   `@web_server`-level timeout, so putting it there lets a long boot die at
   Modal's 300 s default instead.
 - `ON_INSTANCE_DEADLINE` is the `@app.function(timeout=…)` cap; `max_lifetime`
@@ -401,8 +401,8 @@ alongside `backend_options.skypilot.clouds`, because a bare region may not exist
 on whichever cloud the optimizer picks.
 
 Lambda Labs is the working cloud today
-(`../examples/configs/skypilot-lambda-comfyui.yaml`,
-`../examples/configs/skypilot-lambda-diffusers-flashvsr-upscale.yaml`). Vast.ai
+(`examples/configs/skypilot-lambda-comfyui.yaml`,
+`examples/configs/skypilot-lambda-diffusers-flashvsr-upscale.yaml`). Vast.ai
 is blocked on an upstream sky adapter bug — see [roadmap.md](roadmap.md).
 
 ## Diffusers inference-server response contract
@@ -466,7 +466,7 @@ engine.
 Each engine declares *how* to wire each role through a small config
 contract. `init_image` (i2v) and the `first_frame` / `last_frame` bookends
 (flf2v) are both wired and live-verified — fal's `asset_paths` map is
-role-generic, so `../examples/configs/fal-keyframe-flf2v.yaml` reaches
+role-generic, so `examples/configs/fal-keyframe-flf2v.yaml` reaches
 wan-flf2v by declaring `first_frame: start_image_url` and
 `last_frame: end_image_url`. `drive_audio` and `source_video` remain
 deferred: no shipped config declares either.
@@ -563,10 +563,10 @@ each frame into a grid and feather-stitch it back via
 `weights_bundle`, `precision`, `window_size`, `tile_size`, `long_video_mode`,
 `bsa_wheel_url`; see [configuration.md](configuration.md) for types and
 defaults. Examples:
-`../examples/configs/runpod-diffusers-flashvsr-x4-upscale.yaml` (upscale-only),
-`../examples/configs/runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml`
+`examples/configs/runpod-diffusers-flashvsr-x4-upscale.yaml` (upscale-only),
+`examples/configs/runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml`
 (Wan → FlashVSR co-resident on one pod via the server's LRU registry), and
-`../examples/configs/modal-diffusers-flashvsr-1080p-upscale-long-tiled.yaml`
+`examples/configs/modal-diffusers-flashvsr-1080p-upscale-long-tiled.yaml`
 (chunked + tiled on Modal).
 
 **A required weight must never be optional.** Upstream loads
@@ -679,8 +679,8 @@ the live proofs used an RTX A4000 on RunPod and a T4 on Modal.
 `precision` — see [configuration.md](configuration.md). Note that the `model`
 field defaults to `rife49` while the shipped configs pin `rife426` (RIFE v4.26),
 which is the tag the live runs were proven on. Examples:
-`../examples/configs/runpod-diffusers-rife-60fps-interpolate.yaml`,
-`../examples/configs/modal-diffusers-rife-60fps-interpolate.yaml`.
+`examples/configs/runpod-diffusers-rife-60fps-interpolate.yaml`,
+`examples/configs/modal-diffusers-rife-60fps-interpolate.yaml`.
 
 Interpolation is video-only. A clip whose soundtrack came from a `t2va` model
 (MiniMax-H3) needs that audio re-muxed onto the interpolated result — the

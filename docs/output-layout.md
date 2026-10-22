@@ -7,13 +7,16 @@
 Final clips publish to a flat user-visible directory (default `output/` at
 the repo root) with filenames of the form:
 
-    YYYYMMDD-HHMMSS_<prompt-slug>.<ext>
+    YYYYMMDD-HHMMSS_[<kind>_]<provider-slug>_<model-slug>_<prompt-slug>.<ext>
 
 * The timestamp is local-TZ at the moment the clip finishes.
 * The slug is the first 20 ASCII-safe characters of the prompt; emoji,
   CJK, accented characters, and punctuation are dropped (the slug
   pipeline is ASCII-conservative for cross-platform safety and
   grep/tab-complete ergonomics).
+* `<provider-slug>` (≤20 chars) and `<model-slug>` (≤24 chars) come from the
+  run's provider/model, falling back to `unknown`; `<kind>` is present only
+  for tagged artifacts (e.g. `keyframe-init`).
 * Collisions in the same second resolve as `_2`, `_3`, … `_99`, then a
   6-character sha256 hash.
 * Batch entries nest under `output/<batch_id>/` for grouping.

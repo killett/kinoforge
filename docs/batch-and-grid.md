@@ -8,8 +8,8 @@ Render N clips on one shared deployed instance with continue-on-error
 semantics:
 
 ```bash
-kinoforge batch -c ../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml \
-                --manifest ../examples/configs/manifests/batch-prompts.yaml
+kinoforge batch -c examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml \
+                --manifest examples/configs/manifests/batch-prompts.yaml
 ```
 
 The manifest is a YAML list. Each entry sets exactly one of `prompt`
@@ -18,7 +18,7 @@ parent directory). Optional per-entry overrides: `params`, `spec`,
 `assets`, `run_id`.
 
 ```yaml
-# ../examples/configs/manifests/batch-prompts.yaml
+# examples/configs/manifests/batch-prompts.yaml
 - prompt: "waves crashing on basalt cliffs at dusk"
   mode: t2v
   run_id: waves
