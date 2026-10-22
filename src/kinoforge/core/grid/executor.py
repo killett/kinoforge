@@ -398,15 +398,7 @@ async def _run_one_cell(
                 f"{proc.stderr.strip()[:500]}"
             ),
         )
-        return GridCellResult(
-            idx=cell.idx,
-            caption=cell.caption,
-            status="failed",
-            mp4_path=None,
-            sha256=None,
-            cost_usd=None,
-            error=err,
-        )
+        return _cell_result(cell, "failed", error=err)
     cell_out = _cell_output_dir(grid_id, cell.idx, output_dir)
     matches = sorted(cell_out.glob("*.mp4"))
     if not matches:
@@ -417,24 +409,9 @@ async def _run_one_cell(
                 f"no mp4 in per-cell output dir {cell_out}"
             ),
         )
-        return GridCellResult(
-            idx=cell.idx,
-            caption=cell.caption,
-            status="failed",
-            mp4_path=None,
-            sha256=None,
-            cost_usd=None,
-            error=err,
-        )
+        return _cell_result(cell, "failed", error=err)
     mp4 = matches[0]
-    return GridCellResult(
-        idx=cell.idx,
-        caption=cell.caption,
-        status="success",
-        mp4_path=mp4,
-        sha256=_sha256_file(mp4),
-        cost_usd=None,
-    )
+    return _cell_result(cell, "success", mp4_path=mp4, sha256=_sha256_file(mp4))
 
 
 def _stack_to_loras_heredoc(stack: list[LoraStackEntry]) -> str:
@@ -929,16 +906,7 @@ async def _run_group(
         aborted = False
         for cell in cells:
             if aborted:
-                results.append(
-                    GridCellResult(
-                        idx=cell.idx,
-                        caption=cell.caption,
-                        status="aborted",
-                        mp4_path=None,
-                        sha256=None,
-                        cost_usd=None,
-                    )
-                )
+                results.append(_cell_result(cell, "aborted"))
                 continue
             r = await _run_one_cell(
                 cell,
@@ -1160,10 +1128,9 @@ async def run_grid(
             if cell.mp4_path is None:
                 continue
             all_results.append(
-                GridCellResult(
-                    idx=cell.idx,
-                    caption=cell.caption,
-                    status="success",
+                _cell_result(
+                    cell,
+                    "success",
                     mp4_path=cell.mp4_path,
                     sha256=_sha256_file(cell.mp4_path),
                     cost_usd=0.0,
