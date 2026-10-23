@@ -3245,7 +3245,55 @@ on all five `examples/configs/modal-*.yaml` for an undeclared `heartbeat_interva
 (`c9d9b284`); `kinoforge reap --format json` printed a human line on the empty-ledger path
 (`3c7822b8`).
 
-## RESUME SNAPSHOT (updated 2026-10-21 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-10-22 — read this, then STOP; below is history)
+
+### SESSION 2026-10-22 — NEEDS DISCUSSION #1 (Finding #0 leak sweep) FIXED; cron stays disabled
+
+Worked the first item of `docs/hygiene-audit-2026-10-21.md`'s NEEDS DISCUSSION list. Four
+commits on `main`, `f0bb35cd..b1f63596`, red/green throughout:
+
+- **Age source = RunPod `lastStartedAt`** (`f0bb35cd`). `_LIST_PODS_QUERY` and the `pod()` query
+  now select it; `_pod_to_instance` parses it to epoch seconds via `_last_started_at_epoch`
+  (absent / null / empty / malformed → the 0.0 "unknown" sentinel, never a raise). Evidence
+  for the choice is the June sweep `tools/_uptime_field_sweep_log.jsonl`: 14 pods × 11 samples,
+  `lastStartedAt` populated and stable on **every** sample including t=0 — when
+  `runtime.uptimeInSeconds` was still null — and the top-level `Pod.uptimeSeconds` never left 0.
+  It is the start of the current billing run (creation, for a never-stopped pod). Read queries
+  only; no golden moved (`tests/providers` 828 passed). Widened listing validated against the
+  live API: zero pods, no GraphQL error. Consumers were checked first — `cli/_reconcile`,
+  `core/lifecycle.reap` and the reaper all prefer the ledger/index `created_at` and only fall
+  back to the instance's, and `core/reaper.py` already treats `<= 0.0` as unknown.
+- **Tool never reaps an unknown age** (`0ee95cfb`). `created_at <= 0.0` → `SKIP … age=unknown`
+  at WARNING. The test file was rewritten on the REAL `_pod_to_instance` over `myself.pods`-shaped
+  rows; the new unknown-age test reproduced Finding #0's exact signature
+  (`REAP pod=boot tag=None age=497976.26h`) before the guard landed. Docstring now says the
+  per-tier ceilings key on `tags["smoke_tier"]`, which a RunPod listing never carries, so only
+  the untagged 4 h ceiling applies there today.
+- **`tag_filter` deleted** from `tests/_smoke_harness/runpod_lifecycle.destroy_all_active_pods`
+  (`f2928d18`): it could never match, so with it set the sweep destroyed nothing and reported
+  clean. No caller passed it. The two live smokes' comments no longer lean on the cron.
+- **Docs** (`b1f63596`): README task row, `docs/warm-reuse.md` pyramid paragraph,
+  `smoke-wan21-weekly.yml` header, `pixi.toml` comment, and a *Resolved* note on the report's
+  item 1.
+
+**Deliberately NOT done — operator decisions that remain open:**
+- The `smoke-leak-sweep` cron is still `disabled_manually`. The tool is safe to run now, but with
+  only the untagged ceiling reachable it would destroy ANY pod in the account past 4 h — a
+  deliberate long warm-reuse or benchmark pod included. Re-enable with
+  `gh workflow enable smoke-leak-sweep` only if that policy is wanted; `smoke-wan21-weekly`'s
+  always() sweep step is safe to dispatch again.
+- U42's "community pool reclaims pods" root cause and U36's reasoning still need re-examination
+  (the 10-18 audit showed our cron reaped U42's pair). U65's secure pinning stays regardless.
+
+Final gate: `pixi run test` at `b1f63596` — 6847 passed / 182 skipped / 25 deselected / 6 xfailed / **1 failed**: `tests/core/test_no_top_level_pod_uptime_reads.py`, a banner test that greps `src/` for the broken uptime stub's name, tripped on the new docstring naming it in prose. Reworded in `5386a214`; that guard + `tests/providers/test_runpod.py` + the sweep tests re-run green (99 passed) and pre-commit is clean on every touched file. The 10-min full run was not repeated for a docstring-only change. `pixi run smoke-local` scope (harness + sweep + local CPU smoke): 61 passed. No pod running; ledger empty (`kinoforge list` verified).
+
+**Single next action:** NEEDS DISCUSSION item 2 — N1 RunPod `_request` retrying 5xx on the
+CREATE mutation (duplicate untracked pod on a 504 after booking; needs a live check) — then
+item 3, N2 `budget` vs `time_buffer` (`budget: 0.25` on an A40 dies 450 s into boot; offline-
+fixable, two options tabled). Recommended N2 shape: hand selfterm
+`budget / rate · 3600 + time_buffer` so the budget bounds GPU time and the buffer stays a
+teardown allowance, with a test at the default buffer. Everything from the 10-21 snapshot below
+still holds.
 
 ### SESSION 2026-10-21 — whole-repo hygiene pass WITH FIXES (43 behaviour-preserving commits)
 
