@@ -1,13 +1,27 @@
 """Layer-3 leak-detection sweep.
 
-Reaps any RunPod pod whose age exceeds the per-tag ceiling. Designed
-to run every 30 min via .github/workflows/leak-sweep.yml + on-demand
-via ``pixi run smoke-leak-sweep``.
+Reaps any RunPod pod whose age exceeds the per-tag ceiling. Runs on
+demand via ``pixi run smoke-leak-sweep`` and as the always() step of
+``smoke-wan21-weekly.yml``. The 30-min cron in
+``.github/workflows/leak-sweep.yml`` was DISABLED on 2026-10-18 after it
+destroyed two in-flight pods (Finding #0, docs/hygiene-audit-2026-10-18.md);
+the age source is fixed (below) but re-enabling it is an operator call —
+``gh workflow enable smoke-leak-sweep``.
+
+Age comes from ``Instance.created_at``, which the RunPod provider fills from
+the pod's ``lastStartedAt`` (``_pod_to_instance``). A pod whose age is unknown
+(the 0.0 sentinel) is skipped with a WARNING, never reaped — aging the
+sentinel as ``now - 0.0`` was Finding #0.
+
+The per-tier ceilings are keyed on ``tags["smoke_tier"]``, which a RunPod
+listing never carries (the pod schema has no tags), so on RunPod only the
+untagged ceiling applies today. The table is kept for the provider or naming
+scheme that does populate it.
 
 The watchdog is INDEPENDENT of the smoke tiers — when a smoke crash
 defeats its own finally block (T22 attempt 2 lost $0.63 this way),
-this cron catches the leak within 30-60 min and produces a GitHub
-issue with pod_id + age + spend + tag.
+a sweep catches the leak and produces a GitHub issue with pod_id +
+age + spend + tag.
 """
 
 from __future__ import annotations
@@ -103,6 +117,18 @@ def main(argv: list[str] | None = None) -> int:
     for pod in pods:
         tag = pod.tags.get("smoke_tier")
         budget = _AGE_BUDGET.get(tag, _AGE_BUDGET[None])
+        if pod.created_at <= 0.0:
+            # The provider's "age unknown" sentinel (RunPod: no
+            # ``lastStartedAt`` on the row). Aging it as ``now - 0.0`` is
+            # ~497,000 h — past every ceiling — which is how this tool
+            # destroyed every pod it listed until 2026-10-18 (Finding #0,
+            # docs/hygiene-audit-2026-10-18.md). Unknown never reaps.
+            _log.warning(
+                "SKIP pod=%s tag=%s age=unknown (created_at sentinel); not reaped",
+                pod.id,
+                tag,
+            )
+            continue
         age_h = (now - pod.created_at) / 3600.0
         if age_h <= budget:
             _log.info(
