@@ -77,21 +77,18 @@ def _get_runpod_provider() -> Any:
     return kf_registry.get_provider("runpod")()
 
 
-def destroy_all_active_pods(*, tag_filter: str | None = None) -> SweepResult:
-    """Belt-and-suspenders sweep.
+def destroy_all_active_pods() -> SweepResult:
+    """Belt-and-suspenders sweep: destroy every active pod the provider lists.
 
     Defends against the T22 attempt-2 failure mode: a smoke that crashes
     mid-cold-boot before its in-test ``pod_id`` variable is captured
     can leave a $1.39/hr A100 idle. Calling this in ``finally``
     catches every pod the orchestrator created during the smoke
-    (it records BEFORE wait_for_ready).
-
-    Args:
-        tag_filter: When set, only pods whose
-            ``tags.get("smoke_tier")`` equals ``tag_filter`` are
-            destroyed. ``None`` reaps every active pod the provider
-            knows about — appropriate when the smoke owns the workspace
-            exclusively.
+    (it records BEFORE wait_for_ready). Unconditional on purpose: the
+    smokes own the workspace exclusively (preflight asserts zero active
+    pods), and a ``tag_filter`` on ``tags["smoke_tier"]`` — removed
+    2026-10-22 — could never match, because a RunPod listing carries no
+    tags; with it set the sweep destroyed nothing and reported clean.
 
     Returns:
         :class:`SweepResult` whose ``destroyed`` list carries the IDs
@@ -107,8 +104,6 @@ def destroy_all_active_pods(*, tag_filter: str | None = None) -> SweepResult:
     try:
         provider = _get_runpod_provider()
         for inst in provider.list_instances():
-            if tag_filter is not None and inst.tags.get("smoke_tier") != tag_filter:
-                continue
             try:
                 provider.destroy_instance(inst.id)
                 destroyed.append(inst.id)

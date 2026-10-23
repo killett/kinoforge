@@ -147,10 +147,10 @@ def test_lora_swap_matrix_wan21(tmp_path: Path) -> None:
         if poller is not None:
             poller.stop()
             poller.join(timeout=2.0)
-        # No tag_filter: cfg.compute.tags is not currently propagated to
-        # actual pod tags by the RunPod provider, so a tag-restricted
-        # sweep reaps nothing. The smoke owns the workspace exclusively
-        # (preflight asserts 0 active pods at start), so unconditional
-        # sweep is safe. Tracked as separate cleanup; the leak-sweep
-        # cron still catches anything this misses within 45 min.
+        # The sweep is unconditional: a RunPod listing carries no tags, so a
+        # tier-filtered sweep reaped nothing (the filter was removed
+        # 2026-10-22). The smoke owns the workspace exclusively (preflight
+        # asserts 0 active pods at start). The leak-sweep cron is DISABLED
+        # (Finding #0) — this finally and a post-run `kinoforge list` are
+        # the leak guard.
         runpod_lifecycle.teardown_pod_or_raise(pod_id)

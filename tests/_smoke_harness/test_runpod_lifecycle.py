@@ -49,30 +49,6 @@ def test_destroy_all_active_pods_reaps_everything_when_no_filter(
     assert sorted(destroyed) == ["a", "b"]
 
 
-def test_destroy_all_active_pods_honors_tag_filter(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Bug: tier-3 sweep reaps a tier-4 pod sharing the workspace."""
-    destroyed: list[str] = []
-
-    class _Provider:
-        def list_instances(self) -> list[_FakeInstance]:
-            return [
-                _FakeInstance("t3", {"smoke_tier": "kinoforge-smoke-tier-3"}),
-                _FakeInstance("t4", {"smoke_tier": "kinoforge-smoke-tier-4"}),
-                _FakeInstance("none"),
-            ]
-
-        def destroy_instance(self, pod_id: str) -> None:
-            destroyed.append(pod_id)
-
-    monkeypatch.setattr(runpod_lifecycle, "_get_runpod_provider", lambda: _Provider())
-    out = runpod_lifecycle.destroy_all_active_pods(tag_filter="kinoforge-smoke-tier-3")
-    assert out.destroyed == ["t3"]
-    assert out.failures == {}
-    assert destroyed == ["t3"]
-
-
 def test_destroy_all_active_pods_reports_failures(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

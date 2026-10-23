@@ -230,5 +230,5 @@ def test_wan22_lora_warm_reuse_4_step_matrix(tmp_path: Path) -> None:
         if poller is not None:
             poller.stop()
             poller.join(timeout=2.0)
-        # No tag_filter — see live_wan21/test_lora_swap_matrix.py for why.
+        # Unconditional sweep — see live_wan21/test_lora_swap_matrix.py for why.
         runpod_lifecycle.teardown_pod_or_raise(pod_id, repo_root=REPO)
