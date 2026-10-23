@@ -184,8 +184,8 @@ pre-commit-all = "python -m pre_commit run --all-files"
 pre-commit-install = "python -m pre_commit install --install-hooks"
 
 # LoRA smoke-test pyramid (docs/superpowers/specs/2026-06-21-lora-smoke-pyramid-design.md).
-# Tier 1 free local smoke (every PR, on demand); Tiers 3/4 live (cron / release-gate);
-# leak-sweep is the Layer-3 watchdog.
+# Tier 1 free local smoke (every PR, on demand); Tiers 3/4 live (dispatch / release-gate);
+# leak-sweep is the Layer-3 watchdog (its cron is disabled — Finding #0).
 smoke-local = "python -m pytest tests/smoke/local_cpu/ tests/_smoke_harness/ tests/tools/test_smoke_leak_sweep.py -v"
 smoke-21b-live = { cmd = "python -m pytest tests/smoke/live_wan21/ -v -s", env = { KINOFORGE_LIVE_TESTS = "1" } }
 smoke-wan22-live = { cmd = "python -m pytest tests/smoke/release_wan22/ -v -s", env = { KINOFORGE_LIVE_TESTS = "1" } }

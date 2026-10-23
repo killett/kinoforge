@@ -162,7 +162,7 @@ never be logged in `successful-generations.md`), and `--debug-show-secrets`.
 | `pixi run smoke-local` | Local CPU smoke suite | No cloud required |
 | `pixi run smoke-21b-live` | Live smoke: Wan 2.1 1.3B (`tests/smoke/live_wan21/`) | $0.30 cap per module |
 | `pixi run smoke-wan22-live` | Live smoke: Wan 2.2 14B (`tests/smoke/release_wan22/`) | Per-module caps $1.50–$4.00; expect $1–2 |
-| `pixi run smoke-leak-sweep` | Destroy RunPod pods past the per-tier age ceiling | DANGER: ages pods from a `created_at` sentinel, so it reaps every pod (Finding #0 in `docs/hygiene-audit-2026-10-18.md`); fix before use |
+| `pixi run smoke-leak-sweep` | Destroy RunPod pods past the per-tier age ceiling | Ages pods from RunPod's `lastStartedAt`; an unknown age is skipped, never reaped. The 30-min cron stays disabled (Finding #0 in `docs/hygiene-audit-2026-10-18.md`) |
 | `pixi run build-image-wan-comfyui` | Build + push the pre-baked Wan + ComfyUI image | Needs `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` |
 | `pixi run cloud:bootstrap-kms` | Provision AWS + GCP KMS keys | Idempotent; ~$0.04/day once live |
 | `pixi run cloud:perms-probe` | Probe cloud IAM permissions | Diagnostics only |

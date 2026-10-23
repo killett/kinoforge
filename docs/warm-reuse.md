@@ -303,9 +303,14 @@ Three tiers + a watchdog (full design:
 | 3 — `pixi run smoke-21b-live` | Weekly Mon 04:00 PT + on demand | Real-diffusers semantics, real CUDA, real RunPod proxy + Cloudflare path on Wan 2.1 1.3B + 2 single LoRAs | ~$0.20 |
 | 4 — `pixi run smoke-wan22-live` | Manual, pre-release | Full Wan 2.2 14B + Arcane Style pair end-to-end on A100 80GB | ~$1-2 |
 
-A separate `pixi run smoke-leak-sweep` cron runs every 30 min to reap
-any tier-tagged pod older than its ceiling (Tier 3: 45 min, Tier 4:
-90 min) and post a GitHub issue per reap. All four tiers share
+A separate `pixi run smoke-leak-sweep` reaps any pod older than its
+ceiling (untagged: 4 h; the Tier 3 / Tier 4 ceilings of 45 / 90 min key
+on a `smoke_tier` tag a RunPod listing never carries) and posts a GitHub
+issue per reap. Its 30-min cron (`leak-sweep.yml`) has been disabled since
+2026-10-18, when it was found aging every pod from a `created_at` sentinel
+and reaping all of them (Finding #0, `hygiene-audit-2026-10-18.md`); the
+age now comes from RunPod's `lastStartedAt` and an unknown age is never
+reaped, but re-enabling the cron is an operator decision. All four tiers share
 `../tests/_smoke_harness/` so the kinoforge-internal HTTP patterns
 (UA + `?api_key=` + URLError retry + leak sweep) are inherited by
 import, not by rediscovery.
