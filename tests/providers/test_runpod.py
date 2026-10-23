@@ -1223,6 +1223,116 @@ def test_list_instances_tags_an_empty_name_when_the_pod_has_none() -> None:
     assert "name" not in provider.list_instances()[0].tags
 
 
+# ---------------------------------------------------------------------------
+# Finding #0 (docs/hygiene-audit-2026-10-18.md): a listed pod's age.
+# RunPod's ``Pod`` type carries no creation time, but ``lastStartedAt`` is
+# populated from the first list/get response (154/154 samples in the 2026-06
+# uptime sweep, tools/_uptime_field_sweep_log.jsonl — never null, stable for
+# the pod's life, present while ``runtime`` was still null). It is the start of
+# the current billing run, which for a never-stopped pod is its creation.
+# ---------------------------------------------------------------------------
+
+# 2026-06-16T18:50:06.738Z as RunPod renders it. The expected epoch was computed
+# independently of the parser: calendar.timegm((2026, 6, 16, 18, 50, 6)) + 0.738.
+_LAST_STARTED_AT = "2026-06-16T18:50:06.738Z"
+_LAST_STARTED_AT_EPOCH = 1781635806.738
+_ABSENT = object()
+
+
+def test_list_instances_selects_last_started_at_and_maps_it_to_created_at() -> None:
+    """``myself.pods`` must select ``lastStartedAt`` and it must become ``created_at``.
+
+    Bug caught: either half missing leaves ``created_at`` at the 0.0 sentinel,
+    which read as "~497,000 h old" to ``tools/smoke_leak_sweep.py`` and reaped
+    every pod in the account (Finding #0). A parser that drops the ``Z`` and
+    reads the stamp as LOCAL time is off by the host's UTC offset — the
+    assertion is exact to the millisecond, so a seven-hour error fails it.
+    """
+    list_response: dict[str, Any] = {
+        "data": {
+            "myself": {
+                "pods": [
+                    {
+                        "id": "pod-1",
+                        "name": "kf-run-1",
+                        "desiredStatus": "RUNNING",
+                        "imageName": "img:1",
+                        "costPerHr": 0.45,
+                        "lastStartedAt": _LAST_STARTED_AT,
+                    }
+                ]
+            }
+        }
+    }
+    http_post = HttpPostSpy(response=list_response)
+    provider = RunPodProvider(http_post=http_post)
+
+    instances = provider.list_instances()
+
+    query = _create_calls(http_post)[0][1]["query"]
+    assert "lastStartedAt" in query, (
+        f"GraphQL myself.pods query missing lastStartedAt field; got: {query!r}"
+    )
+    assert instances[0].created_at == pytest.approx(_LAST_STARTED_AT_EPOCH, abs=1e-3)
+
+
+def test_get_instance_selects_last_started_at_and_maps_it_to_created_at() -> None:
+    """The single-pod ``pod()`` read carries the same field to the same place.
+
+    Bug caught: fixing only the listing query leaves ``get_instance`` — the
+    read behind ``kinoforge status`` and warm attach — reporting an unknown
+    age for a pod the listing dates correctly.
+    """
+    get_response: dict[str, Any] = {
+        "data": {
+            "pod": {
+                "id": "pod-aged",
+                "desiredStatus": "RUNNING",
+                "imageName": "img:1",
+                "costPerHr": 0.45,
+                "lastStartedAt": _LAST_STARTED_AT,
+            }
+        }
+    }
+    http_post = HttpPostSpy(response=get_response)
+    provider = RunPodProvider(http_post=http_post)
+
+    inst = provider.get_instance("pod-aged")
+
+    query = _create_calls(http_post)[0][1]["query"]
+    assert "lastStartedAt" in query, (
+        f"GraphQL pod() query missing lastStartedAt field; got: {query!r}"
+    )
+    assert inst.created_at == pytest.approx(_LAST_STARTED_AT_EPOCH, abs=1e-3)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [_ABSENT, None, "", "yesterday", "2026-06-16T18:50:06.738ZZ"],
+    ids=["absent", "null", "empty", "prose", "malformed"],
+)
+def test_pod_to_instance_keeps_the_unknown_age_sentinel_without_a_usable_stamp(
+    raw: object,
+) -> None:
+    """An absent, null, empty or malformed ``lastStartedAt`` is ``created_at == 0.0``.
+
+    Bug caught: ``datetime.fromisoformat(None)`` raises ``TypeError`` and a
+    malformed stamp raises ``ValueError``; either breaks ``kinoforge list``
+    outright on an early-boot or partial response. 0.0 is the sentinel every
+    consumer already reads as "unknown" (``core/reaper.py``: ``created_at <=
+    0.0``), and the leak sweep must see exactly that value to refuse the reap.
+    """
+    from kinoforge.providers.runpod import _pod_to_instance
+
+    pod: dict[str, Any] = {"id": "pod-boot", "desiredStatus": "STARTING"}
+    if raw is not _ABSENT:
+        pod["lastStartedAt"] = raw
+
+    inst = _pod_to_instance(pod)
+
+    assert inst.created_at == 0.0
+
+
 def test_list_instances_populates_cost_rate_from_cost_per_hr() -> None:
     """list_instances threads each pod's costPerHr through to Instance.
 

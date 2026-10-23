@@ -33,7 +33,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -1761,10 +1761,14 @@ def _gpu_types_query(cloud_type: str = "any") -> str:
 # provisional ledger row is keyed by the client-side ``run_id``, which RunPod
 # only ever sees as the pod NAME. Without the name in this selection set,
 # ``cli/_reconcile`` cannot resolve such a row to the pod it created and would
-# age out the only durable handle on a live, billing pod. This is a READ query;
-# it does not participate in any launch payload.
+# age out the only durable handle on a live, billing pod. ``lastStartedAt`` is
+# the only age a listed pod carries (see :func:`_last_started_at_epoch`); without
+# it every listed pod reads as the 0.0 "unknown" sentinel, which
+# ``tools/smoke_leak_sweep.py`` once aged as ~497,000 h and reaped (Finding #0,
+# docs/hygiene-audit-2026-10-18.md). This is a READ query; it does not
+# participate in any launch payload.
 _LIST_PODS_QUERY: str = (
-    "{ myself { pods { id name desiredStatus imageName costPerHr } } }"
+    "{ myself { pods { id name desiredStatus imageName costPerHr lastStartedAt } } }"
 )
 
 _CREATE_POD_MUTATION: str = (
@@ -1875,7 +1879,7 @@ def _get_pod_query(pod_id: str) -> str:
     """
     return (
         f'{{ pod(input: {{ podId: "{pod_id}" }}) '
-        "{ id desiredStatus imageName costPerHr } }"
+        "{ id desiredStatus imageName costPerHr lastStartedAt } }"
     )
 
 
@@ -1968,10 +1972,48 @@ def _pod_to_instance(pod: dict[str, Any]) -> Instance:
         id=pod_id,
         provider="runpod",
         status=_runpod_status_to_kinoforge(desired_status),
-        created_at=0.0,  # RunPod list API does not return creation time
+        created_at=_last_started_at_epoch(pod.get("lastStartedAt")),
         tags=tags,
         cost_rate_usd_per_hr=cost_rate,
     )
+
+
+def _last_started_at_epoch(raw: object) -> float:
+    """Epoch seconds of a pod's ``lastStartedAt``, or ``0.0`` when unusable.
+
+    RunPod's ``Pod`` type exposes no creation time on a list or get response.
+    ``lastStartedAt`` is the start of the pod's CURRENT billing run — for a pod
+    that was never stopped, its creation. The 2026-06 uptime sweep
+    (``tools/_uptime_field_sweep_log.jsonl``, 14 pods x 11 samples) saw it
+    populated and stable on every sample, including the first, while
+    ``runtime.uptimeInSeconds`` was still null and the top-level
+    ``uptimeSeconds`` never left 0.
+
+    ``0.0`` is the sentinel every consumer already reads as "age unknown"
+    (``core/reaper.py``'s ``created_at <= 0.0`` guard, and the leak sweep's
+    refusal to reap). It is returned rather than raised for an absent, null,
+    empty or malformed value so an early-boot or partial response cannot take
+    down ``kinoforge list``.
+
+    Args:
+        raw: The ``lastStartedAt`` value as RunPod returned it — an ISO-8601
+            ``...Z`` string, or missing.
+
+    Returns:
+        POSIX seconds, or ``0.0`` when the stamp is unusable.
+    """
+    if not isinstance(raw, str) or not raw:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if parsed.tzinfo is None:
+        # RunPod always suffixes ``Z``; a bare stamp from it is still UTC, and
+        # reading it as the controller's local time would skew every age by
+        # the host's UTC offset.
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.timestamp()
 
 
 # ---------------------------------------------------------------------------
