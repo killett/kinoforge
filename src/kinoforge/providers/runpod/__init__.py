@@ -1986,8 +1986,9 @@ def _last_started_at_epoch(raw: object) -> float:
     that was never stopped, its creation. The 2026-06 uptime sweep
     (``tools/_uptime_field_sweep_log.jsonl``, 14 pods x 11 samples) saw it
     populated and stable on every sample, including the first, while
-    ``runtime.uptimeInSeconds`` was still null and the top-level
-    ``uptimeSeconds`` never left 0.
+    ``runtime.uptimeInSeconds`` was still null and the top-level pod uptime
+    field never left 0 (a broken stub — the banner test
+    ``tests/core/test_no_top_level_pod_uptime_reads.py`` forbids even naming it).
 
     ``0.0`` is the sentinel every consumer already reads as "age unknown"
     (``core/reaper.py``'s ``created_at <= 0.0`` guard, and the leak sweep's
